@@ -416,6 +416,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
     public let editionFingerprintSpines: [EditionFingerprintSpineArtifact]?
     public let transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]?
     public let episodeMapEvidencePaths: [String: String]?
+    /// Why this packet's shared map couldn't be placed on the listener's copy, kept so the
+    /// item can still say why after a restart (#481). Nil when a shared map is in use or
+    /// the listener has their own; older builds ignore the field.
+    public var sharedMapRefusalReason: String?
 
     public init(
         id: String,
@@ -436,8 +440,10 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         editionFingerprintSpines: [EditionFingerprintSpineArtifact]? = nil,
         transcriptPhraseSketches: [TranscriptPhraseSketchArtifact]? = nil,
         episodeMapEvidencePaths: [String: String]? = nil,
-        resolvedRecipientEditionSHA256: String? = nil
+        resolvedRecipientEditionSHA256: String? = nil,
+        sharedMapRefusalReason: String? = nil
     ) {
+        self.sharedMapRefusalReason = sharedMapRefusalReason
         self.resolvedRecipientEditionSHA256 = resolvedRecipientEditionSHA256
         self.id = id
         self.itemId = itemId
@@ -465,6 +471,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         case resolvedRecipientEditionSHA256
         case sourceResolutionStatus, isEnabled, isMuted, revealMode, deletedAt
         case listeningMapProposals, editionFingerprintSpines, transcriptPhraseSketches, episodeMapEvidencePaths
+        case sharedMapRefusalReason
     }
 
     public init(from decoder: Decoder) throws {
@@ -504,6 +511,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
             forKey: .transcriptPhraseSketches
         )
         episodeMapEvidencePaths = try values.decodeIfPresent([String: String].self, forKey: .episodeMapEvidencePaths)
+        sharedMapRefusalReason = try values.decodeIfPresent(String.self, forKey: .sharedMapRefusalReason)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -527,6 +535,7 @@ public struct ImportedCommentaryLayer: Codable, Equatable, Sendable, Identifiabl
         try values.encodeIfPresent(editionFingerprintSpines, forKey: .editionFingerprintSpines)
         try values.encodeIfPresent(transcriptPhraseSketches, forKey: .transcriptPhraseSketches)
         try values.encodeIfPresent(episodeMapEvidencePaths, forKey: .episodeMapEvidencePaths)
+        try values.encodeIfPresent(sharedMapRefusalReason, forKey: .sharedMapRefusalReason)
     }
 }
 
@@ -577,9 +586,23 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
     public let audioDurationMs: Int?
     public let podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]?
     public var resolution: ImportedAnchorResolution
+    /// When this listener first heard the Margin's voice; nil while it's new to them (#469).
+    /// Local only: packets never carry it, and Build 29 ignores the key when it reads the record.
+    public var firstHeardAt: Date?
+
+    /// Not heard yet, so the Timeline and the Margins list mark it as new.
+    public var isNewToListener: Bool { firstHeardAt == nil }
     /// The Margins this one answers, from the packet's conversation artifact (#472). Nil for an
     /// ordinary Margin; more than one link is a fork. Build 29 ignores it.
     public let replyLinks: [MarginReplyLink]?
+    /// Where else this same Margin arrived: later packets from the same sender that carried it again
+    /// are not imported a second time, so replies to their copy still find this one (#858). Nil for
+    /// a Margin that arrived once. Local only; Build 29 ignores the key when it reads the record.
+    public var alsoSharedAs: [MarginPacketIdentity]?
+    /// Stable capture provenance from the selected representation ID. Older packets have none;
+    /// matching words and a display label alone cannot prove they came from the same person.
+    /// Local JSON only; Build 29 ignores this optional key.
+    public let shareProvenance: String?
 
     public init(
         id: String,
@@ -592,7 +615,10 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         audioDurationMs: Int? = nil,
         podcastAnchorEvidence: [ImportedPodcastAnchorEvidence]? = nil,
         resolution: ImportedAnchorResolution = .init(evidenceClass: .unresolved),
-        replyLinks: [MarginReplyLink]? = nil
+        firstHeardAt: Date? = nil,
+        replyLinks: [MarginReplyLink]? = nil,
+        alsoSharedAs: [MarginPacketIdentity]? = nil,
+        shareProvenance: String? = nil
     ) {
         self.id = id
         self.layerId = layerId
@@ -604,7 +630,10 @@ public struct ImportedCommentaryInterjection: Codable, Equatable, Sendable, Iden
         self.audioDurationMs = audioDurationMs
         self.podcastAnchorEvidence = podcastAnchorEvidence
         self.resolution = resolution
+        self.firstHeardAt = firstHeardAt
         self.replyLinks = replyLinks
+        self.alsoSharedAs = alsoSharedAs
+        self.shareProvenance = shareProvenance
     }
 }
 

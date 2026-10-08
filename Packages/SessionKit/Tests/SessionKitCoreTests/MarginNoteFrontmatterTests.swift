@@ -28,7 +28,7 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         XCTAssertEqual(properties["target"], .plain("source"))
         XCTAssertEqual(properties["tags"], .list(["spoken-margins"]))
         XCTAssertEqual(Array(properties.keys).sorted(), ["author", "created", "item_id", "margin_id", "margin_kind", "source", "tags", "target", "title"])
-        XCTAssertTrue(note.contains("Position: 754000 ms"))
+        XCTAssertTrue(note.contains("\nPosition: 12:34\n"), note)
     }
 
     func testArticleMarginWithoutAuthorOmitsAuthorAndMarksWrittenKind() throws {
@@ -80,6 +80,35 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         }
     }
 
+    /// The titles above only exercise `\n`, `\t`, `\r`, `\\`, `"` and U+2028, and U+2028 matches the
+    /// generic escape clause on its own, so dropping the C0 range from it went unnoticed. PDF text
+    /// extraction yields form feeds and vertical tabs, and feed titles sometimes begin with a BOM. The
+    /// parser below rejects any raw control character, so each of these must be escaped to round-trip.
+    func testEveryControlAndLineBreakScalarInATitleIsEscapedAndRoundTrips() throws {
+        let scalars: [UInt32] = Array(0x00...0x1F) + [0x7F, 0x85, 0x2028, 0x2029, 0xFEFF]
+        for value in scalars {
+            let label = String(format: "U+%04X", value)
+            let character = Character(try XCTUnwrap(Unicode.Scalar(value)))
+            for title in ["Before\(character)after", "\(character)leading", "trailing\(character)"] {
+                let item = Item(id: "item", title: title, mediaType: "text", text: "Source.",
+                                externalReference: nil, status: "ready", author: "Au\(character)thor")
+                let note = try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: nil))
+                let properties: [String: FrontmatterParser.Value]
+                do { properties = try FrontmatterParser.parse(note) } catch {
+                    XCTFail("\(label) in a title broke the properties block: \(error)")
+                    continue
+                }
+                XCTAssertEqual(properties["title"], .string(title), label)
+                XCTAssertEqual(properties["author"], .string("Au\(character)thor"), label)
+                XCTAssertEqual(Array(properties.keys).sorted(), ["author", "created", "item_id", "margin_id", "margin_kind", "tags", "target", "title"], label)
+            }
+        }
+        // What the escape looks like, so a reader that only knows YAML's `\uXXXX` still decodes it.
+        XCTAssertEqual(MarginNoteFrontmatter.quoted("a\u{0C}b"), "\"a\\u000Cb\"")
+        XCTAssertEqual(MarginNoteFrontmatter.quoted("\u{FEFF}"), "\"\\uFEFF\"")
+        XCTAssertEqual(MarginNoteFrontmatter.quoted("\r\n"), "\"\\r\\n\"")
+    }
+
     func testPrivateFeedLinksNeverReachTheNote() throws {
         let privateLink = "https://www.patreon.com/rss/show?auth=abc123SECRET456def789ghi012jkl345"
         let privateMedia = "https://c10.patreonusercontent.com/episode.mp3?token-hash=zyx987SECRET654wvu321tsr098qpo765"
@@ -104,7 +133,8 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         XCTAssertNil(frontmatter.source)
     }
 
-    func testBodyBelowTheBlockIsTheBuild29Note() throws {
+    /// Build 29's body plus the clock position and the link back (#171); the writer rewrites unedited notes once.
+    func testBodyBelowTheBlock() throws {
         let item = Item(id: "item-body", title: "Body", mediaType: "text", text: "Source.",
                         externalReference: "https://example.com/body", status: "ready")
         let note = try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: nil))
@@ -118,6 +148,7 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         Session: session-item-body
         Margin: margin
         Position: 0%
+        [Open this Margin in Spoken Margins](spokenmargins://margin?session=session-item-body&margin=margin)
 
         ## Listener Margin
 
@@ -132,6 +163,49 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         After.
 
         """)
+    }
+
+    // MARK: - Every spoken Margin, with a way back (#171)
+
+    func testMediaPositionsReadAsAClock() throws {
+        let item = Item(id: "item-long", title: "Long episode", mediaType: "audio", text: nil,
+                        externalReference: "https://example.com/long", status: "ready")
+        XCTAssertTrue(try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: 65_400)).contains("\nPosition: 01:05\n"))
+        XCTAssertTrue(try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: 3_723_999)).contains("\nPosition: 1:02:03\n"))
+        XCTAssertEqual(MarginDeepLink.clockPosition(ms: 0), "00:00")
+        XCTAssertEqual(MarginDeepLink.clockPosition(ms: -5), "00:00")
+    }
+
+    func testTheNoteLinksBackToItsOwnMargin() throws {
+        let item = Item(id: "item-link", title: "Linked", mediaType: "audio", text: nil,
+                        externalReference: "https://example.com/linked", status: "ready")
+        let note = try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: 1_000))
+        let line = try XCTUnwrap(note.components(separatedBy: "\n").first { $0.hasPrefix("[Open this Margin in Spoken Margins](") })
+        let link = try XCTUnwrap(MarginDeepLink(url: try XCTUnwrap(URL(string: String(line.dropFirst("[Open this Margin in Spoken Margins](".count).dropLast())))))
+        XCTAssertEqual(link, MarginDeepLink(sessionId: "session-item-link", marginId: "margin"))
+    }
+
+    func testSpokenMarginWithoutATranscriptStillGetsANoteThatSaysSo() throws {
+        let item = Item(id: "item-untranscribed", title: "Untranscribed", mediaType: "audio", text: nil,
+                        externalReference: "https://example.com/u", status: "ready")
+        var spoken = margin(item: item, kind: .audio, mediaTimeMs: 2_000)
+        spoken.transcript = nil
+        spoken.displayText = nil
+        spoken.transcriptionStatus = "failed"
+        let note = try renderNote(item: item, margin: spoken)
+        XCTAssertTrue(note.contains("## Listener Margin\n\nTranscript not available yet.\n"), note)
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .audio, text: nil))
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: nil, text: "  "))
+
+        // When the transcript arrives, the same note id renders the words instead.
+        spoken.transcript = "Arrived later."
+        spoken.transcriptionStatus = "transcribed"
+        XCTAssertTrue(try renderNote(item: item, margin: spoken).contains("## Listener Margin\n\nArrived later.\n"))
+    }
+
+    func testAWrittenMarginWithNoWordsGetsNoNote() {
+        XCTAssertFalse(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .written, text: " \n"))
+        XCTAssertTrue(SessionExportMarkdownRenderer.writesMarginNote(captureKind: .written, text: "Words."))
     }
 
     // MARK: - A paper's citation (#206)
@@ -219,6 +293,21 @@ final class MarginNoteFrontmatterTests: XCTestCase {
             )
         )
         return (item, document)
+    }
+
+    /// #560: a Margin on a Wikipedia article imported before the fix captured link titles in its
+    /// context; the note shows the context as read (the stored anchor isn't touched).
+    func testNoteContextFromAnEarlierWikipediaImportDropsLinkTitles() throws {
+        let stored = LinkTitleSpeechTests.storedBeforeFix
+        let item = Item(id: "item-wiki", title: "Marginalia", mediaType: "text", text: stored + " Next sentence.",
+                        externalReference: "https://en.wikipedia.org/wiki/Marginalia", status: "ready")
+        var onWiki = margin(item: item, kind: .written, mediaTimeMs: nil)
+        onWiki.anchor.anchorBefore = stored
+        onWiki.anchor.anchorAfter = "of a [book]( \"Book\") or other document."
+        let note = try renderNote(item: item, margin: onWiki)
+
+        XCTAssertTrue(note.contains("## Context before\n\n" + LinkTitleSpeechTests.storedAsNowRead + "\n"), note)
+        XCTAssertTrue(note.contains("## Context after\n\nof a book or other document.\n"), note)
     }
 
     private func margin(item: Item, kind: InterjectionCaptureKind?, mediaTimeMs: Int?, startChar: Int = 0) -> Interjection {

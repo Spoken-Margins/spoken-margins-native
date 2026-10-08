@@ -91,6 +91,27 @@ public enum PreparedNarrationFallback {
         return max(startChar, min(offset, endChar))
     }
 
+    /// The media time generated narration reaches `textOffset`, interpolated within a segment. Text between two
+    /// segments maps to the next segment's start. Nil when the rendered audio has no text positions or ends
+    /// before `textOffset` (a partly rendered article), so a caller never seeks to a place the audio can't reach.
+    public static func mediaTimeMs(textOffset: Int, timeline: TranscriptTimeline) -> Int? {
+        let sortedSegments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        guard sortedSegments.contains(where: { $0.startChar != nil && $0.endChar != nil }) else { return nil }
+        if let segment = sortedSegments.first(where: { segment in
+            guard let start = segment.startChar, let end = segment.endChar else { return false }
+            return start <= textOffset && textOffset < end
+        }) {
+            guard let startChar = segment.startChar,
+                  let endChar = segment.endChar,
+                  endChar > startChar else {
+                return segment.startMs
+            }
+            let fraction = Double(textOffset - startChar) / Double(endChar - startChar)
+            return segment.startMs + Int((Double(segment.endMs - segment.startMs) * max(0, min(1, fraction))).rounded())
+        }
+        return sortedSegments.first(where: { ($0.startChar ?? .max) > textOffset })?.startMs
+    }
+
     /// Once an item's narration is detached, its "ready offline" prepared audio must be prepared
     /// again, or Prepare answers "already available offline" while the item plays live speech (#278).
     public static func markPreparedAudioForRepreparation(

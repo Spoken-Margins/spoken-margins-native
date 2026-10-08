@@ -13,9 +13,10 @@ public enum FeedbackBannerPolicy {
     }
 
     /// Seconds before the banner dismisses itself, or nil when only the listener dismisses it.
-    public static func autoDismissSeconds(for kind: Kind) -> Double? {
+    /// A confirmation that offers an action (Play now, #784) stays long enough to reach it.
+    public static func autoDismissSeconds(for kind: Kind, offersAction: Bool = false) -> Double? {
         switch kind {
-        case .success: 3
+        case .success: offersAction ? 8 : 3
         case .warning: 6
         case .error: nil
         }
@@ -47,7 +48,9 @@ public struct ItemFailureLog: Equatable, Sendable {
 
     public init() {}
 
-    public mutating func record(_ message: String, itemId: String, at date: Date = Date()) {
+    /// Async work names its originating item. Only failures without an origin use the visible item.
+    public mutating func record(_ message: String, itemId: String?, visibleItemId: String = "", at date: Date = Date()) {
+        let itemId = itemId ?? visibleItemId
         guard !itemId.isEmpty else { return }
         entries[itemId] = Entry(message: message, occurredAt: date)
     }

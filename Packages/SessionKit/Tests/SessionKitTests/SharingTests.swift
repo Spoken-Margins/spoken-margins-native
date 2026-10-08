@@ -348,6 +348,166 @@ final class SharingTests: XCTestCase {
         XCTAssertTrue(verified.extractedAssetURLs.isEmpty)
     }
 
+    /// #536: sharing a streamed podcast's Margins failed with "episode fingerprint spine is out of
+    /// bounds". The stored spine named the feed's http:// link, held more than 500 landmarks from
+    /// long periodic capture, and one landmark whose signature file was gone. The writer now repairs
+    /// the spine, and Build 29's reader (exportPacket) imports the packet.
+    func testAStreamedEpisodeSpineThePacketRulesRejectIsRepairedOnExport() async throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("patterned-source.m4a")
+        try writePatternedM4A(to: sourceURL, durationSeconds: 30)
+        let generatedEvidence = try await PodcastAnchorEvidenceGenerator.generate(
+            sourceURL: sourceURL,
+            anchorMediaTimeMs: 15_000,
+            outputDirectory: root.appendingPathComponent("generated-evidence"),
+            idPrefix: "evidence"
+        )
+        let evidence = try XCTUnwrap(generatedEvidence.first)
+        func landmark(_ index: Int, asset: String) -> EpisodeFingerprintLandmark {
+            EpisodeFingerprintLandmark(
+                id: "landmark-\(index)", order: index,
+                sourceMediaStartMs: index * 6_000, sourceMediaEndMs: index * 6_000 + 11_000,
+                anchorMediaTimeMs: index * 6_000 + 5_500, continuityEpoch: 1,
+                trigger: .periodicPlayback, provenance: .observedDecodedPlayback, signatureAssetId: asset
+            )
+        }
+        // Each captured landmark has its own signature, as the app records them. Landmark 621 reuses
+        // landmark 3's: Build 29's importer keys a dictionary by signature and traps on a repeat.
+        let signatures = (0..<620).map { index in
+            ReviewedMachineEvidenceAsset(
+                id: "\(evidence.id)-\(index)", path: "assets/evidence/\(evidence.id)-\(index).shazamsignature",
+                sourceURL: evidence.fileURL, durationMs: evidence.durationMs, anchorOffsetMs: evidence.anchorOffsetMs,
+                provenance: PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
+            )
+        }
+        let captured = (0..<620).map { landmark($0, asset: signatures[$0].id) }
+            + [landmark(620, asset: "episode-signature-missing"), landmark(621, asset: signatures[3].id)]
+        let spine = EditionFingerprintSpineArtifact(
+            id: "episode-spine-streamed", itemId: "item-source-v2-streamed",
+            canonicalURL: "http://example.com/episodes/one", episodeGUID: "episode-one",
+            producingEditionDurationMs: podcastItem.durationMs, createdAt: fixedDate, landmarks: captured
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "streamed-package", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 401_000, machineEvidenceAssetIds: [evidence.id]),
+                representation: .textOnly
+            )],
+            fingerprintSpines: [spine],
+            machineEvidence: [.init(
+                id: evidence.id, path: evidence.archivePath, sourceURL: evidence.fileURL,
+                durationMs: evidence.durationMs, anchorOffsetMs: evidence.anchorOffsetMs,
+                provenance: PodcastAnchorEvidenceProvenance.decodedPlaybackStream.rawValue
+            )] + signatures
+        )
+        let url = root.appendingPathComponent("streamed.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        let shared = try XCTUnwrap(try SpokenMarginsPackageArchive.read(
+            from: url, extractingAssetsTo: root.appendingPathComponent("assets")
+        ).editionFingerprintSpines.first)
+        XCTAssertNil(shared.canonicalURL, "packets carry https links only")
+        XCTAssertEqual(shared.episodeGUID, "episode-one")
+        XCTAssertEqual(shared.landmarks.count, FingerprintSpineExportRepair.maximumLandmarks)
+        XCTAssertEqual(shared.landmarks.map(\.order), Array(0..<FingerprintSpineExportRepair.maximumLandmarks))
+        XCTAssertEqual(shared.landmarks.first?.id, "landmark-0")
+        XCTAssertEqual(shared.landmarks.last?.id, "landmark-619", "spread over the whole episode")
+        XCTAssertFalse(shared.landmarks.contains { $0.signatureAssetId == "episode-signature-missing" })
+        XCTAssertEqual(Set(shared.landmarks.map(\.signatureAssetId)).count, shared.landmarks.count, "one landmark per signature")
+    }
+
+    /// #536: a spine naming another episode is left out, and the Margins still share.
+    func testASpineForAnotherEpisodeIsLeftOutAndTheMarginsStillShare() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let spine = EditionFingerprintSpineArtifact(
+            id: "episode-spine-other", itemId: "item-other", episodeGUID: "episode-two", createdAt: fixedDate, landmarks: []
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "other-package", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly
+            )],
+            fingerprintSpines: [spine]
+        )
+        let url = root.appendingPathComponent("other.spokenmargins")
+        _ = try exportPacket(prepared, to: url)
+        let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appendingPathComponent("assets"))
+        XCTAssertTrue(verified.editionFingerprintSpines.isEmpty)
+        XCTAssertEqual(verified.commentaryLayers.first?.interjections.map(\.packageScopedId), ["margin-001"])
+    }
+
+    /// #536: the validator's one message covered nine rules. It now names the rule, so diagnostics
+    /// (lastSharedPackageFailure) say which one failed.
+    func testASpineThePacketRejectsNamesTheRuleThatFailed() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "named-rule", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly
+            )],
+            fingerprintSpines: [EditionFingerprintSpineArtifact(
+                id: "spine-1", itemId: "episode-one", canonicalURL: "https://example.com/episodes/one",
+                createdAt: fixedDate, landmarks: []
+            )]
+        )
+        // Bypass the export repair, as an older writer would have.
+        let spinePath = try XCTUnwrap(prepared.manifest.artifacts.first {
+            $0.kind == SpokenMarginsArtifactKind.editionFingerprintSpine
+        }?.path)
+        var data = prepared.artifactData
+        var spine = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(data[spinePath])) as? [String: Any])
+        spine["canonicalURL"] = "http://example.com/episodes/one"
+        data[spinePath] = try JSONSerialization.data(withJSONObject: spine)
+        let malformed = PreparedSpokenMarginsPackage(manifest: prepared.manifest, artifactData: data, assetFiles: prepared.assetFiles)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(malformed, to: root.appendingPathComponent("named.spokenmargins"))) { error in
+            XCTAssertEqual(
+                error as? SpokenMarginsPackageArchiveError,
+                .invalidManifest("episode fingerprint spine is out of bounds: canonical_url")
+            )
+        }
+    }
+
+    func testALandmarkWithAnOverflowingSourceRangeIsRejectedNotATrap() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "overflowing-range", createdAt: fixedDate, item: podcastItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-001", revision: approvedRevision(),
+                anchor: .init(anchorType: .media, mediaTimeMs: 5_000), representation: .textOnly
+            )],
+            fingerprintSpines: [EditionFingerprintSpineArtifact(
+                id: "spine-1", itemId: "episode-one", canonicalURL: "https://example.com/episodes/one",
+                createdAt: fixedDate, landmarks: []
+            )]
+        )
+        // Decoding skips the clamping initializer, so a hostile packet can carry this range. Checking the
+        // duration rule before the range rule computes 0 - Int.min, which traps.
+        let spinePath = try XCTUnwrap(prepared.manifest.artifacts.first {
+            $0.kind == SpokenMarginsArtifactKind.editionFingerprintSpine
+        }?.path)
+        var data = prepared.artifactData
+        var spine = try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(data[spinePath])) as? [String: Any])
+        spine["landmarks"] = [[
+            "id": "landmark-1", "order": 0, "sourceMediaStartMs": Int.min, "sourceMediaEndMs": 0,
+            "anchorMediaTimeMs": 0, "continuityEpoch": 0, "trigger": "initial_playback",
+            "provenance": "observed_decoded_playback", "signatureAssetId": "missing", "generatorVersion": "v1",
+        ]]
+        data[spinePath] = try JSONSerialization.data(withJSONObject: spine)
+        let malformed = PreparedSpokenMarginsPackage(manifest: prepared.manifest, artifactData: data, assetFiles: prepared.assetFiles)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(malformed, to: root.appendingPathComponent("overflow.spokenmargins"))) { error in
+            XCTAssertEqual(
+                error as? SpokenMarginsPackageArchiveError,
+                .invalidManifest("episode fingerprint landmark is invalid: source_range")
+            )
+        }
+    }
+
     func testPortableListeningMapProposalAndPodcastEvidenceImportWithoutActivatingMap() async throws {
         let root = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -762,6 +922,27 @@ final class SharingTests: XCTestCase {
         ).evidenceClass, .unresolved)
     }
 
+    /// The Margin's "sent without a position" wording (#872) counts context words in SessionKit, where the
+    /// matcher can't be linked. It must say "usable" exactly when the matcher would try the context.
+    func testSessionKitUsableContextRuleAgreesWithTheTranscriptResolver() {
+        let samples: [String?] = [
+            nil, "", "   ", "one two three four five", "one two three four five six", "one two three four, five —",
+            "it's 3 o'clock, said José, again", "COVID-19 was 2020 and then 2021 happened", "a b c d e f g",
+            "—— … !!! ??? ((( ))) ,,, ...", "naïve café résumé coöperate déjà vu again", "emoji 😀 😀 😀 😀 😀 😀 words",
+            // Samples that straddle six words, where a rule that treats marks differently would disagree.
+            "one two three four nai\u{308}ve", "one two three four na\u{EF}ve", "one two three four five\u{301}",
+            "a\u{2764}\u{FE0F}b c d e f", "\u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F} \u{2764}\u{FE0F}",
+            "नमस्ते दोस्तों आप सब", "नमस्ते दोस्तों आप", "ก็ได้ ครับ ผม", "x²  y³ z½ 1 2 3",
+        ]
+        for prefix in samples {
+            for suffix in samples {
+                let anchor = PortableAnchorEvidence(anchorType: .media, prefix: prefix, suffix: suffix, mediaTimeMs: 1)
+                XCTAssertEqual(anchor.hasUsableTextContext, PodcastTranscriptAnchorResolver.hasUsableContext(anchor),
+                               "prefix \(prefix ?? "nil") suffix \(suffix ?? "nil")")
+            }
+        }
+    }
+
     func testPodcastTranscriptResolutionFusionAndMonotonicGuard() {
         let prefix = "the durable prefix has exactly enough unique words here"
         let suffix = "the following suffix is also uniquely present right now"
@@ -922,8 +1103,8 @@ final class SharingTests: XCTestCase {
     /// the resolver declines to place it. An ad inserted between the flanks does exactly this: the "pre"
     /// flank (anchor offset +11.5 s) still lands at 42 s, the "post" flank (−0.5 s) after the 7 s ad.
     ///
-    /// Two flanks that agree on the same wrong place look like agreement and are fused. The resolver
-    /// can't tell that apart from a real match; repeated theme music can cause it (C4 benchmark, #296).
+    /// Two flanks that agree on the same wrong place look like agreement here. Repeated audio can cause it
+    /// (#296), so `resolve` first looks for another copy of each flank's audio (#331; see the repeated-theme test).
     func testAcousticResolverDeclinesFlanksThatDisagreeByMoreThanTheFusionSpread() {
         let query = PodcastPortableAnchorQuery(
             packageScopedId: "margin-at-an-inserted-ad",
@@ -956,6 +1137,229 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(fused.localMediaTimeMs, 49_000 + spread)
     }
 
+    /// The wrong-episode rule (#456) on its own: when at most half of a packet's flanks found the recipient's
+    /// edition, even a Margin whose two flanks agree is not placed. A majority, or a single Margin, is unchanged.
+    func testAcousticResolverPlacesNothingWhenMostEvidenceMissesTheEdition() throws {
+        let placed = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        let unresolved = ImportedAnchorResolution(evidenceClass: .unresolved, algorithmVersion: "podcast-anchor.v1")
+        let packet = ["inside-intro": placed, "after-intro": unresolved, "deep-content": unresolved]
+
+        let wrongEpisode = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            packet, matchedFlanks: 3, answeredFlanks: 6
+        )
+        XCTAssertNil(wrongEpisode["inside-intro"]?.localMediaTimeMs)
+        XCTAssertEqual(wrongEpisode["inside-intro"]?.evidenceClass, .unresolved)
+        XCTAssertEqual(wrongEpisode["inside-intro"]?.algorithmVersion, "podcast-anchor-edition-unconfirmed.v1")
+        // Unplaced Margins carry the verdict too, so later evidence can't place them on this edition.
+        XCTAssertEqual(wrongEpisode["deep-content"]?.algorithmVersion, "podcast-anchor-edition-unconfirmed.v1")
+        XCTAssertTrue(wrongEpisode.values.allSatisfy(PodcastAcousticAnchorResolver.isEditionRejection))
+
+        // One of three Margins inside a replaced ad: most evidence still found the edition.
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            packet, matchedFlanks: 4, answeredFlanks: 6
+        ), packet)
+        // A single Margin can't show the edition is wrong, so it keeps its placement.
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["only": placed], matchedFlanks: 2, answeredFlanks: 2
+        ), ["only": placed])
+        // No flank matched: no shared audio to guard against, so the transcript still decides.
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            packet, matchedFlanks: 0, answeredFlanks: 6
+        ), packet)
+        // An ambiguous Margin carries the verdict too, so it can't keep an earlier placement.
+        let ambiguous = ImportedAnchorResolution(evidenceClass: .ambiguous, isAmbiguous: true)
+        XCTAssertTrue(PodcastAcousticAnchorResolver.isEditionRejection(try XCTUnwrap(
+            PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+                ["intro-theme": ambiguous, "after-intro": unresolved, "deep-content": unresolved],
+                matchedFlanks: 2, answeredFlanks: 6
+            )["intro-theme"]
+        )))
+    }
+
+    /// A Margin's flank can carry two signature variants, one captured during playback and one cut from the
+    /// source window. When the playback pair matches and the source pair doesn't, that is one Margin with both
+    /// flanks matched, not two of four flanks missing, so the wrong-episode rule leaves it placed (#543 audit).
+    func testSignatureVariantsOfOneFlankCountOnceForTheEditionCheck() {
+        typealias Answer = PodcastAcousticAnchorResolver.EditionFlankAnswer
+        let oneMargin = [
+            Answer(marginId: "m1", anchorOffsetMs: 11_500, matched: true),   // playback, before the anchor
+            Answer(marginId: "m1", anchorOffsetMs: -500, matched: true),     // playback, after the anchor
+            Answer(marginId: "m1", anchorOffsetMs: 11_500, matched: false),  // source window, before
+            Answer(marginId: "m1", anchorOffsetMs: -500, matched: false)     // source window, after
+        ]
+        let counts = PodcastAcousticAnchorResolver.editionFlankCounts(oneMargin)
+        XCTAssertEqual(counts.answered, 2)
+        XCTAssertEqual(counts.matched, 2)
+        let placed = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        XCTAssertEqual(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["m1": placed], matchedFlanks: counts.matched, answeredFlanks: counts.answered
+        ), ["m1": placed])
+
+        // Flanks of different Margins still count separately: one placed Margin and two that found nothing.
+        let packet = oneMargin + [
+            Answer(marginId: "m2", anchorOffsetMs: 11_500, matched: false),
+            Answer(marginId: "m2", anchorOffsetMs: -500, matched: false),
+            Answer(marginId: "m3", anchorOffsetMs: 11_500, matched: false),
+            Answer(marginId: "m3", anchorOffsetMs: -500, matched: false)
+        ]
+        let packetCounts = PodcastAcousticAnchorResolver.editionFlankCounts(packet)
+        XCTAssertEqual(packetCounts.answered, 6)
+        XCTAssertEqual(packetCounts.matched, 2)
+    }
+
+    /// The wrong-episode verdict (#456) survives the app's pipeline. The shared intro's words match the
+    /// recipient's transcript, and fusion alone would place that Margin from the transcript; the final
+    /// resolutions carry the verdict instead. A verified placement stored by an earlier pass on the same
+    /// edition is withdrawn too, while a listener's own confirmation stays.
+    func testEditionRejectionSurvivesTranscriptFusionAndStoredPlacements() throws {
+        let placed = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        let unresolved = ImportedAnchorResolution(evidenceClass: .unresolved, algorithmVersion: "podcast-anchor.v1")
+        let acoustic = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["inside-intro": placed, "after-intro": unresolved, "deep-content": unresolved],
+            matchedFlanks: 2, answeredFlanks: 6
+        )
+        let introTranscript = ImportedAnchorResolution(
+            evidenceClass: .transcriptVerified, localMediaTimeMs: 10_200, confidence: 0.9,
+            algorithmVersion: "podcast-transcript-anchor.v1"
+        )
+        let fused = acoustic.mapValues { acousticResolution in
+            PodcastAnchorFusionResolver.fuse(transcript: introTranscript, acoustic: acousticResolution)
+        }
+        XCTAssertNotNil(fused["inside-intro"]?.localMediaTimeMs, "fusion alone places the intro Margin")
+
+        let final = PodcastAnchorFusionResolver.enforcingEditionRejection(acoustic: acoustic, resolutions: fused)
+        for (id, resolution) in final {
+            XCTAssertNil(resolution.localMediaTimeMs, id)
+            XCTAssertTrue(PodcastAcousticAnchorResolver.isEditionRejection(resolution), id)
+        }
+        // Without the verdict, fusion's result passes through unchanged.
+        XCTAssertEqual(PodcastAnchorFusionResolver.enforcingEditionRejection(acoustic: ["m": placed], resolutions: fused), fused)
+
+        let rejection = try XCTUnwrap(acoustic["inside-intro"])
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: placed, proposed: rejection, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), rejection, "a stored machine placement on the rejected edition is withdrawn")
+        let confirmed = ImportedAnchorResolution(
+            evidenceClass: .recipientConfirmed, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "recipient.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: confirmed, proposed: rejection, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), confirmed, "a listener's confirmation stays")
+        // An ordinary unresolved pass still keeps the stored placement.
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: placed, proposed: unresolved, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), placed)
+    }
+
+    /// A stored wrong-episode verdict (#456) survives a later pass on the same edition that lost evidence. With
+    /// the acoustic step failed, only the transcript of the shared intro is left (Codex audit on 75b32ad). With
+    /// only the intro's flanks answered, the edition check is skipped and the intro fuses (Codex audit on
+    /// 2e6228e). Either would place the Margin on the rejected episode. A listener's confirmation, the sender's
+    /// exact file or another edition lifts the verdict.
+    func testStoredEditionRejectionSurvivesATranscriptOnlyPass() throws {
+        let rejection = try XCTUnwrap(PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["inside-intro": ImportedAnchorResolution(evidenceClass: .unresolved), "a": .init(evidenceClass: .unresolved),
+             "b": .init(evidenceClass: .unresolved)],
+            matchedFlanks: 2, answeredFlanks: 6
+        )["inside-intro"])
+        XCTAssertTrue(PodcastAcousticAnchorResolver.isEditionRejection(rejection))
+
+        // The failed acoustic pass leaves fusion only the transcript of the shared intro.
+        let introTranscript = ImportedAnchorResolution(
+            evidenceClass: .transcriptVerified, localMediaTimeMs: 10_200, confidence: 0.9,
+            algorithmVersion: "podcast-transcript-anchor.v1"
+        )
+        let transcriptOnly = PodcastAnchorFusionResolver.fuse(
+            transcript: introTranscript, acoustic: ImportedAnchorResolution(evidenceClass: .unresolved)
+        )
+        XCTAssertNotNil(transcriptOnly.localMediaTimeMs, "fusion alone places the intro Margin")
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: transcriptOnly, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: true
+        ), rejection, "the stored verdict stays on the same edition")
+
+        // The content flanks error on retry, so only the intro's two flanks answer: too few for the edition
+        // check, and the intro fuses on its own.
+        let flanks = PodcastAcousticAnchorResolver.editionFlankCounts([
+            .init(marginId: "inside-intro", anchorOffsetMs: 11_500, matched: true),
+            .init(marginId: "inside-intro", anchorOffsetMs: -500, matched: true)
+        ])
+        let introFused = ImportedAnchorResolution(
+            evidenceClass: .fused, localMediaTimeMs: 10_000, confidence: 0.95, algorithmVersion: "podcast-anchor.v1"
+        )
+        let retry = PodcastAcousticAnchorResolver.requiringEditionConfirmation(
+            ["inside-intro": introFused, "a": .init(evidenceClass: .unresolved), "b": .init(evidenceClass: .unresolved)],
+            matchedFlanks: flanks.matched, answeredFlanks: flanks.answered
+        )
+        XCTAssertEqual(retry["inside-intro"], introFused, "the partial retry places the intro on its own")
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: introFused, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: true
+        ), rejection, "a partial acoustic retry doesn't lift the stored verdict")
+        let exact = ImportedAnchorResolution(
+            evidenceClass: .exactEdition, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "exact-edition.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: exact, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), exact, "the sender's exact file lifts the verdict")
+        let confirmed = ImportedAnchorResolution(
+            evidenceClass: .recipientConfirmed, localMediaTimeMs: 10_000, confidence: 1, algorithmVersion: "recipient.v1"
+        )
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: confirmed, previousEdition: "edition-b", currentEdition: "edition-b",
+            hasTranscript: false
+        ), confirmed, "a listener's confirmation lifts the verdict")
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(
+            previous: rejection, proposed: transcriptOnly, previousEdition: "edition-b", currentEdition: "edition-c",
+            hasTranscript: true
+        ), transcriptOnly, "a different edition starts afresh")
+    }
+
+    /// Flanks ShazamKit can't answer for say nothing about the edition. Evidence recorded before Build 29 is
+    /// 12 s and every query errors; an unreadable signature is skipped. Such a packet on the right episode must
+    /// not be rejected as a different edition, or its transcript placements would be withdrawn.
+    func testUnanswerableEvidenceDoesNotRejectTheEdition() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let recipientURL = root.appendingPathComponent("recipient.m4a")
+        try SeededNoiseAudio.write(to: recipientURL, seconds: 40)
+        let queries = (1...3).map { index in
+            PodcastPortableAnchorQuery(
+                packageScopedId: "margin-\(index)",
+                senderMediaTimeMs: index * 10_000,
+                evidence: [
+                    PodcastAcousticEvidenceQuery(id: "pre-\(index)", signatureData: Data([1, 2, 3]), anchorOffsetMs: 11_500),
+                    PodcastAcousticEvidenceQuery(id: "post-\(index)", signatureData: Data([4, 5, 6]), anchorOffsetMs: -500)
+                ]
+            )
+        }
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: recipientURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 40_000,
+            strongSourceIdentity: true
+        )
+        XCTAssertEqual(resolutions.count, 3)
+        for (id, resolution) in resolutions {
+            XCTAssertFalse(PodcastAcousticAnchorResolver.isEditionRejection(resolution), id)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
     /// The same rule end to end, on audio that never repeats: a 7 s ad inserted right at the Margin, between
     /// its two flanks, so the flanks honestly disagree by 7 s. (This used a tone fixture that repeated every
     /// 23 s, with the ad before both flanks; its verdict depended on which copy each flank matched, #296.)
@@ -976,6 +1380,163 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(resolution.evidenceClass, .fused)
         let placed = try XCTUnwrap(resolution.localMediaTimeMs)
         XCTAssertLessThanOrEqual(abs(placed - 49_000), PodcastAcousticAnchorResolver.maximumFusionSpreadMs)
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    /// The wrong episode (#456): the recipient's copy is another episode of the same show. It shares only a
+    /// 20 s intro with the sender's, then has different content, and is the same length, so neither a digest nor
+    /// the duration gives it away (the streamed case). No Margin may be placed on it: not one inside the shared
+    /// intro, not one just after it, and not one deep in the content.
+    func testAcousticResolverPlacesNoMarginOnADifferentEpisodeThatSharesTheIntro() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let senderURL = root.appendingPathComponent("sender.m4a")
+        let introURL = root.appendingPathComponent("intro.m4a")
+        let otherContentURL = root.appendingPathComponent("other-episode-content.m4a")
+        let recipientURL = root.appendingPathComponent("recipient-other-episode.m4a")
+        try SeededNoiseAudio.write(to: senderURL, seconds: 75)
+        // The same seed from second 0 gives the sender's first 20 s again: the show's intro.
+        try SeededNoiseAudio.write(to: introURL, seconds: 20)
+        try SeededNoiseAudio.write(to: otherContentURL, seconds: 55, seed: 0xBF58476D1CE4E5B9, startSecond: 1_200)
+        try await concatenateAudio([introURL, otherContentURL], destinationURL: recipientURL)
+        let margins = [("inside-intro", 10_000), ("after-intro", 26_000), ("deep-content", 55_000)]
+        var queries: [PodcastPortableAnchorQuery] = []
+        for (id, anchorMs) in margins {
+            let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                sourceURL: senderURL,
+                anchorMediaTimeMs: anchorMs,
+                outputDirectory: root.appendingPathComponent("evidence"),
+                idPrefix: id
+            )
+            XCTAssertEqual(generated.count, 2, id)
+            queries.append(PodcastPortableAnchorQuery(
+                packageScopedId: id,
+                senderMediaTimeMs: anchorMs,
+                evidence: try generated.map {
+                    PodcastAcousticEvidenceQuery(
+                        id: $0.id,
+                        signatureData: try Data(contentsOf: $0.fileURL),
+                        anchorOffsetMs: $0.anchorOffsetMs
+                    )
+                }
+            ))
+        }
+        // Strong identity is the worst case: the item match said "same episode", and only the audio disagrees.
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: recipientURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 75_000,
+            strongSourceIdentity: true
+        )
+        for (id, _) in margins {
+            let resolution = try XCTUnwrap(resolutions[id], id)
+            let observed = "\(id): \(resolution.evidenceClass) at \(resolution.localMediaTimeMs.map(String.init) ?? "nil")"
+                + " (\(resolution.algorithmVersion))"
+            XCTAssertNil(resolution.localMediaTimeMs, observed)
+            XCTAssertTrue([.unresolved, .ambiguous].contains(resolution.evidenceClass), observed)
+        }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    /// A flank that also matches elsewhere in the edition declines the Margin, whatever the flanks agree on.
+    func testAcousticResolverDeclinesAMarginWhoseFlankRepeatsElsewhere() {
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin-next-to-a-theme",
+            senderMediaTimeMs: 49_000,
+            evidence: [
+                PodcastAcousticEvidenceQuery(id: "pre", signatureData: Data([1]), anchorOffsetMs: 11_500),
+                PodcastAcousticEvidenceQuery(id: "post", signatureData: Data([2]), anchorOffsetMs: -500)
+            ]
+        )
+        let declined = PodcastAcousticAnchorResolver.resolveCandidates(
+            [(72_000, 0.97), (72_002, 0.96)],
+            query: query,
+            senderDurationMs: 120_000,
+            recipientDurationMs: 120_000,
+            strongSourceIdentity: true,
+            exactDigestContradiction: false,
+            matchedAnchorOffsets: [11_500, -500],
+            matchedRepeatedAudio: true
+        )
+        XCTAssertEqual(declined.evidenceClass, .ambiguous)
+        XCTAssertTrue(declined.isAmbiguous)
+        XCTAssertNil(declined.localMediaTimeMs)
+    }
+
+    /// Repeated audio end to end (#331): a 15 s theme opens the edition and comes back to close it. A Margin
+    /// with a flank wholly inside either copy could be placed at the other copy, so none of them is placed;
+    /// Margins whose flanks are clear of the theme still are. Sender and recipient have the same audio, but
+    /// the exact-edition shortcut is off, so every Margin goes through acoustic matching.
+    func testAcousticResolverDoesNotPlaceMarginsNextToRepeatedAudio() async throws {
+        #if canImport(AVFoundation)
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let editionURL = root.appendingPathComponent("edition.m4a")
+        let theme = SeededNoiseAudio.Section(seed: 0xA0761D6478BD642F, startSecond: 900, seconds: 15)
+        try SeededNoiseAudio.write(to: editionURL, sections: [theme, SeededNoiseAudio.Section(seconds: 70), theme])
+        // The theme plays at 0–15 s and 85–100 s. Flanks are 11 s, 0.5 s either side of the Margin.
+        let nextToRepeat = [
+            2_000,  // only a post flank (2.5–13.5 s), inside the first copy
+            14_000, // pre flank 2.5–13.5 s inside the first copy
+            86_000, // post flank 86.5–97.5 s inside the second copy
+            99_000  // only a pre flank (87.5–98.5 s), inside the second copy
+        ]
+        let controls = [40_000, 55_000, 70_000] // both flanks inside 15–85 s, which plays once
+        var queries: [PodcastPortableAnchorQuery] = []
+        for anchorMs in nextToRepeat + controls {
+            let generated = try await PodcastAnchorEvidenceGenerator.generate(
+                sourceURL: editionURL,
+                anchorMediaTimeMs: anchorMs,
+                outputDirectory: root.appendingPathComponent("evidence"),
+                idPrefix: "margin-\(anchorMs)"
+            )
+            queries.append(PodcastPortableAnchorQuery(
+                packageScopedId: "margin-\(anchorMs)",
+                senderMediaTimeMs: anchorMs,
+                evidence: try generated.map {
+                    PodcastAcousticEvidenceQuery(
+                        id: $0.id,
+                        signatureData: try Data(contentsOf: $0.fileURL),
+                        anchorOffsetMs: $0.anchorOffsetMs
+                    )
+                }
+            ))
+        }
+        let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+            queries: queries,
+            recipientAudioURL: editionURL,
+            senderExactEditionSHA256: nil,
+            senderDurationMs: 100_000,
+            strongSourceIdentity: true
+        )
+        let tolerance = PodcastAcousticAnchorResolver.maximumFusionSpreadMs
+        var falseConfident: [String] = []
+        for anchorMs in nextToRepeat + controls {
+            let resolution = try XCTUnwrap(resolutions["margin-\(anchorMs)"])
+            if let placed = resolution.localMediaTimeMs, abs(placed - anchorMs) > tolerance {
+                falseConfident.append("\(anchorMs) ms placed at \(placed) ms (\(resolution.evidenceClass))")
+            }
+        }
+        XCTAssertEqual(falseConfident, [], "no Margin is placed more than 1.5 s from where it was recorded")
+        for anchorMs in nextToRepeat {
+            let resolution = try XCTUnwrap(resolutions["margin-\(anchorMs)"])
+            XCTAssertTrue(
+                resolution.evidenceClass == .ambiguous || resolution.evidenceClass == .unresolved,
+                "Margin at \(anchorMs) ms next to the repeat came back \(resolution.evidenceClass)"
+            )
+            XCTAssertNil(resolution.localMediaTimeMs, "Margin at \(anchorMs) ms next to the repeat is not placed")
+        }
+        for anchorMs in controls {
+            let resolution = try XCTUnwrap(resolutions["margin-\(anchorMs)"])
+            let placed = try XCTUnwrap(resolution.localMediaTimeMs, "control Margin at \(anchorMs) ms is placed")
+            XCTAssertLessThanOrEqual(abs(placed - anchorMs), tolerance, "control Margin at \(anchorMs) ms")
+        }
         #else
         throw XCTSkip("AVFoundation is required")
         #endif
@@ -1459,6 +2020,147 @@ final class SharingTests: XCTestCase {
         )
     }
 
+    // MARK: Crafted descriptors (#913)
+
+    private func voicePackage(in root: URL) throws -> PreparedSpokenMarginsPackage {
+        let audioURL = root.appendingPathComponent("voice.m4a")
+        try writeSilentM4A(to: audioURL)
+        return try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package-voice-001", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
+            selections: [.init(
+                packageScopedId: "margin-voice", revision: approvedRevision(),
+                anchor: .init(anchorType: .text), representation: .originalAudio(sourceURL: audioURL, durationMs: 100)
+            )]
+        )
+    }
+
+    /// Exports `prepared`, rewrites the manifest inside the archive the way a hostile sender could, and reads it back.
+    private func readPacket(
+        tampering prepared: PreparedSpokenMarginsPackage, in root: URL, _ tamper: (inout SpokenMarginsPackageManifest) -> Void
+    ) throws -> VerifiedSpokenMarginsPackage {
+        let goodURL = root.appendingPathComponent("good-\(UUID().uuidString).spokenmargins")
+        _ = try exportPacket(prepared, to: goodURL)
+        var entries = try readRawArchive(goodURL)
+        var manifest = try SpokenMarginsPackageArchive.decodeManifest(XCTUnwrap(entries["manifest.json"]))
+        tamper(&manifest)
+        entries["manifest.json"] = try SpokenMarginsPackageArchive.encodeManifest(manifest)
+        let tamperedURL = root.appendingPathComponent("tampered-\(UUID().uuidString).spokenmargins")
+        try writeRawArchive(entries: entries, to: tamperedURL)
+        return try SpokenMarginsPackageArchive.read(
+            from: tamperedURL, extractingAssetsTo: root.appendingPathComponent("assets-\(UUID().uuidString)")
+        )
+    }
+
+    /// The entry check compares a Set, so a path listed twice passes it; building a dictionary from the descriptors
+    /// then trapped and took the app down before the import review appeared.
+    func testAnArtifactPathListedTwiceIsRejectedNotATrap() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertThrowsError(try readPacket(tampering: try textPreparedPackage(), in: root) { manifest in
+            let first = manifest.artifacts[0]
+            manifest.artifacts.append(SpokenMarginsArtifactDescriptor(
+                id: "\(first.id)-again", kind: first.kind, schemaVersion: first.schemaVersion, path: first.path,
+                required: false, byteCount: first.byteCount, sha256: first.sha256
+            ))
+        }) { error in
+            XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("descriptor identities are not unique"))
+        }
+    }
+
+    func testAnAssetPathListedTwiceIsRejectedNotATrap() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        XCTAssertThrowsError(try readPacket(tampering: try voicePackage(in: root), in: root) { manifest in
+            let first = manifest.assets[0]
+            manifest.assets.append(SpokenMarginsAssetDescriptor(
+                id: "\(first.id)-again", role: first.role, path: first.path, mimeType: first.mimeType,
+                durationMs: first.durationMs, anchorOffsetMs: first.anchorOffsetMs, provenance: first.provenance,
+                byteCount: first.byteCount, sha256: first.sha256
+            ))
+        }) { error in
+            XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("descriptor identities are not unique"))
+        }
+    }
+
+    /// `voice/a` and `voice?a` both became `voice-a.m4a`, so the second recording overwrote the first and both
+    /// Margins played it. A case-insensitive disk does the same to `Voice-a` and `voice-a`.
+    func testAnExportWhoseAssetIDsWouldExtractToOneFileIsRefused() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var selections: [ReviewedInterjectionSelection] = []
+        for number in 1...2 {
+            let audioURL = root.appendingPathComponent("voice-\(number).m4a")
+            try writeSilentM4A(to: audioURL)
+            selections.append(.init(
+                packageScopedId: "margin-\(number)",
+                revision: InterjectionShareRevision(
+                    id: "revision-\(number)", interjectionId: "private-note-\(number)", itemId: "private-item",
+                    sessionId: "private-session", createdAt: fixedDate, approvedTranscript: "A sender-reviewed thought \(number).",
+                    anchorBefore: "Before this passage.", anchorAfter: "After this passage.", status: .senderApproved
+                ),
+                anchor: .init(anchorType: .text), representation: .originalAudio(sourceURL: audioURL, durationMs: 100)
+            ))
+        }
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package-two-voices", createdAt: fixedDate, item: articleItem, itemTransportSelection: .reference,
+            selections: selections
+        )
+        let oldIDs = prepared.manifest.assets.map(\.id)
+        XCTAssertEqual(oldIDs.count, 2)
+        // Rename the two assets everywhere they are named, so the packet stays consistent apart from the clash.
+        for (firstID, secondID) in [("voice/a", "voice?a"), ("Voice-a", "voice-a")] {
+            let newIDs = [oldIDs[0]: firstID, oldIDs[1]: secondID]
+            var manifest = prepared.manifest
+            manifest.assets = manifest.assets.map { asset in
+                SpokenMarginsAssetDescriptor(
+                    id: newIDs[asset.id] ?? asset.id, role: asset.role, path: asset.path, mimeType: asset.mimeType,
+                    durationMs: asset.durationMs, anchorOffsetMs: asset.anchorOffsetMs, provenance: asset.provenance
+                )
+            }
+            var artifactData = prepared.artifactData
+            for (path, data) in artifactData {
+                var text = String(decoding: data, as: UTF8.self)
+                for (old, new) in newIDs { text = text.replacingOccurrences(of: "\"\(old)\"", with: "\"\(new)\"") }
+                artifactData[path] = Data(text.utf8)
+            }
+            let clashing = PreparedSpokenMarginsPackage(manifest: manifest, artifactData: artifactData, assetFiles: prepared.assetFiles)
+            XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(clashing, to: root.appendingPathComponent("clash-\(UUID().uuidString).spokenmargins")),
+                "\(firstID) and \(secondID)"
+            ) { error in
+                XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("asset ids would extract to the same file"))
+            }
+        }
+    }
+
+    /// The same clash in a packet someone else wrote. The manifest is tampered after export, so it also fails the
+    /// digest and entry checks; the point is that the clash is refused first, before anything is written to disk.
+    func testAnImportWhoseAssetIDsWouldExtractToOneFileIsRefusedBeforeAnythingIsWritten() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try voicePackage(in: root)
+        let destination = root.appendingPathComponent("assets-clash")
+        let goodURL = root.appendingPathComponent("good.spokenmargins")
+        _ = try exportPacket(prepared, to: goodURL)
+        var entries = try readRawArchive(goodURL)
+        var manifest = try SpokenMarginsPackageArchive.decodeManifest(XCTUnwrap(entries["manifest.json"]))
+        let first = manifest.assets[0]
+        func asset(_ id: String, path: String) -> SpokenMarginsAssetDescriptor {
+            SpokenMarginsAssetDescriptor(
+                id: id, role: first.role, path: path, mimeType: first.mimeType, durationMs: first.durationMs,
+                anchorOffsetMs: first.anchorOffsetMs, provenance: first.provenance, byteCount: first.byteCount, sha256: first.sha256
+            )
+        }
+        manifest.assets = [asset("voice/a", path: first.path), asset("voice?a", path: "assets/audio/second.m4a")]
+        entries["manifest.json"] = try SpokenMarginsPackageArchive.encodeManifest(manifest)
+        let tamperedURL = root.appendingPathComponent("clash.spokenmargins")
+        try writeRawArchive(entries: entries, to: tamperedURL)
+
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.read(from: tamperedURL, extractingAssetsTo: destination)) { error in
+            XCTAssertEqual(error as? SpokenMarginsPackageArchiveError, .invalidManifest("asset ids would extract to the same file"))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+    }
+
     /// The shipped build's reader is really in the loop (#317): one manifest key it doesn't know, as a new
     /// packet field would add, is enough for it to refuse a packet it otherwise imports.
     func testTheShippedBuildRejectsAManifestKeyItDoesNotKnow() throws {
@@ -1599,6 +2301,32 @@ final class SharingTests: XCTestCase {
             }
             try audioFile.write(from: buffer)
         }
+        #else
+        throw XCTSkip("AVFoundation is required")
+        #endif
+    }
+
+    private func concatenateAudio(_ parts: [URL], destinationURL: URL) async throws {
+        #if canImport(AVFoundation)
+        let composition = AVMutableComposition()
+        let outputTrack = try XCTUnwrap(composition.addMutableTrack(
+            withMediaType: .audio,
+            preferredTrackID: kCMPersistentTrackID_Invalid
+        ))
+        var cursor = CMTime.zero
+        for url in parts {
+            let asset = AVURLAsset(url: url)
+            let duration = try await asset.load(.duration)
+            let tracks = try await asset.loadTracks(withMediaType: .audio)
+            let track = try XCTUnwrap(tracks.first)
+            try outputTrack.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: track, at: cursor)
+            cursor = CMTimeAdd(cursor, duration)
+        }
+        let exporter = try XCTUnwrap(AVAssetExportSession(
+            asset: composition,
+            presetName: AVAssetExportPresetAppleM4A
+        ))
+        try await exporter.export(to: destinationURL, as: .m4a)
         #else
         throw XCTSkip("AVFoundation is required")
         #endif

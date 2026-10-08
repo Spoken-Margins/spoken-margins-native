@@ -23,6 +23,17 @@ final class SessionKitCoreTests: XCTestCase {
         ))
     }
 
+    func testASeekBackFromTheEndLeavesTheEndedState() {
+        // #588: a scrub back from the end must clear the end-of-item notification, or the
+        // engine moves the episode straight back to its end.
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 0, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 177_000, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: 178_808),
+                      "a place the listener chose inside the end tolerance is not the end")
+        XCTAssertFalse(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_808, durationMs: 178_808))
+        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: nil))
+    }
+
     func testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion() {
         XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
             completionNotificationObserved: false,
@@ -70,6 +81,43 @@ final class SessionKitCoreTests: XCTestCase {
             .failed(replacement)
         )
         XCTAssertNil(lifecycle.pending)
+    }
+
+    // #166: a pending seek the player has already passed is abandoned; one still in flight is kept.
+    func testMediaSeekLifecycleAbandonsOnlyASeekThePlayerHasPassed() {
+        var lifecycle = MediaSeekLifecycle()
+        // Resume at 5:46.9 from where the player paused: the seek lands where it already was.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 346_922, originMediaTimeMs: 346_915, uptimeMs: 10_000)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 347_500, uptimeMs: 10_600, playbackRate: 1), "not yet 1 s past the target")
+        XCTAssertNotNil(lifecycle.pending)
+        let abandoned = lifecycle.abandonIfOverrun(playerMediaTimeMs: 348_400, uptimeMs: 11_500, playbackRate: 1)
+        XCTAssertEqual(abandoned?.mediaTimeMs, 346_922)
+        XCTAssertNil(lifecycle.pending)
+
+        // A skip back 5 s whose completion hasn't arrived: the player is still playing on from where it was.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 100_000, purpose: .navigation, originMediaTimeMs: 105_000, uptimeMs: 20_000)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 107_000, uptimeMs: 22_000, playbackRate: 1))
+        XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 100_000, "a seek still in flight keeps reporting its target")
+
+        // A jump forward 50 s still in flight: the player is short of the target.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 200_000, purpose: .navigation, originMediaTimeMs: 150_000, uptimeMs: 30_000)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 151_000, uptimeMs: 31_000, playbackRate: 1))
+        // A player far past the target, further than playback since the seek could take it, isn't this seek landing.
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 290_000, uptimeMs: 32_000, playbackRate: 1))
+        // Landed and played on.
+        XCTAssertEqual(lifecycle.abandonIfOverrun(playerMediaTimeMs: 203_000, uptimeMs: 33_000, playbackRate: 1)?.purpose, .navigation)
+        XCTAssertNil(lifecycle.pending)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 203_000, uptimeMs: 33_000, playbackRate: 1), "nothing pending")
+
+        // A jump forward 15 s still in flight while the player plays on from where it was.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 115_000, purpose: .navigation, originMediaTimeMs: 100_000, uptimeMs: 0)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 117_000, uptimeMs: 17_000, playbackRate: 1))
+        XCTAssertEqual(lifecycle.pending?.mediaTimeMs, 115_000)
+
+        // A skip back 2 s that landed and played on past where it started is still abandoned.
+        _ = lifecycle.begin(targetId: "episode", mediaTimeMs: 100_000, purpose: .navigation, originMediaTimeMs: 102_000, uptimeMs: 0)
+        XCTAssertNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 101_000, uptimeMs: 1_000, playbackRate: 1), "observe the backward landing before playback passes the old origin")
+        XCTAssertNotNil(lifecycle.abandonIfOverrun(playerMediaTimeMs: 103_500, uptimeMs: 3_500, playbackRate: 1))
     }
 
     func testMediaSeekLifecycleIgnoresSupersededSeekCompletion() {
@@ -721,6 +769,8 @@ final class SessionKitCoreTests: XCTestCase {
 
         _ = try engine.startSession(itemId: item.id)
         let spoken = try XCTUnwrap(audio.preparedTexts.last)
+        // #336: prepared audio is planned from exactly what the player speaks after any preface.
+        XCTAssertTrue(spoken.hasSuffix(try XCTUnwrap(PreparedSpeechText(item: item, document: document)).text))
         XCTAssertTrue(spoken.contains("References skipped."))
         XCTAssertTrue(spoken.contains("Table not read."))
         for unheard in ["A cited title", "P1 14", "J Biol", "[12]"] {
@@ -1412,7 +1462,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(summary.delegatedToCanonicalRuntime)
         XCTAssertEqual(summary.snapshot.pendingAiJobKind, "interjection_summary")
         XCTAssertEqual(summary.snapshot.pendingAiJobStatus, "pending")
-        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Interjection Summary 1" })
+        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Margin Summary 1" })
 
         let discussion = try dispatcher.dispatch(.submitFollowup, followUpText: "Can you respond to my interjection?")
         XCTAssertTrue(discussion.delegatedToCanonicalRuntime)
@@ -1977,8 +2027,36 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First")
         XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
-        XCTAssertEqual(engine.currentSession?.position.charOffset, "First ".count)
-        XCTAssertEqual(audio.playedOffsets.last, "First ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 0, "rejoins at the start of its sentence (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 0)
+    }
+
+    /// #624: spoken Margins were stamped one second after 1970 per Margin, which Readwise and the
+    /// notes folder took as the real date. They now carry the engine's clock, like written Margins.
+    func testSpokenMarginCarriesTheTimeItWasRecorded() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "interjection": ["record_audio", "capture_text_anchor"]
+            ]
+        )
+        let item = Item(id: "item-text", title: "Text", mediaType: "text", text: "First sentence.", externalReference: nil, status: "ready")
+        let repo = InMemorySessionRepository(items: [item.id: item])
+        let recordedAt = Date(timeIntervalSince1970: 1_790_000_000)
+        let engine = SessionEngine(
+            profile: profile, repository: repo, audio: RecordingAudioClient(),
+            transcriber: RecordingTranscriptionClient(), now: { recordedAt }
+        )
+
+        _ = try engine.startSession(itemId: item.id)
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/text.m4a")
+
+        let margin = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
+        XCTAssertEqual(margin.createdAt, recordedAt)
     }
 
     func testNativeTextInterjectionsResumeAtExactBoundaryWithoutAccumulatingDrift() throws {
@@ -2087,35 +2165,6 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.currentTranscriptSegmentId, "seg-2")
         XCTAssertEqual(snapshot.currentAnchorConfidence, .transcriptSpan)
         XCTAssertEqual(snapshot.chapterTitle, "Middle")
-    }
-
-    func testLinkResolutionContractCanRepresentResolvedPodcastEpisode() throws {
-        let request = LinkResolutionRequest(
-            id: "link-request-1",
-            inputURL: "https://open.spotify.com/episode/example",
-            sourceSurface: "share_sheet",
-            createdAt: Date(timeIntervalSince1970: 1)
-        )
-        let candidate = LinkResolutionCandidate(
-            sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", title: "Example Show", role: "canonical_feed"),
-            title: "Episode Title",
-            showTitle: "Example Show",
-            durationMs: 1_800_000,
-            publishedAt: "2026-06-19",
-            audioURL: "https://cdn.example.com/episode.mp3",
-            confidence: 0.96
-        )
-        let result = LinkResolutionResult(
-            requestId: request.id,
-            status: .playable,
-            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
-            selectedCandidate: candidate,
-            candidates: [candidate]
-        )
-
-        XCTAssertEqual(result.status, .playable)
-        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/episode.mp3")
-        XCTAssertEqual(result.originalLink.role, "discovery")
     }
 
     func testImportSourceLinkCreatesPlayableNativeAudioItem() throws {
@@ -2553,7 +2602,7 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
-    func testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor() throws {
+    func testNativeAudioInterjectionFreezesClockBeforeSavingAndRejoinsJustBeforeTheAnchor() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -2586,8 +2635,8 @@ final class SessionKitCoreTests: XCTestCase {
 
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 124_250)
-        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 124_250)
-        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 121_250, "rejoins 3 s earlier (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 121_250)
     }
 
     func testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor() throws {
@@ -2662,8 +2711,8 @@ final class SessionKitCoreTests: XCTestCase {
         let saved = try XCTUnwrap(try repo.loadInterjections(sessionId: sessionID).first)
         XCTAssertEqual(saved.anchor.mediaTimeMs, 124_250)
         XCTAssertEqual(resumed.status, .playing)
-        XCTAssertEqual(resumed.currentMediaTimeMs, 124_250)
-        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+        XCTAssertEqual(resumed.currentMediaTimeMs, 121_250, "rejoins 3 s earlier (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 121_250)
     }
 
     func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
@@ -2858,17 +2907,17 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(detached.status, .idle)
         XCTAssertNil(detached.sessionId)
-        XCTAssertEqual(persisted.position.mediaTimeMs, 1_500_000)
+        XCTAssertEqual(persisted.position.mediaTimeMs, 1_497_000, "rejoined 3 s earlier (#776)")
         XCTAssertEqual(persisted.status, "in_progress")
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 1_500_000)
 
         let restored = try engine.inspectSession(sessionId: sessionID)
         XCTAssertEqual(restored.status, .paused)
-        XCTAssertEqual(restored.currentMediaTimeMs, 1_500_000)
+        XCTAssertEqual(restored.currentMediaTimeMs, 1_497_000)
 
         let resumed = try engine.resumePlayback()
         XCTAssertEqual(resumed.status, .playing)
-        XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
+        XCTAssertEqual(audio.playedOffsets.last, 1_497_000)
     }
 
     func testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock() throws {
@@ -2914,8 +2963,8 @@ final class SessionKitCoreTests: XCTestCase {
             let recording = try engine.beginInterjection()
             XCTAssertEqual(recording.currentMediaTimeMs, beforeInterjection)
             let resumed = try engine.finishInterjection(audioRef: "interjections/cycle-\(index).m4a")
-            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection)
-            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection)
+            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection - MarginRejoin.mediaStepBackMs)
+            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection - MarginRejoin.mediaStepBackMs)
 
             audio.currentMediaTimeValue = beforeInterjection + 12_000
             let postResume = try engine.syncPlaybackProgress()
@@ -6475,7 +6524,7 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.sourceProgressPercent, 100)
         XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 100)
-        XCTAssertEqual(snapshot.chapterTitle, "Interjection Summary 1")
+        XCTAssertEqual(snapshot.chapterTitle, "Margin Summary 1")
     }
 
     func testAssistantSeekAndPausedSkipPreserveSourceCompletionAndPersistTarget() throws {

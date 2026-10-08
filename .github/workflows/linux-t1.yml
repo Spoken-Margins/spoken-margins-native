@@ -1,14 +1,18 @@
-# T1 on Linux: SessionKit's Foundation-only modules and their tests (SessionKitCoreTests), on a
-# GitHub-hosted ubuntu runner, so every PR into next gets a red or green without the Mac and cloud
-# sessions can run the same thing themselves (scripts/run-sessionkit-linux-tests.sh). See #316.
+# T1 on Linux: SessionKit's Foundation-only modules and their tests (SessionKitCoreTests), so every
+# PR into next gets a red or green without the Mac, and cloud sessions can run the same thing
+# themselves (scripts/run-sessionkit-linux-tests.sh). See #316.
 #
-# The private repo has 2,000 free Linux minutes a month, so this job is kept lean:
-# - one job, in the official Swift image, with the SwiftPM .build folder cached;
-# - a newer push to the same PR cancels the run in progress;
-# - the job summary reports the minutes each run used.
+# It runs on the owner's VPS (runner sm-vps-t1), not GitHub-hosted ubuntu: the private repo's
+# 2,000 free Linux minutes ran out on 2026-10-07 (#1023). The runner is set up so PR code can't
+# reach the other VPS runner or the websites on the same box:
+# - its own user (smt1), not in the docker group, so no `container:` here;
+# - Swift 6.2.4 from swift.org (signature checked) in /opt/swift, on the runner's PATH;
+# - systemd limits on the service (Nice 15, CPUWeight 20, MemoryMax 5G), so the sites keep priority.
+# It has only the sm-vps-t1 label, so no other job lands on it.
 #
-# Caches from pull_request runs are scoped to that PR, so the first run of each PR builds from
-# scratch (~345 MB .build) and later pushes to it build incrementally.
+# The build folder lives outside the checkout (actions/checkout's clean would delete it) and is
+# kept between runs, so after the first cold build each PR builds incrementally. One runner means
+# one job at a time; a newer push to the same PR cancels the run in progress.
 name: linux-t1
 
 on:
@@ -24,25 +28,17 @@ concurrency:
 
 jobs:
   sessionkit-core:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    container: swift:6.2-noble
+    runs-on: [sm-vps-t1]
+    timeout-minutes: 45
     steps:
       - name: Start the clock
         run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
-      - name: Install libsqlite3
-        run: apt-get update -qq && apt-get install -y -qq libsqlite3-dev zstd > /dev/null
       # A full (shallow) checkout: the tests read fixtures from Contracts/, Site/ and research/.
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
-        with:
-          path: Packages/SessionKit/.build
-          key: linux-t1-${{ hashFiles('Packages/SessionKit/Package.swift') }}-${{ github.sha }}
-          restore-keys: linux-t1-${{ hashFiles('Packages/SessionKit/Package.swift') }}-
       - name: SessionKitCoreTests
-        run: bash scripts/run-sessionkit-linux-tests.sh
-      - name: Report minutes
+        run: bash scripts/run-sessionkit-linux-tests.sh --scratch-path "$HOME/sm-t1-build"
+      - name: Report time
         if: always()
         run: |
           seconds=$(( $(date +%s) - STARTED ))
-          echo "linux-t1 took ${seconds}s (about $(( (seconds + 59) / 60 )) billed minutes, plus container setup)." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "linux-t1 took ${seconds}s on sm-vps-t1." | tee -a "$GITHUB_STEP_SUMMARY"

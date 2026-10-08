@@ -6,15 +6,34 @@ Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners
 
 Replace this section when the focus changes; do not append to it.
 
-- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` stays there; only the owner moves it.
-- **Integration:** `next` carries the Build 30 work, including the new PDF reader and the voice fixes. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
-- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>-…` from `next`, one branch per PR, and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, dispatches lane results every hour, and triages new issues in its daily routine (21:30 Eastern). On the Mac, the lane runner merges the `automerge` PRs it passes, the Mac tick reports the machine and runner on #337 every two hours, a scheduled Codex audit reviews sharing, persistence and audio PRs, and the standing Test Desk tests each new tip of `next`. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
+- **Baseline:** Build 30, tag `testflight/0.1-build-30` (`07c6699`), is the last shipped build (internal TestFlight, 2026-10-08). `main` stays there; only the owner moves it.
+- **Integration:** `next` carries the Build 31 work on top of Build 30. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
+- **Build 31 target, "solid ground" (owner, 2026-10-08), until Build 31 is tagged.** The target: the owner can use Build 31 the way they used Build 30, while the groundwork under it gets stronger. `Gate1AppModel` is split into focused types, the tests that passed without proving their claim now prove it, and the pipeline's known faults are fixed. What the owner notices: later builds arrive faster, and the Test Desk catches bugs before they reach their phone. The scope is exactly the open issues in the `Build 31` milestone: model split slices, test honesty, lane and pipeline fixes, and bugs found on the owner's phone.
+  - Threads and dispatch take `Build 31` issues first. Work outside the milestone waits in `Later` or has no milestone.
+  - What joins `Build 31` after today: a model split slice, a test-honesty finding, a lane or pipeline fault, or a `found-on-phone` bug. Any other new bug that would stop the owner using the build goes to them as a one-line question; co-op and sharing work goes to `Build 32`; everything else goes to `Later`.
+  - The Build 30 freeze ended with its tag. Claude threads' `automerge` is no longer limited to milestone work: re-arm the app PRs that only the freeze was holding back. The Codex worker's freeze is a separate setting, the Dial's **Codex focus** group (#589), which the owner sets; until it names `Build 31` or `None`, Codex stays on `Build 30`.
+- **Build 32 target (owner, 2026-10-08): a fantastic co-op experience.** It starts when Build 31 is tagged. Co-op and sharing work (the F1 co-op items, share links and their encryption, co-op follow-ups) waits in the `Build 32` milestone. This line changes no labels and gates nothing.
+- **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>-…` from `next`, one branch per PR, and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, dispatches lane results every hour, and triages new issues in its daily routine (21:30 Eastern). On the Mac, the lane runner merges the `automerge` PRs it passes, the Mac tick reports the machine and runner on #337 every two hours, a scheduled Codex audit reviews sharing, persistence, audio and lane PRs, and the standing Test Desk tests each new tip of `next`. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
+- **Codex runs the project while Claude is paused (2026-10-02, until Claude's reset Sat 07:00 EDT and the owner restarts the Claude project).** Hand-off: the newest "Codex hand-off" comment on #337.
+  - **Codex worker** (`ops/codex/sm_codex_worker.py`, launchd, `gpt-6.1-sol` high, up to 3 slots from the Dial #589). It first finishes stalled PRs (newest lane report on the head is FAIL, or `needs-mac`), then takes `ready` issues, `priority` first. It opens `automerge` PRs into `next`. It skips issues labelled `in-progress`, `where:mac`, `regression` or `blocked`, so file work for it as `ready` (plus `priority`, plus `bug` for failures).
+  - **Codex Test Desk** (`ops/codex/sm_codex_testdesk.py`, launchd): `--plan app` plus scripted journeys on each new tip of `next`, reports on #184, files real failures as `ready,priority,bug`.
+  - **Codex journey desk** (a Codex app automation with computer use, set up by the owner per #693): hands-on journeys on the tip, reports on #184.
+  - **Codex audit** (`ops/codex/sm_codex_audit.py`, launchd, `gpt-6-astra` high): audits risky and lane PRs; the runner merges those only after "No blocking findings" on the head.
+  - **Rules for Codex app threads:** build only with `scripts/xcodebuild-lane`, boot simulators only with `scripts/lane-sim-boot` (one simulator Mac-wide; Claude's lane guard does not cover Codex), never boot 1330F268, and stop on a crash flood. Don't push to a PR that carries `automerge`; never force-push; don't touch `main`, releases or the owner's data.
 - **Owner's standing calls (2026-09-29).** Don't ask again:
   - **Use the token allowance.** The subscriptions are paid for. Aim for roughly linear use of each weekly allowance, Claude and Codex, by its reset. Waste means little working output per token, not high spend.
   - **The design direction is not changing.** Build on the current look. Where the stream plan says a stream waits on D1, that gate is gone.
   - **The server on the owner's VPS is approved.** App features that use it go ahead. Any "waits on the owner's hosting call" gate is gone.
   - **No off switches for new features.** The way back is reverting the merge.
   - **Merge finished work on host tests plus both builds.** The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
+- **Owner's standing calls (2026-10-05).** Don't ask again:
+  - **"Post-MVP" is a legacy label.** The app is past MVP. The `phase:` labels and `[Post-MVP]` title prefixes were removed on 2026-10-05; if one turns up, or `parked` does, it never stops work on an issue. Judge the issue on its merits.
+  - **Default on only when it costs the listener nothing.** A background or sharing feature may be opt-out only if both are true:
+    - It's no burden on the device: no noticeable battery drain, heat or interface stutter.
+    - It's airtight on privacy: nothing that links the data to a listener is stored anywhere, and even someone with full access to our systems and live logs couldn't tell whose data it is.
+    - Otherwise it's opt-in.
+  - **Keep no user data that could identify someone unless the feature needs it.** Where a feature needs it (a voice Margin is traceable by voice alone), encrypt it end to end so the server holds only unreadable bytes, as share links do (#805).
+  - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
@@ -60,6 +79,7 @@ While parallel streams are running, pick the lowest tier that covers your change
 1. **Component tests (host, fast).** This is the default loop for every change: `.venv/bin/python scripts/verify-tests.py --plan fast`. It runs the SessionKit suite, contract validators and browser suites.
    - In a new worktree, run `scripts/setup-worktree.sh` once first. It links the main checkout's `.venv` and `node_modules`, which git doesn't carry.
    - Write tests that can fail for the bug they name. Run a new regression test once without the fix and confirm it fails.
+   - For a matching, sanitizing or page/title parsing bug, write a table of neighbouring inputs before fixing: case, whitespace, Unicode normalization, punctuation, empty, very long, the same item from another source, and lookalike items. Fix every row that fails in the same commit.
    - Prefer real temporary files, real SQLite and real AVFoundation decoding on macOS over hand-written fakes at the boundary being tested.
 2. **App compile and app-hosted unit tests.**
    - Every app change: build for the simulator and device:

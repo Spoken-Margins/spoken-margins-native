@@ -46,9 +46,16 @@ actor FollowedSourceCoordinator {
     /// error codes only, never a full link.
     private(set) var lastDiscoveryTrace: [String] = []
     private var lastDiscoveryHost = "unknown"
+    /// Where newly seen entries are logged as I4 `item_published` rows (#483).
+    private let signals: ListeningSignalRecorder?
+    /// Each followed show's artwork, in a side file beside the database (#773).
+    private var artwork: FollowingArtworkStore
 
-    init(repository: any SessionRepository, session: URLSession? = nil) {
+    init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
+         signals: ListeningSignalRecorder? = .app) {
         self.repository = repository
+        self.artwork = FollowingArtworkStore(file: artworkFile)
+        self.signals = signals
         if let session {
             self.session = session
         } else {
@@ -64,6 +71,16 @@ actor FollowedSourceCoordinator {
     func follow(urlString: String) async throws -> FeedSubscription {
         let candidates = try await discover(urlString: urlString)
         guard let candidate = candidates.first else { throw FollowedSourceError.noFeedCandidates }
+        return try await follow(candidate: candidate)
+    }
+
+    /// Follows a feed link once. A feed that is already followed keeps its subscription exactly
+    /// as it is (mute state and inbox entries), so the drawer and OPML import can't duplicate it.
+    func followFeed(urlString: String) async throws -> FeedSubscription {
+        guard let candidate = try await discover(urlString: urlString).first else { throw FollowedSourceError.noFeedCandidates }
+        if let existing = try repository.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
+            return existing
+        }
         return try await follow(candidate: candidate)
     }
 
@@ -161,6 +178,8 @@ actor FollowedSourceCoordinator {
         let host = url.host?.lowercased() ?? candidate.source.host
         let canonical = URL(string: parsed.feedURL ?? url.absoluteString) ?? url
         let sourceId = "source-\(Self.digest(canonical.absoluteString.lowercased()))"
+        // Following a feed again keeps its new-item choice (#466).
+        let previousPolicy = try repository.loadFeedSubscriptions().first { $0.id == "subscription-\(sourceId)" }?.newItemPolicy
         let subscription = FeedSubscription(
             id: "subscription-\(sourceId)",
             source: SourceIdentity(
@@ -169,10 +188,12 @@ actor FollowedSourceCoordinator {
                 canonicalURL: canonical.absoluteString,
                 host: canonical.host?.lowercased() ?? host,
                 title: parsed.title
-            )
+            ),
+            newItemPolicy: previousPolicy
         )
         try repository.saveFeedSubscription(subscription)
         try save(entries: parsed.items, subscription: subscription)
+        artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
         return subscription
     }
 
@@ -194,11 +215,16 @@ actor FollowedSourceCoordinator {
         )
     }
 
-    func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async {
+    /// Returns the entries that feeds set to "Add every new item" want added to the Library (#466).
+    /// They stay unseen here; the caller imports them, which marks them imported.
+    @discardableResult
+    func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
+        var toAdd: [FeedEntry] = []
         for subscription in (try? repository.loadFeedSubscriptions()) ?? [] {
             guard force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true else { continue }
-            await refresh(subscription, now: now)
+            toAdd += await refresh(subscription, now: now)
         }
+        return toAdd
     }
 
     func entries() throws -> [FeedEntry] {
@@ -217,26 +243,65 @@ actor FollowedSourceCoordinator {
         try repository.saveFeedEntry(entry)
     }
 
+    /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
+    /// identifies narration without extracting or replacing subscriber feed text.
+    func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {
+        guard entry.publisherNarrationConfirmed != true, entry.publisherPlatform == "substack",
+              (entry.bodyWordCount ?? 0) >= PublisherAudioDetector.minimumBodyWords,
+              let url = Self.validHTTPSURL(entry.canonicalURL),
+              let html = try? await fetchHTML(url: url),
+              let confirmed = PublisherNarrationEvidence.confirmedEntry(entry, html: html) else { return entry }
+        // A refresh, dismissal or unfollow may finish while the page request awaits. Cache only
+        // against the unchanged entry, so corroboration cannot restore a removed/stale row.
+        try? PublisherNarrationEvidence.cache(confirmed, replacing: entry, in: repository)
+        return confirmed
+    }
+
+    /// How Following adds `entry` (#641). For an entry that could be an episode, this looks up its
+    /// audio, refetching the feed for an older entry saved without its enclosure.
+    func importRoute(for entry: FeedEntry, subscriptionKind: SourceIdentityKind) async throws -> FollowedEntryImportRoute {
+        guard FollowedEntryImportRoute.needsAudioLookup(for: entry, subscriptionKind: subscriptionKind) else { return .article }
+        let known = try await audio(for: entry)
+        return FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscriptionKind, audio: known)
+    }
+
     func playableAudioURL(for entry: FeedEntry) async throws -> String? {
+        guard case .found(let audioURL) = try await audio(for: entry) else { return nil }
+        return Self.validHTTPSURL(audioURL)?.absoluteString
+    }
+
+    /// The entry's audio: its stored https enclosure, or the one the feed lists for it now (saved
+    /// on the entry). The feed listing the entry with no audio at all marks a text-only post.
+    func audio(for entry: FeedEntry) async throws -> FollowedEntryAudio {
         if let audioURL = Self.validHTTPSURL(entry.audioURL) {
-            return audioURL.absoluteString
+            return .found(audioURL.absoluteString)
         }
+        let stored = FollowedEntryAudio.stored(in: entry)
         guard let subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }),
               subscription.source.kind == .podcastFeed,
               let feedURL = URL(string: subscription.source.canonicalURL) else {
-            return nil
+            return stored
         }
         let parsed = try await fetch(url: feedURL, subscription: nil)
         guard let match = parsed.items.first(where: { item in
             item.url == entry.canonicalURL
                 || (item.title == entry.title && item.publishedAt == entry.publishedAt)
-        }), let audioURL = Self.validHTTPSURL(match.audioURL) else {
-            return nil
+        }) else {
+            return stored
+        }
+        guard let audioURL = Self.validHTTPSURL(match.audioURL) else {
+            return entry.audioURL == nil && match.audioURL == nil ? .noneInFeed : stored
         }
         var updated = entry
         updated.audioURL = audioURL.absoluteString
         try repository.saveFeedEntry(updated)
-        return audioURL.absoluteString
+        return .found(audioURL.absoluteString)
+    }
+
+    func setNewItemPolicy(subscriptionId: String, policy: FeedNewItemPolicy) throws {
+        guard var subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == subscriptionId }) else { return }
+        subscription.newItemPolicy = policy
+        try repository.saveFeedSubscription(subscription)
     }
 
     func setMuted(subscriptionId: String, muted: Bool) throws {
@@ -250,13 +315,35 @@ actor FollowedSourceCoordinator {
             try repository.deleteFeedEntry(id: entry.id)
         }
         try repository.deleteFeedSubscription(id: subscriptionId)
+        artwork.remove(subscriptionID: subscriptionId)
     }
 
-    private func refresh(_ original: FeedSubscription, now: Date) async {
+    /// Following rows' artwork (#773): drops shows no longer followed and records the catalog's
+    /// artwork for followed shows it lists.
+    func followingArtwork(catalog: SourceCatalog? = nil) -> FollowingArtworkCache {
+        if let subscriptions = try? repository.loadFeedSubscriptions() {
+            artwork.reconcile(with: subscriptions, catalog: catalog)
+        }
+        return artwork.cache
+    }
+
+    private func refresh(_ original: FeedSubscription, now: Date) async -> [FeedEntry] {
         var subscription = original
+        var toAdd: [FeedEntry] = []
         do {
             let parsed = try await fetch(url: URL(string: subscription.source.canonicalURL)!, subscription: subscription)
-            try save(entries: parsed.items, subscription: subscription)
+            // Mute and the new-item choice may have changed during the fetch; the latest ones win.
+            // An unfollow during the fetch wins too: nothing is saved or added.
+            guard let current = try repository.loadFeedSubscriptions().first(where: { $0.id == subscription.id }) else { return [] }
+            subscription.state = current.state
+            subscription.newItemPolicy = current.newItemPolicy
+            let saved = try save(entries: parsed.items, subscription: subscription)
+            artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
+            // A muted feed adds nothing on its own.
+            toAdd = FeedNewItemPolicy.entriesToAdd(
+                new: saved.entries, existing: saved.previous,
+                policy: subscription.state == .muted ? nil : subscription.newItemPolicy
+            )
             subscription.lastRefreshAt = now
             try repository.saveFeedSubscription(subscription)
             try repository.saveFeedRefreshState(FeedRefreshState(
@@ -281,6 +368,7 @@ actor FollowedSourceCoordinator {
                 errorCode: String(describing: type(of: error))
             ))
         }
+        return toAdd
     }
 
     private func fetch(url: URL, subscription: FeedSubscription?) async throws -> ParsedFeed {
@@ -376,7 +464,9 @@ actor FollowedSourceCoordinator {
         return results
     }
 
-    private func save(entries: [ParsedFeedItem], subscription: FeedSubscription) throws {
+    /// Returns the retained entries as saved, and the entries the feed had before this save.
+    @discardableResult
+    private func save(entries: [ParsedFeedItem], subscription: FeedSubscription) throws -> (entries: [FeedEntry], previous: [FeedEntry]) {
         let existingEntries = try repository.loadFeedEntries(subscriptionId: subscription.id)
         let existing = Dictionary(uniqueKeysWithValues: existingEntries.map { ($0.id, $0) })
         let retainedItems = entries.enumerated()
@@ -396,9 +486,11 @@ actor FollowedSourceCoordinator {
             .map { $0.element }
         let retainedIDs = Set(retainedItems.map { Self.entryID(subscriptionID: subscription.id, itemID: $0.id) })
 
+        let seenAt = Date()
+        var saved: [FeedEntry] = []
         for item in retainedItems {
             let id = Self.entryID(subscriptionID: subscription.id, itemID: item.id)
-            try repository.saveFeedEntry(FeedEntry(
+            let entry = FeedEntry(
                 id: id,
                 subscriptionId: subscription.id,
                 canonicalURL: item.url,
@@ -407,8 +499,18 @@ actor FollowedSourceCoordinator {
                 author: item.author,
                 summary: item.summary,
                 publishedAt: item.publishedAt,
-                state: existing[id]?.state ?? .unseen
-            ))
+                state: existing[id]?.state ?? .unseen,
+                bodyWordCount: PublisherAudioDetector.bodyWordCount(of: item),
+                fullBody: item.content,
+                publisherPlatform: item.publisherPlatform,
+                audioDurationMs: item.durationMs,
+                episodeGUID: item.guid
+            )
+            try repository.saveFeedEntry(entry)
+            saved.append(entry)
+            // Every retained entry, stored or not: the recorder publishes each one once, so entries
+            // saved before this build (or before a re-follow) still get their publication row.
+            signals?.record(.itemPublished, source: ListeningSignalContext.source(for: subscription), item: ListeningSignalContext.item(for: entry, seenAt: seenAt, durationMs: item.durationMs), at: seenAt)
         }
 
         for entry in existingEntries where !retainedIDs.contains(entry.id) {
@@ -417,6 +519,7 @@ actor FollowedSourceCoordinator {
             guard entry.state == .unseen || entry.state == .seen else { continue }
             try repository.deleteFeedEntry(id: entry.id)
         }
+        return (saved, existingEntries)
     }
 
     private static func entryID(subscriptionID: String, itemID: String) -> String {

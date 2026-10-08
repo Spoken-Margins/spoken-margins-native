@@ -109,7 +109,7 @@ struct ExperienceLibraryScreen: View {
                 Button("Settings", systemImage: "gearshape", action: model.openSettings)
                 Button("Help", systemImage: "questionmark.circle", action: model.openHelp)
                 Divider()
-                Button("Offline Rendering", systemImage: "waveform.badge.magnifyingglass") {
+                Button("Preparing Audio", systemImage: "waveform.badge.magnifyingglass") {
                     isAudioPreparationQueuePresented = true
                 }
             } label: {
@@ -141,7 +141,7 @@ struct ExperienceLibraryScreen: View {
                         .frame(width: 40, height: 40)
                         .background(AppColors.ochre.opacity(0.12), in: Circle())
                     VStack(alignment: .leading, spacing: 3) {
-                        Text("Offline rendering")
+                        Text("Preparing audio")
                             .font(.headline)
                         Text(preparationSummaryDetail)
                             .font(.subheadline)
@@ -159,7 +159,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     private var preparationSummaryDetail: String {
-        let queued = model.audioPreparationQueue.count
+        let queued = Set(model.audioPreparationQueue.map(\.itemId)).count // items, not jobs (#883)
         let recent = model.recentlyPreparedAudio.count
         if queued > 0, recent > 0 {
             return "\(queued) queued · \(recent) recently ready"
@@ -452,7 +452,8 @@ private struct ExperienceLibraryCompactRow: View {
             .accessibilityLabel(playActionTitle)
             .accessibilityValue(
                 row.startupAudioState == .preparing
-                    ? "\(startupProgressDescription). Playback can start now."
+                    ? "Preparing audio, \(startupProgressDescription). Playback can start now."
+                    : row.startupAudioState == .waiting ? "Waiting to prepare audio. Playback can start now."
                     : (row.offlineState == .readyOffline ? "Ready offline" : "Ready to start")
             )
             .accessibilityIdentifier("queue.start.\(row.id)")
@@ -489,8 +490,9 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
         }
-        // A full swipe completed items by accident while opening them (#273): it takes a tap now.
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+        // One long swipe completes again (#584): Undo and Mark Unfinished (#273) recover a stray one.
+        // Mark Unfinished on a completed row still takes a tap.
+        .swipeActions(edge: .leading, allowsFullSwipe: !row.isCompleted) {
             if !row.isCompleted {
                 Button(action: onComplete) { Label("Complete", systemImage: "checkmark.circle.fill") }
                     .tint(AppColors.evergreen)
@@ -568,8 +570,10 @@ private struct ExperienceLibraryCompactRow: View {
 
     private var offlineDetailLabel: String? {
         switch row.startupAudioState {
+        case .waiting:
+            return "Waiting"
         case .preparing:
-            return "Opening audio \(startupProgressDescription.lowercased())"
+            return "Preparing audio · \(startupProgressDescription)"
         case .ready where row.offlineState != .readyOffline:
             return "Ready to start"
         case .paused:
@@ -593,7 +597,7 @@ private struct ExperienceLibraryCompactRow: View {
 
     private var startupProgressDescription: String {
         let target = max(1, row.startupAudioTargetChunkCount)
-        return "\(min(row.startupAudioCompletedChunkCount, target)) of \(target) chunks"
+        return "\(min(row.startupAudioCompletedChunkCount, target)) of \(target)"
     }
 }
 

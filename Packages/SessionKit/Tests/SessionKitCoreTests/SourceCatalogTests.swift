@@ -26,10 +26,14 @@ final class SourceCatalogTests: XCTestCase {
         let followable = catalog.entries.filter(\.isFollowable)
         let raw = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: Self.path(Self.publishedCatalog)))
         XCTAssertEqual(catalog.entries.count, raw.entries.count, "validation must not drop any published entry")
-        XCTAssertGreaterThanOrEqual(followable.count, 100)
+        XCTAssertGreaterThanOrEqual(followable.filter { $0.kind == .podcastFeed }.count, 100)
         XCTAssertGreaterThanOrEqual(catalog.visibleSubjects.count, 8)
         XCTAssertTrue(followable.allSatisfy { $0.artworkURL?.hasPrefix("https://") == true }, "every drawer tile needs artwork")
-        XCTAssertTrue(followable.allSatisfy { $0.kind == .podcastFeed && $0.contentKind == .podcast })
+        // Podcasts, plus the hand-picked Writers row of newsletters (#470).
+        XCTAssertTrue(followable.allSatisfy {
+            ($0.kind == .podcastFeed && $0.contentKind == .podcast)
+                || ($0.kind == .articleFeed && $0.contentKind == .newsletter && $0.subjects == ["writers"])
+        })
         let provenance = Set(catalog.provenance.map(\.id))
         XCTAssertTrue(followable.allSatisfy { Set($0.provenanceIds).isSubset(of: provenance) }, "every entry says where it came from")
         for subject in catalog.visibleSubjects {
@@ -54,7 +58,64 @@ final class SourceCatalogTests: XCTestCase {
         let rest = science.dropFirst(starter.entryIds.count)
         let primaryFirst = rest.map { $0.primarySubject == "science" }
         XCTAssertEqual(primaryFirst, primaryFirst.sorted { $0 && !$1 }, "shows whose primary subject this is come first")
-        XCTAssertEqual(catalog.entries(forSubject: nil).count, catalog.entries.count)
+        XCTAssertEqual(catalog.entries(forSubject: nil).count, catalog.entries.filter { $0.explicit != true }.count)
+    }
+
+    // MARK: Starter list: no shows marked explicit (#544)
+
+    /// #544: the first-run list showed the 48 shows the catalog marks explicit, which would raise the
+    /// App Store age rating. Loads the bundled catalog through the drawer's path (store, then
+    /// `entries(forSubject:)`) and counts the shows against the raw file.
+    func testStarterListFromTheBundledCatalogHidesShowsMarkedExplicit() async throws {
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.publishedCatalog), cacheDirectory: temporary, policy: .production) { _, _ in
+            throw URLError(.notConnectedToInternet)
+        }
+        let catalog = try await store.current()
+        let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.path(Self.publishedCatalog))) as! [String: Any]
+        let rawEntries = raw["entries"] as! [[String: Any]]
+        let rawExplicit = rawEntries.filter { $0["explicit"] as? Bool == true }
+        XCTAssertFalse(rawExplicit.isEmpty, "the bundled catalog marks some shows explicit")
+
+        let starters = catalog.entries(forSubject: nil)
+        XCTAssertEqual(starters.count, rawEntries.count - rawExplicit.count)
+        XCTAssertGreaterThanOrEqual(starters.count, 100, "the M1 bar still holds")
+        XCTAssertFalse(starters.contains { $0.explicit == true })
+        for subject in catalog.visibleSubjects {
+            let row = catalog.entries(forSubject: subject.id)
+            XCTAssertFalse(row.isEmpty, subject.id)
+            XCTAssertFalse(row.contains { $0.explicit == true }, subject.id)
+        }
+
+        // A show already followed keeps its catalog tags in Following.
+        let explicitFeed = try XCTUnwrap(rawExplicit.first?["feedURL"] as? String)
+        XCTAssertEqual(catalog.entry(matchingFeedURL: explicitFeed)?.explicit, true)
+    }
+
+    func testStarterListKeepsAShowWithNoExplicitFlag() throws {
+        var catalog = try Self.fixtureCatalog()
+        let unflagged = catalog.entries[0].id
+        catalog.entries[0].explicit = nil
+        let explicitIds = Set(catalog.entries.filter { $0.explicit == true }.map(\.id))
+        XCTAssertFalse(explicitIds.isEmpty, "the fixture has a show marked explicit")
+        let starters = catalog.entries(forSubject: nil).map(\.id)
+        XCTAssertTrue(starters.contains(unflagged))
+        XCTAssertTrue(explicitIds.isDisjoint(with: starters))
+        // The fixture's comedy subject keeps its chip through its one clean show.
+        XCTAssertTrue(catalog.visibleSubjects.contains { $0.id == "comedy" })
+        XCTAssertEqual(catalog.entries(forSubject: "comedy").map(\.id), ["apple-1795483480"])
+    }
+
+    func testStarterListFromARefreshedCatalogHidesShowsMarkedExplicit() async throws {
+        let (manifestData, catalogData) = try Self.remote(contentVersion: 2)
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, maximumBytes in
+            url.lastPathComponent == "manifest.json" ? (200, manifestData) : (200, catalogData.prefix(maximumBytes))
+        }
+        let outcome = await store.refresh()
+        XCTAssertEqual(outcome, .updated(contentVersion: 2))
+        let catalog = try await store.current()
+        XCTAssertTrue(catalog.entries.contains { $0.explicit == true }, "the server copy is unchanged")
+        XCTAssertFalse(catalog.entries(forSubject: nil).contains { $0.explicit == true })
+        XCTAssertFalse(catalog.entries(forSubject: "comedy").contains { $0.explicit == true })
     }
 
     func testEntryMatchingFeedURLFoldsSchemeAndHostCaseButNotPath() throws {
@@ -205,6 +266,64 @@ final class SourceCatalogTests: XCTestCase {
         }
         let outcome = await store.refresh()
         XCTAssertEqual(outcome, .failed(.untrustedURL))
+    }
+
+    /// `https://evil.example` fails any version of the check. These are the near misses a loose one lets
+    /// through: plain http on the right host, a host that merely ends with, starts with or contains the
+    /// trusted one, the trusted name as userinfo or as a path, and a non-web scheme. None may be fetched.
+    func testStoreRefusesCatalogURLsThatOnlyLookLikeTheTrustedHost() async throws {
+        let trusted = "spokenmargins.proximitytoprogress.com"
+        let lookAlikes = [
+            "http://\(trusted)/onboarding/catalog/v1/catalog.json",
+            "https://evil-\(trusted)/onboarding/catalog/v1/catalog.json",
+            "https://\(trusted).evil.example/onboarding/catalog/v1/catalog.json",
+            "https://\(trusted)@evil.example/onboarding/catalog/v1/catalog.json",
+            "https://evil.example/\(trusted)/catalog.json",
+            "file:///\(trusted)/catalog.json",
+        ]
+        for catalogURL in lookAlikes {
+            let (manifestData, _) = try Self.remote(contentVersion: 2, catalogURL: catalogURL)
+            let requested = RequestLog()
+            let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
+                await requested.append(url.absoluteString)
+                return (200, manifestData)
+            }
+            let outcome = await store.refresh()
+            XCTAssertEqual(outcome, .failed(.untrustedURL), catalogURL)
+            let requestedURLs = await requested.values
+            XCTAssertEqual(requestedURLs, [Self.fixturePolicy.manifestURL.absoluteString], "\(catalogURL) was never fetched")
+        }
+    }
+
+    func testTheTrustedHostIsMatchedExactlyAndWithoutRegardToCase() throws {
+        let policy = Self.fixturePolicy
+        for url in ["https://spokenmargins.proximitytoprogress.com/a.json", "HTTPS://SpokenMargins.ProximityToProgress.com/a.json"] {
+            XCTAssertTrue(SourceCatalogVerifier.isTrusted(try XCTUnwrap(URL(string: url)), policy: policy), url)
+        }
+        for url in ["http://spokenmargins.proximitytoprogress.com/a.json", "https://proximitytoprogress.com/a.json",
+                    "https://xspokenmargins.proximitytoprogress.com/a.json", "https://spokenmargins.proximitytoprogress.com.evil.example/a.json",
+                    "https://spokenmargins.proximitytoprogress.com@evil.example/a.json"] {
+            XCTAssertFalse(SourceCatalogVerifier.isTrusted(try XCTUnwrap(URL(string: url)), policy: policy), url)
+        }
+    }
+
+    /// The manifest is the one URL the app fetches before any check on its content, so a policy whose
+    /// manifest URL is off the trusted host or not https must never reach the network.
+    func testStoreNeverFetchesAManifestURLOffTheTrustedHost() async throws {
+        for manifestURL in ["https://evil.example/onboarding/catalog/v1/manifest.json",
+                            "http://spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/manifest.json"] {
+            let policy = SourceCatalogPolicy(manifestURL: try XCTUnwrap(URL(string: manifestURL)), trustedHost: "spokenmargins.proximitytoprogress.com", catalogId: "fixture-top-podcasts")
+            let (manifestData, _) = try Self.remote(contentVersion: 2)
+            let requested = RequestLog()
+            let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: policy) { url, _ in
+                await requested.append(url.absoluteString)
+                return (200, manifestData)
+            }
+            let outcome = await store.refresh()
+            XCTAssertEqual(outcome, .failed(.untrustedURL), manifestURL)
+            let requestedURLs = await requested.values
+            XCTAssertEqual(requestedURLs, [], "\(manifestURL) was never fetched")
+        }
     }
 
     func testStoreRejectsAnOversizedManifestAndHTTPErrors() async throws {

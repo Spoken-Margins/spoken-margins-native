@@ -132,6 +132,60 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertFalse(SpeechRateRule.systemSpeechUsesAccessibilitySettings)
     }
 
+    /// The one quarter-step rule behind the saved speed, the speed button and the lock-screen speed (#974).
+    /// The expected values are written out by hand, not computed from the rule.
+    func testQuarterStepMultiplierRoundsToTheNearestQuarterAndStaysInRange() {
+        let table: [(input: Double, expected: Double)] = [
+            (0.6, 0.5), (0.63, 0.75), (0.625, 0.75), (0.74, 0.75), (0.76, 0.75),
+            (1.0, 1.0), (1.1249, 1.0), (1.125, 1.25), (1.4, 1.5), (1.99, 2.0),
+            (2.4, 2.0), (9, 2.0), (0.1, 0.5), (0, 0.5), (-1, 0.5)
+        ]
+        for (input, expected) in table {
+            XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(input), expected, "\(input)")
+        }
+        for step in SpeechRateRule.supportedMultipliers {
+            XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(step), step, "a supported speed stays put (\(step))")
+        }
+    }
+
+    /// What the app did before the rule moved, so a speed saved by an older build reads back the same.
+    func testQuarterStepMultiplierKeepsTheAppsOldResultForValuesThatAreNotNumbers() {
+        XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(.nan), 2.0)
+        XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(.infinity), 2.0)
+        XCTAssertEqual(SpeechRateRule.quarterStepMultiplier(-.infinity), 0.5)
+    }
+
+    func testTheSupportedSpeedsAreQuarterStepsFromHalfToDoubleAndMatchTheSystemRateTable() {
+        XCTAssertEqual(SpeechRateRule.supportedMultipliers, [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2])
+        XCTAssertEqual(SpeechRateRule.supportedMultipliers, Array(stride(from: 0.5, through: 2.0, by: 0.25)))
+        XCTAssertEqual(SpeechRateRule.supportedMultipliers, SpeechRateRule.systemRateTable.map(\.multiplier))
+        XCTAssertEqual(SpeechRateRule.supportedMultipliers.first, SpeechRateRule.multiplierRange.lowerBound)
+        XCTAssertEqual(SpeechRateRule.supportedMultipliers.last, SpeechRateRule.multiplierRange.upperBound)
+    }
+
+    func testTheSpeedButtonStepsUpAndWrapsFromTheTopToTheBottom() {
+        let table: [(current: Double, expected: Double)] = [
+            (0.5, 0.75), (0.75, 1), (1, 1.25), (1.5, 1.75), (1.75, 2),
+            (2, 0.5), (2.5, 0.5), (9, 0.5),
+            (0.25, 0.5), (0, 0.5), (-1, 0.5),
+            (1.0004, 1.25), (0.9995, 1.25), (1.1, 1.25), (1.9989, 2)
+        ]
+        for (current, expected) in table {
+            XCTAssertEqual(SpeechRateRule.next(after: current), expected, "after \(current)")
+        }
+        XCTAssertEqual(SpeechRateRule.next(after: .nan), 0.5, "no step is above NaN, so it wraps")
+        XCTAssertEqual(SpeechRateRule.next(after: .infinity), 0.5)
+        XCTAssertEqual(SpeechRateRule.next(after: -.infinity), 0.5)
+
+        var speed = SpeechRateRule.supportedMultipliers[0]
+        var seen = [speed]
+        for _ in 0..<SpeechRateRule.supportedMultipliers.count {
+            speed = SpeechRateRule.next(after: speed)
+            seen.append(speed)
+        }
+        XCTAssertEqual(seen, SpeechRateRule.supportedMultipliers + [0.5], "one full lap visits every speed once")
+    }
+
     /// Mirrors the published I14 table on next (docs/workstreams/interfaces.md, #218).
     func testDocumentRolesFollowThePublishedI14Table() {
         XCTAssertEqual(DocumentSpeechRules.treatment(forRole: "body"), .read)

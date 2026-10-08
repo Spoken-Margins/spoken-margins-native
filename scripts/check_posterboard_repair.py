@@ -6,15 +6,8 @@ from pathlib import Path
 import subprocess
 import time
 
-
-def new_crash(reports, baseline, device):
-    for path in reports.glob('*.ips'):
-        signature = (path.stat().st_mtime_ns, path.stat().st_size)
-        if baseline.get(path) == signature:
-            continue
-        if f'com.apple.CoreSimulator.SimDevice.{device}' in path.read_text(errors='replace'):
-            return path
-    return None
+# The lane's scans skip reports macOS is still writing and ones that vanish mid-scan (#822).
+from lane_sim import crash_snapshot, new_crash
 
 
 def poster_state(store):
@@ -75,7 +68,7 @@ def main():
     reports = Path.home() / 'Library/Logs/DiagnosticReports'
     if not reports.is_dir():
         parser.error('Crash-report directory is unavailable; refusing an unobserved boot.')
-    baseline = {p: (p.stat().st_mtime_ns, p.stat().st_size) for p in reports.glob('*.ips')}
+    baseline = crash_snapshot(reports)
     store = Path(selected[0]['dataPath']) / 'Library/Application Support/PRBPosterExtensionDataStore'
     args.output.mkdir(parents=True, exist_ok=False)
     process = None

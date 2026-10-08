@@ -187,7 +187,7 @@ My pick is option 1, as a small follow-up. Users can still add any feed they lik
 Test hooks are still compiled into Release, though. None has a button; they can only be reached with a launch argument or environment variable, which Xcode and XCTest can pass and a user or App Review can't. One of them deletes the library, so they should still be compiled out: issue #517.
 
 - `--ui-testing` calls `resetAndSeed()`, which deletes the library and loads a fixture (`M:1830`, `M:2479`). Other `--ui-testing` hooks install fake resolvers and seed data (`M:1041`, `:1288`, `:1304`, `:1341`, `:1349`, `:14877`, `:14900`).
-- `SPOKEN_MARGINS_UI_TEST_RECORDING=1` swaps the microphone for a no-op (`M:564`).
+- `SPOKEN_MARGINS_UI_TEST_RECORDING=1`, with `--ui-testing`, swaps the microphone for a recorder that writes a generated tone, and speech recognition for a fixed transcript (`UITestingLaunchSeedWriter.swift`, #685).
 - A second "Create Recipient Test Session" button with no guard sits in a view nothing opens (`A/SharingExperience.swift:932`).
 - `project.yml:34-37` bundles the test fixtures (about 2 MB) into the app for `resetAndSeed`.
 
@@ -195,4 +195,80 @@ Copy that reads as internal, for the listing pass rather than an issue: `A/Setti
 
 ## 5. Download size input for #175
 
-The bundled Supertonic 3 INT8 voice is **148,064,378 bytes (148.1 MB, 141.2 MiB)** across 22 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
+The bundled Supertonic 3 INT8 voice is **148,065,254 bytes (148.1 MB, 141.2 MiB)** across 23 files. The four ONNX models are 144,508,203 bytes of that. Source: the sum of `bytes` in `App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json`. The onnxruntime framework comes on top of that. The real download and install sizes come from App Store Connect's size report for a TestFlight build.
+
+## 6. Licenses and the EULA (#449 item 7)
+
+Checked on `next` at `c951fdb` (2026-10-01). Paths are shortened: `L/` is `App/SpokenMarginsApp/Resources/Supertonic/licenses/`.
+
+### The listing's license text
+
+`docs/legal/spoken-margins-terms.md` already settles the structure: the App Store listing uses **Apple's Standard EULA**, with no custom EULA in App Store Connect. The versioned Spoken Margins Terms of Use supplement it.
+
+- Bundled copy: `App/SpokenMarginsApp/Resources/Legal/SPOKEN_MARGINS_TERMS_OF_USE.txt`.
+- Public copy: `https://spokenmargins.proximitytoprogress.com/terms/` (`Site/terms/index.html`).
+- The Terms carry the Open RAIL-M paragraph 5 and Attachment A restrictions as an enforceable provision (`SPOKEN_MARGINS_TERMS_OF_USE.txt:18-20`), as paragraph 4(a) requires.
+- The app asks the listener to accept the Terms before James or Lily speaks, and checks acceptance again where it renders speech.
+
+The Standard EULA field can't carry extra text, so the listing points to the restrictions in two places:
+
+1. **Last line of the description, DRAFT:**
+   > DRAFT. The on-device voices are licensed under the Open RAIL-M License, whose use restrictions are part of the Spoken Margins Terms of Use: https://spokenmargins.proximitytoprogress.com/terms/
+2. **App Review notes:** the "Voices" paragraph in section 2 already says the voices require accepting the Terms, which supplement Apple's Standard EULA.
+
+**Q3, for the attorney (#455).** Is a supplement the listener accepts before the voice speaks enough for paragraph 4(a)? Paragraph 4(a) covers any agreement "governing the use and/or distribution" of the model. The model ships to every user under the Standard EULA, but only listeners who choose James or Lily accept the Terms (`SPOKEN_MARGINS_TERMS_OF_USE.txt:10`). The alternative is a custom EULA in App Store Connect: Apple's Standard EULA terms plus the Terms of Use, so everyone who downloads the app agrees to the restrictions.
+- **Keep the supplement, as built.** Nothing to change. The gate already covers the only use of the model, but distribution to listeners who never accept is the open point.
+- **Custom EULA.** It covers distribution too. It's one more document to keep in step with the Terms.
+
+My pick: ask the attorney. If the answer isn't clear before submission, use the custom EULA, because it's the cautious reading and costs one paste in App Store Connect.
+
+### Every bundled third-party license
+
+| Component | Where it ships | License | App Store distribution | What it asks of us | Met? |
+|---|---|---|---|---|---|
+| Supertonic 3 model and preset voices (Supertone) | App, `Resources/Supertonic` | BigScience Open RAIL-M (`L/SUPERTONIC_MODEL_OPENRAIL-M.txt`) | Allowed. Paragraph 4 permits distribution "in any medium", subject to 4(a)–(d) | 4(a) restrictions as an enforceable provision and notice to users; 4(b) a copy of the license; 4(c) notices on modified files; 4(d) keep attribution | 4(a): built (the Terms and the voice gate), but whether it's enough is Q3. 4(b): yes, the license is bundled and shown in Settings > Support & Privacy > Legal > On-Device Voice (`App/SpokenMarginsApp/Sources/SpokenMarginsApp/SupertonicLegalView.swift:19-23`). 4(c): **partly**. `L/THIRD_PARTY_NOTICES.txt` says the INT8 graphs are modified, quantized derivatives that were renamed, but the license asks for "prominent notices" on the modified files, and the `.onnx` files themselves carry none: #630. 4(d): yes, the same notice |
+| Supertonic Swift inference code (Supertone) | App | MIT (`L/SUPERTONIC_CODE_MIT.txt`) | Allowed | Keep the copyright and permission notice | Yes, bundled and linked from the same screen |
+| INT8 model conversion (k2-fsa sherpa-onnx) | App (the converted graphs) | Apache-2.0 (`L/SHERPA_ONNX_APACHE-2.0.txt`) | Allowed | Section 4: a copy of the license, notice of changes, and any NOTICE file | Yes. The license is bundled and linked, and the change is described in `L/THIRD_PARTY_NOTICES.txt` |
+| ONNX Runtime 1.24.2 (Microsoft), via `onnxruntime-swift-package-manager` | App, linked framework | MIT (`L/ONNXRUNTIME_MIT.txt`) | Allowed | Keep the notice | Yes, bundled and linked |
+| ONNX Runtime's own third-party components | Inside the framework | Listed in `L/ONNXRUNTIME_THIRD_PARTY_NOTICES.txt`: MIT, BSD, Apache-2.0 (including OpenSSL), zlib, Boost, ISC, the Unlicense (G3log), the PIL/HPND license, public domain (SQLite), the Intel Simplified Software License, and MPL-2.0 (Eigen) | Allowed. None is GPL or LGPL; the only copyleft is Eigen's MPL-2.0, which is file-level | Keep the notices. MPL-2.0 §3.2 also asks that recipients be told where Eigen's source is | Yes. The file is bundled and linked unchanged. Microsoft's notice gives its source-request address, and Eigen is unmodified and public at gitlab.com/libeigen/eigen |
+| ZIPFoundation 0.9.20 (Thomas Zoechling) | App, Swift package | MIT (`App/SpokenMarginsApp/Resources/Legal/ZIPFoundation-LICENSE.txt`) | Allowed | Keep the notice "in all copies" | The file is in the app bundle, but no screen shows it. Fine for MIT; adding it to the Legal screen is good practice (#630) |
+| Defuddle 0.19.1 (Steph Ango) | App, Safari extension and Share extension, compiled into `browserTextCapture.js` and `SourceLinkPreprocessor.js` | MIT (`App/SharedResources/Defuddle-LICENSE.txt`, and a copy in the Share extension) | Allowed | Keep the notice | The file is bundled beside each script but not shown in the app |
+| Defuddle's bundled dependencies: turndown, temml, mathml-to-latex, @xmldom/xmldom | The same two scripts | MIT (per `package-lock.json`) | Allowed | Keep each notice | **No.** `Tools/BrowserExtraction/build.mjs` builds with `legalComments: "none"` and copies only Defuddle's LICENSE, so these notices ship nowhere: #630 |
+| Swift packages | — | — | — | — | Only onnxruntime and ZIPFoundation (`Packages/SessionKit/Package.swift:21-30`, `Package.resolved`). `swift-crypto` is Linux-only (`Package.swift:139-142`) and never ships |
+
+Data bundled in the app that isn't open-source software:
+
+- **Starter podcast catalog.** `Site/onboarding/catalog/v1/catalog.json` is bundled (`project.yml:33-34`). It was built from Apple's Top Charts RSS feeds (`provenance` in the file) and points at Apple-hosted artwork. Apple's terms for that feed and its artwork decide whether bundling it is allowed, not an open-source license. They don't clearly allow it: see "The starter podcast catalog" below (#632).
+- **Test fixtures and traces.** `Contracts/fixtures` (about 2 MB, including iTunes Search responses and OPML from real feeds) and `Contracts/traces` are bundled (`project.yml:35-38`) only for the test hooks. #517 already plans to stop shipping the test hooks; these folders should leave the Release build with them.
+
+No bundled license forbids App Store distribution or conflicts with Apple's Standard EULA. None is GPL or LGPL, and the only copyleft is Eigen's file-level MPL-2.0, satisfied by the source pointer above.
+
+Follow-up issues: #630 (notices for Defuddle's bundled dependencies, a modified-files notice beside the model, and an in-app screen for every license) and #632 (the starter catalog's terms).
+
+### The starter podcast catalog (#632)
+
+Checked 2026-10-03 on `next` at `b26e133`. This is research, not legal advice.
+
+**Short answer: not clearly allowed.** No public Apple term we found grants a right to bundle a list built from the Top Charts feeds in an app. (Apple Media Feeds, the bulk data "for partners to fully incorporate aspects of content into a website or app", is a partner program we're not in.) The artwork terms that do exist allow it only on pages that promote it, beside a link to Apple's store, which the drawer doesn't have. So the question goes to the attorney (Q19 in `docs/legal/attorney-questions.md`, #455).
+
+**What ships.** `catalog.json` (content version 2) has 200 shows:
+- **192 from Apple.** They come from 12 US Top Charts genre feeds on the legacy iTunes RSS endpoint (`https://itunes.apple.com/us/rss/toppodcasts/limit=40/genre=<id>/json`), filled in through the iTunes Lookup API (`provenance` ids `apple-top-us-*` and `itunes-lookup`).
+  - Each row bundles the title, author, the publisher's feed URL, the Apple Podcasts id, the chart rank and the explicit flag (48 of the 192 are explicit).
+  - Each row also bundles an `artworkURL` on Apple's image server (`is1-ssl.mzstatic.com`). The image isn't in the bundle: the drawer loads it from Apple at runtime (`CatalogDrawer.swift:269`). The drawer shows no Apple attribution and no link to Apple Podcasts.
+- **8 hand-picked** Substack publications (`hand-picked-writers`), with Substack-hosted artwork. They are not affected.
+
+**The terms that apply.**
+
+1. **The chart feeds carry no license.** The feeds themselves say only `"rights": "Copyright 2008 Apple Inc."` (legacy endpoint) or `"copyright": "Copyright © 2026 Apple Inc. All rights reserved."` (the current `rss.marketingtools.apple.com` API), as fetched 2026-10-03. Apple's marketing-tools page describes the RSS Feed Generator only as: "You can add these feeds to your website or view them using a standard RSS feed reader." ([Marketing Resources & Tools](https://performance-partners.apple.com/tools)). The generator site links no terms of its own.
+2. **Apple's website Terms of Use may cover the rest.** They govern apple.com and the sites it links to; whether that reaches the feed endpoints and the `mzstatic` image server is itself a question for the attorney. They say: "Except as expressly provided in these Terms of Use, no part of the Site and no Content may be copied, reproduced, republished, uploaded, posted, publicly displayed, encoded, translated, transmitted or distributed in any way (including "mirroring") to any other computer, server, Web site or other medium for publication or distribution or for any commercial enterprise, without Apple's express prior written consent." "Content" includes "the design, structure, selection, coordination, expression, "look and feel" and arrangement of such Content" ([Apple Website Terms of Use](https://www.apple.com/legal/internet-services/terms/site.html)). A ranked chart is a selection and arrangement.
+3. **Artwork and Lookup data come under the Search API's Promo Content terms.** "Developers may use promotional content in the API, including previews of songs, music videos, album art and App icons only to promote store content and not for entertainment purposes." In full, Promo Content may be used "for the purposes of promoting the subject of the Promo Content; provided such Promo Content: (i) is placed only on pages that promote the content on which the Promo Content is based; (ii) is proximate to a "Download on iTunes" or "Download on App Store" badge (as approved by Apple) that acts as a link directly to pages within iTunes where consumers can purchase the promoted content; [...] (v) is not used for independent entertainment value apart from its promotional purpose; and (vi) is not used to promote any other goods or services." ([iTunes Search API, Legal](https://performance-partners.apple.com/search-api)). The drawer shows Apple-hosted artwork with no Apple badge or link, inside an app that is not Apple Podcasts.
+4. **App Review checks for permission.** Guideline 5.2.2: "If your app uses, accesses, monetizes access to, or displays content from a third-party service, ensure that you are specifically permitted to do so under the service's terms of use. Authorization must be provided upon request." Guideline 5.2.1: "Don't use protected third-party material such as trademarks, copyrighted works, or patented ideas in your app without permission" ([App Review Guidelines](https://developer.apple.com/app-store/review/guidelines/)). We have no authorization to show.
+
+**What is probably fine.** Plain facts, such as a show's title, author and feed URL, are generally not protected one by one, and podcast apps routinely show the artwork a publisher puts in its own public feed (`<itunes:image>`). Rebuilding the rows from each publisher's feed avoids Apple's terms for everything except the choice of shows.
+
+**Options for the attorney question:**
+1. **Keep it as built.** Nothing changes. It relies on the terms above not reaching a bundled list, and on App Review not asking for authorization.
+2. **Fetch it only from the server.** The app stops bundling `catalog.json` and downloads it on first run. This doesn't change the answer: the server, a public website, would republish the same Apple-derived list and artwork links. It also leaves first-run onboarding empty when the network is down.
+3. **Rebuild it from the publishers' own feeds.** The catalog build reads each show's title, author and artwork from its own RSS feed. It drops the Apple chart ranks and the `mzstatic` artwork URLs, and picks the shows by hand per subject, informed by several public lists rather than copied from one chart. The drawer code doesn't change. This costs one build-script change and a curation pass.
+
+**My pick: option 3** before submission, whatever the attorney says about option 1. It costs little and leaves nothing to show App Review under 5.2.2. The attorney question is still worth asking: whether choosing shows while looking at Apple's charts is a problem, and whether option 1 is safe for the TestFlight beta in the meantime.

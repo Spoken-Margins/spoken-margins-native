@@ -1056,6 +1056,17 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         #endif
     }
 
+    /// The client's own intent for `playback.state` diagnostics (#1109), in the words the on-device voice
+    /// client uses: `paused` after a pause that stopped speech, `playing` while speech is queued or
+    /// spoken, otherwise `stopped`.
+    public var diagnosticIntent: String {
+        if paused { return "paused" }
+        #if canImport(AVFoundation)
+        if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { return "playing" }
+        #endif
+        return "stopped"
+    }
+
     public func currentCharOffset() -> Int? {
         currentOffset
     }
@@ -1587,6 +1598,11 @@ struct AudioPlaybackInterruptionResumePolicy: Equatable {
 }
 
 struct MediaSeekLifecycle: Equatable {
+    enum Observation: Equatable {
+        case playbackSample
+        case nativeTimeJump
+    }
+
     enum Purpose: Equatable {
         case playbackStart
         case navigation
@@ -1599,7 +1615,17 @@ struct MediaSeekLifecycle: Equatable {
         var mediaTimeMs: Int
         var retryCount: Int
         var purpose: Purpose
+        /// Where the player was when the seek began, and when (system uptime), for `abandonIfOverrun`.
+        var originMediaTimeMs: Int? = nil
+        var beganUptimeMs = 0
+        var lastObservedUptimeMs = 0
+        var lastObservedPlayerMediaTimeMs: Int? = nil
+        var playbackAllowanceMs: Double = 0
+        var landingObserved = false
     }
+
+    /// How far past its target the player must be before a pending seek counts as landed.
+    static let overrunToleranceMs = 1_000
 
     enum Resolution: Equatable {
         case ignored
@@ -1614,7 +1640,9 @@ struct MediaSeekLifecycle: Equatable {
     mutating func begin(
         targetId: String,
         mediaTimeMs: Int,
-        purpose: Purpose = .playbackStart
+        purpose: Purpose = .playbackStart,
+        originMediaTimeMs: Int? = nil,
+        uptimeMs: Int = 0
     ) -> Int {
         generation += 1
         pending = Pending(
@@ -1623,9 +1651,49 @@ struct MediaSeekLifecycle: Equatable {
             targetId: targetId,
             mediaTimeMs: max(0, mediaTimeMs),
             retryCount: 0,
-            purpose: purpose
+            purpose: purpose,
+            originMediaTimeMs: originMediaTimeMs,
+            beganUptimeMs: uptimeMs,
+            lastObservedUptimeMs: uptimeMs,
+            lastObservedPlayerMediaTimeMs: originMediaTimeMs,
+            landingObserved: originMediaTimeMs.map {
+                abs(Double($0) - Double(max(0, mediaTimeMs))) <= Double(Self.overrunToleranceMs)
+            } ?? false
         )
         return generation
+    }
+
+    /// A seek whose completion never arrived kept every clock at its target while the audio played
+    /// on (#166). Time bounds possible playback; it does not prove landing. Remember a native jump
+    /// near the target or a displacement from the origin that ordinary playback cannot explain, then
+    /// recover only when the player moves beyond the target. Sample at rate changes as well as ticks
+    /// so a slower rate cannot erase playback accumulated at the earlier rate.
+    mutating func abandonIfOverrun(playerMediaTimeMs: Int?, uptimeMs: Int, playbackRate: Double,
+                                  observation: Observation = .playbackSample) -> Pending? {
+        guard var current = pending else { return nil }
+        let elapsed = max(0, uptimeMs - current.lastObservedUptimeMs)
+        current.playbackAllowanceMs += Double(elapsed) * (playbackRate.isFinite ? max(playbackRate, 0) : 0)
+        current.lastObservedUptimeMs = max(current.lastObservedUptimeMs, uptimeMs)
+        guard let player = playerMediaTimeMs else {
+            pending = current
+            return nil
+        }
+        let moved = current.lastObservedPlayerMediaTimeMs.map { $0 != player } ?? false
+        current.lastObservedPlayerMediaTimeMs = player
+        let tolerance = Double(Self.overrunToleranceMs)
+        let reach = current.playbackAllowanceMs + tolerance
+        let pastTarget = Double(player) - Double(current.mediaTimeMs)
+        if observation == .nativeTimeJump, abs(pastTarget) <= tolerance {
+            current.landingObserved = true
+        } else if moved, pastTarget >= -tolerance, pastTarget <= reach,
+                  let origin = current.originMediaTimeMs,
+                  observation == .nativeTimeJump || player < origin || Double(player) - Double(origin) > reach {
+            current.landingObserved = true
+        }
+        pending = current
+        guard moved, current.landingObserved, pastTarget > tolerance, pastTarget <= reach else { return nil }
+        invalidate()
+        return current
     }
 
     mutating func finish(generation: Int, targetId: String, completed: Bool) -> Resolution {
@@ -1643,14 +1711,9 @@ struct MediaSeekLifecycle: Equatable {
             return .failed(current)
         }
         self.generation += 1
-        let retry = Pending(
-            generation: self.generation,
-            requestId: current.requestId,
-            targetId: current.targetId,
-            mediaTimeMs: current.mediaTimeMs,
-            retryCount: 1,
-            purpose: current.purpose
-        )
+        var retry = current
+        retry.generation = self.generation
+        retry.retryCount = 1
         pending = retry
         return .retry(retry)
     }
@@ -1688,12 +1751,22 @@ struct MediaPlaybackCompletionPolicy {
         let remainingMs = max(0, durationMs - currentMediaTimeMs)
         return currentMediaTimeMs > 0 && remainingMs <= terminalToleranceMs
     }
+
+    /// Whether a seek to `mediaTimeMs` takes an ended episode back from its end, so its
+    /// end-of-item notification no longer holds (#588). Any destination before the end does,
+    /// even one inside the terminal tolerance: that tolerance is for a player that stopped on
+    /// its own, not for a place the listener chose. Without a known length, any seek does.
+    static func seekLeavesEnd(toMediaTimeMs mediaTimeMs: Int, durationMs: Int?) -> Bool {
+        guard let durationMs, durationMs > 0 else { return true }
+        return mediaTimeMs < durationMs
+    }
 }
 
 public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var player: AVPlayer?
     private var completionObserver: NSObjectProtocol?
+    private var timeJumpObserver: NSObjectProtocol?
     private var timeObserverToken: Any?
     private var playerStateObservation: NSKeyValueObservation?
     private var audioSessionObservers: [NSObjectProtocol] = []
@@ -1705,10 +1778,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public var playbackStartTraceHandler: (@Sendable ([String: String]) -> Void)?
     /// Receives a record when the player's clock stops moving while playback is intended, and when it moves
     /// again (#166). Carries AVPlayer's own state so the log can tell a buffering stall from a frozen clock.
+    /// Also receives `event: seek_abandoned` when a seek the player has passed is given up.
     public var playbackStallTraceHandler: (@Sendable ([String: String]) -> Void)?
     private var stallDetector = PlaybackStallDetector()
     private var stallWatchdog: Timer?
     private var mediaSeekStartedUptime: TimeInterval?
+    /// Tests only: drop AVPlayer's seek completions, as happened on a stream in #166.
+    var withholdsSeekCompletionsForTesting = false
+    var pendingSeekHasLandingEvidenceForTesting: Bool { mediaSeekLifecycle.pending?.landingObserved == true }
     #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
     private var postResumeEvidenceTap: MTAudioProcessingTap?
     private var postResumeEvidenceTapContext: PostResumePodcastEvidenceTapContext?
@@ -1943,6 +2020,15 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         guard let player, let activeTargetId else {
             throw SessionKitError.invalidCommandForState("media_seek_player_unavailable")
         }
+        // Scrubbing back from the end leaves the episode paused at the new place, not ended:
+        // a kept completion flag would move it straight back to the end (#588).
+        if playbackComplete,
+           MediaPlaybackCompletionPolicy.seekLeavesEnd(
+               toMediaTimeMs: lastRequestedMediaTimeMs, durationMs: durationMs(for: activeTargetId)
+           ) {
+            playbackComplete = false
+            completedTargetId = nil
+        }
         let seekGeneration = beginMediaSeek(
             targetId: activeTargetId,
             mediaTimeMs: lastRequestedMediaTimeMs,
@@ -1980,6 +2066,8 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     public func setPlaybackRate(_ rate: Double) throws {
+        // Account for the interval at the old rate before changing it (#166).
+        abandonOverrunMediaSeek(uptime: ProcessInfo.processInfo.systemUptime)
         playbackRate = max(0.25, min(3.0, rate))
         #if canImport(AVFoundation)
         if !paused {
@@ -2234,8 +2322,35 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
             )
         }
         mediaSeekFailure = nil
-        mediaSeekStartedUptime = ProcessInfo.processInfo.systemUptime
-        return mediaSeekLifecycle.begin(targetId: targetId, mediaTimeMs: mediaTimeMs, purpose: purpose)
+        let uptime = ProcessInfo.processInfo.systemUptime
+        mediaSeekStartedUptime = uptime
+        return mediaSeekLifecycle.begin(
+            targetId: targetId, mediaTimeMs: mediaTimeMs, purpose: purpose,
+            originMediaTimeMs: observedPlayerMediaTimeMs(), uptimeMs: Int(uptime * 1_000)
+        )
+    }
+
+    /// Native jumps supply landing evidence; watchdog/rate samples only supply movement and bounds.
+    private func abandonOverrunMediaSeek(uptime: TimeInterval,
+                                        observation: MediaSeekLifecycle.Observation = .playbackSample) {
+        let observed = observedPlayerMediaTimeMs()
+        guard let abandoned = mediaSeekLifecycle.abandonIfOverrun(
+            playerMediaTimeMs: observed, uptimeMs: Int(uptime * 1_000), playbackRate: playbackRate,
+            observation: observation
+        ) else { return }
+        mediaSeekFailure = nil
+        if abandoned.purpose == .navigation {
+            storeNavigationSeekResolution(.accepted(mediaTimeMs: observed ?? abandoned.mediaTimeMs), for: abandoned.requestId)
+        }
+        var fields = [
+            "event": "seek_abandoned", "toMs": String(abandoned.mediaTimeMs),
+            "purpose": abandoned.purpose == .navigation ? "navigation" : "start",
+            "retry": String(abandoned.retryCount),
+            "ageMs": String(Int(uptime * 1_000) - abandoned.beganUptimeMs)
+        ]
+        fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
+        playbackStallTraceHandler?(fields)
+        publishNowPlaying(isPlaying: !paused)
     }
 
     private func startStallWatchdog() {
@@ -2256,6 +2371,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     private func checkForStall() {
         let uptime = ProcessInfo.processInfo.systemUptime
+        abandonOverrunMediaSeek(uptime: uptime)
         guard let event = stallDetector.observe(
             uptimeMs: Int(uptime * 1_000),
             mediaTimeMs: observedPlayerMediaTimeMs(),
@@ -2310,6 +2426,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func finishMediaSeek(generation: Int, targetId: String, finished: Bool) {
+        guard !withholdsSeekCompletionsForTesting else { return }
         // AVPlayer calls the completion handler once for both completed and
         // interrupted seeks. A false result is terminal for this generation;
         // retaining it as pending forever freezes every derived progress
@@ -2552,6 +2669,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     #if canImport(AVFoundation)
     private func observeCompletion(for item: AVPlayerItem) {
+        // A seek can land between watchdog ticks without ever delivering its completion (#166).
+        timeJumpObserver = NotificationCenter.default.addObserver(
+            forName: .AVPlayerItemTimeJumped, object: item, queue: .main
+        ) { [weak self] notification in
+            guard let self, let jumpedItem = notification.object as? AVPlayerItem,
+                  self.player?.currentItem === jumpedItem else { return }
+            self.abandonOverrunMediaSeek(uptime: ProcessInfo.processInfo.systemUptime, observation: .nativeTimeJump)
+        }
         completionObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: item,
@@ -2570,6 +2695,10 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func removeCompletionObserver() {
+        if let timeJumpObserver {
+            NotificationCenter.default.removeObserver(timeJumpObserver)
+            self.timeJumpObserver = nil
+        }
         if let completionObserver {
             NotificationCenter.default.removeObserver(completionObserver)
             self.completionObserver = nil
@@ -3078,6 +3207,18 @@ public final class SystemRecordingClient: RecordingClient {
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
+    private var recorderDelegate: CaptureDelegate?
+    /// The loudest the microphone has been since the Margin began, in dB (diagnostics only, #937).
+    private var peakPowerDb: Float?
+    /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
+    private var isCaptureActive = false
+    private var captureRestarts = 0
+    /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
+    /// the audio it took in is still in its file.
+    private var capturedHighWaterMs = 0
+    /// The length of a stopped recorder's finalized file, measured once off the main thread. Nil while the
+    /// recorder runs. Until it lands, or if the file can't be read, the length is unknown and kept (#937).
+    private var stoppedMeasurement: StoppedFileMeasurement?
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3140,6 +3281,69 @@ public final class SystemRecordingClient: RecordingClient {
     }
     #endif
 
+    #if canImport(AVFoundation)
+    /// Puts the session in `playAndRecord`, then starts a recorder on a new file. A restart passes
+    /// `cycleSession` to drop and retake the session, which makes iOS settle the route again (#937).
+    private func startRecorder(cycleSession: Bool) throws -> (recorder: AVAudioRecorder, url: URL) {
+        #if os(iOS) || os(watchOS)
+        let session = AVAudioSession.sharedInstance()
+        if cycleSession { try? session.setActive(false) }
+        #if os(watchOS)
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
+        #else
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        #endif
+        try session.setActive(true)
+        #endif
+        let directory = try recordingsDirectory()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let url = directory.appending(path: "\(stamp)\(captureRestarts == 0 ? "" : "-r\(captureRestarts)").m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        let delegate = CaptureDelegate()
+        recorder.delegate = delegate
+        recorder.isMeteringEnabled = true
+        recorder.prepareToRecord()
+        guard recorder.record() else {
+            throw SessionKitError.persistenceFailed("recording_failed")
+        }
+        recorderDelegate = delegate
+        capturedHighWaterMs = 0
+        stoppedMeasurement = nil
+        return (recorder, url)
+    }
+
+    /// What `AVAudioRecorder` reported when it stopped by itself, kept for the diagnostics log.
+    private final class CaptureDelegate: NSObject, AVAudioRecorderDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private var finishedSuccessfully: Bool?
+        private var encodeError: String?
+
+        func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+            lock.withLock { finishedSuccessfully = flag }
+        }
+
+        func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+            lock.withLock { encodeError = error.map { String(describing: type(of: $0)) } ?? "unknown" }
+        }
+
+        var fields: [String: String] {
+            lock.withLock {
+                var result: [String: String] = [:]
+                if let finishedSuccessfully { result["recorderFinished"] = finishedSuccessfully ? "ok" : "failed" }
+                if let encodeError { result["encodeError"] = encodeError }
+                return result
+            }
+        }
+    }
+    #endif
+
     public func beginRecording() throws {
         #if canImport(AVFoundation)
         #if os(iOS)
@@ -3182,33 +3386,112 @@ public final class SystemRecordingClient: RecordingClient {
             throw SessionKitError.persistenceFailed("recording_permission_unknown")
         }
         #endif
+        captureRestarts = 0
+        peakPowerDb = nil
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
-        #if os(watchOS)
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
-        #else
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
         #endif
-        try session.setActive(true)
-        #endif
-        let directory = try recordingsDirectory()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appending(path: "\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44_100,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
-        let recorder = try AVAudioRecorder(url: url, settings: settings)
-        recorder.prepareToRecord()
-        guard recorder.record() else {
-            throw SessionKitError.persistenceFailed("recording_failed")
-        }
+        let (recorder, url) = try startRecorder(cycleSession: false)
+        isCaptureActive = true
         self.recorder = recorder
         self.currentURL = url
         #else
         throw SessionKitError.persistenceFailed("recording_unavailable")
+        #endif
+    }
+
+    public func captureReading() -> RecordingCaptureReading? {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { return nil }
+        // No recorder while a capture is active means a restart failed: report that, not "can't tell".
+        guard let recorder else { return RecordingCaptureReading(recorderRunning: false, capturedMs: 0) }
+        recorder.updateMeters()
+        let peak = recorder.peakPower(forChannel: 0)
+        peakPowerDb = max(peakPowerDb ?? peak, peak)
+        capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
+        var durationKnown = true
+        if recorder.isRecording {
+            stoppedMeasurement = nil
+        } else {
+            // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0. The
+            // finalized file says how much it really holds. It is measured once, off the main thread, and
+            // until that lands (or if the file can't be read) the length is unknown, which means keep.
+            if stoppedMeasurement == nil, let currentURL {
+                stoppedMeasurement = StoppedFileMeasurement.start(url: currentURL)
+            }
+            if case .milliseconds(let fileMs)? = stoppedMeasurement?.outcome {
+                capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+            } else {
+                durationKnown = false
+            }
+        }
+        return RecordingCaptureReading(
+            recorderRunning: recorder.isRecording,
+            capturedMs: capturedHighWaterMs,
+            durationKnown: durationKnown
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    public func restartCapture() throws {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
+        let previousURL = currentURL
+        recorder?.stop()
+        // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
+        // old, so read what the file really holds first and refuse to delete audio worth keeping.
+        // This one read is on the main thread, once, and only for a recorder that is already stopped.
+        switch previousURL.map(RecordedFileDuration.measure) ?? .milliseconds(0) {
+        case .milliseconds(let fileMs):
+            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+        case .unreadable:
+            // The length is unknown, so the file may hold speech: keep it, never delete on a failed read.
+            throw SessionKitError.persistenceFailed("recording_unreadable")
+        }
+        if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
+            throw SessionKitError.persistenceFailed("recording_has_audio")
+        }
+        recorder?.delegate = nil
+        recorder = nil
+        recorderDelegate = nil
+        currentURL = nil
+        if let previousURL { try? fileManager.removeItem(at: previousURL) }
+        captureRestarts += 1
+        // The first restart only replaces the recorder. A second retakes the session too.
+        let started = try startRecorder(cycleSession: captureRestarts >= 2)
+        recorder = started.recorder
+        currentURL = started.url
+        #else
+        throw SessionKitError.persistenceFailed("recording_restart_unsupported")
+        #endif
+    }
+
+    public func captureDiagnostics() -> [String: String] {
+        #if canImport(AVFoundation)
+        var fields: [String: String] = ["captureRestarts": String(captureRestarts)]
+        if let recorder {
+            fields["recorderRunning"] = String(recorder.isRecording)
+            fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
+            switch stoppedMeasurement?.outcome {
+            case nil: fields["stoppedFile"] = stoppedMeasurement == nil ? "recording" : "measuring"
+            case .milliseconds(let fileMs)?: fields["stoppedFile"] = "\(fileMs)ms"
+            case .unreadable?: fields["stoppedFile"] = "unreadable"
+            }
+        }
+        if let currentURL, let bytes = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+            fields["fileBytes"] = String(bytes)
+        }
+        if let peakPowerDb { fields["peakDb"] = String(Int(peakPowerDb.rounded())) }
+        if let recorderDelegate { fields.merge(recorderDelegate.fields) { current, _ in current } }
+        #if os(iOS)
+        // The session fields name only the output route; a silent microphone is about the input.
+        fields["inputs"] = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        #endif
+        return fields.merging(AudioSessionDiagnostics.fields()) { current, _ in current }
+        #else
+        return [:]
         #endif
     }
 
@@ -3218,6 +3501,8 @@ public final class SystemRecordingClient: RecordingClient {
             if let audioRef { return audioRef }
             throw SessionKitError.invalidCommandForState("finishRecording")
         }
+        isCaptureActive = false
+        recorderDelegate = nil
         recorder.stop()
         self.recorder = nil
         self.currentURL = nil
@@ -3236,6 +3521,8 @@ public final class SystemRecordingClient: RecordingClient {
     public func cancelRecording() throws {
         #if canImport(AVFoundation)
         let url = currentURL
+        isCaptureActive = false
+        recorderDelegate = nil
         recorder?.stop()
         recorder?.deleteRecording()
         recorder = nil
@@ -3649,7 +3936,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let windowDirectory = directory.appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
@@ -3750,8 +4037,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let localWindowURL = caches
-            .appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let localWindowURL = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
             .appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
             .appending(path: "source-window.m4a")
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
@@ -3875,7 +4161,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionChunksV3/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .chunks, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var chunks: [SourceAudioChunk] = []
         for (index, range) in ranges.enumerated() {

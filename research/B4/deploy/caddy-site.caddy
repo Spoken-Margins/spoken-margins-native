@@ -1,0 +1,27 @@
+spokenmargins.proximitytoprogress.com {
+	# managed-by: spokenmargins-server (research/B4/deploy/deploy.sh)
+	encode gzip
+
+	# The kill switch and the bridge manifest are static, identical for every
+	# install, and live in smserver's own root, which the site deploy's
+	# rsync --delete never touches. Caddy serves them even if smserver is down.
+	@smpublic path /api/v1/config.json /bridge/v1/manifest.json
+
+	route {
+		handle @smpublic {
+			root * @SERVER_ROOT@
+			header Cache-Control "public, max-age=300"
+			file_server
+		}
+		handle /l/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
+		handle /api/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
+		handle {
+			root * /srv/www/spokenmargins
+			file_server
+		}
+	}
+}

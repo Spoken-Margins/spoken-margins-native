@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 import UIKit
 
@@ -8,6 +9,7 @@ struct ExperienceMarginDetailView: View {
     @State private var pendingNavigation: NavigationIntent?
     @State private var showsManagement = false
     @State private var actionFeedback: UserFeedbackEvent?
+    @State private var markdownFileURL: URL?
     let row: MarginRow
 
     private enum NavigationIntent { case moment, item }
@@ -42,11 +44,18 @@ struct ExperienceMarginDetailView: View {
                     Button("Copy with Context", systemImage: "doc.on.doc") {
                         model.copyInterjectionWithContext(current.interjection)
                     }
+                    if MarginMarkdownShare.hasNote(current.interjection) {
+                        Button("Share as Markdown", systemImage: "square.and.arrow.up") {
+                            markdownFileURL = model.marginMarkdownFileURL(for: [current.interjection], asItem: false)
+                        }
+                        .accessibilityIdentifier("marginDetail.shareMarkdown.button")
+                    }
                     if current.canPlayRecording {
                         Button(
                             model.isPlayingInterjectionAudio(current.interjection) ? "Stop playing" : "Play Margin",
                             systemImage: model.isPlayingInterjectionAudio(current.interjection) ? "stop.fill" : "play.fill"
                         ) { model.toggleInterjectionAudioPlayback(current.interjection) }
+                        .accessibilityIdentifier("marginDetail.playRecording.button")
                     }
                     if current.canRetryTranscription {
                         Button(model.isRetryingInterjectionTranscription(current.interjection) ? "Transcribing…" : "Retry Transcription", systemImage: "arrow.clockwise") {
@@ -77,6 +86,7 @@ struct ExperienceMarginDetailView: View {
                 }
             }
             .buttonStyle(MarginDetailActionButtonStyle())
+            .fileShareSheet($markdownFileURL)
             .overlay(alignment: .top) {
                 if let actionFeedback { UserFeedbackBanner(feedback: actionFeedback).padding(.horizontal, 16) }
             }
@@ -109,7 +119,9 @@ struct ExperienceMarginDetailView: View {
                     .accessibilityLabel(current.interjection.isStarredForSharing == true ? "Unstar Margin" : "Star Margin")
                     .accessibilityIdentifier("marginDetail.star.button")
                 }
-                ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }.accessibilityIdentifier("marginDetail.done.button")
+                }
             }
             .sheet(isPresented: $showsManagement) {
                 InterjectionDetailView(interjection: current.interjection).environmentObject(model)

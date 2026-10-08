@@ -37,6 +37,9 @@ enum PDFStructuredTextExtractor {
         var pointSize: CGFloat
         var isBold: Bool
         var bounds: CGRect?
+        /// The size most of the line's visible characters are set in. `pointSize` is the
+        /// first character's, which a leading marker or subscript skews (#592).
+        var mainPointSize: CGFloat = 0
         /// Character ranges of `text` set as superscripts (v2 only).
         var superscripts: [Range<Int>] = []
     }
@@ -233,9 +236,12 @@ enum PDFStructuredTextExtractor {
         if let title = document.documentAttributes?[PDFDocumentAttribute.titleAttribute] as? String, !cleaned(title).isEmpty {
             return cleaned(title)
         }
+        // v1 made each line of a printed title a heading; v2 reads the title as one
+        // segment (#272) but keeps v1's level on it, so its first line is v1's title.
         let characters = Array(structured.text)
-        return structured.segments.first { $0.role == .heading && $0.level == 1 }.map {
+        return structured.segments.first { ($0.role == .heading || $0.role == .title) && $0.level == 1 }.map {
             String(characters[$0.range.start..<min($0.range.end, characters.count)])
+                .split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         }
     }
 
@@ -376,7 +382,13 @@ enum PDFStructuredTextExtractor {
                 } else if tableOfContentsLines.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .frontMatter, pageIndex: pageIndex))
                 } else if let role = titlePage[lineIndex] {
-                    result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex))
+                    // A printed title keeps the heading level v1 gave it, so `itemTitle`
+                    // still finds v1's title and a re-imported PDF stays the same item.
+                    let v1Level: Int? = role == .title && outline.isEmpty
+                        && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
+                        && isVisualHeading(line, bodySize: bodySize)
+                        ? visualHeadingLevel(line, bodySize: bodySize) : nil
+                    result.append(StructuredDocumentLine(text: line.text, role: role, pageIndex: pageIndex, level: v1Level))
                 } else if footnotes.contains(lineIndex) {
                     result.append(StructuredDocumentLine(text: line.text, role: .footnote, pageIndex: pageIndex))
                 } else if tableLines.contains(lineIndex) {
@@ -711,9 +723,36 @@ enum PDFStructuredTextExtractor {
               let abstract = lines.firstIndex(where: {
                   $0.text.range(of: #"^(?:abstract|summary|a b s t r a c t)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
               }), abstract > 0 else { return roles }
+        // Display type before the abstract is the title page, not section headings
+        // (#272): the largest run of real lines is the title, read once as one segment;
+        // display-size author lines are authors; affiliations and short badges ("v1",
+        // a journal logo such as "sensors") are front matter; any other display line
+        // (a subtitle) is read as title.
+        let display = (0..<abstract).filter {
+            roles[$0] == nil && lines[$0].pointSize >= bodySize + 1.5 && !looksLikeSectionHeading(lines[$0].text)
+        }
+        func wordCount(_ index: Int) -> Int { lines[index].text.split(separator: " ").count }
+        let titleCandidates = display.contains(where: { wordCount($0) >= 4 }) ? display.filter { wordCount($0) >= 4 } : display
+        if let titleSize = titleCandidates.map({ lines[$0].pointSize }).max(),
+           let first = titleCandidates.first(where: { abs(lines[$0].pointSize - titleSize) < 0.3 }) {
+            var index = first
+            while index < abstract, roles[index] == nil, abs(lines[index].pointSize - titleSize) < 0.3 {
+                roles[index] = .title
+                index += 1
+            }
+        }
+        for index in display where roles[index] == nil {
+            let text = lines[index].text
+            if looksLikeAuthorList(text) {
+                roles[index] = .authors
+            } else if wordCount(index) <= 3 || looksLikeAffiliation(text) {
+                roles[index] = .frontMatter
+            } else {
+                roles[index] = .title
+            }
+        }
         for index in 0..<abstract where roles[index] == nil {
-            // The title and any other display type are read.
-            if lines[index].pointSize >= bodySize + 1.5 { continue }
+            if lines[index].pointSize >= bodySize + 1.5 { continue }  // a section heading, kept above
             let text = lines[index].text
             if looksLikeAuthorList(text) {
                 roles[index] = .authors
@@ -722,6 +761,19 @@ enum PDFStructuredTextExtractor {
             }
         }
         return roles
+    }
+
+    /// "1 Introduction", "2.1 Methods", "Background": a section heading that can sit
+    /// on page 1 above an abstract read out of order, and stays a chapter.
+    static func looksLikeSectionHeading(_ text: String) -> Bool {
+        text.range(of: #"^(?:[0-9]+(?:\.[0-9]+)*\.?\s+\p{Lu}|(?:introduction|background|methods?|results|discussion|conclusions?)\s*$)"#,
+                   options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// "1BioFrontiers Institute, University of Colorado": an institution or address.
+    static func looksLikeAffiliation(_ text: String) -> Bool {
+        text.range(of: #"(?i)univ|department|dept\.|institut|laborator|hospital|college|school of|faculty of|academy|research cent"#,
+                   options: .regularExpression) != nil
     }
 
     /// Footnotes at the foot of a page (#250): a block in small type in the bottom 40%
@@ -740,7 +792,7 @@ enum PDFStructuredTextExtractor {
         }
         // Markers the body sets as superscripts on this page: "1", "12", "†", "a".
         var bodyMarkers = Set<String>()
-        for line in lines where abs(line.pointSize - bodySize) < 0.6 {
+        for line in lines where abs(line.mainPointSize - bodySize) < 0.6 {
             let characters = Array(line.text)
             for range in line.superscripts where range.lowerBound >= 0 && range.upperBound <= characters.count {
                 let label = digits(String(characters[range]))
@@ -753,7 +805,7 @@ enum PDFStructuredTextExtractor {
         let bottom = pageBox.minY + pageBox.height * 0.4
         let continuationBottom = pageBox.minY + pageBox.height * 0.45
         func isSmall(_ line: TextLine) -> Bool {
-            line.pointSize > 0 && line.pointSize < bodySize - 0.5
+            line.mainPointSize > 0 && line.mainPointSize < bodySize - 0.5
         }
         var result = Set<Int>()
         var index = 0
@@ -773,15 +825,15 @@ enum PDFStructuredTextExtractor {
             let readsAsNote = letters >= 15 && (rest.split(separator: " ").count >= 3 || isLink)
             // A new block: after other type, after a gap (the footnote rule), or up a column.
             var startsBlock = true
-            if index > 0, let previous = lines[index - 1].bounds, abs(lines[index - 1].pointSize - line.pointSize) < 0.3 {
-                startsBlock = previous.midY - bounds.midY > line.pointSize * 1.8 || bounds.midY > previous.midY
+            if index > 0, let previous = lines[index - 1].bounds, abs(lines[index - 1].mainPointSize - line.mainPointSize) < 0.3 {
+                startsBlock = previous.midY - bounds.midY > line.mainPointSize * 1.8 || bounds.midY > previous.midY
             }
             guard bodyMarkers.contains(marker), readsAsNote, startsBlock else {
                 index += 1
                 continue
             }
-            let size = line.pointSize
-            while index < lines.count, abs(lines[index].pointSize - size) < 0.3,
+            let size = line.mainPointSize
+            while index < lines.count, abs(lines[index].mainPointSize - size) < 0.3,
                   let next = lines[index].bounds, next.midY < continuationBottom {
                 result.insert(index)
                 index += 1
@@ -899,6 +951,7 @@ enum PDFStructuredTextExtractor {
                     pointSize: font?.pointSize ?? 0,
                     isBold: font?.fontDescriptor.symbolicTraits.contains(.traitBold) == true,
                     bounds: bounds,
+                    mainPointSize: mainPointSize(in: attributed, range: range) ?? font?.pointSize ?? 0,
                     superscripts: detectSuperscripts
                         ? superscriptRanges(in: attributed, lineRange: range, page: page, lineBounds: bounds, cleanedText: text)
                         : []
@@ -999,6 +1052,24 @@ enum PDFStructuredTextExtractor {
         let overlap = expandedRegion.intersection(lineBounds)
         guard !overlap.isNull else { return false }
         return (overlap.width * overlap.height) / (lineBounds.width * lineBounds.height) >= 0.65
+    }
+
+    /// The point size with the most visible characters in `range`; the larger on a tie.
+    private static func mainPointSize(in attributed: NSAttributedString, range: NSRange) -> CGFloat? {
+        let source = attributed.string as NSString
+        var countBySize: [CGFloat: Int] = [:]
+        attributed.enumerateAttribute(.font, in: range) { value, run, _ in
+            guard let size = (value as? UIFont)?.pointSize, size > 0 else { return }
+            var visible = 0
+            for location in run.location..<NSMaxRange(run) {
+                if let scalar = UnicodeScalar(source.character(at: location)),
+                   !CharacterSet.whitespacesAndNewlines.contains(scalar) {
+                    visible += 1
+                }
+            }
+            if visible > 0 { countBySize[size, default: 0] += visible }
+        }
+        return countBySize.max { lhs, rhs in lhs.value == rhs.value ? lhs.key < rhs.key : lhs.value < rhs.value }?.key
     }
 
     private static func firstVisibleLocation(in source: NSString, range: NSRange) -> Int {

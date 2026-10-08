@@ -59,21 +59,40 @@ public enum StructuredDocumentMigration {
         let words = Array(old[anchor.start..<anchor.end])
         guard words.contains(where: { !$0.isWhitespace }) else { return nil }
         let candidates = occurrences(of: words, in: new)
-        if candidates.count == 1 {
-            return candidates[0]..<(candidates[0] + words.count)
-        }
-        guard candidates.count > 1 else { return nil }
-        // The same words more than once: the stored context decides, else the old
-        // text's own surroundings. A tie leaves the item where it is.
+        guard !candidates.isEmpty else { return nil }
+        // The stored context decides, else the old text's own surroundings.
         let before = anchor.before.isEmpty ? Array(old[max(0, anchor.start - 40)..<anchor.start]) : Array(anchor.before)
         let after = anchor.after.isEmpty ? Array(old[anchor.end..<min(old.count, anchor.end + 40)]) : Array(anchor.after)
-        let scored = candidates.map { start in
-            (start, commonSuffixLength(before, new[..<start]) + commonPrefixLength(after, new[(start + words.count)...]))
+        func score(_ start: Int) -> Int {
+            commonSuffixLength(before, new[..<start]) + commonPrefixLength(after, new[(start + words.count)...])
         }
-        guard let best = scored.map(\.1).max(), best > 0 else { return nil }
-        let winners = scored.filter { $0.1 == best }
-        guard winners.count == 1 else { return nil }
-        return winners[0].0..<(winners[0].0 + words.count)
+        let chosen: Int
+        if candidates.count == 1 {
+            chosen = candidates[0]
+        } else {
+            // The same words more than once: a tie leaves the item where it is.
+            let scored = candidates.map { ($0, score($0)) }
+            guard let best = scored.map(\.1).max(), best > 0 else { return nil }
+            let winners = scored.filter { $0.1 == best }
+            guard winners.count == 1 else { return nil }
+            chosen = winners[0].0
+        }
+        // The words were also somewhere else in the old text (a running head, a repeated line), so
+        // the copy found may be another copy than the Margin's own. It counts only if it looks more
+        // like the Margin's own copy than like any other old copy; otherwise the item stays (#1054).
+        // Every old copy is read the same way, from the old text around it: the context a Margin
+        // stores is cut at the Margin's start and runs through its own words, so it can't be lined
+        // up against the words after another copy.
+        func oldContextScore(at start: Int) -> Int {
+            let end = start + words.count
+            return commonSuffixLength(Array(old[max(0, start - 40)..<start]), new[..<chosen])
+                + commonPrefixLength(Array(old[end..<min(old.count, end + 40)]), new[(chosen + words.count)...])
+        }
+        let ownScore = oldContextScore(at: anchor.start)
+        for other in occurrences(of: words, in: old) where other != anchor.start && oldContextScore(at: other) >= ownScore {
+            return nil
+        }
+        return chosen..<(chosen + words.count)
     }
 
     static func occurrences(of needle: [Character], in haystack: [Character]) -> [Int] {

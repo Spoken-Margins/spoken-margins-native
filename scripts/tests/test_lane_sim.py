@@ -89,7 +89,8 @@ class LaneSimTests(unittest.TestCase):
         gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh),
+                    'SM_LANE_BUILD_NEEDS_ROOM': ''}  # not the build runner's slot rules (#656)
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                    mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
@@ -252,6 +253,66 @@ class LaneSimTests(unittest.TestCase):
         self.assertIsNone(lane_sim.new_crash(folder, baseline, UDID))
         (folder / 'SpringBoard-new.ips').write_text(f'FBSystemShellInitialize com.apple.CoreSimulator.SimDevice.{UDID}')
         self.assertEqual(lane_sim.new_crash(folder, baseline, UDID).name, 'SpringBoard-new.ips')
+
+    def test_a_crash_report_renamed_during_the_scan_does_not_fail_the_boot(self):
+        # #822: macOS writes each report as a hidden `.Name-date.ips` and then renames it. A rename between
+        # crash_snapshot's glob and its stat raised FileNotFoundError and failed the boot (#767 hit the same
+        # race in verify-tests' copy of the scan).
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+
+        class RenamingFolder:
+            """Lists the real folder, then renames every hidden report, as macOS does, before the caller reads it."""
+
+            def __init__(self, folder):
+                self.folder = folder
+
+            def is_dir(self):
+                return self.folder.is_dir()
+
+            def glob(self, pattern):
+                found = list(self.folder.glob(pattern))
+                for path in found:
+                    if path.name.startswith('.'):
+                        path.rename(path.with_name(path.name[1:]))
+                return iter(found)
+
+        (folder / '.SpringBoard-2026-10-04-095145.ips').write_text('com.apple.CoreSimulator.SimDevice.99999999-0000')
+        with mock.patch.object(lane_sim, 'crash_reports_dir', return_value=RenamingFolder(folder)):
+            lane_sim.boot(UDID, 'test', out=self.quiet)
+        self.assertNotIn(UDID, lane_sim.unsafe_devices())
+
+    def test_the_crash_scans_skip_hidden_and_vanished_reports(self):
+        import datetime
+        folder = Path(self.env['SM_LANE_CRASH_REPORTS'])
+        stamp = datetime.datetime.fromtimestamp(time.time()).astimezone().strftime('%Y-%m-%d %H:%M:%S.%f %z')
+        report = ('{"app_name":"x","timestamp":"2000-01-01 00:00:00.00 +0000"}\n'
+                  f'{{"captureTime" : "{stamp}", "path": "com.apple.CoreSimulator.SimDevice.{UDID}"}}')
+        window = (time.time() - 10, time.time() + 10)
+
+        # A hidden report is still being written: not a crash yet, and not part of the baseline.
+        (folder / '.SpringBoard-2026-10-04-095145.ips').write_text(report)
+        self.assertEqual(lane_sim.crash_snapshot(folder), {})
+        self.assertIsNone(lane_sim.new_crash(folder, {}, UDID))
+        self.assertIsNone(lane_sim.late_report(folder, UDID, window))
+
+        # Once renamed, it is the real report, and each scan finds it.
+        (folder / '.SpringBoard-2026-10-04-095145.ips').rename(folder / 'SpringBoard-2026-10-04-095145.ips')
+        self.assertEqual(lane_sim.new_crash(folder, {}, UDID).name, 'SpringBoard-2026-10-04-095145.ips')
+        self.assertEqual(lane_sim.late_report(folder, UDID, window).name, 'SpringBoard-2026-10-04-095145.ips')
+
+        class VanishingFolder:
+            """Lists the real folder, then deletes what it listed before the caller reads it."""
+
+            def is_dir(self):
+                return True
+
+            def glob(self, pattern):
+                found = list(folder.glob(pattern))
+                for path in found:
+                    path.unlink()
+                return iter(found)
+
+        self.assertEqual(lane_sim.crash_snapshot(VanishingFolder()), {})
 
     def test_boot_wires_the_real_report_folder_into_the_watch(self):
         # End to end with the fake simctl: its bootstatus writes a report and then waits 60 s, so only the

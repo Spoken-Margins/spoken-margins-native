@@ -44,9 +44,8 @@ struct SpokenMarginsTermsView: View {
                         .accessibilityIdentifier("terms.accept.button")
 
                         if !SpokenMarginsTerms.hasBundledText() {
-                            Text("The bundled Terms are unavailable, so the on-device voice cannot be enabled in this build.")
+                            FailureMessageLabel("The bundled Terms are unavailable, so the on-device voice cannot be enabled in this build.")
                                 .font(.footnote)
-                                .foregroundStyle(.red)
                                 .accessibilityIdentifier("terms.unavailable.error")
                         }
 

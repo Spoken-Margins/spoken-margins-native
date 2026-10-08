@@ -141,6 +141,8 @@ struct Build23ImportedMarginSnapshot: Identifiable, Equatable {
     let positionDescription: String
     let isPlayable: Bool
     let hasVoice: Bool
+    /// Shown instead of the resolution while the Margin is being placed (#872).
+    var placementLabel: String? = nil
 }
 
 struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
@@ -354,14 +356,19 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
-                    .map { margin in
-                        Build23ImportedMarginSnapshot(
+                    .map { margin -> Build23ImportedMarginSnapshot in
+                        let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
+                            layerStatus: layer.sourceResolutionStatus, pass: item.sharedMarginPlacement,
+                            hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
+                            awaitingPlacementPass: layer.awaitsPlacementPass)
+                        return Build23ImportedMarginSnapshot(
                             id: margin.id,
                             reviewedText: margin.approvedTranscript,
                             resolution: margin.resolution.evidenceClass,
-                            positionDescription: Self.positionDescription(for: margin.resolution),
+                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution),
                             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
-                            hasVoice: margin.audioPath != nil
+                            hasVoice: margin.audioPath != nil,
+                            placementLabel: placement.label
                         )
                     }
                 return Build23ImportedLayerSnapshot(
@@ -515,6 +522,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         verifiedPreview = nil
         previewState = .notBuilt
         stage = newStage
+    }
+
+    /// The share sheet sent the verified packet (logged as an I4 `share` for its item, #483).
+    func recordSystemShareCompleted(packetURL: URL) {
+        model.listeningSignals.share(packetURL: packetURL)
     }
 
     private func buildRecipientPreview() {

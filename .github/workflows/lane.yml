@@ -6,8 +6,9 @@
 # --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
 # every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
 # the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
-# changes .github/ or scripts/lane*, or is an audio, persistence or packet change with no Codex
-# audit yet (scripts/lane-runner.py).
+# is an audio, persistence, packet or lane change with no clean Codex audit of its head yet
+# (scripts/lane-runner.py). Lane changes, this file included, merge that way too (owner rule
+# 2026-10-01).
 #
 # Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
@@ -19,6 +20,13 @@
 #
 # `lane-check/**` bases exist only to test a change to the lane before it reaches next.
 name: lane
+
+# The run name carries what scripts/lane_dedupe.py needs to tell this PR's runs apart (#860): the PR, the
+# head and which of the two Mac jobs the event asks for, with the same conditions as the jobs' `if`.
+run-name: >-
+  lane pr=${{ github.event.pull_request.number }} head=${{ github.event.pull_request.head.sha }}
+  lane=${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
+  auto=${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
 
 on:
   pull_request:
@@ -34,13 +42,89 @@ permissions:
   issues: write
 
 jobs:
-  lane:
-    # /lane T2 and T3 requests: the main runner, the only one that runs simulators.
+  route:
+    # Cheap hosted routing, before a job enters either Mac queue. Only same-repo requests.
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
+      ((contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')) ||
+       (contains(github.event.pull_request.labels.*.name, 'automerge') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'automerge')))
+    # The owner's VPS runner (sm-vps), not a GitHub-hosted one: the free Linux minutes ran out in October.
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      pull-requests: read
+      # write: cancelling this PR's older queued runs (scripts/lane_dedupe.py). Only base-branch code runs here.
+      actions: write
+    outputs:
+      lane: ${{ steps.route.outputs.lane }}
+      automerge: ${{ steps.route.outputs.automerge }}
+      skip_lane: ${{ steps.dedupe.outputs.skip_lane }}
+      skip_automerge: ${{ steps.dedupe.outputs.skip_automerge }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Policy and code from the base, never PR code with the runner-discovery token.
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+          # No LFS downloads or history needed to classify infrastructure paths.
+          sparse-checkout: |
+            scripts/test-scope.py
+            scripts/lane_dedupe.py
+            project.yml
+          sparse-checkout-cone-mode: false
+      - name: Discover runners and changed paths
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUNNERS_TOKEN: ${{ secrets.SM_LANE_RUNNERS_TOKEN || github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # Denied runner-list access, API outages, and uninstalled runners all fall back.
+          GH_TOKEN="$RUNNERS_TOKEN" timeout 30s gh api --paginate --slurp "repos/$GH_REPO/actions/runners?per_page=100" > "$RUNNER_TEMP/runners.json" || echo '[]' > "$RUNNER_TEMP/runners.json"
+          timeout 30s gh api --paginate --slurp "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > "$RUNNER_TEMP/files.json" || echo '[]' > "$RUNNER_TEMP/files.json"
+      - name: Drop stale and duplicate runs
+        id: dedupe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ github.run_id }}
+          WANT_LANE: ${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
+          WANT_AUTO: ${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
+        run: |
+          # Closed or moved-on PRs and duplicate runs stop here; older-head runs still waiting for a Mac are
+          # cancelled. Any failure (including a base without the helper) leaves both outputs unset: run as before.
+          # Bound all API calls together; discovery uses at most 60s, leaving 60s for checkout and routing.
+          if timeout 60s python3 scripts/lane_dedupe.py --pr "$PR_NUMBER" --head "$EVENT_HEAD" --run-id "$RUN_ID" \
+              --lane "$WANT_LANE" --auto "$WANT_AUTO" > "$RUNNER_TEMP/dedupe.json"; then
+            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/dedupe.json" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::Lane dedupe unavailable; running as before.'
+          fi
+      - name: Choose queues
+        id: route
+        run: |
+          # The base can predate this helper while this workflow is first being introduced.
+          if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
+            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/route.json" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::Runner routing unavailable; using the normal Mac queues.'
+          fi
+
+  lane:
+    # /lane T2 and T3 requests: main or priority runner, sharing the Mac-wide simulator slot.
+    needs: route
+    if: >-
+      !cancelled() &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.route.outputs.skip_lane != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'lane:queued') &&
       (github.event.action != 'labeled' || github.event.label.name == 'lane:queued')
-    runs-on: [self-hosted, macOS, sm-lane]
+    runs-on: ${{ fromJSON(needs.route.outputs.lane || '["self-hosted","macOS","sm-lane"]') }}
     # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
     # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
     # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
@@ -75,17 +159,22 @@ jobs:
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
-      # The check is green only on PASS (#184): project threads read the check mark. A FAIL or
-      # INCONCLUSIVE report fails this step, after the report is posted and the labels are set.
+      # The check is red only on FAIL (#184): project threads wake when a check on their PR fails, and
+      # a FAIL is the PR's code. INCONCLUSIVE (held for T3, no simulator, a flood, a conflict with next)
+      # stays green with a warning: the report and the lane:done relabel take it to the dispatcher.
+      # This step runs after the report is posted and the labels are set. A job that dies before it
+      # reports still fails at its Run step, so a lost report never looks green.
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
         env:
           VERDICT: ${{ steps.run.outputs.verdict }}
         run: |
           echo "Lane verdict: $VERDICT (the report is on the PR)"
-          if [ "$VERDICT" != PASS ]; then
-            echo "::error title=Lane $VERDICT::The lane reported $VERDICT. The report on the PR says why."
+          if [ "$VERDICT" = FAIL ]; then
+            echo "::error title=Lane FAIL::The lane reported FAIL. The report on the PR says why."
             exit 1
+          elif [ "$VERDICT" != PASS ]; then
+            echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
           fi
       - name: Tidy up after a cancelled or failed run
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
@@ -94,13 +183,16 @@ jobs:
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode explicit
 
   automerge:
-    # The automerge label: host tests and builds only, so any runner labelled sm-lane-build takes it.
+    needs: route
+    # The automerge label: host tests and builds on the build queue or priority runner.
     # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_build).
     if: >-
+      !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.route.outputs.skip_automerge != 'true' &&
       contains(github.event.pull_request.labels.*.name, 'automerge') &&
       (github.event.action != 'labeled' || github.event.label.name == 'automerge')
-    runs-on: [self-hosted, macOS, sm-lane-build]
+    runs-on: ${{ fromJSON(needs.route.outputs.automerge || '["self-hosted","macOS","sm-lane-build"]') }}
     # One runner is one lane, so runs from different PRs queue behind each other. Within a PR, a
     # newer queued run replaces one that hasn't started, so only the newest commit is tested. This
     # sits on the job, not the workflow, so skipped runs (other labels) never cancel a real one.
@@ -133,17 +225,22 @@ jobs:
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto
-      # The check is green only on PASS (#184): project threads read the check mark. A FAIL or
-      # INCONCLUSIVE report fails this step, after the report is posted and the labels are set.
+      # The check is red only on FAIL (#184): project threads wake when a check on their PR fails, and
+      # a FAIL is the PR's code. INCONCLUSIVE (held for T3, no simulator, a flood, a conflict with next)
+      # stays green with a warning: the report and the lane:done relabel take it to the dispatcher.
+      # This step runs after the report is posted and the labels are set. A job that dies before it
+      # reports still fails at its Run step, so a lost report never looks green.
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
         env:
           VERDICT: ${{ steps.run.outputs.verdict }}
         run: |
           echo "Lane verdict: $VERDICT (the report is on the PR)"
-          if [ "$VERDICT" != PASS ]; then
-            echo "::error title=Lane $VERDICT::The lane reported $VERDICT. The report on the PR says why."
+          if [ "$VERDICT" = FAIL ]; then
+            echo "::error title=Lane FAIL::The lane reported FAIL. The report on the PR says why."
             exit 1
+          elif [ "$VERDICT" != PASS ]; then
+            echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
           fi
       - name: Tidy up after a cancelled or failed run
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'

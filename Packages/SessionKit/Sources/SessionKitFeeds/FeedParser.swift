@@ -30,6 +30,14 @@ public struct ParsedFeedItem: Equatable, Sendable {
     public var audioURL: String?
     /// Episode length from `itunes:duration`, when the feed gives one.
     public var durationMs: Int? = nil
+    /// The item's full body, tags stripped, from RSS `content:encoded`, Atom `content` or JSON Feed
+    /// `content_html`/`content_text`, kept apart from the short description so a full post can be
+    /// told from show notes (#545). `summary` is unchanged: it still takes the last of these.
+    public var content: String? = nil
+    public var publisherPlatform: String? = nil
+    /// The item's `<guid>`, Atom `id` or JSON Feed `id` as written, without the display cleanup
+    /// `id` gets; nil when the feed gives none (`id` then falls back to the link).
+    public var guid: String? = nil
 }
 
 public struct ParsedFeed: Equatable, Sendable {
@@ -38,6 +46,9 @@ public struct ParsedFeed: Equatable, Sendable {
     public var homePageURL: String?
     public var feedURL: String?
     public var items: [ParsedFeedItem]
+    /// The show's own artwork: RSS `<itunes:image href>` or `<image><url>`, Atom `<logo>` or
+    /// `<icon>`, JSON Feed `icon`. Https only; nil when the feed names none (#773).
+    public var imageURL: String? = nil
 }
 
 public enum FeedParserError: Error, LocalizedError, Equatable {
@@ -81,7 +92,13 @@ public final class FeedParser: @unchecked Sendable {
             title: delegate.feedTitle.nilIfEmpty ?? "Untitled Source",
             homePageURL: delegate.homePageURL.nilIfEmpty,
             feedURL: delegate.feedURL.nilIfEmpty,
-            items: Array(delegate.items.prefix(limits.maximumEntries))
+            items: Array(delegate.items.prefix(limits.maximumEntries)).map { item in
+                var item = item
+                item.publisherPlatform = delegate.feedGenerator.nilIfEmpty?.lowercased()
+                return item
+            },
+            imageURL: [delegate.itunesImage, delegate.channelImage, delegate.atomLogo, delegate.atomIcon]
+                .lazy.compactMap(httpsLink).first
         )
     }
 
@@ -106,6 +123,7 @@ public final class FeedParser: @unchecked Sendable {
             var title: String
             var home_page_url: String?
             var feed_url: String?
+            var icon: String?
             var items: [Item]
         }
         let decoded: JSONFeed
@@ -118,6 +136,7 @@ public final class FeedParser: @unchecked Sendable {
             // An episode with audio but no link is still an episode (#179); its audio stands in for the link.
             guard let url = item.url?.nilIfEmpty ?? item.external_url?.nilIfEmpty ?? audio else { return nil }
             let rawSummary = item.summary ?? item.content_text ?? item.content_html
+            let content = item.content_html.map(FeedArticleBodyText.html) ?? item.content_text.map(sanitize)
             let author = item.authors?.compactMap(\.name).joined(separator: ", ").nilIfEmpty ?? item.author?.name
             return ParsedFeedItem(
                 id: item.id ?? url,
@@ -126,10 +145,12 @@ public final class FeedParser: @unchecked Sendable {
                 author: author.map(sanitize),
                 summary: rawSummary.map(sanitize),
                 publishedAt: item.date_published.flatMap(formatter.date(from:)),
-                audioURL: audio
+                audioURL: audio,
+                content: content?.nilIfEmpty,
+                guid: item.id?.nilIfEmpty
             )
         }
-        return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items)
+        return ParsedFeed(format: .json, title: sanitize(decoded.title), homePageURL: decoded.home_page_url, feedURL: decoded.feed_url, items: items, imageURL: decoded.icon.flatMap(httpsLink))
     }
 }
 
@@ -137,10 +158,16 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
     let limits: FeedParserLimits
     var format: ParsedFeedFormat?
     var feedTitle = ""
+    var feedGenerator = ""
     var homePageURL = ""
     var feedURL = ""
+    var itunesImage = ""
+    var channelImage = ""
+    var atomLogo = ""
+    var atomIcon = ""
     var items: [ParsedFeedItem] = []
     var tooDeep = false
+    private var inChannelImage = false
     private var depth = 0
     private var currentElement = ""
     private var text = ""
@@ -160,6 +187,14 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
         if name == "item" || name == "entry" {
             inEntry = true
             item = ItemBuilder()
+        }
+        if !inEntry, name == "image" {
+            // `<itunes:image href>` carries the link itself; RSS `<image>` holds a `<url>` child.
+            if let href = attributeDict["href"] {
+                if itunesImage.isEmpty { itunesImage = href }
+            } else {
+                inChannelImage = true
+            }
         }
         if format == .atom, name == "link", let href = attributeDict["href"] {
             let rel = attributeDict["rel"] ?? "alternate"
@@ -183,16 +218,31 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
             switch name {
             case "title": item?.title = value
             case "link": if format == .rss && item?.url == nil { item?.url = value }
-            case "guid", "id": item?.id = value
-            case "description", "summary", "content", "encoded": item?.summary = value
+            case "guid", "id":
+                item?.id = value
+                // Kept as written: display cleanup would turn `episode&lt;42&gt;` into `episode`,
+                // while the direct RSS import keeps `episode<42>`, and the GUIDs must match.
+                item?.guid = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            case "description", "summary": item?.summary = value
+            case "content", "encoded":
+                item?.summary = value
+                // An empty `media:content` also ends as "content"; it mustn't wipe a body.
+                let content = FeedArticleBodyText.html(text)
+                if !content.isEmpty { item?.content = content }
             case "author", "creator", "name": if item?.author == nil { item?.author = value }
             case "pubdate", "published", "updated": item?.published = value
             case "duration": item?.duration = value
             default: break
             }
+        } else if inChannelImage {
+            if name == "url", channelImage.isEmpty { channelImage = value }
+            if name == "image" { inChannelImage = false }
         } else {
+            if name == "generator", feedGenerator.isEmpty { feedGenerator = value }
             if name == "title", feedTitle.isEmpty { feedTitle = value }
             if name == "link", format == .rss, homePageURL.isEmpty { homePageURL = value }
+            if name == "logo", format == .atom, atomLogo.isEmpty { atomLogo = value }
+            if name == "icon", format == .atom, atomIcon.isEmpty { atomIcon = value }
         }
         if name == "item" || name == "entry" {
             if let built = item?.build(), items.count < limits.maximumEntries { items.append(built) }
@@ -208,6 +258,7 @@ private final class XMLFeedDelegate: NSObject, XMLParserDelegate {
 
 private struct ItemBuilder {
     var id: String?
+    var guid: String?
     var title: String?
     var url: String?
     var author: String?
@@ -215,6 +266,7 @@ private struct ItemBuilder {
     var published: String?
     var audioURL: String?
     var duration: String?
+    var content: String?
     func build() -> ParsedFeedItem? {
         // Podcast feeds, paid ones especially, often give episodes audio and a GUID but no
         // <link> (#179). The enclosure then stands in for the link, so identity falls back to
@@ -233,7 +285,9 @@ private struct ItemBuilder {
             summary: summary?.nilIfEmpty,
             publishedAt: published.flatMap { formatter.date(from: $0) ?? rssFormatter.date(from: $0) },
             audioURL: audioURL?.nilIfEmpty,
-            durationMs: duration.flatMap(FeedDuration.milliseconds(from:))
+            durationMs: duration.flatMap(FeedDuration.milliseconds(from:)),
+            content: content?.nilIfEmpty,
+            guid: guid?.nilIfEmpty
         )
     }
 }
@@ -253,6 +307,13 @@ enum FeedDuration {
         guard seconds.isFinite, seconds > 0, seconds < 1_000_000 else { return nil }
         return Int((seconds * 1_000).rounded())
     }
+}
+
+/// The link when it is an https URL with a host, else nil.
+private func httpsLink(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let url = URL(string: trimmed), url.scheme?.lowercased() == "https", !(url.host ?? "").isEmpty else { return nil }
+    return trimmed
 }
 
 private func sanitize(_ value: String) -> String {

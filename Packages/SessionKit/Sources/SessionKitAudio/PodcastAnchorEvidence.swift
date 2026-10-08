@@ -99,9 +99,15 @@ public enum PodcastAnchorEvidenceGenerator {
         defer { try? handle.close() }
         var hasher = SHA256()
         while true {
-            let data = try handle.read(upToCount: 1_048_576) ?? Data()
-            guard !data.isEmpty else { break }
-            hasher.update(data: data)
+            // FileHandle's reads are autoreleased. Release each buffer here so a synchronous digest (or
+            // several exact-edition resolutions without a suspension) never retains the whole episode.
+            let didRead = try autoreleasepool {
+                let data = try handle.read(upToCount: 1_048_576) ?? Data()
+                guard !data.isEmpty else { return false }
+                hasher.update(data: data)
+                return true
+            }
+            guard didRead else { break }
         }
         return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
@@ -152,7 +158,7 @@ public enum PodcastAnchorEvidenceGenerator {
                 duration: CMTime(value: CMTimeValue(window.endMs - window.startMs), timescale: 1_000)
             )
             try track.insertTimeRange(range, of: sourceTrack, at: .zero)
-            let signature = try await SHSignatureGenerator.signature(from: composition)
+            let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
             let data = signature.dataRepresentation
             guard !data.isEmpty else { throw PodcastAnchorEvidenceError.signatureGenerationFailed }
             let safePrefix = idPrefix.replacingOccurrences(
@@ -212,7 +218,7 @@ public enum PodcastAnchorEvidenceGenerator {
             of: sourceTrack,
             at: .zero
         )
-        let signature = try await SHSignatureGenerator.signature(from: composition)
+        let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
         let data = signature.dataRepresentation
         guard !data.isEmpty else { throw PodcastAnchorEvidenceError.signatureGenerationFailed }
         try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -237,6 +243,7 @@ public enum PodcastAnchorEvidenceGenerator {
 public enum PodcastAcousticAnchorResolver {
     public static let maximumFusionSpreadMs = 1_500
     public static let minimumPartialFlankConfidence = 0.9
+    public static let minimumRepeatConfidenceRatio = 0.5
 
     public static func resolve(
         queries: [PodcastPortableAnchorQuery],
@@ -245,7 +252,9 @@ public enum PodcastAcousticAnchorResolver {
         senderDurationMs: Int?,
         strongSourceIdentity: Bool
     ) async throws -> [String: ImportedAnchorResolution] {
+        try Task.checkCancellation()
         let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: recipientAudioURL)
+        try Task.checkCancellation()
         if let senderExactEditionSHA256, senderExactEditionSHA256 == recipientDigest {
             return Dictionary(uniqueKeysWithValues: queries.map { query in
                 guard let senderMediaTimeMs = query.senderMediaTimeMs else {
@@ -289,10 +298,16 @@ public enum PodcastAcousticAnchorResolver {
         }
 
         var resolutions: [String: ImportedAnchorResolution] = [:]
+        var flankAnswers: [EditionFlankAnswer] = []
+        var repeatProbe: RepeatedAudioProbe?
+        var repeatProbeTried = false
         for query in queries {
+            try Task.checkCancellation()
             var candidates: [(timeMs: Int, confidence: Double)] = []
             var matchedAnchorOffsets: [Int] = []
+            var matchedRepeatedAudio = false
             for evidence in query.evidence {
+                try Task.checkCancellation()
                 let signature: SHSignature
                 do {
                     signature = try SHSignature(dataRepresentation: evidence.signatureData)
@@ -303,18 +318,34 @@ public enum PodcastAcousticAnchorResolver {
                 switch await session.result(from: signature) {
                 case .match(let match):
                     guard let item = match.mediaItems.first else { continue }
-                    let chunkStartMs = (item[referenceChunkStartKey] as? NSNumber)?.intValue ?? 0
-                    let matchedStartMs = chunkStartMs + Int((item.matchOffset * 1_000).rounded())
-                    let confidence: Double
-                    if #available(iOS 18.4, macOS 15.4, *) {
-                        confidence = Double(item.confidence)
-                    } else {
-                        confidence = 0.9
+                    flankAnswers.append(EditionFlankAnswer(
+                        marginId: query.packageScopedId, anchorOffsetMs: evidence.anchorOffsetMs, matched: true
+                    ))
+                    let matchedStartMs = absoluteStartMs(of: item)
+                    let confidence = matchConfidence(of: item)
+                    // A flank whose audio also plays elsewhere in this edition (a theme, sting or bumper) can match
+                    // the wrong copy, and two flanks can agree on it (#331). Look for another copy before trusting it.
+                    if !matchedRepeatedAudio {
+                        if !repeatProbeTried {
+                            repeatProbeTried = true
+                            repeatProbe = await RepeatedAudioProbe(
+                                recipientAudioURL: recipientAudioURL,
+                                durationMs: recipientDurationMs
+                            )
+                        }
+                        let probed = await repeatProbe?.otherMatches(of: signature, matchedStartMs: matchedStartMs) ?? []
+                        matchedRepeatedAudio = (Array(match.mediaItems.dropFirst()) + probed).contains {
+                            isAnotherCopy($0, matchedStartMs: matchedStartMs, matchedConfidence: confidence)
+                        }
                     }
                     candidates.append((matchedStartMs + evidence.anchorOffsetMs, confidence))
                     matchedAnchorOffsets.append(evidence.anchorOffsetMs)
-                case .noMatch, .error:
-                    continue
+                case .noMatch:
+                    flankAnswers.append(EditionFlankAnswer(
+                        marginId: query.packageScopedId, anchorOffsetMs: evidence.anchorOffsetMs, matched: false
+                    ))
+                case .error:
+                    continue // Not an answer about this edition: pre-Build 29 evidence (12 s) always errors.
                 }
             }
             resolutions[query.packageScopedId] = resolveCandidates(
@@ -324,10 +355,16 @@ public enum PodcastAcousticAnchorResolver {
                 recipientDurationMs: recipientDurationMs,
                 strongSourceIdentity: strongSourceIdentity,
                 exactDigestContradiction: senderExactEditionSHA256 != nil,
-                matchedAnchorOffsets: matchedAnchorOffsets
+                matchedAnchorOffsets: matchedAnchorOffsets,
+                matchedRepeatedAudio: matchedRepeatedAudio
             )
         }
-        return corroboratePartialFlanks(queries: queries, resolutions: resolutions)
+        let flanks = editionFlankCounts(flankAnswers)
+        return requiringEditionConfirmation(
+            corroboratePartialFlanks(queries: queries, resolutions: resolutions),
+            matchedFlanks: flanks.matched,
+            answeredFlanks: flanks.answered
+        )
         #else
         return Dictionary(uniqueKeysWithValues: queries.map { query in
             (query.packageScopedId, timestampFallback(
@@ -356,7 +393,7 @@ public enum PodcastAcousticAnchorResolver {
               let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first else {
             // Unknown length: fall back to a single reference for the whole file.
             do {
-                let reference = try await SHSignatureGenerator.signature(from: asset)
+                let reference = try await PodcastAssetSignatureGenerator.signature(from: asset)
                 try catalog.addReferenceSignature(reference, representing: [SHMediaItem(properties: [
                     .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: 0)
                 ])])
@@ -365,9 +402,35 @@ public enum PodcastAcousticAnchorResolver {
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
             }
         }
+        for chunk in try await signedChunks(
+            of: sourceTrack,
+            durationMs: durationMs,
+            chunkMs: referenceChunkMs,
+            overlapMs: referenceChunkOverlapMs
+        ) {
+            do {
+                try catalog.addReferenceSignature(chunk.signature, representing: [SHMediaItem(properties: [
+                    .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: chunk.startMs)
+                ])])
+            } catch {
+                throw PodcastAnchorEvidenceError.referenceGenerationFailed
+            }
+        }
+        return catalog
+    }
+
+    /// Signs the edition in overlapping chunks, so that any span no longer than `overlapMs` lies wholly inside one.
+    static func signedChunks(
+        of sourceTrack: AVAssetTrack,
+        durationMs: Int,
+        chunkMs: Int,
+        overlapMs: Int
+    ) async throws -> [(startMs: Int, lengthMs: Int, signature: SHSignature)] {
+        var chunks: [(startMs: Int, lengthMs: Int, signature: SHSignature)] = []
         var startMs = 0
         while startMs < durationMs {
-            let lengthMs = min(referenceChunkMs, durationMs - startMs)
+            try Task.checkCancellation()
+            let lengthMs = min(chunkMs, durationMs - startMs)
             let composition = AVMutableComposition()
             guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
@@ -381,17 +444,94 @@ public enum PodcastAcousticAnchorResolver {
                     of: sourceTrack,
                     at: .zero
                 )
-                let reference = try await SHSignatureGenerator.signature(from: composition)
-                try catalog.addReferenceSignature(reference, representing: [SHMediaItem(properties: [
-                    .title: "Spoken Margins recipient edition", referenceChunkStartKey: NSNumber(value: startMs)
-                ])])
+                let signature = try await PodcastAssetSignatureGenerator.signature(from: composition)
+                chunks.append((startMs, lengthMs, signature))
             } catch {
+                try Task.checkCancellation()
                 throw PodcastAnchorEvidenceError.referenceGenerationFailed
             }
             if startMs + lengthMs >= durationMs { break }
-            startMs += referenceChunkMs - referenceChunkOverlapMs
+            startMs += chunkMs - overlapMs
         }
-        return catalog
+        return chunks
+    }
+
+    static func absoluteStartMs(of item: SHMatchedMediaItem) -> Int {
+        let chunkStartMs = (item[referenceChunkStartKey] as? NSNumber)?.intValue ?? 0
+        return chunkStartMs + Int((item.matchOffset * 1_000).rounded())
+    }
+
+    static func matchConfidence(of item: SHMatchedMediaItem) -> Double {
+        if #available(iOS 18.4, macOS 15.4, *) {
+            return Double(item.confidence)
+        }
+        return 0.9
+    }
+
+    /// A match elsewhere counts as another copy only when it is at least half as strong as the matched one. A
+    /// wrong copy can only win the first match when the real one is about as strong, so a much weaker match
+    /// elsewhere is incidental likeness, not a repeat.
+    static func isAnotherCopy(_ item: SHMatchedMediaItem, matchedStartMs: Int, matchedConfidence: Double) -> Bool {
+        abs(absoluteStartMs(of: item) - matchedStartMs) > maximumFusionSpreadMs
+            && matchConfidence(of: item) >= matchedConfidence * minimumRepeatConfidenceRatio
+    }
+
+    /// Finds whether a flank's audio plays a second time in the recipient edition (#331).
+    ///
+    /// ShazamKit reports one match per reference, so the main catalog can't show a second copy inside the same
+    /// 15-minute chunk. The probe signs the edition again in short chunks, then asks the flank once more against
+    /// only the chunks that don't touch the span it already matched. A strong enough match there is another
+    /// copy (`isAnotherCopy`).
+    ///
+    /// Built once per resolve, and only when some flank matched. A copy within about one probe chunk of the
+    /// matched span can be excluded with it and go unseen. When the probe can't be built, only the main
+    /// catalog's extra matches are checked, as before.
+    struct RepeatedAudioProbe {
+        static let chunkMs = 40_000
+        /// At least one flank (11 s) plus room for frame rounding, so every flank fits wholly inside one chunk.
+        static let chunkOverlapMs = 13_000
+
+        let chunks: [(startMs: Int, lengthMs: Int, signature: SHSignature)]
+
+        /// Nil when the edition can't be signed in chunks; the resolver then keeps its single-match behaviour.
+        init?(recipientAudioURL: URL, durationMs: Int?) async {
+            // Hold the asset while its track is read: a track whose asset has been released fails to sign
+            // (AVFoundation -11800 / -12780), and the probe would silently never run.
+            let asset = AVURLAsset(url: recipientAudioURL)
+            guard let durationMs, durationMs > 0,
+                  let sourceTrack = try? await asset.loadTracks(withMediaType: .audio).first,
+                  let chunks = try? await PodcastAcousticAnchorResolver.signedChunks(
+                      of: sourceTrack,
+                      durationMs: durationMs,
+                      chunkMs: Self.chunkMs,
+                      overlapMs: Self.chunkOverlapMs
+                  ) else { return nil }
+            self.chunks = chunks
+            withExtendedLifetime(asset) {}
+        }
+
+        /// The flank's matches outside the span it already matched (with a margin of the fusion spread).
+        func otherMatches(of signature: SHSignature, matchedStartMs: Int) async -> [SHMatchedMediaItem] {
+            let spread = PodcastAcousticAnchorResolver.maximumFusionSpreadMs
+            let excludedStartMs = matchedStartMs - spread
+            let excludedEndMs = matchedStartMs + Int((signature.duration * 1_000).rounded()) + spread
+            let catalog = SHCustomCatalog()
+            var added = 0
+            for chunk in chunks where chunk.startMs >= excludedEndMs || chunk.startMs + chunk.lengthMs <= excludedStartMs {
+                do {
+                    try catalog.addReferenceSignature(chunk.signature, representing: [SHMediaItem(properties: [
+                        .title: "Spoken Margins repeat probe",
+                        PodcastAcousticAnchorResolver.referenceChunkStartKey: NSNumber(value: chunk.startMs)
+                    ])])
+                    added += 1
+                } catch {
+                    continue
+                }
+            }
+            guard added > 0,
+                  case .match(let match) = await SHSession(catalog: catalog).result(from: signature) else { return [] }
+            return match.mediaItems
+        }
     }
     #endif
 
@@ -402,7 +542,8 @@ public enum PodcastAcousticAnchorResolver {
         recipientDurationMs: Int?,
         strongSourceIdentity: Bool,
         exactDigestContradiction: Bool,
-        matchedAnchorOffsets: [Int] = []
+        matchedAnchorOffsets: [Int] = [],
+        matchedRepeatedAudio: Bool = false
     ) -> ImportedAnchorResolution {
         guard !candidates.isEmpty else {
             if !query.evidenceWasDeclared {
@@ -417,6 +558,15 @@ public enum PodcastAcousticAnchorResolver {
             return ImportedAnchorResolution(
                 evidenceClass: .unresolved,
                 algorithmVersion: "podcast-anchor.v1"
+            )
+        }
+        // A flank that also matches another copy of its audio may have matched the wrong one, and the other
+        // flank can't overrule it: both may sit in the repeat. Ask the listener to confirm instead (#331).
+        guard !matchedRepeatedAudio else {
+            return ImportedAnchorResolution(
+                evidenceClass: .ambiguous,
+                isAmbiguous: true,
+                algorithmVersion: "podcast-anchor-repeated-audio.v1"
             )
         }
         // Redundant signature variants need not all match, but both temporal
@@ -463,6 +613,68 @@ public enum PodcastAcousticAnchorResolver {
             confidence: confidence,
             algorithmVersion: "podcast-anchor.v1"
         )
+    }
+
+    /// A different episode of the same show can share the sender's intro or outro. A Margin there matches
+    /// perfectly, on both flanks, although nothing else in the packet does (#456). So a placement counts only
+    /// when more than half of the packet's evidence found this edition. Below that, the edition is unconfirmed
+    /// and nothing is placed. Only flanks ShazamKit answered count (a match or no match): an unreadable
+    /// signature or a query error says nothing about the edition. The rule needs at least one match, the
+    /// shared audio it guards against; with none, other evidence (the transcript) decides as before. A packet
+    /// with fewer answered flanks than `minimumFlanksForEditionCheck` (two Margins) is left as it is.
+    static let minimumFlanksForEditionCheck = 4
+    public static let editionUnconfirmedAlgorithmVersion = "podcast-anchor-edition-unconfirmed.v1"
+    static let editionRejection = ImportedAnchorResolution(
+        evidenceClass: .unresolved,
+        algorithmVersion: editionUnconfirmedAlgorithmVersion
+    )
+
+    /// The packet-level verdict that the recipient has a different edition. Fusion and the app's
+    /// re-resolution keep it (`PodcastAnchorFusionResolver.enforcingEditionRejection`).
+    public static func isEditionRejection(_ resolution: ImportedAnchorResolution) -> Bool {
+        resolution.evidenceClass == .unresolved && resolution.algorithmVersion == editionUnconfirmedAlgorithmVersion
+    }
+
+    /// ShazamKit's answer for one signature variant of one Margin's flank.
+    struct EditionFlankAnswer: Equatable, Sendable {
+        let marginId: String
+        let anchorOffsetMs: Int
+        let matched: Bool
+    }
+
+    /// Counts the packet's answered and matched flanks for the edition check. A Margin has a flank before its
+    /// anchor (positive offset) and one after (negative), and each flank can carry more than one signature
+    /// variant: one captured during playback and one cut from the source window. The variants are one piece of
+    /// evidence, so a flank counts once: answered when any variant was answered, matched when any variant
+    /// matched. Counting variants separately let one Margin whose playback pair matched and whose source pair
+    /// didn't withdraw its own placement (Codex audit on d00dd82).
+    static func editionFlankCounts(_ answers: [EditionFlankAnswer]) -> (answered: Int, matched: Int) {
+        struct Flank: Hashable {
+            let marginId: String
+            let side: Int
+        }
+        var answered = Set<Flank>()
+        var matched = Set<Flank>()
+        for answer in answers {
+            let flank = Flank(marginId: answer.marginId, side: answer.anchorOffsetMs.signum())
+            answered.insert(flank)
+            if answer.matched { matched.insert(flank) }
+        }
+        return (answered.count, matched.count)
+    }
+
+    static func requiringEditionConfirmation(
+        _ resolutions: [String: ImportedAnchorResolution],
+        matchedFlanks: Int,
+        answeredFlanks: Int
+    ) -> [String: ImportedAnchorResolution] {
+        guard answeredFlanks >= minimumFlanksForEditionCheck, matchedFlanks >= 1,
+              matchedFlanks * 2 <= answeredFlanks else {
+            return resolutions
+        }
+        // Every Margin carries the verdict, placed, ambiguous or not, so neither other evidence (a transcript of
+        // the shared intro) nor an earlier placement on this edition puts one back.
+        return resolutions.mapValues { _ in editionRejection }
     }
 
     /// A high-confidence single flank remains useful direct evidence, but it
@@ -827,6 +1039,69 @@ public enum PodcastAnchorFusionResolver {
             evidenceClass: .unresolved,
             algorithmVersion: "podcast-anchor-fusion.v1"
         )
+    }
+
+    /// When the acoustic pass found the packet on a different edition (#456), nothing places a Margin on it:
+    /// not a transcript match of the shared intro, and not interpolation. Apply to the final resolutions.
+    public static func enforcingEditionRejection(
+        acoustic: [String: ImportedAnchorResolution],
+        resolutions: [String: ImportedAnchorResolution]
+    ) -> [String: ImportedAnchorResolution] {
+        guard acoustic.values.contains(where: PodcastAcousticAnchorResolver.isEditionRejection) else {
+            return resolutions
+        }
+        return resolutions.mapValues { _ in PodcastAcousticAnchorResolver.editionRejection }
+    }
+
+    /// The resolution a re-resolution stores: a verified placement on the same recipient edition survives a
+    /// weaker result, so a pass without a transcript doesn't undo one with it. An edition rejection (#456)
+    /// isn't weaker: it withdraws the machine placements it finds. A listener's own confirmation stays.
+    /// A stored rejection survives a later pass on the same edition too, unless that pass confirms the edition
+    /// itself (`confirmsEdition`). The packet and the file are the same, so a pass that disagrees has lost
+    /// evidence: its acoustic step failed, leaving the shared intro's transcript (Codex audit on 75b32ad), or
+    /// only the intro's flanks were answered, too few for the edition check (Codex audit on 2e6228e).
+    public static func preservingVerifiedPlacement(
+        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
+        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
+    ) -> ImportedAnchorResolution {
+        let sameEdition = currentEdition != nil && currentEdition == previousEdition
+        if PodcastAcousticAnchorResolver.isEditionRejection(proposed) {
+            return sameEdition && previous.evidenceClass == .recipientConfirmed ? previous : proposed
+        }
+        if sameEdition, PodcastAcousticAnchorResolver.isEditionRejection(previous), !confirmsEdition(proposed) {
+            return previous
+        }
+        let verified = isInlinePlacement(previous)
+            && previous.evidenceClass != .timestampFallback && previous.evidenceClass != .mapInterpolated
+        let weaker = proposed.evidenceClass == .unresolved || proposed.evidenceClass == .absentFromRecipientEdition
+            || (!hasTranscript && proposed.evidenceClass == .ambiguous
+                && (previous.evidenceClass == .transcriptVerified || previous.evidenceClass == .fused))
+        return sameEdition && verified && weaker ? previous : proposed
+    }
+
+    /// Whether a resolution is evidence about the edition itself, enough to lift an edition rejection: the
+    /// sender's exact file or the listener's own confirmation. A single Margin's transcript or acoustic match
+    /// isn't: the shared intro matches on either episode, in words and in audio.
+    static func confirmsEdition(_ resolution: ImportedAnchorResolution) -> Bool {
+        switch resolution.evidenceClass {
+        case .exactEdition, .recipientConfirmed:
+            return resolution.localMediaTimeMs != nil
+        case .transcriptVerified, .acousticVerified, .fused, .articleTextVerified, .mapInterpolated,
+             .timestampFallback, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
+    }
+
+    /// Whether a podcast Margin plays inline at a recipient position.
+    public static func isInlinePlacement(_ resolution: ImportedAnchorResolution) -> Bool {
+        guard resolution.localMediaTimeMs != nil else { return false }
+        switch resolution.evidenceClass {
+        case .exactEdition, .transcriptVerified, .acousticVerified, .fused,
+             .mapInterpolated, .timestampFallback, .recipientConfirmed:
+            return true
+        case .articleTextVerified, .ambiguous, .absentFromRecipientEdition, .unresolved:
+            return false
+        }
     }
 
     public static func enforcingMonotonicOrder(

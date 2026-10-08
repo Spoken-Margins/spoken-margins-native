@@ -1,10 +1,10 @@
 {
   "schemaVersion": "source-catalog-manifest.v1",
   "catalogId": "onboarding-top-podcasts",
-  "contentVersion": 1,
-  "generatedAt": "2026-09-28T12:19:05Z",
+  "contentVersion": 2,
+  "generatedAt": "2026-10-01T13:00:00Z",
   "catalogURL": "https://spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/catalog.json",
-  "catalogByteCount": 144177,
-  "catalogChecksumSHA256": "b7e02831082e31be4931c09a780cc4e11a0963bddd211eab84fe66aec26b7225",
-  "entryCount": 192
+  "catalogByteCount": 150544,
+  "catalogChecksumSHA256": "cfb47f6ff10b70fdfce33d13f7e0d1248742e87ff9a5c8a369bc9f9719f11a0f",
+  "entryCount": 200
 }

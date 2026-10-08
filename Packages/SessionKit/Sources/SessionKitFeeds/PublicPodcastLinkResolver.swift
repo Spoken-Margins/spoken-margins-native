@@ -34,13 +34,25 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         var chapterLinks: [SourceChapterLink]
     }
 
-    private let fetch: Fetch
+    private var fetch: Fetch
     private let asynchronousFetch: (@Sendable (URL) async throws -> Data)?
+    private var pages: FetchedPageMemo?
 
     public init(fetch: @escaping Fetch = PublicPodcastLinkResolver.fetchSynchronously,
          asynchronousFetch: (@Sendable (URL) async throws -> Data)? = nil) {
         self.fetch = fetch
         self.asynchronousFetch = asynchronousFetch
+    }
+
+    /// This resolver, keeping every response in `pages` and fetching each address once (#810). Resolution can
+    /// read a page up to three times (feed, episode page, title), and a shared post's voiceover lookup reads
+    /// it again afterwards; with a memo they all share one request.
+    public func remembering(_ pages: FetchedPageMemo) -> PublicPodcastLinkResolver {
+        var resolver = self
+        let fetch = self.fetch
+        resolver.fetch = { url in try pages.page(for: url)?.data ?? pages.remember(try fetch(url), for: url) }
+        resolver.pages = pages
+        return resolver
     }
 
     public func canonicalFeedURL(for url: URL) throws -> URL? {
@@ -395,6 +407,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: showTitle,
             durationMs: durationMs,
             publishedAt: publishedAt,
+            episodeGUID: episode["episodeGuid"] as? String,
             audioURL: audioURL,
             confidence: score
         )
@@ -665,6 +678,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -720,6 +735,8 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
                 title: title ?? "Apple Podcasts Episode",
                 showTitle: episode["collectionName"] as? String,
                 durationMs: (episode["trackTimeMillis"] as? NSNumber)?.intValue,
+                publishedAt: episode["releaseDate"] as? String,
+                episodeGUID: episode["episodeGuid"] as? String,
                 audioURL: episodeURL,
                 publisherChapterCollections: appleDescriptionChapters(episode),
                 confidence: 0.95
@@ -821,6 +838,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -860,6 +878,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: selected.feedTitle,
             durationMs: selected.durationMs,
             publishedAt: selected.publishedAt,
+            episodeGUID: selected.guid,
             audioURL: audioURL,
             transcriptLinks: selected.transcriptLinks,
             chapterLinks: selected.chapterLinks,
@@ -998,6 +1017,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
             showTitle: item.feedTitle,
             durationMs: item.durationMs,
             publishedAt: item.publishedAt,
+            episodeGUID: item.guid,
             audioURL: item.enclosureURL,
             transcriptLinks: item.transcriptLinks,
             chapterLinks: item.chapterLinks,
@@ -1160,6 +1180,9 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
 
     private func metadataOnlyResult(request: LinkResolutionRequest, url: URL, provider: String?, reason: String) throws -> LinkResolutionResult {
         let data = try? fetch(url)
+        if let data, Self.isPDFDocument(data) {
+            return needsReview(request: request, provider: provider, title: title(from: url), reason: LinkResolutionResult.pdfDocumentFailureReason)
+        }
         let pageTitle = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(htmlTitle)
         return needsReview(request: request, provider: provider, title: pageTitle ?? title(from: url), reason: reason)
     }
@@ -1172,8 +1195,18 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         requestTimeoutSeconds: TimeInterval
     ) async throws -> LinkResolutionResult {
         let data = try? await fetchAsync(url, timeout: requestTimeoutSeconds)
+        if let data, Self.isPDFDocument(data) {
+            return needsReview(request: request, provider: provider, title: title(from: url), reason: LinkResolutionResult.pdfDocumentFailureReason)
+        }
         let pageTitle = data.flatMap { String(data: $0, encoding: .utf8) }.flatMap(htmlTitle)
         return needsReview(request: request, provider: provider, title: pageTitle ?? title(from: url), reason: reason)
+    }
+
+    /// The body is a PDF: it starts with the `%PDF-` header, after any leading whitespace (#758). A link with no
+    /// `.pdf` ending, such as arXiv's `/pdf/<id>`, is only recognisable this way.
+    static func isPDFDocument(_ data: Data) -> Bool {
+        let body = data.prefix(1_024).drop { [0x20, 0x09, 0x0A, 0x0D, 0x0C].contains($0) }
+        return body.starts(with: Data("%PDF-".utf8))
     }
 
     private func playable(request: LinkResolutionRequest, provider: String, candidate: LinkResolutionCandidate) -> LinkResolutionResult {
@@ -1410,7 +1443,11 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
     }
 
     private func fetchAsync(_ url: URL, timeout: TimeInterval) async throws -> Data {
-        if let asynchronousFetch { return try await asynchronousFetch(url) }
+        if let page = pages?.page(for: url) { return page.data }
+        if let asynchronousFetch {
+            let data = try await asynchronousFetch(url)
+            return pages?.remember(data, for: url) ?? data
+        }
         var request = URLRequest(url: url)
         request.timeoutInterval = timeout
         request.setValue("SpokenMargins/0.1", forHTTPHeaderField: "User-Agent")
@@ -1419,7 +1456,7 @@ public struct PublicPodcastLinkResolver: LinkResolutionClient, Sendable {
         guard (200..<300).contains(status) else {
             throw URLError(.badServerResponse)
         }
-        return data
+        return pages?.remember(data, for: url, finalURL: response.url) ?? data
     }
 }
 
@@ -1469,6 +1506,13 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
     private var isInItem = false
     private var isInPodloveChapters = false
 
+    /// Substack lists each text post's cover image as an `image/jpeg` enclosure, so a shared text post looked like an
+    /// episode whose audio was a picture (#223). An enclosure without a type stays: some podcast feeds omit it.
+    static func mayBePlayable(enclosureType: String?) -> Bool {
+        let type = (enclosureType ?? "").lowercased()
+        return !type.hasPrefix("image/") && !type.hasPrefix("text/")
+    }
+
     func parse(data: Data) -> [RSSFeedItem] {
         let parser = XMLParser(data: data)
         parser.shouldProcessNamespaces = true
@@ -1485,7 +1529,7 @@ private final class RSSFeedParser: NSObject, XMLParserDelegate {
         if element == "item" || element == "entry" {
             isInItem = true
             currentItem = RSSFeedItem(feedTitle: feedTitle)
-        } else if isInItem, element == "enclosure" {
+        } else if isInItem, element == "enclosure", Self.mayBePlayable(enclosureType: attributeDict["type"]) {
             currentItem?.enclosureURL = attributeDict["url"]
         } else if isInItem, element == "link", let href = attributeDict["href"], currentItem?.link == nil {
             currentItem?.link = href

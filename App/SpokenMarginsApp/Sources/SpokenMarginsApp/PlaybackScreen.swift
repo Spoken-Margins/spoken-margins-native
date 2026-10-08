@@ -79,8 +79,6 @@ struct PlaybackScreen: View {
                                     openTimeline()
                                 }
                             }
-                            SourceFollowSuggestionCard(appearance: .playback)
-                            ManualSourceFollowButton(appearance: .playback)
                         }
                         .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
                         .padding(.vertical, 18)
@@ -238,35 +236,16 @@ struct PlaybackScreen: View {
                 .buttonStyle(InterjectButtonStyle())
                 .accessibilityIdentifier("playback.skim.return.button")
             } else if model.snapshot.phase == .finished {
-                Button("Add a Margin", systemImage: "square.and.pencil", action: model.beginWrittenMargin)
-                    .frame(maxWidth: .infinity)
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityIdentifier("playback.write.button")
+                // #142: the same spoken + written row as during playback, so the flow is
+                // finish, add a recap Margin, then Share.
+                marginRow
                 Button("Share", systemImage: "square.and.arrow.up", action: model.openExport)
-                    .frame(maxWidth: .infinity)
-                    .buttonStyle(InterjectButtonStyle())
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .frame(minHeight: 44)
                     .accessibilityIdentifier("playback.finished.share.button")
             } else {
-                HStack(spacing: 8) {
-                    Button(action: model.beginInterjection) {
-                        Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityLabel("Record a Margin")
-                    .accessibilityIdentifier("playback.interject.button")
-                    Button(action: model.beginWrittenMargin) {
-                        Image(systemName: "square.and.pencil")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
-                            .frame(width: 52, height: 52)
-                    }
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityLabel("Write a Margin")
-                    .accessibilityIdentifier("playback.write.button")
-                }
-                .disabled(!model.hasActiveSession)
+                marginRow
             }
             HStack(spacing: 18) {
                 Button(action: openTimeline) {
@@ -303,6 +282,30 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
+    }
+
+    /// Add a Margin (spoken) with the pencil (written) beside it.
+    private var marginRow: some View {
+        HStack(spacing: 8) {
+            Button(action: model.beginInterjection) {
+                Label(dynamicTypeSize.isAccessibilitySize ? "Record" : "Add a Margin", systemImage: "mic.fill")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(InterjectButtonStyle())
+            .accessibilityLabel("Record a Margin")
+            .accessibilityIdentifier("playback.interject.button")
+            Button(action: model.beginWrittenMargin) {
+                Image(systemName: "square.and.pencil")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: dynamicTypeSize.isAccessibilitySize ? 32 : 24, height: dynamicTypeSize.isAccessibilitySize ? 32 : 24)
+                    .frame(width: 52, height: 52)
+            }
+            .buttonStyle(InterjectButtonStyle())
+            .accessibilityLabel("Write a Margin")
+            .accessibilityIdentifier("playback.write.button")
+        }
+        .disabled(!model.hasActiveSession)
     }
 
     private var listeningOptionsButton: some View {
@@ -560,6 +563,15 @@ struct PlaybackScreen: View {
     private var marginMomentControl: some View {
         if let moment = model.marginMoment {
             VStack(alignment: .leading, spacing: 10) {
+                // A shared Margin still being placed says so for the whole moment (#872); it plays from its
+                // approximate time meanwhile.
+                if let placing = model.sharedMarginRows.first(where: { $0.id == moment.target.marginId })?
+                    .placementStatus.positionDescription {
+                    Text(placing)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .accessibilityIdentifier("marginMoment.placing")
+                }
                 if moment.isPlayingMargin {
                     Label(model.marginMomentVoiceIsPaused ? "\(model.marginMomentTitle) is paused" : "Playing \(model.marginMomentTitle)",
                           systemImage: "waveform")
@@ -609,10 +621,7 @@ struct PlaybackScreen: View {
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: model.openCurrentPlaybackItem) {
-                Text(model.playbackItemHeaderTitle)
-                    .font(.system(.largeTitle, design: .serif).weight(.medium))
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
+                PlaybackHeaderTitle(title: model.playbackItemHeaderTitle)
                     .foregroundStyle(.white)
             }
             .buttonStyle(.plain)
@@ -800,6 +809,14 @@ struct PlaybackScreen: View {
                 .disabled(!model.hasActiveSession)
                 .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
                 .accessibilityIdentifier("playback.forward.button")
+            }
+
+            if model.snapshot.status == .starting {
+                // #357: say what the silence is, instead of a bare spinner.
+                Text(PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.starting.label")
             }
 
             if model.isMediaPlaybackSnapshot,
@@ -1500,7 +1517,7 @@ struct PlaybackScreen: View {
                                     }
                                     .buttonStyle(IconButtonStyle())
                                     .disabled(model.selectedItem.interjections.filter { $0.targetId == turn.id && $0.targetType != .item }.isEmpty)
-                                    .accessibilityLabel("Copy interjections for \(turnTitle(turn))")
+                                    .accessibilityLabel("Copy Margins for \(turnTitle(turn))")
                                     .accessibilityIdentifier("conversation.copyTurnInterjections.\(turn.id)")
                                     Button {
                                         model.playTurn(turn)
@@ -1581,7 +1598,7 @@ private struct GuidedOnboardingPlaybackCard: View {
     private var stageContent: some View {
         switch model.guidedOnboardingStage {
         case .practiceInterjection:
-            Text("Practice making an Margin")
+            Text("Practice making a Margin")
                 .font(.title3.bold())
             Text("Let the welcome source play until an idea occurs to you, then record a short note. Spoken Margins will anchor it to this listening session.")
                 .foregroundStyle(AppColors.secondaryText)
@@ -1590,7 +1607,7 @@ private struct GuidedOnboardingPlaybackCard: View {
                     .buttonStyle(PrimaryButtonStyle())
                     .accessibilityIdentifier("onboarding.interjection.done.button")
             } else {
-                Button("Make an Interjection", action: model.beginInterjection)
+                Button("Add a Margin", action: model.beginInterjection)
                     .buttonStyle(PrimaryButtonStyle())
                     .disabled(!model.hasActiveSession)
                     .accessibilityIdentifier("onboarding.interjection.start.button")
@@ -1607,7 +1624,7 @@ private struct GuidedOnboardingPlaybackCard: View {
             Text("AI is optional")
                 .font(.title3.bold())
             Text(model.remoteProviderExperienceEnabled
-                ? "Summarize Notes synthesizes this session’s interjections. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
+                ? "Summarize Notes sums up this session’s Margins. Discuss answers a question using relevant source and session context. Both require your OpenAI API key, network access, and permission to send content."
                 : "Summarize Notes uses Apple’s on-device model when it is available. Nothing is sent to a third-party AI service. You can also copy notes to another chatbot and paste its response back here.")
                 .foregroundStyle(AppColors.secondaryText)
             if model.remoteProviderExperienceEnabled {
@@ -1947,19 +1964,7 @@ private struct Pill: View {
 }
 
 private func turnTitle(_ turn: ConversationTurn) -> String {
-    switch turn.turnType {
-    case "interjection_summary":
-        return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
-    case "assistant_response":
-        if let number = turnSequenceNumber(turn.id) {
-            return "AI Response \(number)"
-        }
-        return "AI Response"
-    case "user_response":
-        return "Follow-up"
-    default:
-        return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-    }
+    ConversationTurnTitle.numbered(turn)
 }
 
 private func turnBadge(_ turn: ConversationTurn) -> String {
@@ -1983,14 +1988,6 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
         return transcript
     }
     return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
-}
-
-private func turnSequenceNumber(_ id: String) -> Int? {
-    guard let raw = id.split(separator: "-").last,
-          let value = Int(raw) else {
-        return nil
-    }
-    return value
 }
 
 private struct LightButtonStyle: ButtonStyle {

@@ -288,6 +288,13 @@ final class Gate1FlowUITests: XCTestCase {
         let listen = app.buttons["item.start.button"]
         XCTAssertTrue(listen.waitForExistence(timeout: 4))
         XCTAssertTrue(listen.isHittable, "Start or Continue Listening should be available before scrolling.")
+        // #149: pinned in the lower third, within thumb reach, and still there after scrolling.
+        XCTAssertGreaterThan(listen.frame.midY, app.windows.firstMatch.frame.height * 2 / 3)
+        captureScreen(named: "item-listen-pinned-top")
+        app.scrollViews.firstMatch.swipeUp()
+        XCTAssertTrue(listen.isHittable, "The listening button should stay pinned while the page scrolls.")
+        XCTAssertGreaterThan(listen.frame.midY, app.windows.firstMatch.frame.height * 2 / 3)
+        captureScreen(named: "item-listen-pinned-scrolled")
         XCTAssertLessThanOrEqual(app.buttons.matching(identifier: "item.generateMap.button").count, 1)
         XCTAssertEqual(app.buttons.matching(identifier: "chapters.generateMap.button").count, 0)
     }
@@ -637,17 +644,18 @@ final class Gate1FlowUITests: XCTestCase {
         )
     }
 
-    func testDiagnosticsCopyShowsLocalConfirmation() throws {
+    func testShareDiagnosticsOpensTheShareSheet() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         openLibrarySettings()
-        let copy = scrollToElement("settings.copyDiagnostics.button")
+        let share = scrollToElement("settings.shareDiagnostics.button")
 
-        copy.tap()
+        share.tap()
 
-        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
-        // The global success banner expires after three seconds while XCTest
-        // waits for idle. Its event and exported payload are verified by
-        // testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback.
+        // The exported file's payload is verified by testDiagnosticsExportFileCarriesSafePayload.
+        let shareSheet = element("ActivityListView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "Share Diagnostics did not open the system share sheet.")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
     func testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries() throws {
@@ -662,8 +670,14 @@ final class Gate1FlowUITests: XCTestCase {
 
         tapRoot("Following")
         XCTAssertTrue(element("sources.screen").waitForExistence(timeout: 4))
+        // Following opens on its entries; the feed field lives on Manage Feeds (#141).
+        XCTAssertFalse(element("sources.follow.url").exists)
+        element("sources.manageFeeds").tap()
         XCTAssertTrue(element("sources.follow.url").waitForExistence(timeout: 4))
         XCTAssertTrue(element("sources.follow.button").exists)
+        XCTAssertTrue(element("sources.browseCatalog").exists)
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(element("sources.manageFeeds").waitForExistence(timeout: 4))
         app.buttons["Settings"].tap()
         XCTAssertTrue(element("settings.screen").waitForExistence(timeout: 5))
         captureScreen(named: "following-settings-opened")
@@ -709,6 +723,8 @@ final class Gate1FlowUITests: XCTestCase {
 
         let finish = element("recording.finish.button")
         XCTAssertLessThan(finish.frame.maxY, app.frame.midY, "Finish must stay away from the bottom capture control")
+        // Save ignores taps for 0.5 s after the recording screen appears (#148), so wait past that window.
+        _ = XCTWaiter.wait(for: [XCTestExpectation(description: "recording save guard window")], timeout: 0.6)
         finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         XCTAssertFalse(element("recording.screen").exists, "A second finish tap started another Margin")

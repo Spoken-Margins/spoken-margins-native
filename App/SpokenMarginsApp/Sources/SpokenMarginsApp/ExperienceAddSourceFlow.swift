@@ -59,6 +59,8 @@ struct ExperienceAddSourceFlow: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if showsPinnedTextAction {
                     pastedTextActions
+                } else if showsPasteAndGo {
+                    PasteAndGoBar { dismiss() }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -140,6 +142,11 @@ struct ExperienceAddSourceFlow: View {
 
     private var showsPinnedTextAction: Bool {
         !showsRoutePicker && selectedRoute == .pastedText && model.sourceLinkCandidateReview == nil
+    }
+
+    /// Paste & go sits in the bottom inset of the route picker, in thumb reach at the medium detent (#145).
+    private var showsPasteAndGo: Bool {
+        showsRoutePicker && model.sourceLinkCandidateReview == nil
     }
 
     private var routePicker: some View {
@@ -269,17 +276,11 @@ struct ExperienceAddSourceFlow: View {
                             Label("Add to Library", systemImage: "plus")
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.evergreen)
+                    .filledActionButton()
                     .disabled(model.sourceLinkURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isResolvingSourceLink)
                     .accessibilityIdentifier("sourceLink.import.button")
                 }
-                if let message = model.sourceLinkImportMessage {
-                    Text(message)
-                        .font(.subheadline)
-                        .foregroundStyle(model.sourceLinkImportState == "failure" ? AppColors.coral : AppColors.secondaryText)
-                        .accessibilityIdentifier("sourceLink.import.status")
-                }
+                SourceLinkImportStatusView()
                 Text("Adding a source never replaces the item already in Now Playing.")
                     .font(.caption)
                     .foregroundStyle(AppColors.secondaryText)
@@ -325,10 +326,8 @@ struct ExperienceAddSourceFlow: View {
                 .accessibilityLabel("Source text")
                 .accessibilityIdentifier("create.text.editor")
             if let textImportError {
-                Label(textImportError, systemImage: "exclamationmark.triangle")
+                FailureMessageLabel(textImportError)
                     .font(.subheadline)
-                    .foregroundStyle(AppColors.dangerText)
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .tint(AppColors.evergreen)
@@ -340,8 +339,7 @@ struct ExperienceAddSourceFlow: View {
                 Button("Choose Document or Book", systemImage: "doc.badge.plus") {
                     presentFileImporter(.documentOrBook)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("document.import.button")
                 Text("Documents and books stay local and retain authored structure when the format provides it.")
@@ -357,8 +355,7 @@ struct ExperienceAddSourceFlow: View {
                 Button("Choose Audiobook", systemImage: "headphones") {
                     presentFileImporter(.audiobook)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .frame(minHeight: 44)
                 .accessibilityIdentifier("audiobook.import.button")
                 Text("Audiobooks are copied into app-owned storage and protected from automatic eviction.")
@@ -377,8 +374,7 @@ struct ExperienceAddSourceFlow: View {
                 Button("Choose Folder", systemImage: "folder.badge.plus") {
                     presentFileImporter(.quickFolder)
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+                .filledActionButton()
                 .accessibilityIdentifier("quickFolder.choose.button")
                 if !model.quickAccessRecentFiles.isEmpty {
                     Divider()

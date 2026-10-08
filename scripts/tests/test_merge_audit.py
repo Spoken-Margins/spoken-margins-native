@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -70,7 +71,7 @@ class PushTests(unittest.TestCase):
 
 
 class SweepTests(unittest.TestCase):
-    """The hourly sweep: the runner's token-made merges start no push run (decision 3)."""
+    """The sweep after each runner merge: the runner's token-made merges start no push run (decision 3)."""
 
     def test_it_takes_prs_into_next_merged_within_the_window(self):
         import datetime
@@ -82,6 +83,119 @@ class SweepTests(unittest.TestCase):
             {'number': 4, 'merged_at': None, 'base': {'ref': 'next'}},
         ]
         self.assertEqual([p['number'] for p in audit.recently_merged(recent, 2, now)], [1])
+
+
+# Shaped like the real comments on #633 (hand merge after a lane PASS and a clean audit of f41b1de) and
+# #656 (hand merge of 4fba40e, whose audits covered only earlier heads).
+BOT = {'login': 'github-actions[bot]'}
+OWNER = {'login': 'uncomposed'}
+HAND_HEAD = 'f41b1defebde743a2f3626cc2d8c020e909b8d1d'
+HAND_MERGED_AT = '2026-10-01T17:08:20Z'
+
+
+def lane_report(verdict, tier='auto', commit=HAND_HEAD, created_at='2026-10-01T16:40:54Z', user=BOT):
+    marker = json.dumps({'commit': commit, 'next': 'b7e312b5745378928fd252a375722ce70ec6d5f9', 'tests': [],
+                         'tier': tier}, sort_keys=True)
+    body = (f'Lane report pr633-r36887921056 — {verdict}\n'
+            f'commit {commit[:7]} (tested merged with next at b7e312b) · tier {tier} · host only · 7m35s\n'
+            f'ran: host tests (--plan fast): passed\n<!-- lane-request: {marker} -->\n')
+    return {'body': body, 'created_at': created_at, 'user': user}
+
+
+def codex_audit(verdict='No blocking findings.', sha=HAND_HEAD[:7], created_at='2026-10-01T16:48:21Z'):
+    body = (f'**Codex audit (Astra) on `{sha}`**\n\n{verdict}\n\n---\nPosted by the mechanical audit script; '
+            'Codex ran read-only; findings are Codex\'s own, not re-checked by Claude.')
+    return {'body': body, 'created_at': created_at, 'user': OWNER}
+
+
+REQUEST = {'body': 'Audit requested: lane change (owner rule 2026-10-01).', 'created_at': '2026-10-01T15:54:25Z',
+           'user': OWNER}
+
+
+class HandMergeTests(unittest.TestCase):
+    """#742: a hand merge passes when the head had a lane PASS and a clean Codex audit before the merge."""
+
+    def gap(self, comments, head=HAND_HEAD, merged_at=HAND_MERGED_AT):
+        return audit.hand_merge_gap(comments, head, merged_at)
+
+    def test_a_lane_pass_and_a_clean_audit_of_the_head_pass(self):  # #633, #637
+        self.assertIsNone(self.gap([REQUEST, lane_report('PASS'), codex_audit()]))
+        self.assertIsNone(self.gap([REQUEST, codex_audit(verdict='No findings.'), lane_report('PASS')]))
+
+    def test_audits_of_earlier_heads_dont_clear_the_merged_head(self):  # #656
+        comments = [codex_audit(verdict='- **[P1] Older PR heads crash on the new import**', sha='fce8210'),
+                    codex_audit(sha='ef52c6c')]
+        self.assertEqual(self.gap(comments), 'no lane report on `f41b1de`; no Codex audit of `f41b1de`')
+
+    def test_a_missing_or_failing_lane_report_fails(self):
+        self.assertEqual(self.gap([codex_audit()]), 'no lane report on `f41b1de`')
+        self.assertEqual(self.gap([lane_report('PASS'), lane_report('FAIL', created_at='2026-10-01T16:45:00Z'),
+                                   codex_audit()]), 'the newest lane report on `f41b1de` is FAIL')
+        self.assertEqual(self.gap([lane_report('INCONCLUSIVE'), codex_audit()]),
+                         'the newest lane report on `f41b1de` is INCONCLUSIVE')
+
+    def test_a_failed_t3_on_the_head_holds_even_after_an_automerge_pass(self):
+        comments = [lane_report('FAIL', tier='T3'), lane_report('PASS', created_at='2026-10-01T16:45:00Z'),
+                    codex_audit()]
+        self.assertEqual(self.gap(comments), 'the newest T3 lane report on `f41b1de` is FAIL')
+        comments.insert(1, lane_report('PASS', tier='T3', created_at='2026-10-01T16:42:00Z'))
+        self.assertIsNone(self.gap(comments))
+
+    def test_reports_on_another_head_or_not_from_the_runner_dont_count(self):
+        self.assertEqual(self.gap([lane_report('PASS', commit='5a59350' + 'b' * 33), codex_audit()]),
+                         'no lane report on `f41b1de`')
+        self.assertEqual(self.gap([lane_report('PASS', user=OWNER), codex_audit()]), 'no lane report on `f41b1de`')
+
+    def test_an_audit_with_findings_fails(self):
+        self.assertEqual(self.gap([lane_report('PASS'), codex_audit(verdict='- **[P2] Something real**')]),
+                         'the Codex audit of `f41b1de` has blocking findings')
+        # The newest audit of the head decides.
+        self.assertIsNone(self.gap([lane_report('PASS'), codex_audit(verdict='- **[P2] Something real**'),
+                                    codex_audit(created_at='2026-10-01T17:00:00Z')]))
+
+    def test_evidence_posted_after_the_merge_doesnt_count(self):  # #610, #615: lane runs after the merge
+        self.assertEqual(self.gap([lane_report('PASS', created_at='2026-10-01T17:41:08Z'),
+                                   codex_audit(created_at=HAND_MERGED_AT)]),
+                         'no lane report on `f41b1de`; no Codex audit of `f41b1de`')
+
+    def test_the_failure_comment_says_what_was_missing(self):
+        self.assertEqual(audit.failure_comment(HAND_HEAD, 'no Codex audit of `f41b1de`'),
+                         'Merged into next without a triage-desk merge check on f41b1de. Hand-merge rule not met '
+                         'before the merge: no Codex audit of `f41b1de`. If the owner merged this directly, remove '
+                         'the label.')
+
+
+class FakeGitHub:
+    repo = 'uncomposed/spoken-margins-native'
+
+    def __init__(self, comments):
+        self.comments, self.flagged = comments, []
+
+    def json_lines(self, path):
+        return self.comments
+
+    def flag_pull(self, number, head_sha, gap=None):
+        self.flagged.append((number, gap))
+
+
+class AuditPullTests(unittest.TestCase):
+    pull = {'number': 633, 'head': {'sha': HAND_HEAD}, 'merged_at': HAND_MERGED_AT}
+
+    def test_a_compliant_hand_merge_is_not_flagged(self):
+        github = FakeGitHub([REQUEST, lane_report('PASS'), codex_audit()])
+        audit.audit_pull(github, self.pull, dry_run=False)
+        self.assertEqual(github.flagged, [])
+
+    def test_a_hand_merge_without_the_checks_is_flagged_with_the_reason(self):
+        github = FakeGitHub([lane_report('PASS')])
+        audit.audit_pull(github, self.pull, dry_run=False)
+        self.assertEqual(github.flagged, [(633, 'no Codex audit of `f41b1de`')])
+
+    def test_the_runner_merge_check_still_passes(self):
+        check = {'body': CHECK.replace('92533d3', 'f41b1de'), 'created_at': '2026-10-01T17:08:00Z', 'user': BOT}
+        github = FakeGitHub([check])
+        audit.audit_pull(github, self.pull, dry_run=False)
+        self.assertEqual(github.flagged, [])
 
 
 if __name__ == '__main__':

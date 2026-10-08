@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SessionKit
 import SessionKitPersistence
@@ -392,6 +393,136 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertNil(restarted.artifact)
     }
 
+    /// #64 Done when 2, through the real preparation pass: heat pauses the job and saves
+    /// "Paused for device temperature" with chunk 0 kept; once the phone cools, the pass resumes
+    /// at chunk 1. Before #765 the pass returned early on heat and saved no pause.
+    @MainActor
+    func testHeatPausesThePreparationPassAndCoolingResumesAtTheNextChunk() async throws {
+        let defaults = UserDefaults.standard
+        let keys = ["supertonicTTSMigrationV1", "supertonicVoicePendingTermsV1", "ttsMode", "ttsVoiceSelection",
+                    SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
+        let prior = keys.reduce(into: [String: Any]()) { $0[$1] = defaults.object(forKey: $1) }
+        defer { for key in keys { if let value = prior[key] { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
+        SpokenMarginsTerms.recordAcceptance()
+
+        let root = FileManager.default.temporaryDirectory.appending(path: "heat-pause-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
+                                  databaseURLOverride: root.appending(path: "store.sqlite"))
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            // Startup tasks can retain the connection after the test finishes.
+            if model == nil, store == nil { try? FileManager.default.removeItem(at: root) }
+        }
+        model.ttsVoiceSelection = .james
+        model.automaticAudioPreparationPolicy = .whileCharging
+        let voice = try XCTUnwrap(model.ttsVoiceSelection.supertonicVoice)
+        XCTAssertTrue(model.hasAcceptedCurrentTerms)
+
+        let itemId = "heat-item-\(UUID().uuidString)"
+        let text = (1...36).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }.joined(separator: " ")
+        try store.saveItem(Item(id: itemId, title: "Warm article", mediaType: "text", text: text, externalReference: nil, status: "ready"))
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let preparedRoot = support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
+        let resources = try XCTUnwrap(Bundle.main.resourceURL).appending(path: "Supertonic", directoryHint: .isDirectory)
+        let signature = try SupertonicRenderIdentity.make(assets: SupertonicAssetLocation(rootURL: resources), voice: voice)
+        let plan = PreparedChunkPlan.articlePlan(text)
+        XCTAssertGreaterThanOrEqual(plan.count, 5)
+        let manifest = try await PreparedAudioCoordinator(repository: store, rootDirectory: preparedRoot)
+            .begin(itemId: itemId, sourceText: text, signature: signature, plan: plan, schedulesJob: false)
+        addTeardownBlock { try? FileManager.default.removeItem(at: preparedRoot.appending(path: itemId, directoryHint: .isDirectory)) }
+        try store.saveAudioPreparationJob(AudioPreparationJob(id: "job-\(manifest.id)", itemId: itemId, manifestId: manifest.id, policy: .whileCharging))
+
+        let template = try makeHeatTestWAV()
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = HeatTestRenderer(templateURL: template)
+        let heat = HeatReading()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: heat.read()) },
+            renderer: { renderer }
+        )
+        func saved() throws -> PreparedAudioManifest { try XCTUnwrap(try store.loadPreparedAudioManifest(id: manifest.id)) }
+
+        // Cool: the pass renders chunk 0.
+        _ = await model.performBackgroundAudioPreparationPass()
+        var texts = await renderer.texts
+        XCTAssertEqual(texts, [plan[0].text])
+        let first = try XCTUnwrap(try saved().chunks.first { $0.index == 0 })
+        XCTAssertEqual(try saved().state, .preparing)
+
+        // Hot: nothing renders, the manifest is saved as paused for heat, and chunk 0 stays.
+        heat.thermal = .serious
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts.count, 1, "nothing renders while the phone is hot")
+        XCTAssertEqual(try saved().state, .pausedForThermal)
+        XCTAssertEqual(try saved().chunks.map(\.index), [0], "a heat pause keeps committed chunks")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: preparedRoot.appending(path: first.relativePath).path))
+        XCTAssertEqual(try store.loadAudioPreparationJobs().map(\.id), ["job-\(manifest.id)"], "the job stays in line")
+
+        // Cool again: the pass resumes at chunk 1, not chunk 0.
+        heat.thermal = .nominal
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts, [plan[0].text, plan[1].text])
+        XCTAssertEqual(try saved().state, .preparing)
+        XCTAssertEqual(try saved().chunks.map(\.index), [0, 1])
+        XCTAssertEqual(try saved().chunks.first { $0.index == 0 }?.checksumSHA256, first.checksumSHA256)
+
+        // Cool when the pass starts, hot by the time it would render (Codex audit on 27fd1bd): the
+        // pass reads the heat again just before rendering, so chunk 2 waits and the pause is saved.
+        heat.warmsAfterReads = 1
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts.count, 2, "heat that rises during setup still stops the render")
+        XCTAssertEqual(try saved().state, .pausedForThermal)
+        XCTAssertEqual(try saved().chunks.map(\.index), [0, 1])
+
+        // Cool again: chunk 2 renders.
+        heat.thermal = .nominal
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts.count, 3)
+        XCTAssertEqual(try saved().state, .preparing)
+
+        // Playback commits a chunk while the pass sets up, then the phone gets hot (Codex audit on
+        // bae0dc4): the pause is saved on the current manifest, so that chunk isn't lost.
+        heat.warmsAfterReads = 1
+        heat.onWarm = {
+            guard var current = try? store.loadPreparedAudioManifest(id: manifest.id), var extra = current.chunks.first else { return }
+            extra.id = "\(manifest.id)-chunk-3"
+            extra.index = 3
+            current.chunks.append(extra)
+            try? store.savePreparedAudioManifest(current)
+        }
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts.count, 3, "nothing renders once the phone is hot")
+        XCTAssertEqual(try saved().state, .pausedForThermal)
+        XCTAssertEqual(try saved().chunks.map(\.index), [0, 1, 2, 3], "a chunk committed during setup survives the pause")
+
+        // Cool through setup, hot only once space is reserved and the renderer is ready (Codex audit
+        // on e5088b9): the last check before rendering stops the next chunk and saves the pause again.
+        heat.thermal = .nominal
+        heat.warmsAfterReads = 2
+        _ = await model.performBackgroundAudioPreparationPass()
+        texts = await renderer.texts
+        XCTAssertEqual(texts.count, 3, "heat that rises while the render is set up still stops it")
+        XCTAssertEqual(try saved().state, .pausedForThermal)
+        XCTAssertEqual(try saved().chunks.map(\.index), [0, 1, 2, 3])
+        XCTAssertNil(heat.warmsAfterReads, "the pass read the heat a third time, right before rendering")
+    }
+
+    private func makeHeatTestWAV() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "heat-template-\(UUID().uuidString).wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_410))
+        buffer.frameLength = 4_410
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+        return url
+    }
+
     private func plans() -> [PreparedChunkPlan] {
         [
             PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: 12, text: "First chunk."),
@@ -408,5 +539,43 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: "prepared-audio-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path))
+    }
+}
+
+@MainActor private final class HeatReading {
+    var thermal = SpeechThermalLevel.nominal
+    /// Serious heat after this many more reads, as if the phone warmed up while the pass set up.
+    var warmsAfterReads: Int?
+    /// Runs as the heat arrives, standing in for work that lands while the pass sets up.
+    var onWarm: (() -> Void)?
+
+    func read() -> SpeechThermalLevel {
+        if let reads = warmsAfterReads {
+            if reads == 0 { thermal = .serious; warmsAfterReads = nil; onWarm?(); onWarm = nil } else { warmsAfterReads = reads - 1 }
+        }
+        return thermal
+    }
+}
+
+/// Copies a short WAV for each chunk and reports a duration the output check accepts, so the
+/// preparation pass commits it as Supertonic audio without loading the model.
+private actor HeatTestRenderer: SupertonicRendering {
+    let templateURL: URL
+    private(set) var texts: [String] = []
+    private var generated: Set<URL> = []
+
+    init(templateURL: URL) { self.templateURL = templateURL }
+
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        texts.append(text)
+        let url = FileManager.default.temporaryDirectory.appending(path: "heat-render-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        generated.insert(url)
+        return SupertonicNarrationResult(audioURL: url, duration: Double(text.count) / 15, sampleRate: 44_100,
+                                         renderDuration: 0.01, sessionLoadCount: 1)
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        if generated.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
     }
 }

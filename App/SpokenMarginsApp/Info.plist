@@ -5,6 +5,7 @@
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>com.spokenmargins.native.audio-preparation</string>
+		<string>com.spokenmargins.native.audio-preparation.continued</string>
 	</array>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
@@ -69,9 +70,9 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Spoken Margins records spoken interjections during listening sessions.</string>
+	<string>Spoken Margins records your spoken Margins while you listen. Recordings stay on your phone.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Spoken Margins may transcribe spoken interjections when enabled.</string>
+	<string>Spoken Margins turns your spoken Margins into text so you can search and copy them.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>SMBuildCommit</key>

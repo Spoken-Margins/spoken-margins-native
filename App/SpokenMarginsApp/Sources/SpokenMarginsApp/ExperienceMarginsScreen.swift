@@ -1,4 +1,5 @@
 import SwiftUI
+import SessionKit
 
 struct ExperienceMarginsScreen: View {
     private struct MarginGroup: Identifiable {
@@ -16,6 +17,7 @@ struct ExperienceMarginsScreen: View {
 
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
+    @State private var markdownFileURL: URL?
 
     var body: some View {
         NavigationStack {
@@ -47,6 +49,7 @@ struct ExperienceMarginsScreen: View {
             .background(AppColors.bone)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("margins.screen")
+            .fileShareSheet($markdownFileURL)
             .navigationTitle("Margins")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -120,6 +123,18 @@ struct ExperienceMarginsScreen: View {
                     .buttonStyle(.borderless)
                     .accessibilityLabel("Share Margins from \(group.itemTitle)")
                     .accessibilityIdentifier("margins.shareItem.\(group.itemID)")
+                    // Every active Margin of the item, not only those the search shows (#493).
+                    Button {
+                        markdownFileURL = model.marginMarkdownFileURL(
+                            for: model.marginRows.filter { $0.interjection.itemId == group.itemID }.map(\.interjection),
+                            asItem: true
+                        )
+                    } label: {
+                        Image(systemName: "doc.text").frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Share Margins from \(group.itemTitle) as Markdown")
+                    .accessibilityIdentifier("margins.shareItemMarkdown.\(group.itemID)")
                     }
                     .padding(.top, 16)
                     .padding(.bottom, 6)
@@ -180,9 +195,12 @@ struct ExperienceMarginsScreen: View {
             ForEach(model.visibleSharedMarginRows) { row in
                 Button { selectedSharedMargin = row } label: {
                     VStack(alignment: .leading, spacing: 7) {
-                        Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
+                        HStack(spacing: 8) {
+                            Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                            if row.isNew { NewMarginBadge() }
+                        }
                         Text(row.interjection.approvedTranscript)
                             .font(.system(.body, design: .serif))
                             .foregroundStyle(AppColors.text)
@@ -223,6 +241,8 @@ struct SharedMarginDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
     let row: SharedMarginRow
+    /// The model's current copy, so placement progress updates while the sheet is open (#872).
+    private var current: SharedMarginRow { model.sharedMarginRows.first { $0.id == row.id } ?? row }
 
     var body: some View {
         NavigationStack {
@@ -237,7 +257,7 @@ struct SharedMarginDetailView: View {
                 }
                 Section("Source & position") {
                     Text(row.itemTitle)
-                    Text(row.positionDescription)
+                    Text(current.positionDescription)
                     if row.layer.itemId != nil {
                         Button("Open item and shared controls", systemImage: "doc.text") {
                             shouldOpenItem = true

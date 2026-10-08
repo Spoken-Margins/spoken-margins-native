@@ -108,10 +108,10 @@ final class ReadwiseHighlightTests: XCTestCase {
         let client = ReadwiseHighlightClient(transport: transport.send)
         let sent1 = try await ReadwiseHighlightSyncPass.run(highlights, token: "t", client: client, ledger: ledger())
 
-        XCTAssertEqual(sent1, 2)
+        XCTAssertEqual(sent1.sent, 2)
         let sent2 = try await ReadwiseHighlightSyncPass.run(highlights, token: "t", client: client, ledger: ledger())
 
-        XCTAssertEqual(sent2, 0)
+        XCTAssertEqual(sent2.sent, 0)
         XCTAssertEqual(transport.requests.count, 1)
     }
 
@@ -130,9 +130,54 @@ final class ReadwiseHighlightTests: XCTestCase {
         let sent3 = try await ReadwiseHighlightSyncPass.run(highlights, token: "t", client: client, ledger: ledger(), batchSize: 1)
 
 
-        XCTAssertEqual(sent3, 2)
+        XCTAssertEqual(sent3.sent, 2)
         // m1 once; m2 failed, then sent; m3 sent.
         XCTAssertEqual(transport.highlights.map { $0.map { $0["note"] ?? "" } }, [["first"], ["second"], ["second"], ["third"]])
+    }
+
+    /// #642: tapping Disconnect during a send pass let the pass keep sending batches with the token
+    /// it had captured. It now stops before the next batch and keeps the accepted one in the ledger.
+    func testDisconnectDuringAPassStopsTheNextBatch() async throws {
+        let highlights = try twoArticleHighlights() + [try highlight(id: "m3")]
+        let transport = RecordingTransport()
+        let client = ReadwiseHighlightClient(transport: transport.send)
+        // The stored credential: the listener disconnects once the first batch has gone out.
+        let stored = LockedValue<String?>("t")
+        let sendThenDisconnect = ReadwiseHighlightClient { request in
+            let result = try await transport.send(request)
+            stored.set(nil)
+            return result
+        }
+        do {
+            _ = try await ReadwiseHighlightSyncPass.run(
+                highlights, token: "t", client: sendThenDisconnect, ledger: ledger(), batchSize: 1,
+                tokenIsCurrent: { stored.get() == $0 }
+            )
+            XCTFail("Disconnect should stop the pass")
+        } catch is CancellationError {}
+        XCTAssertEqual(transport.requests.count, 1, "no batch starts after Disconnect")
+        XCTAssertEqual(try ledger().sentKeys(), ["session-item-article:m1"])
+
+        // A different token saved meanwhile stops the old pass too.
+        stored.set("new-token")
+        await XCTAssertThrowsCancellation {
+            try await ReadwiseHighlightSyncPass.run(highlights, token: "t", client: client, ledger: self.ledger(), batchSize: 1, tokenIsCurrent: { stored.get() == $0 })
+        }
+        XCTAssertEqual(transport.requests.count, 1)
+
+        // Connected with that token, the next pass sends what's left.
+        let report = try await ReadwiseHighlightSyncPass.run(highlights, token: "new-token", client: client, ledger: ledger(), batchSize: 1, tokenIsCurrent: { stored.get() == $0 })
+        XCTAssertEqual(report.sent, 2)
+    }
+
+    private func XCTAssertThrowsCancellation(_ body: () async throws -> ReadwiseSyncReport, file: StaticString = #filePath, line: UInt = #line) async {
+        do {
+            _ = try await body()
+            XCTFail("expected a CancellationError", file: file, line: line)
+        } catch is CancellationError {
+        } catch {
+            XCTFail("expected a CancellationError, got \(error)", file: file, line: line)
+        }
     }
 
     func testLedgerSurvivesARestartAndGathererSkipsSentMargins() async throws {
@@ -150,7 +195,158 @@ final class ReadwiseHighlightTests: XCTestCase {
         XCTAssertEqual(try ReadwiseHighlightGatherer.highlights(sessions: [session], repository: repo, skipping: reopened.sentKeys()), [])
         let sent4 = try await ReadwiseHighlightSyncPass.run(try gather(pairs), token: "t", client: client, ledger: reopened)
 
-        XCTAssertEqual(sent4, 0)
+        XCTAssertEqual(sent4.sent, 0)
+    }
+
+    /// #624: a spoken Margin stored before the fix holds a counter (seconds after 1970). It goes to
+    /// Readwise dated by its session's start plus the counter, not in 1970; real dates pass unchanged.
+    func testMarginStoredWithACounterDateIsSentWithItsSessionDate() async throws {
+        let item = article()
+        var old = margin(item: item, id: "m1")
+        old.createdAt = Date(timeIntervalSince1970: 2)
+        let current = margin(item: item, id: "m2")
+        let repo = repository([(item, old), (item, current)])
+        let sessionStart = Date(timeIntervalSince1970: 1_790_000_000)
+        repo.sessions["session-item-article"]?.createdAt = sessionStart
+        let highlights = try ReadwiseHighlightGatherer.highlights(sessions: Array(repo.sessions.values), repository: repo)
+            .sorted { $0.marginKey < $1.marginKey }
+
+        XCTAssertEqual(highlights.map(\.highlightedAt), [sessionStart.addingTimeInterval(2), createdAt])
+        let transport = RecordingTransport()
+        try await ReadwiseHighlightClient(transport: transport.send).send(highlights, token: "t")
+        XCTAssertEqual(transport.highlights.first?.first?["highlighted_at"], "2026-09-21T14:13:22Z")
+    }
+
+    // MARK: - Readwise's reply (#623)
+
+    /// Readwise's documented reply to POST /api/v2/highlights/: the books the highlights were filed under.
+    private static let recordedReply = """
+    [
+      {
+        "id": 2008,
+        "title": "An essay",
+        "author": null,
+        "category": "articles",
+        "source": "api_article",
+        "num_highlights": 2,
+        "last_highlight_at": "2026-04-24T03:06:40.000Z",
+        "updated": "2026-04-24T03:06:41.000Z",
+        "cover_image_url": "https://readwise-assets.s3.amazonaws.com/static/images/article2.png",
+        "highlights_url": "https://readwise.io/bookreview/2008",
+        "source_url": "https://example.com/essay",
+        "modified_highlights": [1012, 1013]
+      }
+    ]
+    """
+
+    func testRecordedReplyNamesTheItemAndLinksItToItsReadwisePage() async throws {
+        let transport = RecordingTransport(bodies: [Self.recordedReply])
+        let report = try await ReadwiseHighlightSyncPass.run(
+            try twoArticleHighlights(), token: "t", client: ReadwiseHighlightClient(transport: transport.send), ledger: ledger()
+        )
+
+        XCTAssertEqual(report, ReadwiseSyncReport(sent: 2, unlisted: 0, itemCount: 1, latestTitle: "An essay"))
+        XCTAssertEqual(report.summary, "2 Margins sent to Readwise under \u{201C}An essay\u{201D}.")
+        XCTAssertEqual(try ledger().links(), ["item-article": URL(string: "https://readwise.io/bookreview/2008")!])
+        // The links outlive the app: a relaunch reads the same file.
+        let reopened = ReadwiseSentLedger(fileURL: directory.appendingPathComponent("ReadwiseSentLedger.json"))
+        XCTAssertEqual(try reopened.links()["item-article"], URL(string: "https://readwise.io/bookreview/2008"))
+    }
+
+    func testEmptyReplyIsNotReportedAsSent() async throws {
+        let transport = RecordingTransport(bodies: ["[]"])
+        let report = try await ReadwiseHighlightSyncPass.run(
+            try twoArticleHighlights(), token: "t", client: ReadwiseHighlightClient(transport: transport.send), ledger: ledger()
+        )
+
+        XCTAssertEqual(report.unlisted, 2)
+        let summary = try XCTUnwrap(report.summary)
+        XCTAssertFalse(summary.contains("sent"), summary)
+        XCTAssertEqual(summary, "Readwise accepted 2 Margins but didn't list any highlights. Check your Readwise account.")
+        XCTAssertEqual(try ledger().links(), [:])
+        // Readwise did accept them, so they aren't sent again every minute.
+        XCTAssertEqual(try ledger().sentKeys(), ["session-item-article:m1", "session-item-article:m2"])
+    }
+
+    func testBookListingNoModifiedHighlightsCountsAsUnlisted() async throws {
+        let reply = #"[{"title": "An essay", "highlights_url": "https://readwise.io/bookreview/2008", "modified_highlights": []}]"#
+        let report = try await ReadwiseHighlightSyncPass.run(
+            try twoArticleHighlights(), token: "t",
+            client: ReadwiseHighlightClient(transport: RecordingTransport(bodies: [reply]).send), ledger: ledger()
+        )
+        XCTAssertEqual(report.unlisted, 2)
+    }
+
+    func testUnreadableReplyStillReportsTheSendWithoutALink() async throws {
+        let report = try await ReadwiseHighlightSyncPass.run(
+            try twoArticleHighlights(), token: "t",
+            client: ReadwiseHighlightClient(transport: RecordingTransport(bodies: ["<html>ok</html>"]).send), ledger: ledger()
+        )
+        XCTAssertEqual(report.summary, "2 Margins sent to Readwise under \u{201C}An essay\u{201D}.")
+        XCTAssertEqual(try ledger().links(), [:])
+    }
+
+    func testSeveralItemsNameTheMostRecentAndLinkEachByTitle() async throws {
+        let essay = article()
+        let episode = Item(id: "item-episode", title: "  A Hacking Tool Built With A Very Long Title Indeed ", mediaType: "text",
+                           text: "Source text.", externalReference: nil, status: "ready")
+        var later = margin(item: episode, id: "m9")
+        later.createdAt = createdAt.addingTimeInterval(60)
+        let highlights = try gather([(essay, margin(item: essay, id: "m1")), (episode, later)])
+        let reply = """
+        [{"title": "a hacking tool built with a very long title indeed", "highlights_url": "https://readwise.io/bookreview/31", "modified_highlights": [7]},
+         {"title": "An essay", "highlights_url": "https://readwise.io/bookreview/30", "modified_highlights": [6]}]
+        """
+        let report = try await ReadwiseHighlightSyncPass.run(
+            highlights, token: "t", client: ReadwiseHighlightClient(transport: RecordingTransport(bodies: [reply]).send), ledger: ledger()
+        )
+
+        XCTAssertEqual(report.summary,
+                       "2 Margins sent to Readwise across 2 items, most recently \u{201C}A Hacking Tool Built With A Very Long T\u{2026}\u{201D}.")
+        XCTAssertEqual(try ledger().links(), [
+            "item-article": URL(string: "https://readwise.io/bookreview/30")!,
+            "item-episode": URL(string: "https://readwise.io/bookreview/31")!,
+        ])
+    }
+
+    func testOnlyReadwiseLinksAreKept() async throws {
+        let reply = #"[{"title": "An essay", "highlights_url": "https://readwise.io.evil.example/bookreview/1", "modified_highlights": [1]}]"#
+        _ = try await ReadwiseHighlightSyncPass.run(
+            try twoArticleHighlights(), token: "t",
+            client: ReadwiseHighlightClient(transport: RecordingTransport(bodies: [reply]).send), ledger: ledger()
+        )
+        XCTAssertEqual(try ledger().links(), [:])
+        XCTAssertNil(ReadwiseBook(title: "x", highlightsURL: "http://readwise.io/bookreview/1", modifiedHighlights: nil).readwiseLink)
+        XCTAssertNotNil(ReadwiseBook(title: "x", highlightsURL: "https://wise.readwise.io/bookreview/1", modifiedHighlights: nil).readwiseLink)
+    }
+
+    func testLedgerFileStaysReadableByBuild29() throws {
+        // Build 29's ledger decodes only `sent`; a file with links must still decode that way, and a Build 29 file must load here.
+        struct Build29File: Decodable { var sent: [String] }
+        let file = ledger()
+        try Data(#"{"sent":["s:m1"]}"#.utf8).write(to: file.fileURL)
+        XCTAssertEqual(try file.sentKeys(), ["s:m1"])
+        XCTAssertEqual(try file.links(), [:])
+
+        try file.record(["s:m2"], links: ["item": URL(string: "https://readwise.io/bookreview/9")!])
+        let old = try JSONDecoder().decode(Build29File.self, from: Data(contentsOf: file.fileURL))
+        XCTAssertEqual(old.sent, ["s:m1", "s:m2"])
+        // A later send without a link keeps the earlier one.
+        try file.record(["s:m3"])
+        XCTAssertEqual(try file.links(), ["item": URL(string: "https://readwise.io/bookreview/9")!])
+    }
+
+    func testStatusLineKeepsTheLastSendThroughQuietPasses() {
+        XCTAssertEqual(ReadwiseSyncReport().summary, nil)
+        XCTAssertEqual(ReadwiseSyncReport(sent: 1, itemCount: 1, latestTitle: "Essay").summary,
+                       "1 Margin sent to Readwise under \u{201C}Essay\u{201D}.")
+        XCTAssertEqual(ReadwiseSyncReport(sent: 3, unlisted: 1, itemCount: 2, latestTitle: "Essay").summary,
+                       "3 Margins sent to Readwise across 2 items, most recently \u{201C}Essay\u{201D}. Readwise didn't list 1 of them.")
+        XCTAssertEqual(ReadwiseSyncReport.statusLine(lastSummary: nil, sentAt: nil, checkedAt: "8:32 AM"),
+                       "No new Margins to send. Last checked 8:32 AM.")
+        XCTAssertEqual(ReadwiseSyncReport.statusLine(lastSummary: "1 Margin sent to Readwise under \u{201C}Essay\u{201D}.",
+                                                     sentAt: "8:30 AM", checkedAt: "8:32 AM"),
+                       "1 Margin sent to Readwise under \u{201C}Essay\u{201D}. Sent 8:30 AM. Last checked 8:32 AM.")
     }
 
     // MARK: - Errors
@@ -174,7 +370,7 @@ final class ReadwiseHighlightTests: XCTestCase {
         let client = ReadwiseHighlightClient(transport: RecordingTransport(statuses: [200]).send)
         let sent5 = try await ReadwiseHighlightSyncPass.run(try twoArticleHighlights(), token: "t", client: client, ledger: ledger())
 
-        XCTAssertEqual(sent5, 2)
+        XCTAssertEqual(sent5.sent, 2)
     }
 
     func testMalformedTokenIsRejectedBeforeAnyRequest() async throws {
@@ -257,13 +453,15 @@ final class ReadwiseHighlightTests: XCTestCase {
     }
 }
 
-/// Records each request and answers with the next scripted status (200 once the script runs out).
+/// Records each request and answers with the next scripted status (200 once the script runs out)
+/// and the next scripted body ("{}" once that script runs out).
 private final class RecordingTransport: @unchecked Sendable {
     private let lock = NSLock()
     private var statuses: [Int]
+    private var replies: [String]
     private(set) var requests: [URLRequest] = []
 
-    init(statuses: [Int] = []) { self.statuses = statuses }
+    init(statuses: [Int] = [], bodies: [String] = []) { self.statuses = statuses; self.replies = bodies }
 
     var bodies: [String] { requests.map { String(decoding: $0.httpBody ?? Data(), as: UTF8.self) } }
 
@@ -276,11 +474,20 @@ private final class RecordingTransport: @unchecked Sendable {
 
     var send: ReadwiseHighlightClient.Transport {
         { [self] request in
-            let status: Int = lock.withLock {
+            let (status, body): (Int, String) = lock.withLock {
                 requests.append(request)
-                return statuses.isEmpty ? 200 : statuses.removeFirst()
+                return (statuses.isEmpty ? 200 : statuses.removeFirst(), replies.isEmpty ? "{}" : replies.removeFirst())
             }
-            return (Data("{}".utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+            return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
         }
     }
+}
+
+/// A value read and written from the transport and the pass (#642).
+private final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+    init(_ value: Value) { self.value = value }
+    func get() -> Value { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ newValue: Value) { lock.lock(); value = newValue; lock.unlock() }
 }

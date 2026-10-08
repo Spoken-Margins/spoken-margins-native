@@ -2,6 +2,7 @@ import XCTest
 import SessionKit
 import SessionKitPersistence
 import SessionKitAudio
+import SessionKitFeeds
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -122,16 +123,21 @@ final class SourceLinkImportTests: XCTestCase {
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
         try store.saveFeedSubscription(subscription)
-        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion")
+        let entry = FeedEntry(id: "entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/episode", audioURL: audioURL, title: "Actual episode title", author: "Actual author", summary: "00:00 Opening\n02:00 Discussion", publishedAt: Date(timeIntervalSince1970: 1_790_675_200), bodyWordCount: 900, fullBody: String(repeating: "Podcast transcript. ", count: 450), episodeGUID: "episode-42")
         try store.saveFeedEntry(entry)
         model.importFollowedSourceEntry(entry)
         try await waitFor("feed entry import") { model.libraryItems.contains { $0.title == entry.title } }
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
         let persisted = try store.loadItem(id: row.id)
+        XCTAssertNotNil(persisted.media, "a long podcast transcript must not replace playable episode media")
         XCTAssertEqual(persisted.sourceTitle, "Actual Publisher")
         XCTAssertEqual(persisted.sourceURL, subscription.source.canonicalURL)
         XCTAssertEqual(persisted.externalReference, entry.canonicalURL)
         XCTAssertEqual(persisted.author, "Actual author")
+        // #177 audit: an episode added from a followed feed can be matched to a shared Margin by GUID.
+        XCTAssertEqual(persisted.episodeGUID, "episode-42")
+        XCTAssertEqual(persisted.showTitle, "Actual Publisher")
+        XCTAssertEqual(persisted.publishedAt, ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: 1_790_675_200)))
         XCTAssertEqual(try store.loadTranscriptTimeline(itemId: row.id)?.timeline.chapters.map(\.startMs), [0, 120_000])
         XCTAssertEqual(model.snapshot.sessionId, activeSession)
         XCTAssertEqual(model.selectedItem.id, "item-pill")
@@ -154,6 +160,46 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
+    func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
+        for openWhenFinished in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            temporaryDirectories.append(root)
+            let database = root.appendingPathComponent("redirect.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+            model.resetAndSeed()
+            let store = try SQLiteSessionStore(path: database.path)
+            let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+            let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+            model.listeningSignals = signals
+            model.startItem(id: "item-pill")
+            let activeSession = model.snapshot.sessionId
+            let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .articleFeed,
+                canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+            let entry = FeedEntry(id: "redirected-entry", subscriptionId: subscription.id,
+                canonicalURL: "https://publisher.example/link", title: "A redirected article")
+            try store.saveFeedSubscription(subscription)
+            try store.saveFeedEntry(entry)
+            let capture = BrowserTextHandoff(captureMode: .readablePage,
+                source: BrowserTextSource(url: "https://destination.example/article", title: entry.title),
+                text: "The extracted article body stays intact.")
+            model.readablePageExtractor = RedirectedFeedArticleExtractor(capture: capture)
+            model.importFollowedSourceEntry(entry, openWhenFinished: openWhenFinished)
+            try await waitFor("redirected followed article import") { model.libraryItems.contains { $0.title == entry.title } }
+            let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+            let item = try store.loadItem(id: row.id)
+            XCTAssertEqual(item.externalReference, capture.source.url, "the final URL stays the sharing identity")
+            XCTAssertEqual(item.text, capture.text)
+            XCTAssertEqual(model.snapshot.sessionId, activeSession)
+            XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
+            signals.writtenMargin(itemId: item.id, text: "A note")
+            let exported = await signals.exportFileURL()
+            let rows = exported.map(ListeningSignalRecorder.read) ?? []
+            XCTAssertEqual(rows.filter { $0.event.name == "margin" }.map { $0.item?.id }, [entry.id])
+            model.endSession()
+        }
+    }
+
     func testFeedAliasesUseFinalResponseIdentityWithoutSelfLink() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AliasedFeedURLProtocol.self]
@@ -163,6 +209,117 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(candidates.first?.source.canonicalURL, "https://example.com/canonical-feed")
         let subscription = try await coordinator.follow(urlString: "https://example.com/rss")
         XCTAssertEqual(subscription.source.id, candidates.first?.source.id)
+    }
+
+    /// #545: a Substack post with a voiceover was saved like an episode, so adding it made a podcast
+    /// item with no text. Following the feed now records each entry's body length and duration, and
+    /// the voiceover entry is the only one that imports as an article with publisher audio.
+    func testFollowingAPublicationWithVoiceoversMarksOnlyThePostsWithAFullBody() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
+        let repository = InMemorySessionRepository()
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+
+        let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
+
+        XCTAssertEqual(subscription.source.kind, .podcastFeed, "a feed with audio is still followed as it was")
+        let entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+        let post = try XCTUnwrap(entries.first { $0.title == "A post with a voiceover" })
+        let episode = try XCTUnwrap(entries.first { $0.title == "An episode" })
+        XCTAssertGreaterThanOrEqual(post.bodyWordCount ?? 0, 700)
+        XCTAssertEqual(post.audioDurationMs, 1_312_000)
+        XCTAssertFalse(post.hasPublisherAudio, "length alone is ambiguous")
+        let confirmed = await coordinator.publisherAudioEntry(for: post)
+        XCTAssertTrue(confirmed.hasPublisherAudio)
+        XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: confirmed, itemId: "item")?.audioURL, "https://cdn.voiceovers.example/post.mp3")
+        XCTAssertFalse(episode.hasPublisherAudio, "an episode with short notes imports as audio, as before")
+        XCTAssertNil(PublisherAudioDetector.publisherAudio(for: episode, itemId: "item"))
+    }
+
+    /// #641: following a publication with some voiceovers makes it a podcast feed, and Add on one
+    /// of its text-only posts took the podcast path with the post's page as the audio, which
+    /// failed. With nothing to play, even after rechecking the feed, the post imports as an article.
+    func testATextOnlyPostOnAFollowedPodcastFeedImportsAsAnArticle() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
+        let repository = InMemorySessionRepository()
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
+        XCTAssertEqual(subscription.source.kind, .podcastFeed)
+        let entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
+
+        let post = try XCTUnwrap(entries.first { $0.title == "A text-only post" })
+        XCTAssertNil(post.audioURL)
+        let postRoute = try await coordinator.importRoute(for: post, subscriptionKind: subscription.source.kind)
+        XCTAssertEqual(postRoute, .article)
+
+        // An older episode saved without its enclosure still finds it in the feed and imports as audio.
+        var episode = try XCTUnwrap(entries.first { $0.title == "An episode" })
+        episode.audioURL = nil
+        try repository.saveFeedEntry(episode)
+        let episodeRoute = try await coordinator.importRoute(for: episode, subscriptionKind: subscription.source.kind)
+        XCTAssertEqual(episodeRoute, .episode(audioURL: "https://cdn.voiceovers.example/episode.mp3"))
+
+        // One no longer in the feed may still be an episode: the podcast path tries its page, as before.
+        let gone = FeedEntry(id: "gone", subscriptionId: subscription.id, canonicalURL: "https://voiceovers.example/p/gone", title: "Gone")
+        let goneRoute = try await coordinator.importRoute(for: gone, subscriptionKind: subscription.source.kind)
+        XCTAssertEqual(goneRoute, .episode(audioURL: gone.canonicalURL))
+    }
+
+    func testPublisherNarrationImportsSubscriberFeedBodyWithoutPublicPageExtraction() async throws {
+        for openWhenFinished in [false, true] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let databaseURL = root.appendingPathComponent("subscriber.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+            model.resetAndSeed()
+            model.startItem(id: "item-pill")
+            let activeSession = model.snapshot.sessionId
+            let extractor = RefusingPublisherPageExtractor()
+            model.readablePageExtractor = extractor
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            let subscription = FeedSubscription(id: "s", source: SourceIdentity(id: "publication", kind: .podcastFeed,
+                canonicalURL: "https://publisher.example/private-feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+            try store.saveFeedSubscription(subscription)
+            let sentences = String(repeating: "This subscriber article is available in the feed only. ", count: 90)
+            let html = "<p>Don&#8217;t stop. &ldquo;Listen&rdquo; &copy; 2026.</p><p>\(sentences)</p>"
+            let feed = "<rss><channel><item><title>Private publisher narration</title><link>https://publisher.example/p/private</link><content:encoded xmlns:content=\"http://purl.org/rss/1.0/modules/content/\"><![CDATA[\(html)]]></content:encoded></item></channel></rss>"
+            let parsed = try FeedParser().parse(data: Data(feed.utf8), contentType: "application/rss+xml")
+            let body = try XCTUnwrap(parsed.items.first?.content)
+            let expected = "Don’t stop. “Listen” © 2026. " + sentences.trimmingCharacters(in: .whitespacesAndNewlines)
+            let entry = FeedEntry(id: "private-post", subscriptionId: "s", canonicalURL: "https://publisher.example/p/private",
+                audioURL: "https://publisher.example/private.mp3", title: "Private publisher narration", bodyWordCount: 810,
+                fullBody: body, publisherNarrationConfirmed: true, audioDurationMs: 60_000)
+            try store.saveFeedEntry(entry)
+            model.importFollowedSourceEntry(entry, openWhenFinished: openWhenFinished)
+            try await waitFor("subscriber feed article import") {
+                (try? store.loadFeedEntries(subscriptionId: "s").first?.state) == .imported
+            }
+            let row = try XCTUnwrap(model.libraryItems.first { $0.title == entry.title })
+            let item = try store.loadItem(id: row.id)
+            XCTAssertEqual(item.mediaType, "text")
+            XCTAssertEqual(item.text, expected, "Add and open must import decoded feed text")
+            XCTAssertNil(item.media)
+            XCTAssertEqual(try store.loadPublisherAudio(itemId: item.id)?.audioURL, entry.audioURL)
+            XCTAssertEqual(extractor.calls, 0, "a public 403/teaser must never replace accessible feed text")
+            XCTAssertEqual(model.snapshot.sessionId, activeSession)
+            XCTAssertEqual(model.selectedItem.id, openWhenFinished ? item.id : "item-pill")
+        }
+    }
+
+    func testConfirmedNarrationWithoutStoredBodyUsesTheArticleExtractor() async throws {
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://publisher.example/p/article",
+            audioURL: "https://publisher.example/recording.mp3", title: "Article", bodyWordCount: 720,
+            publisherNarrationConfirmed: true)
+        let expected = BrowserTextHandoff(captureMode: .readablePage,
+            source: BrowserTextSource(url: entry.canonicalURL, title: entry.title), text: "Extracted body.")
+        let extractor = RefusingPublisherPageExtractor(result: expected)
+        var diagnostics: [String: String] = [:]
+        let result = try await FollowedArticleImport.handoff(for: entry, url: XCTUnwrap(URL(string: entry.canonicalURL)),
+            using: extractor, record: { diagnostics = $0 })
+        XCTAssertEqual(result, expected)
+        XCTAssertEqual(extractor.calls, 1)
+        XCTAssertEqual(diagnostics["followedArticleExtractor"], "unauthenticated-page")
     }
 
     func testFollowedSourceAcceptsLargeFeedAndRetainsOnlyNewestTwentyFiveSuggestions() async throws {
@@ -251,6 +408,236 @@ final class SourceLinkImportTests: XCTestCase {
         let representation: Any = expected as NSURL
 
         XCTAssertEqual(SourceLinkShareRepresentation.url(from: representation), expected)
+    }
+
+    func testSafariPDFShareHandsOffThePDFBeforeItsURL() throws {
+        // #271: PubMed Central answers a re-download of the link with an HTML
+        // page, so the PDF Safari already has must be tried first.
+        let provider = makeSharedPDFProvider(url: Self.pmcPDFURL)
+
+        let identifiers = rankedShareIdentifiers([provider])
+
+        XCTAssertEqual(identifiers.first, ShareSheetRepresentationOrder.pdfIdentifier)
+        let pdfIndex = try XCTUnwrap(identifiers.firstIndex(of: ShareSheetRepresentationOrder.pdfIdentifier))
+        let urlIndex = try XCTUnwrap(
+            identifiers.firstIndex(of: ShareSheetRepresentationOrder.urlIdentifier),
+            "The URL must stay as the fallback"
+        )
+        XCTAssertLessThan(pdfIndex, urlIndex)
+    }
+
+    func testSafariPDFShareOnSeparateAttachmentsHandsOffThePDFFirst() throws {
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let pdfProvider = makeSharedPDFProvider(url: nil)
+
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, pdfProvider],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+
+        let first = try XCTUnwrap(candidates.first)
+        XCTAssertTrue(first.provider === pdfProvider)
+        XCTAssertEqual(first.identifier, ShareSheetRepresentationOrder.pdfIdentifier)
+        XCTAssertTrue(candidates.contains {
+            $0.provider === linkProvider && $0.identifier == ShareSheetRepresentationOrder.urlIdentifier
+        })
+    }
+
+    func testSafariWebPageShareStillPrefersTheReadablePage() throws {
+        let provider = NSItemProvider(object: try XCTUnwrap(URL(string: "https://example.com/article")) as NSURL)
+        provider.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?(["NSExtensionJavaScriptPreprocessingResultsKey": ["title": "Article"]] as NSDictionary, nil)
+        }
+
+        let identifiers = rankedShareIdentifiers([provider])
+
+        XCTAssertEqual(identifiers.first, ShareSheetRepresentationOrder.propertyListIdentifier)
+        XCTAssertFalse(identifiers.contains(ShareSheetRepresentationOrder.pdfIdentifier))
+    }
+
+    func testSafariPageSentPDFBytesAreUsedWithTheLinksFileName() throws {
+        // #271's T4: Safari offered no PDF attachment, only the page results, so the PDF
+        // comes from the bytes the preprocessor read in the page.
+        let pdf = Data("%PDF-1.7 F1000Research 12:1146".utf8)
+        let results: [String: Any] = [
+            "documentURL": Self.pmcPDFURL.absoluteString,
+            "isPDFDocument": true,
+            SourceLinkShareRepresentation.pagePDFKey: pdf.base64EncodedString()
+        ]
+
+        let pagePDF = try XCTUnwrap(SourceLinkShareRepresentation.pagePDF(fromPageResults: results))
+
+        XCTAssertEqual(pagePDF.data, pdf)
+        XCTAssertEqual(pagePDF.suggestedFilename, "f1000research-12-157633.pdf")
+        let copied = try makePayloadStore().savePDF(data: pagePDF.data, suggestedFilename: pagePDF.suggestedFilename)
+        XCTAssertEqual(copied.lastPathComponent, "f1000research-12-157633.pdf")
+    }
+
+    func testSafariPageResultsOnASeparateAttachmentComeBeforeTheLink() throws {
+        // #271 audit: with the link and the page results on separate attachments, the
+        // page results (which can carry the PDF's bytes) must be tried before the link.
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let pageProvider = makePageResultsProvider(pdf: nil)
+
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, pageProvider],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+
+        let pageIndex = try XCTUnwrap(candidates.firstIndex {
+            $0.provider === pageProvider && $0.identifier == ShareSheetRepresentationOrder.propertyListIdentifier
+        })
+        let linkIndex = try XCTUnwrap(candidates.firstIndex {
+            $0.provider === linkProvider && $0.identifier == ShareSheetRepresentationOrder.urlIdentifier
+        })
+        XCTAssertLessThan(pageIndex, linkIndex)
+    }
+
+    func testSafariPDFShareTriesThePageResultsBeforeTheLink() throws {
+        let provider = makeSharedPDFProvider(url: Self.pmcPDFURL)
+        provider.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?([:] as NSDictionary, nil)
+        }
+
+        let identifiers = rankedShareIdentifiers([provider])
+
+        let pageIndex = try XCTUnwrap(identifiers.firstIndex(of: ShareSheetRepresentationOrder.propertyListIdentifier))
+        let urlIndex = try XCTUnwrap(identifiers.firstIndex(of: ShareSheetRepresentationOrder.urlIdentifier))
+        XCTAssertLessThan(pageIndex, urlIndex)
+        XCTAssertEqual(identifiers.last, ShareSheetRepresentationOrder.urlIdentifier)
+    }
+
+    func testPageBytesOnALaterAttachmentWinOverAnEarlierLink() throws {
+        // #271 audit: a link found first (page results without bytes, or a URL) waits
+        // while other attachments are untried, so the PDF bytes become a local file.
+        let pdf = Data("%PDF-1.7 PubMed Central".utf8)
+        let linkOnlyPage = makePageResultsProvider(pdf: nil)
+        let bytesPage = makePageResultsProvider(pdf: pdf)
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, linkOnlyPage, bytesPage],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+        let store = makePayloadStore()
+
+        let handoff = try firstShareHandoff(candidates) { candidate in
+            if candidate.provider === bytesPage {
+                let pagePDF = try XCTUnwrap(SourceLinkShareRepresentation.pagePDF(fromPageResults: [
+                    "documentURL": Self.pmcPDFURL.absoluteString,
+                    SourceLinkShareRepresentation.pagePDFKey: pdf.base64EncodedString()
+                ]))
+                let copied = try store.savePDF(data: pagePDF.data, suggestedFilename: pagePDF.suggestedFilename)
+                return (copied, "share_sheet_pdf_file")
+            }
+            return (Self.pmcPDFURL, "share_sheet_pdf")
+        }
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf_file")
+        XCTAssertTrue(store.isManagedPDFURL(handoff.url))
+        XCTAssertEqual(try Data(contentsOf: handoff.url), pdf)
+    }
+
+    func testLinkIsStillHandedOffWhenNoAttachmentCarriesThePDF() throws {
+        let linkProvider = NSItemProvider(object: Self.pmcPDFURL as NSURL)
+        let pageProvider = makePageResultsProvider(pdf: nil)
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkProvider, pageProvider],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+
+        let handoff = try firstShareHandoff(candidates) { _ in (Self.pmcPDFURL, "share_sheet_pdf") }
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf")
+        XCTAssertEqual(handoff.url, Self.pmcPDFURL)
+    }
+
+    func testPDFRepresentationThatLoadsAsALinkKeepsItAsTheLastFallback() throws {
+        // #271 audit on 1c86dee: an attachment offering only com.adobe.pdf can load as an
+        // https link. With no file or bytes anywhere, that link must still be handed off.
+        XCTAssertEqual(SourceLinkShareRepresentation.pdfFallbackLink(from: Self.pmcPDFURL as NSURL), Self.pmcPDFURL)
+        XCTAssertNil(SourceLinkShareRepresentation.pdfFallbackLink(from: URL(fileURLWithPath: "/tmp/shared.pdf")))
+        XCTAssertNil(SourceLinkShareRepresentation.pdfFallbackLink(from: URL(string: "http://example.com/report.pdf")))
+        XCTAssertNil(SourceLinkShareRepresentation.pdfFallbackLink(from: Data("%PDF-1.7".utf8)))
+
+        let pdfOnly = NSItemProvider()
+        pdfOnly.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.pdfIdentifier) { completion, _, _ in
+            completion?(Self.pmcPDFURL as NSURL, nil)
+        }
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [pdfOnly],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+        XCTAssertEqual(candidates.map(\.identifier), [ShareSheetRepresentationOrder.pdfIdentifier])
+
+        let handoff = try firstShareHandoff(candidates) { _ in (Self.pmcPDFURL, "share_sheet_pdf") }
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf")
+        XCTAssertEqual(handoff.url, Self.pmcPDFURL)
+    }
+
+    func testSafariPageResultsWithoutPDFBytesFallBackToTheLink() {
+        let html = Data("<html>Preparing to download</html>".utf8).base64EncodedString()
+
+        XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: ["documentURL": Self.pmcPDFURL.absoluteString]))
+        XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: html]))
+        XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: "not base64"]))
+    }
+
+    private static let pmcPDFURL = URL(string: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-157633.pdf")!
+
+    private func makeSharedPDFProvider(url: URL?) -> NSItemProvider {
+        let provider = url.map { NSItemProvider(object: $0 as NSURL) } ?? NSItemProvider()
+        provider.registerDataRepresentation(
+            forTypeIdentifier: ShareSheetRepresentationOrder.pdfIdentifier,
+            visibility: .all
+        ) { completion in
+            completion(Data("%PDF-1.7 shared from Safari".utf8), nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func makePageResultsProvider(pdf: Data?) -> NSItemProvider {
+        var results: [String: Any] = ["documentURL": Self.pmcPDFURL.absoluteString, "isPDFDocument": true]
+        results[SourceLinkShareRepresentation.pagePDFKey] = pdf?.base64EncodedString()
+        let item = ["NSExtensionJavaScriptPreprocessingResultsKey": results] as NSDictionary
+        let provider = NSItemProvider()
+        provider.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?(item, nil)
+        }
+        return provider
+    }
+
+    /// Walks the candidates the way the share extension does: a link waits in
+    /// `ShareSheetLinkFallback` while non-link candidates remain. `handoff` returns the
+    /// URL and handoff surface a candidate yields; `share_sheet_pdf_file` is a local copy.
+    private func firstShareHandoff(
+        _ candidates: [ShareSheetRepresentationOrder.Candidate<NSItemProvider>],
+        handoff: (ShareSheetRepresentationOrder.Candidate<NSItemProvider>) throws -> (URL, String)
+    ) throws -> (url: URL, surface: String) {
+        var fallback = ShareSheetLinkFallback<(url: URL, surface: String)>()
+        let identifiers = candidates.map(\.identifier)
+        for (index, candidate) in candidates.enumerated() {
+            let found = try handoff(candidate)
+            let isLink = found.1 != "share_sheet_pdf_file"
+            if let accepted = fallback.accept((found.0, found.1), isLink: isLink, at: index, in: identifiers) {
+                return accepted
+            }
+        }
+        return try XCTUnwrap(fallback.deferredLink)
+    }
+
+    private func rankedShareIdentifiers(_ providers: [NSItemProvider]) -> [String] {
+        ShareSheetRepresentationOrder.candidates(
+            from: providers,
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        ).map(\.identifier)
     }
 
     func testSourceLinkPayloadStoreRoundTripsAndDeletes() throws {
@@ -1101,29 +1488,6 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipForwardSeconds"), 45)
     }
 
-    func testStoredTranscriptWindowUsesFullShoulderAndAllowsTimestampGaps() throws {
-        let timeline = TranscriptTimeline(
-            segments: [
-                MediaTimelineSegment(id: "early", startMs: 35_000, endMs: 55_000, text: "Earlier context."),
-                MediaTimelineSegment(id: "before", startMs: 70_000, endMs: 120_000, text: "Before."),
-                MediaTimelineSegment(id: "after", startMs: 125_000, endMs: 175_000, text: "After."),
-                MediaTimelineSegment(id: "late", startMs: 200_000, endMs: 240_000, text: "Later context."),
-                MediaTimelineSegment(id: "far", startMs: 500_000, endMs: 550_000, text: "Far away.")
-            ],
-            chapters: [],
-            durationMs: 600_000
-        )
-
-        let window = try XCTUnwrap(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 123_000))
-
-        XCTAssertEqual(
-            window.segments.map(\.id),
-            ["early", "before", "after", "late"],
-            "The stored transcript should preserve the full 90-second/120-second shoulder despite normal word-timestamp gaps"
-        )
-        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 350_000))
-    }
-
     func testClipboardButtonExtractsSourceLinkURL() throws {
         #if canImport(UIKit)
         UIPasteboard.general.string = "Listen here: https://podcasts.apple.com/us/podcast/show/id123456?i=999"
@@ -1486,6 +1850,55 @@ private struct StaticAppLinkResolver: LinkResolutionClient {
     }
 }
 
+private final class VoiceoverFeedURLProtocol: URLProtocol, @unchecked Sendable {
+    private static let feedData = Data("""
+    <?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+    <channel><title>Voiceovers</title><link>https://voiceovers.example</link><generator>Substack</generator>
+    <item><title>A post with a voiceover</title><link>https://voiceovers.example/p/post</link><guid>post</guid>
+    <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/post.mp3" type="audio/mpeg"/>
+    <itunes:duration>1312</itunes:duration>
+    <content:encoded><![CDATA[<p>\(String(repeating: "Listening in the margins. ", count: 180))</p>]]></content:encoded></item>
+    <item><title>An episode</title><link>https://voiceovers.example/p/episode</link><guid>episode</guid>
+    <description>Subtitle.</description><enclosure url="https://cdn.voiceovers.example/episode.mp3" type="audio/mpeg"/>
+    <content:encoded><![CDATA[<p>Show notes for the episode.</p>]]></content:encoded></item>
+    <item><title>A text-only post</title><link>https://voiceovers.example/p/text-only</link><guid>text-only</guid>
+    <description>Subtitle.</description>
+    <content:encoded><![CDATA[<p>\(String(repeating: "Notes from the archive. ", count: 40))</p>]]></content:encoded></item>
+    </channel></rss>
+    """.utf8)
+
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "voiceovers.example"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        guard let url = request.url,
+              let response = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/rss+xml"]) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        if url.path == "/p/post" {
+            let post: [String: Any] = ["id": 1, "type": "newsletter", "has_voiceover": true,
+                "canonical_url": "https://voiceovers.example/p/post", "audio_items": [
+                    ["post_id": 1, "type": "voiceover", "status": "completed", "audio_url": "https://cdn.voiceovers.example/post.mp3"]]]
+            let json = try! JSONSerialization.data(withJSONObject: ["post": post], options: [.sortedKeys, .withoutEscapingSlashes])
+            let encoded = try! JSONEncoder().encode(String(decoding: json, as: UTF8.self))
+            client?.urlProtocol(self, didLoad: Data("<script>window._preloads = JSON.parse(\(String(decoding: encoded, as: UTF8.self)));</script>".utf8))
+        } else {
+            client?.urlProtocol(self, didLoad: Self.feedData)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
+
 private final class LargePodcastFeedURLProtocol: URLProtocol, @unchecked Sendable {
     private static let feedData: Data = {
         let padding = String(repeating: "x", count: 2 * 1_024 * 1_024 + 1)
@@ -1763,6 +2176,15 @@ private actor SequencedInterjectionTranscriber {
     }
 }
 
+@MainActor
+private final class RedirectedFeedArticleExtractor: ReadablePageExtracting {
+    let capture: BrowserTextHandoff
+    init(capture: BrowserTextHandoff) { self.capture = capture }
+    var lastExtractor: String? { "redirected-test-capture" }
+    var contactedHosts: [String] { ["publisher.example", "destination.example"] }
+    func extract(url: URL) async throws -> BrowserTextHandoff { capture }
+}
+
 private final class AliasedFeedURLProtocol: URLProtocol, @unchecked Sendable {
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "example.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -1783,5 +2205,19 @@ private extension Gate1AppModel {
     /// Per-Margin diagnostics are keyed by a session token; these tests run a single session.
     func marginDiagnostic(_ name: String, interjectionId: String) -> String? {
         diagnostics.first { $0.key.hasPrefix("\(name):") && $0.key.hasSuffix("/\(interjectionId)") }?.value
+    }
+}
+
+@MainActor
+private final class RefusingPublisherPageExtractor: ReadablePageExtracting {
+    var calls = 0
+    private let result: BrowserTextHandoff?
+    init(result: BrowserTextHandoff? = nil) { self.result = result }
+    var lastExtractor: String? { "unauthenticated-page" }
+    var contactedHosts: [String] { [] }
+    func extract(url: URL) async throws -> BrowserTextHandoff {
+        calls += 1
+        if let result { return result }
+        throw URLError(.userAuthenticationRequired)
     }
 }

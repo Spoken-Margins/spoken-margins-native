@@ -100,7 +100,162 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         XCTAssertEqual(conductor.sequence.phase, .listening)
     }
 
-    private static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
+    // MARK: Another listener's Margin gets the chime first (#932)
+
+    /// The Timeline's tap path used to start a shared Margin's voice with no chime at all. The chime plays
+    /// first, and the voice starts only after it has finished, so the two never overlap.
+    func testASharedMarginsChimePlaysBeforeItsVoiceAndNeverOverlapsIt() throws {
+        let fixture = try ChimeFixture(chimed: true)
+        defer { fixture.cleanUp() }
+
+        fixture.reachTheMargin()
+        XCTAssertEqual(fixture.events, ["source.pause", "chime:shared"], "the chime is the first sound; the voice waits for it")
+        XCTAssertTrue(fixture.conductor.isPlayingVoice, "the Margin already has the floor during its chime")
+        XCTAssertTrue(fixture.conductor.isPlayingChime, "the chime is sounding")
+
+        try fixture.pump(until: { fixture.events.contains("voice:shared") }, "the voice starts after the chime")
+        XCTAssertEqual(fixture.events, ["source.pause", "chime:shared", "voice:shared"])
+        let chimeSeconds = try AVAudioPlayer(data: SharedMarginCue.doubleChimeWAVData()).duration
+        let gap = try XCTUnwrap(fixture.voiceStartedAt).timeIntervalSince(try XCTUnwrap(fixture.chimeStartedAt))
+        XCTAssertGreaterThanOrEqual(gap, chimeSeconds, "the voice starts only once the chime is over")
+
+        try fixture.pump(until: { fixture.resumed == 1 }, "the episode resumes when the voice ends")
+        XCTAssertEqual(fixture.events.filter { $0.hasPrefix("chime") }.count, 1, "exactly one chime")
+        XCTAssertEqual(fixture.conductor.sequence.phase, .listening)
+    }
+
+    /// Your own Margins, and a muted layer's, get no chime: the voice starts the moment the Margin is reached.
+    func testAMarginThatIsNotChimedStartsItsVoiceStraightAway() throws {
+        let fixture = try ChimeFixture(chimed: false)
+        defer { fixture.cleanUp() }
+
+        fixture.reachTheMargin()
+        XCTAssertEqual(fixture.events, ["source.pause", "voice:shared"])
+        try fixture.pump(until: { fixture.resumed == 1 }, "the episode resumes when the voice ends")
+        XCTAssertEqual(fixture.events, ["source.pause", "voice:shared", "source.resume"])
+    }
+
+    /// Skip during the chime stops it, never starts the voice, and the episode carries on.
+    func testSkippingDuringTheChimeNeverStartsTheVoice() throws {
+        let fixture = try ChimeFixture(chimed: true)
+        defer { fixture.cleanUp() }
+
+        fixture.reachTheMargin()
+        XCTAssertTrue(fixture.conductor.isPlayingChime)
+        fixture.conductor.skipVoice()
+        XCTAssertEqual(fixture.resumed, 1)
+        XCTAssertFalse(fixture.conductor.isPlayingVoice)
+        XCTAssertFalse(fixture.conductor.isPlayingChime, "skip stops the chime too")
+        fixture.pump(forSeconds: 1)
+        XCTAssertEqual(fixture.events, ["source.pause", "chime:shared", "source.resume"], "the voice never started")
+        XCTAssertEqual(fixture.conductor.sequence.phase, .listening)
+    }
+
+    /// Leaving the moment (another item, a recording) during the chime also keeps the voice from starting.
+    func testCancellingDuringTheChimeNeverStartsTheVoice() throws {
+        let fixture = try ChimeFixture(chimed: true)
+        defer { fixture.cleanUp() }
+
+        fixture.reachTheMargin()
+        XCTAssertTrue(fixture.conductor.isPlayingChime)
+        fixture.conductor.cancel()
+        XCTAssertFalse(fixture.conductor.isPlayingChime, "cancel stops the chime too")
+        fixture.pump(forSeconds: 1)
+        XCTAssertEqual(fixture.events, ["source.pause", "chime:shared"])
+        XCTAssertFalse(fixture.conductor.isPlayingVoice)
+    }
+
+    /// Pause during the chime stops the chime and holds the voice; resume starts the voice, once, and marks it started.
+    func testPausingDuringTheChimeHoldsTheVoiceUntilResumed() throws {
+        let fixture = try ChimeFixture(chimed: true)
+        defer { fixture.cleanUp() }
+
+        fixture.reachTheMargin()
+        XCTAssertTrue(fixture.conductor.isPlayingChime)
+        fixture.conductor.setVoicePaused(true)
+        XCTAssertFalse(fixture.conductor.isPlayingChime, "paused means silent: the chime stops with the voice")
+        fixture.pump(forSeconds: 1)
+        XCTAssertEqual(fixture.events, ["source.pause", "chime:shared"], "paused, so the voice stays silent")
+        XCTAssertTrue(fixture.conductor.isVoicePaused)
+
+        fixture.conductor.setVoicePaused(false)
+        XCTAssertEqual(fixture.events, ["source.pause", "chime:shared", "voice:shared"])
+        XCTAssertFalse(fixture.conductor.isVoicePaused)
+        try fixture.pump(until: { fixture.resumed == 1 }, "the episode resumes when the voice ends")
+        XCTAssertEqual(fixture.events.filter { $0 == "voice:shared" }.count, 1, "the voice started once")
+    }
+
+    /// A conductor for one shared Margin at 5 s with real chime and voice players, both silent.
+    @MainActor
+    private final class ChimeFixture {
+        private final class Log {
+            var events: [String] = []
+            var resumed = 0
+            var chimeStartedAt: Date?
+            var voiceStartedAt: Date?
+        }
+
+        let conductor: MarginMomentConductor
+        private let directory: URL
+        private let log = Log()
+
+        var events: [String] { log.events }
+        var resumed: Int { log.resumed }
+        var chimeStartedAt: Date? { log.chimeStartedAt }
+        var voiceStartedAt: Date? { log.voiceStartedAt }
+
+        init(chimed: Bool) throws {
+            let directory = FileManager.default.temporaryDirectory
+                .appending(path: "margin-chime-\(UUID().uuidString)", directoryHint: .isDirectory)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let voiceURL = try RealPlayerMarginMomentTests.writeTone(
+                to: directory.appending(path: "shared.caf"), seconds: 0.8, hz: 440
+            )
+            let log = self.log
+            self.directory = directory
+            conductor = MarginMomentConductor(
+                sequence: MarginMomentSequence(
+                    itemId: "episode", target: MarginMomentAnchor(marginId: "shared", mediaTimeMs: 5_000), otherMargins: []
+                ),
+                source: .init(
+                    pause: { log.events.append("source.pause") },
+                    resume: { log.resumed += 1; log.events.append("source.resume") },
+                    seek: { _ in }
+                ),
+                voiceURL: { _ in voiceURL }
+            )
+            conductor.voiceVolume = 0
+            conductor.chimeVolume = 0
+            if chimed { conductor.chimedMarginIds = ["shared"] }
+            conductor.onChimeStarted = { log.chimeStartedAt = Date(); log.events.append("chime:\($0)") }
+            conductor.onVoiceStarted = { log.voiceStartedAt = Date(); log.events.append("voice:\($0)") }
+        }
+
+        func reachTheMargin() {
+            conductor.start()
+            conductor.observe(mediaTimeMs: 4_800)
+            conductor.observe(mediaTimeMs: 5_200)
+        }
+
+        func pump(forSeconds seconds: TimeInterval) {
+            RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+        }
+
+        func pump(until condition: () -> Bool, _ what: String, timeout: TimeInterval = 5) throws {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !condition() {
+                guard Date() < deadline else { return XCTFail("timed out waiting until \(what)") }
+                RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            }
+        }
+
+        func cleanUp() {
+            conductor.cancel()
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    fileprivate static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
         let sampleRate = 44_100.0
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
         let file = try AVAudioFile(forWriting: url, settings: format.settings)

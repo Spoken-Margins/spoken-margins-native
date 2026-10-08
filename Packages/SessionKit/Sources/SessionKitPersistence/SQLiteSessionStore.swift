@@ -154,6 +154,48 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadBySession(kind: "interjection", sessionId: sessionId)
     }
 
+    /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
+    public func loadInterjections(itemId: String) throws -> [Interjection] {
+        try loadByItem(kind: "interjection", itemId: itemId)
+    }
+
+    /// Every audio path any stored Margin names, read from the stored JSON itself: live rows, rows that no
+    /// longer decode as a Margin, and rows already moved to quarantine. It is the check that no Margin
+    /// still uses a recording before the recording is deleted (#1035), so it fails closed: a row it can't
+    /// read, or a read that doesn't reach the end of the table, throws instead of leaving a reference out.
+    public func allMarginAudioPaths() throws -> [String] {
+        let live = try marginAudioPaths(sql: "SELECT payload FROM records WHERE kind = 'interjection';")
+        let quarantined = try marginAudioPaths(sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection';")
+        return live + quarantined
+    }
+
+    private func marginAudioPaths(sql: String) throws -> [String] {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
+            }
+            defer { sqlite3_finalize(statement) }
+            var paths: [String] = []
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return paths }
+                guard step == SQLITE_ROW else {
+                    throw SessionKitError.persistenceFailed("step_margin_audio_paths")
+                }
+                guard let raw = sqlite3_column_text(statement, 0),
+                      let object = try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] else {
+                    throw SessionKitError.persistenceFailed("margin_row_unreadable")
+                }
+                switch object["audioPath"] {
+                case nil, is NSNull: continue
+                case let path as String: paths.append(path)
+                default: throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
+                }
+            }
+        }
+    }
+
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {
         try withTransaction {
             let existing: InterjectionShareRevision? = try loadOptional(
@@ -278,14 +320,40 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
-        let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
-        try save(
-            kind: "imported_commentary_interjection",
-            id: interjection.id,
-            sessionId: nil,
-            itemId: layer?.itemId,
-            value: interjection
-        )
+        // The lock, not a transaction: markImportedCommentaryInterjectionHeard calls this inside one.
+        try withConnectionLock {
+            var interjection = interjection
+            let stored: ImportedCommentaryInterjection? = try loadOptional(kind: "imported_commentary_interjection", id: interjection.id)
+            // Slow anchor resolution must preserve additive state saved after its snapshot.
+            if interjection.firstHeardAt == nil { interjection.firstHeardAt = stored?.firstHeardAt }
+            var aliases = stored?.alsoSharedAs ?? []
+            for identity in interjection.alsoSharedAs ?? [] where !aliases.contains(identity) { aliases.append(identity) }
+            interjection.alsoSharedAs = aliases.isEmpty ? nil : aliases
+            let layer = try loadImportedCommentaryLayer(id: interjection.layerId)
+            try save(
+                kind: "imported_commentary_interjection",
+                id: interjection.id,
+                sessionId: nil,
+                itemId: layer?.itemId,
+                value: interjection
+            )
+        }
+    }
+
+    public func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection? {
+        var result: ImportedCommentaryInterjection?
+        try withTransaction {
+            guard var interjection: ImportedCommentaryInterjection = try loadOptional(
+                kind: "imported_commentary_interjection",
+                id: id
+            ) else { return }
+            if interjection.firstHeardAt == nil {
+                interjection.firstHeardAt = date
+                try saveImportedCommentaryInterjection(interjection)
+            }
+            result = interjection
+        }
+        return result
     }
 
     public func saveTurn(_ turn: ConversationTurn) throws {
@@ -547,6 +615,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
+    @discardableResult
+    public func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool {
+        try withTransaction {
+            guard let asset: OwnedOfflineAsset = try loadOptional(kind: "owned_offline_asset", id: id),
+                  shouldDelete(asset) else { return false }
+            try deleteOwnedOfflineAsset(id: id)
+            return true
+        }
+    }
+
     public func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws {
         try save(kind: "offline_storage_reservation", id: reservation.id, sessionId: nil, itemId: nil, value: reservation)
     }
@@ -661,13 +739,24 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     public func deleteItem(id: String) throws {
         try withConnectionLock {
             var statement: OpaquePointer?
-            let sql = "DELETE FROM records WHERE item_id = ? OR (kind = 'item' AND id = ?);"
+            // Turns are saved with a session id and no item id, so they are found through the
+            // item's session rows. One statement: SQLite reads the session rows before it
+            // deletes any, and a failure leaves the item whole.
+            let sql = """
+            DELETE FROM records
+            WHERE item_id = ?
+               OR (kind = 'item' AND id = ?)
+               OR (kind = 'turn' AND session_id IN (
+                    SELECT id FROM records WHERE kind = 'session' AND item_id = ?
+               ));
+            """
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_delete_item")
             }
             defer { if statement != nil { sqlite3_finalize(statement) } }
             bind(statement, index: 1, value: id)
             bind(statement, index: 2, value: id)
+            bind(statement, index: 3, value: id)
             guard sqlite3_step(statement) == SQLITE_DONE else {
                 throw SessionKitError.persistenceFailed("step_delete_item")
             }
@@ -1113,5 +1202,41 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
             for session in upgrade.sessions { try saveSession(session) }
             try saveStructuredDocument(upgrade.document, itemId: itemId)
         }
+    }
+}
+
+/// Publisher audio (#545) lives in the records table as kind "publisher_audio", one row per
+/// item, keyed and linked by the item id. No table or column changes, and schema_version stays
+/// 5: Build 29 selects records by kind and never reads this one, and deleting the item removes it.
+extension SQLiteSessionStore: PublisherAudioRepository {
+    static let publisherAudioKind = "publisher_audio"
+
+    public func savePublisherAudio(_ audio: PublisherAudio) throws {
+        try save(kind: Self.publisherAudioKind, id: audio.itemId, sessionId: nil, itemId: audio.itemId, value: audio)
+    }
+
+    public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? {
+        try loadOptional(kind: Self.publisherAudioKind, id: itemId)
+    }
+}
+
+/// Community map uploads (#552) live in the records table as kind "community_map_upload", one
+/// row per episode key. The row is not linked to an item, so deleting one Library copy keeps the
+/// episode's history and re-importing it doesn't send the transcript again. No table or column
+/// changes, and schema_version stays the same: Build 29 selects records by kind and never reads
+/// this one.
+extension SQLiteSessionStore: CommunityMapUploadRepository {
+    static let communityMapUploadKind = "community_map_upload"
+
+    public func saveCommunityMapUpload(_ record: CommunityMapUploadRecord) throws {
+        try save(kind: Self.communityMapUploadKind, id: record.id, sessionId: nil, itemId: nil, value: record)
+    }
+
+    public func loadCommunityMapUpload(episodeKey: String) throws -> CommunityMapUploadRecord? {
+        try loadOptional(kind: Self.communityMapUploadKind, id: episodeKey)
+    }
+
+    public func loadCommunityMapUploads() throws -> [CommunityMapUploadRecord] {
+        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", [Self.communityMapUploadKind])
     }
 }

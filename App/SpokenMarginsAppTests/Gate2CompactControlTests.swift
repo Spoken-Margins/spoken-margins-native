@@ -343,6 +343,51 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: nil, backward: false), "Skim Forward")
     }
 
+    func testLiveActivityContentStateCarriesTheMicrophoneStateAndDefaultsToCapturing() throws {
+        let stopped = Gate2LiveActivityAttributes.ContentState(
+            title: "Pill",
+            chapterTitle: "Opening",
+            status: "recording",
+            phase: "recordingInterjection",
+            progressPercent: 42,
+            isRecording: true,
+            microphone: .stopped
+        )
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(stopped)
+        )
+        XCTAssertEqual(decoded.microphone, .stopped)
+
+        let legacy = try JSONDecoder().decode(Gate2LiveActivityAttributes.ContentState.self, from: Data("""
+        {"title":"Pill","chapterTitle":"Opening","status":"recording","phase":"recordingInterjection","progressPercent":42,"isRecording":true}
+        """.utf8))
+        XCTAssertEqual(legacy.microphone, .capturing, "a payload from before this field behaves as it did")
+    }
+
+    func testLiveActivityStopsSayingRecordWhenTheMicrophoneStops() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(liveActivity.lastMicrophone, .capturing, "a recorder that can report nothing counts as capturing")
+
+        controller.setMicrophone(.stopped)
+
+        XCTAssertEqual(liveActivity.lastMicrophone, .stopped, "the card is republished at once, not at the next playback tick")
+
+        controller.setMicrophone(.capturing)
+
+        XCTAssertEqual(liveActivity.lastMicrophone, .capturing)
+    }
+
     func testLiveActivityContentStateCarriesPendingSharedMargin() throws {
         let original = Gate2LiveActivityAttributes.ContentState(
             title: "Pill",
@@ -1062,14 +1107,17 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
     private(set) var lastStaleDate: Date?
     private(set) var lastSharedMarginPrompt: Gate2SharedMarginActivityPrompt?
     private(set) var lastUpcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
+    private(set) var lastMicrophone = Gate2LiveActivityMicrophone.capturing
 
     func publish(
         _ snapshot: CompactControlSnapshot,
         staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
-        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry],
+        microphone: Gate2LiveActivityMicrophone
     ) {
         publishCallCount += 1
+        lastMicrophone = microphone
         lastStaleDate = staleDate
         lastSharedMarginPrompt = sharedMarginPrompt
         lastUpcomingSharedMargins = upcomingSharedMargins

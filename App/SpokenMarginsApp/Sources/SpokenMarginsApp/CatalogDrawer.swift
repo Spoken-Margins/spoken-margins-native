@@ -6,19 +6,18 @@ import SessionKit
 /// tap through the app's normal follow path.
 @MainActor
 final class CatalogDrawerModel: ObservableObject {
-    enum FollowState: Equatable {
-        case following
-        case followed
-        case failed(String)
-    }
+    typealias FollowState = CatalogDrawerFollowState
 
     static let seenKey = "catalogDrawerSeenV1"
     /// Catalog entry id → followed source id, recorded when the drawer follows a show.
     static let followedSourcesKey = "catalogDrawerFollowedSourcesV1"
 
     @Published var isPresented = false
-    @Published var selectedSubject: String?
-    @Published private(set) var catalog: SourceCatalog?
+    @Published var selectedSubject: String? { didSet { refreshEntries() } }
+    @Published private(set) var catalog: SourceCatalog? { didSet { refreshEntries() } }
+    /// The rows for the selected subject, refiltered only when the catalog or subject changes
+    /// (#246: it was refiltered on every render, including one per Follow tap).
+    @Published private(set) var entries: [SourceCatalogEntry] = []
     @Published private(set) var loadError: String?
     @Published private(set) var followStates: [String: FollowState] = [:]
 
@@ -27,17 +26,21 @@ final class CatalogDrawerModel: ObservableObject {
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
     private var hasLoaded = false
+    /// Makes a fresh OPML import (#463) for the drawer and Following; nil hides the entry.
+    let makeOPMLImport: (@MainActor () -> OPMLImportModel)?
 
     init(
         store: SourceCatalogStore?,
         defaults: UserDefaults = .standard,
         subscriptions: @escaping @MainActor () -> [FeedSubscription],
-        follow: @escaping @MainActor (String) async throws -> String
+        follow: @escaping @MainActor (String) async throws -> String,
+        makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil
     ) {
         self.store = store
         self.defaults = defaults
         self.subscriptions = subscriptions
         self.follow = follow
+        self.makeOPMLImport = makeOPMLImport
     }
 
     /// The app's drawer: the bundled snapshot plus a cache in Application Support.
@@ -62,9 +65,13 @@ final class CatalogDrawerModel: ObservableObject {
         }
     }
 
-    var entries: [SourceCatalogEntry] { catalog?.entries(forSubject: selectedSubject) ?? [] }
     var subjects: [SourceCatalogSubject] { catalog?.visibleSubjects ?? [] }
     var followedCount: Int { followStates.values.filter { $0 == .followed }.count }
+    /// The footer, counting shows and newsletters in their own words (#661).
+    var followedSummary: String? {
+        let followed = (catalog?.entries ?? []).filter { followStates[$0.id] == .followed }
+        return CatalogFollowedSummary.text(followedKinds: followed.map(\.contentKind))
+    }
 
     func presentIfFirstRun(libraryWasEmptyAtLaunch: Bool, followedSourceCount: Int) {
         guard FirstRunCatalogDrawerPolicy.opensAutomatically(
@@ -75,7 +82,10 @@ final class CatalogDrawerModel: ObservableObject {
         present()
     }
 
+    /// The drawer model lives for the whole app run, so each opening drops the follows it
+    /// confirmed before: the listener may have unfollowed one in Following since (#646).
     func present() {
+        followStates = FollowState.keptOnReopening(followStates)
         isPresented = true
     }
 
@@ -109,12 +119,25 @@ final class CatalogDrawerModel: ObservableObject {
         if catalog == nil { catalog = snapshot }
     }
 
+    private func refreshEntries() {
+        entries = catalog?.entries(forSubject: selectedSubject) ?? []
+    }
+
     func state(for entry: SourceCatalogEntry) -> FollowState? {
-        if let state = followStates[entry.id] { return state }
-        guard let catalog else { return nil }
-        let recorded = (defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String])?[entry.id]
-        return CatalogFollowState.isFollowed(entry, in: catalog, recordedSourceId: recorded, subscriptions: subscriptions())
-            ? .followed : nil
+        followStates(for: [entry])[entry.id]
+    }
+
+    /// Follow state for every row in one pass (#246); rows without a state are left out. The list
+    /// asks once per render, so the recorded follows and the subscriptions are read once, not
+    /// twice per row. Subscriptions aren't cached: they change in Following without telling
+    /// the drawer.
+    func followStates(for entries: [SourceCatalogEntry]) -> [String: FollowState] {
+        var followed: Set<String> = []
+        if let catalog, entries.contains(where: { followStates[$0.id] == nil }) {
+            let recorded = defaults.dictionary(forKey: Self.followedSourcesKey) as? [String: String] ?? [:]
+            followed = CatalogFollowState.followedEntryIds(in: catalog, recordedSourceIds: recorded, subscriptions: subscriptions())
+        }
+        return FollowState.merged(drawerStates: followStates, liveFollowedEntryIds: followed, entryIds: entries.map(\.id))
     }
 
     private func recordFollowedSource(_ sourceId: String, for entry: SourceCatalogEntry) {
@@ -151,10 +174,11 @@ struct CatalogDrawerView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 subjectBar
+                importLink
                 list
             }
             .background(AppColors.bone)
-            .navigationTitle("Follow a few podcasts")
+            .navigationTitle("Follow a few favourites")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -165,6 +189,21 @@ struct CatalogDrawerView: View {
             .task { await drawer.load() }
         }
         .accessibilityIdentifier("catalog.drawer")
+    }
+
+    /// Shown whether or not the podcast list loaded: importing matters most when it didn't (#463).
+    @ViewBuilder
+    private var importLink: some View {
+        if let makeOPMLImport = drawer.makeOPMLImport {
+            NavigationLink {
+                OPMLImportScreen(importer: makeOPMLImport())
+            } label: {
+                Label("Import from another app", systemImage: "square.and.arrow.down")
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            }
+            .padding(.horizontal, 16)
+            .accessibilityIdentifier("catalog.drawer.importOPML")
+        }
     }
 
     private var subjectBar: some View {
@@ -204,13 +243,15 @@ struct CatalogDrawerView: View {
         } else if drawer.catalog == nil {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
+            let states = drawer.followStates(for: drawer.entries)
             List {
                 Section {
                     ForEach(drawer.entries) { entry in
-                        CatalogDrawerRow(entry: entry)
+                        CatalogDrawerRow(entry: entry, state: states[entry.id]) { drawer.toggleFollow(entry) }
+                            .equatable()
                     }
                 } header: {
-                    Text("New episodes show up in Following. Nothing downloads until you choose it.")
+                    Text("New episodes and posts show up in Following. Nothing downloads until you choose it.")
                         .font(.footnote)
                         .textCase(nil)
                 }
@@ -218,8 +259,8 @@ struct CatalogDrawerView: View {
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom) {
-                if drawer.followedCount > 0 {
-                    Text("Following \(drawer.followedCount) \(drawer.followedCount == 1 ? "show" : "shows")")
+                if let summary = drawer.followedSummary {
+                    Text(summary)
                         .font(.subheadline.weight(.semibold))
                         .frame(maxWidth: .infinity, minHeight: 44)
                         .background(.bar)
@@ -230,27 +271,30 @@ struct CatalogDrawerView: View {
     }
 }
 
-private struct CatalogDrawerRow: View {
-    @EnvironmentObject private var drawer: CatalogDrawerModel
+/// One drawer row. It gets its follow state from the list's single pass instead of observing the
+/// drawer, so a Follow tap re-renders only the row whose state changed (#246).
+private struct CatalogDrawerRow: View, Equatable {
     let entry: SourceCatalogEntry
+    let state: CatalogDrawerModel.FollowState?
+    let toggleFollow: () -> Void
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.entry == rhs.entry && lhs.state == rhs.state
+    }
 
     var body: some View {
         HStack(spacing: 12) {
-            AsyncImage(url: entry.artworkURL.flatMap(URL.init(string:))) { image in
-                image.resizable().scaledToFill()
-            } placeholder: {
-                AppColors.panel.overlay { Image(systemName: "headphones").foregroundStyle(AppColors.secondaryText) }
-            }
-            .frame(width: 56, height: 56)
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .accessibilityHidden(true)
+            ArtworkThumbnail(url: entry.artworkURL.flatMap(URL.init(string:)))
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(entry.title).font(.headline).lineLimit(2)
                 if let author = entry.author {
                     Text(author).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(1)
                 }
-                if case .failed(let message) = drawer.state(for: entry) {
+                if case .failed(let message) = state {
                     Text(message).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(2)
                 }
             }
@@ -263,7 +307,7 @@ private struct CatalogDrawerRow: View {
 
     @ViewBuilder
     private var followButton: some View {
-        switch drawer.state(for: entry) {
+        switch state {
         case .following:
             ProgressView().frame(minWidth: 96, minHeight: 44)
         case .followed:
@@ -272,14 +316,13 @@ private struct CatalogDrawerRow: View {
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityIdentifier("catalog.followed.\(entry.id)")
         case .failed:
-            Button("Retry") { drawer.toggleFollow(entry) }
+            Button("Retry", action: toggleFollow)
                 .buttonStyle(.bordered)
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
         case nil:
-            Button("Follow") { drawer.toggleFollow(entry) }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.evergreen)
+            Button("Follow", action: toggleFollow)
+                .filledActionButton()
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Follow \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")

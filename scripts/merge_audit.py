@@ -4,8 +4,11 @@
 Run by .github/workflows/merge-audit.yml on every push to next. For each pull request merged by the
 push, it passes when the PR has an issue comment that starts with "**Merge check (triage desk)",
 contains the first 7 characters of the merged head commit, and was posted before the merge.
-Otherwise it adds the `merge-audit` label and says so on the PR. Commits pushed to next without any
-pull request get a `merge-audit` issue. It never reverts anything.
+A hand merge without that comment also passes when, before the merge, the head had what the owner's
+hand-merge rule asks for (#742): the newest lane report the runner posted on the head says PASS, so does
+the newest T3 report on the head if there is one, and the newest Codex audit naming the head says "No
+blocking findings". Otherwise it adds the `merge-audit` label and says on the PR what was missing.
+Commits pushed to next without any pull request get a `merge-audit` issue. It never reverts anything.
 
 The owner may merge directly; they remove the label. The lead session surveys open `merge-audit`
 labels each morning (docs/workstreams/kickoff.md).
@@ -14,8 +17,9 @@ labels each morning (docs/workstreams/kickoff.md).
   scripts/merge_audit.py --sweep-hours 2                    PRs merged into next in the last 2 hours
 
 The sweep exists because the lane runner merges with the workflow token (decision 3), and pushes
-made with that token don't start other workflows, so no push run audits them. The runner posts its
-merge check before it pushes, so its own merges pass.
+made with that token don't start other workflows, so no push run audits them. lane-runner.py runs
+the sweep after each merge it pushes. The runner posts its merge check before it pushes, so its own
+merges pass.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -32,6 +37,14 @@ LABEL = 'merge-audit'
 LABEL_COLOR = 'b60205'
 LABEL_DESCRIPTION = 'Merged into next without a triage-desk merge check (remove if the owner merged it)'
 ZERO = '0' * 40
+# The lane runner's report and audit formats (scripts/lane-runner.py: BOT, REPORT, MARKER, AUDITS,
+# AUDIT_SHA, CLEAN_AUDIT). Reports count only from the runner's bot; agents post as the owner.
+LANE_BOT = 'github-actions[bot]'
+REPORT = re.compile(r'Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)')
+MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
+AUDITS = ('**Codex audit (Astra)', '## Codex audit')
+AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
+CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
 
 
 def parse_time(text: str) -> datetime.datetime:
@@ -48,8 +61,67 @@ def has_merge_check(comments: list[dict], head_sha: str, merged_at: str) -> bool
     return False
 
 
-def failure_comment(head_sha: str) -> str:
-    return (f'Merged into next without a triage-desk merge check on {head_sha[:7]}. '
+def same_commit(a: str, b: str) -> bool:
+    return bool(a) and bool(b) and (a.startswith(b) or b.startswith(a))
+
+
+def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime) -> list[tuple[str, str]]:
+    """(verdict, tier) of the runner's lane reports on this head posted before the merge, oldest first."""
+    found = []
+    for comment in comments:
+        if (comment.get('user') or {}).get('login') != LANE_BOT or parse_time(comment['created_at']) >= merged:
+            continue
+        body = (comment.get('body') or '').lstrip()
+        verdict, marker = REPORT.match(body), MARKER.search(body)
+        try:
+            wanted = json.loads(marker.group(1)) if marker else {}
+        except ValueError:
+            wanted = {}
+        if verdict and same_commit(wanted.get('commit', ''), head_sha):
+            found.append((verdict.group(1), wanted.get('tier', '')))
+    return found
+
+
+def audit_verdict(comments: list[dict], head_sha: str, merged: datetime.datetime) -> str | None:
+    """The verdict line of the newest Codex audit naming this head posted before the merge, if any."""
+    verdict = None
+    for comment in comments:
+        body = (comment.get('body') or '').lstrip()
+        if not body.startswith(AUDITS) or parse_time(comment['created_at']) >= merged:
+            continue
+        heading, _, rest = body.partition('\n')
+        if any(same_commit(sha, head_sha) for sha in AUDIT_SHA.findall(heading)):
+            verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
+    return verdict
+
+
+def hand_merge_gap(comments: list[dict], head_sha: str, merged_at: str) -> str | None:
+    """What the owner's hand-merge rule missed on this head before the merge, or None when it was all there.
+
+    The rule (owner, 2026-10-01; #742): a lane PASS and a clean Codex audit on the head being merged. Lane
+    changes the runner can't merge (`.github/`, `scripts/lane*`) are merged by hand this way.
+    """
+    sha7, merged = head_sha[:7], parse_time(merged_at)
+    missing = []
+    reports = lane_reports(comments, head_sha, merged)
+    t3 = [verdict for verdict, tier in reports if tier == 'T3']
+    if not reports:
+        missing.append(f'no lane report on `{sha7}`')
+    elif reports[-1][0] != 'PASS':
+        missing.append(f'the newest lane report on `{sha7}` is {reports[-1][0]}')
+    elif t3 and t3[-1] != 'PASS':
+        missing.append(f'the newest T3 lane report on `{sha7}` is {t3[-1]}')
+    verdict = audit_verdict(comments, head_sha, merged)
+    if verdict is None:
+        missing.append(f'no Codex audit of `{sha7}`')
+    elif not CLEAN_AUDIT.match(verdict):
+        missing.append(f'the Codex audit of `{sha7}` has blocking findings')
+    return '; '.join(missing) or None
+
+
+def failure_comment(head_sha: str, gap: str | None = None) -> str:
+    missing = f'Hand-merge rule not met before the merge: {gap}. ' if gap else ''
+    return (f'Merged into next without a triage-desk merge check on {head_sha[:7]}. {missing}'
             'If the owner merged this directly, remove the label.')
 
 
@@ -107,13 +179,13 @@ class GitHub:
         self.api(f'repos/{self.repo}/labels', '-f', f'name={LABEL}', '-f', f'color={LABEL_COLOR}',
                  '-f', f'description={LABEL_DESCRIPTION}', check=False)  # already exists: fine
 
-    def flag_pull(self, number: int, head_sha: str) -> None:
+    def flag_pull(self, number: int, head_sha: str, gap: str | None = None) -> None:
         labels = {l['name'] for l in json.loads(self.api(f'repos/{self.repo}/issues/{number}'))['labels']}
         if LABEL in labels:
             return
         self.ensure_label()
         self.api('-X', 'POST', f'repos/{self.repo}/issues/{number}/labels', '-f', f'labels[]={LABEL}')
-        self.api(f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={failure_comment(head_sha)}')
+        self.api(f'repos/{self.repo}/issues/{number}/comments', '-f', f'body={failure_comment(head_sha, gap)}')
 
     def flag_direct(self, head: str, shas: list[str]) -> None:
         self.ensure_label()
@@ -129,10 +201,14 @@ def audit_pull(github: 'GitHub', pull: dict, dry_run: bool) -> None:
     comments = github.json_lines(f'repos/{github.repo}/issues/{number}/comments')
     if has_merge_check(comments, head, pull['merged_at']):
         print(f'#{number} ({head[:7]}): merge check found')
-    else:
-        print(f'#{number} ({head[:7]}): no triage-desk merge check before the merge; flagged')
-        if not dry_run:
-            github.flag_pull(number, head)
+        return
+    gap = hand_merge_gap(comments, head, pull['merged_at'])
+    if gap is None:
+        print(f'#{number} ({head[:7]}): merged by hand after a lane PASS and a clean Codex audit of the head')
+        return
+    print(f'#{number} ({head[:7]}): no triage-desk merge check before the merge ({gap}); flagged')
+    if not dry_run:
+        github.flag_pull(number, head, gap)
 
 
 def main(argv=None) -> int:

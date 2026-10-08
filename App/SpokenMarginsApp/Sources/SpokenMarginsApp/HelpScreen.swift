@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 struct HelpScreen: View {
@@ -41,7 +42,7 @@ struct HelpScreen: View {
                     )
                     .accessibilityIdentifier("help.onboarding.start.button")
                     if model.isOnboardingCardDismissed && !model.hasCompletedCoreOnboarding {
-                        Button("Show Progress on Home", action: model.restoreOnboardingCard)
+                        Button("Show Progress in the Library", action: model.restoreOnboardingCard)
                             .accessibilityIdentifier("help.onboarding.restoreCard.button")
                     }
                 }
@@ -89,10 +90,10 @@ struct HelpScreen: View {
                 }
                 Section("Safari Articles") {
                     Text("In Safari, open Manage Extensions and enable Spoken Margins Text. Tap the extension once to send the readable page to Spoken Margins.")
-                    Text("For Safari’s Share menu, run the Add Article to Spoken Margins Shortcut. The Add Link field in the app is for podcast, RSS, or direct audio links.")
+                    Text("For Safari’s Share menu, run the Add Article to Spoken Margins Shortcut. In the app, the Link field takes podcast episodes, RSS feeds, audio files, web articles and PDF links.")
                 }
                 Section("Files and PDFs") {
-                    Text("From Home, tap Add Source, then Import Text or PDF Files. You can also share a PDF, Markdown file, or text file to Spoken Margins from another app.")
+                    Text("In the Library, tap Add, then Document or Book. You can also share a PDF, Markdown file, or text file to Spoken Margins from another app.")
                     Text("PDFs must contain extractable text. Image-only or scanned PDFs need OCR before Spoken Margins can import them.")
                 }
                 Section("Podcast Links") {

@@ -40,6 +40,57 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertNil(model.itemFailures.lastFailure(itemId: "item-pill"))
     }
 
+    /// #784: with nothing in Now Playing, the add confirmation offers Play now, and only the tap plays.
+    func testAnAddWithNothingPlayingOffersPlayNowAndOnlyTheTapPlays() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms() // a fresh simulator otherwise parks playback on the voice choice
+        XCTAssertTrue(model.nowPlayingIsEmpty)
+        model.importTitle = "Play Now Article"
+        model.importText = "A short article the listener adds while nothing is playing."
+        model.importTextItem(startListening: false)
+
+        let event = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertEqual(event.kind, .success)
+        XCTAssertEqual(event.message, "Added Play Now Article to Library.")
+        let action = try XCTUnwrap(event.action, "Play now must be offered when Now Playing is empty")
+        XCTAssertEqual(action.title, "Play now")
+        XCTAssertEqual(action.accessibilityLabel, "Play now, Play Now Article")
+        XCTAssertNil(model.snapshot.sessionId, "Nothing plays by itself")
+
+        action.perform()
+        let added = try XCTUnwrap(model.libraryItems.first { $0.title == "Play Now Article" })
+        XCTAssertEqual(model.snapshot.itemId, added.id)
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    /// #784: with something in Now Playing, today's message stays, with no button; and a stale
+    /// Play now tapped after something else started does nothing.
+    func testAnAddDuringPlaybackKeepsTodaysMessageAndAStalePlayNowDoesNothing() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.importTitle = "First Article"
+        model.importText = "The first article, added with nothing playing."
+        model.importTextItem(startListening: false)
+        let stale = try XCTUnwrap(model.feedbackEvent?.action)
+
+        model.startItem(id: "item-pill")
+        model.pause()
+        let nowPlaying = model.snapshot
+        model.openHome()
+        stale.perform()
+        XCTAssertEqual(model.snapshot.sessionId, nowPlaying.sessionId, "Play now must not replace what's in Now Playing")
+        XCTAssertEqual(model.snapshot.itemId, nowPlaying.itemId)
+
+        model.importTitle = "Second Article"
+        model.importText = "The second article, added while another item is paused."
+        model.importTextItem(startListening: false)
+        XCTAssertEqual(model.feedbackEvent?.message, "Added Second Article to Library without changing Now Playing.")
+        XCTAssertNil(model.feedbackEvent?.action)
+        XCTAssertEqual(model.snapshot.sessionId, nowPlaying.sessionId)
+    }
+
     func testAConfirmationDoesNotCoverAnErrorThatOffersRetry() {
         let retryable = UserFeedbackEvent(kind: .error, message: "The request timed out.", retry: .init(key: "test") {})
         let plain = UserFeedbackEvent(kind: .error, message: "Clipboard does not contain text.")
@@ -48,5 +99,137 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertFalse(retryable.mayBeReplaced(by: confirmation))
         XCTAssertTrue(retryable.mayBeReplaced(by: plain))
         XCTAssertTrue(plain.mayBeReplaced(by: confirmation))
+    }
+
+    func testFailedTimelineSummaryStaysOnItsItemAfterBannerCloses() async throws {
+        try await withPendingLocalSummary { model, summarizer in
+            XCTAssertEqual(model.screen, .timeline)
+            let startedAt = Date()
+            await summarizer.fail()
+            try await waitForSummaryFailure(model)
+
+            let failure = try XCTUnwrap(model.itemFailures.lastFailure(itemId: "item-pill"))
+            XCTAssertEqual(failure.message, model.feedbackEvent?.message)
+            XCTAssertGreaterThanOrEqual(failure.occurredAt, startedAt)
+            XCTAssertLessThanOrEqual(failure.occurredAt, Date())
+            XCTAssertEqual(model.feedbackEvent?.kind, .error)
+            XCTAssertEqual(model.feedbackEvent?.retry?.key, "summary")
+            XCTAssertNil(FeedbackBannerPolicy.autoDismissSeconds(for: .error))
+            let bannerId = model.feedbackEvent?.id
+            model.openItem(id: "item-pill")
+            XCTAssertEqual(model.feedbackEvent?.id, bannerId, "Opening the item must not cover its Retry banner.")
+
+            model.dismissFeedback()
+            model.openHome()
+            model.openItem(id: "item-pill")
+            XCTAssertNil(model.feedbackEvent)
+            XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill"), failure)
+        }
+    }
+
+    func testFailedTimelineSummaryStaysOnOriginalItemAfterOpeningAnotherItem() async throws {
+        try await withPendingLocalSummary { model, summarizer in
+            let otherItemId = try XCTUnwrap(model.libraryItems.first { $0.id != "item-pill" }?.id)
+            model.openItem(id: otherItemId)
+            XCTAssertEqual(model.screen, .item)
+            XCTAssertEqual(model.selectedItem.id, otherItemId)
+
+            await summarizer.fail()
+            try await waitForSummaryFailure(model)
+
+            XCTAssertEqual(model.selectedItem.id, otherItemId)
+            XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message,
+                           model.feedbackEvent?.message)
+            XCTAssertNotNil(model.itemFailures.lastFailure(itemId: "item-pill"))
+            XCTAssertNil(model.itemFailures.lastFailure(itemId: otherItemId))
+            XCTAssertEqual(model.feedbackEvent?.retry?.key, "summary")
+        }
+    }
+
+    private func withPendingLocalSummary(
+        _ check: (Gate1AppModel, PendingFailingSummaryClient) async throws -> Void
+    ) async throws {
+        let version = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+        let date = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
+        defer {
+            if let version {
+                UserDefaults.standard.set(version, forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: SpokenMarginsTerms.acceptanceVersionKey)
+            }
+            if let date {
+                UserDefaults.standard.set(date, forKey: SpokenMarginsTerms.acceptanceDateKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: SpokenMarginsTerms.acceptanceDateKey)
+            }
+        }
+        SpokenMarginsTerms.recordAcceptance()
+        let summarizer = PendingFailingSummaryClient()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: summarizer
+        )
+        model.resetAndSeed()
+        model.importTitle = "Another article"
+        model.importText = "A different source that the listener can open while a summary is pending."
+        model.importTextItem(startListening: false)
+        XCTAssertEqual(model.libraryItems.count, 2)
+        model.startItem(id: "item-pill")
+        model.pause()
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Does this premise support the conclusion?")
+        XCTAssertTrue(model.canSummarizeInterjections)
+        model.openTimeline()
+        XCTAssertEqual(model.screen, .timeline)
+        model.summarize()
+        let didStart = await summarizer.waitUntilRequested()
+        XCTAssertTrue(didStart, "The summary must start before navigation or failure.")
+        do {
+            try await check(model, summarizer)
+        } catch {
+            await summarizer.fail()
+            throw error
+        }
+        await summarizer.fail()
+    }
+
+    private func waitForSummaryFailure(_ model: Gate1AppModel) async throws {
+        for _ in 0..<100 {
+            if model.diagnostics["lastSummaryMode"] == "apple_foundation_failed" { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("Timed out waiting for the local summary failure.")
+    }
+}
+
+private actor PendingFailingSummaryClient: LocalFoundationModelClient {
+    private var pending: CheckedContinuation<String, Error>?
+
+    nonisolated func availability() -> LocalFoundationModelAvailability { .available }
+
+    func summarizeInterjections(context: String) async throws -> String {
+        try await withCheckedThrowingContinuation { pending = $0 }
+    }
+
+    func waitUntilRequested() async -> Bool {
+        for _ in 0..<100 {
+            if pending != nil { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return false
+    }
+
+    func fail() {
+        pending?.resume(throwing: LocalFoundationModelError.invalidInterjectionSummary)
+        pending = nil
+    }
+
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        throw LocalFoundationModelError.invalidInterjectionSummary
+    }
+
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        throw LocalFoundationModelError.invalidInterjectionSummary
     }
 }

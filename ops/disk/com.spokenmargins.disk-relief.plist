@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Disk relief: every 15 minutes, check free space; below 35 GiB with SlawBulk plugged in, free
+  space until 60 GiB (ops/disk/README.md). Not installed by the PR. Install steps are in the README.
+  It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.spokenmargins.disk-relief</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/colemiller/Documents/GitHub/spoken-margins-native/ops/disk/sm_disk_relief.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/colemiller/SpokenMarginsOps/disk-relief</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>StartInterval</key>
+  <integer>900</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>Nice</key>
+  <integer>10</integer>
+  <key>LowPriorityIO</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/colemiller/SpokenMarginsOps/disk-relief/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/colemiller/SpokenMarginsOps/disk-relief/launchd.log</string>
+</dict>
+</plist>

@@ -14,7 +14,13 @@ struct SettingsScreen: View {
     @State private var pendingPermanentDeletion: LibraryItemRow?
     @State private var isEmptyRecentlyDeletedConfirmationPresented = false
     @State private var isResetConfirmationPresented = false
-    @State private var copiedDiagnostics = false
+    @State private var diagnosticsExportURL: URL?
+    @State private var isDiagnosticsSharePresented = false
+    @State private var listeningSignalsExportURL: URL?
+    @State private var isExportingListeningSignals = false
+    @State private var isListeningSignalsSharePresented = false
+    @State private var hasNoListeningSignals = false
+    @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
 
     private enum Field {
         case mapModel
@@ -213,7 +219,7 @@ struct SettingsScreen: View {
                     Text("Episode maps are private and off by default. While Charging only prepares already-downloaded episodes; full transcripts and temporary audio are deleted after derivative artifacts commit.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    Text("While Charging uses durable jobs and pauses before the next chunk when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
+                    Text("While Charging uses durable jobs and pauses between parts of an item when power, thermal, or storage safety changes. Completion timing is not guaranteed.")
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
                 }
@@ -312,9 +318,8 @@ struct SettingsScreen: View {
                                     .font(.caption)
                                     .foregroundStyle(AppColors.secondaryText)
                                     .lineLimit(2)
-                                Text(entry.reason)
+                                FailureMessageLabel(entry.reason)
                                     .font(.caption)
-                                    .foregroundStyle(.red)
                                 HStack {
                                     Button("Retry") {
                                         model.retryImportInboxEntry(entry)
@@ -338,6 +343,15 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.help.button")
                     Link("Privacy Policy", destination: AppLinks.privacy)
                     Link("Support", destination: AppLinks.support)
+                    Toggle(isOn: $helpsMakeListeningMaps) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Help make listening maps")
+                            Text("Send transcripts of public episodes to the Spoken Margins server, which turns them into maps and then deletes them.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.communityMaps.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                     }
@@ -348,21 +362,53 @@ struct SettingsScreen: View {
                         SupertonicLegalView()
                     }
                     .accessibilityIdentifier("settings.legal.supertonic.link")
+                    NavigationLink("Legal · Open-Source Licenses") {
+                        OpenSourceLicensesView()
+                    }
+                    .accessibilityIdentifier("settings.legal.openSource.link")
+                    #if canImport(UIKit)
                     Button {
-                        model.copyDiagnosticsExport()
-                        copiedDiagnostics = true
+                        diagnosticsExportURL = model.diagnosticsExportFileURL()
+                        isDiagnosticsSharePresented = diagnosticsExportURL != nil
+                    } label: {
+                        Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("settings.shareDiagnostics.button")
+                    .sheet(isPresented: $isDiagnosticsSharePresented) {
+                        if let diagnosticsExportURL {
+                            ShareFileActivityView(fileURL: diagnosticsExportURL)
+                        }
+                    }
+                    Text("App state and recent playback events, as a file for a bug report. It includes the titles and links of items in your Library. It stays on this device unless you share it.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    Button {
+                        isExportingListeningSignals = true
                         Task {
-                            try? await Task.sleep(for: .seconds(2))
-                            copiedDiagnostics = false
+                            defer { isExportingListeningSignals = false }
+                            listeningSignalsExportURL = await model.listeningSignals.exportFileURL()
+                            isListeningSignalsSharePresented = listeningSignalsExportURL != nil
+                            hasNoListeningSignals = listeningSignalsExportURL == nil
                         }
                     } label: {
                         Label(
-                            copiedDiagnostics ? "Copied" : "Copy Privacy-Safe Diagnostics",
-                            systemImage: copiedDiagnostics ? "checkmark" : "doc.on.doc"
+                            hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
+                            systemImage: "square.and.arrow.up"
                         )
                     }
                     .buttonStyle(.borderless)
-                        .accessibilityIdentifier("settings.copyDiagnostics.button")
+                    .accessibilityIdentifier("settings.exportListeningSignals.button")
+                    .disabled(isExportingListeningSignals)
+                    .sheet(isPresented: $isListeningSignalsSharePresented) {
+                        if let listeningSignalsExportURL {
+                            ShareFileActivityView(fileURL: listeningSignalsExportURL)
+                        }
+                    }
+                    Text("A private log of listening time, Margins, shares and finishes for followed sources: titles, times and counts, never Margin text or audio. It stays on this device unless you export it.")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                    #endif
                     LabeledContent("Version", value: AppLinks.versionDescription)
                 }
                 #if DEBUG
@@ -370,7 +416,7 @@ struct SettingsScreen: View {
                     DisclosureGroup("Developer tools", isExpanded: $showsDeveloperTools) {
                         Toggle("Record Detailed Device Diagnostics", isOn: $model.developerDiagnosticRecordingEnabled)
                             .accessibilityIdentifier("settings.developer.recordDiagnostics")
-                        Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Copy Privacy-Safe Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
+                        Text("Basic playback events are saved locally automatically (latest 300 events, no source text or audio). For detailed sampling, turn on, reproduce, then turn off and Share Diagnostics. Detailed recording keeps 1,200 events and is off after restart.")
                             .font(.caption)
                         Text(model.developerDiagnosticBuild).font(.caption.monospaced())
                         Button("Add Sample Item", action: model.addSampleItem)
@@ -477,3 +523,17 @@ private struct RuntimeDiagnosticRows: View {
         }
     }
 }
+
+#if canImport(UIKit)
+/// Hands a file (the listening-signals log, #483, or the diagnostics export, #903) to the share sheet.
+/// Nothing is uploaded by the app.
+private struct ShareFileActivityView: UIViewControllerRepresentable {
+    let fileURL: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

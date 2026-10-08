@@ -1,4 +1,7 @@
 import importlib.util
+import json
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import unittest
@@ -107,6 +110,88 @@ class TestScopeTests(unittest.TestCase):
                 self.assertTrue(any('Build 29' in n for n in result['notes']))
         self.assertEqual(self.classify(APP + 'SharingExperience.swift')['tier'], 'T3')
 
+    def kind(self, path, added=None):
+        """(category, tier) test-scope.py gives one path; `added` is a changed line of a SessionKit source."""
+        diffs = {path: f'@@ -0,0 +1 @@\n+{added}\n'} if added is not None else None
+        [found] = self.classify(path, diffs=diffs)['files']
+        return found['category'], found['tier']
+
+    # The tables below decide which diffs escalate to an app build or app-hosted tests and which are held for a
+    # Codex audit, so each entry of each one is checked on its own. The sample paths match only the entry they
+    # are named for (`Playback` alone, not `Speech` too), or a table could lose entries unnoticed.
+
+    def test_persistence_fixtures_are_persistence_and_t2(self):
+        self.assertEqual(self.kind('Contracts/fixtures/persistence/build-29-library.json'), ('persistence', 'T2'))
+        self.assertEqual(self.kind('Contracts/fixtures/persistence/nested/prior-build.sqlite'), ('persistence', 'T2'))
+        self.assertEqual(self.kind('Contracts/fixtures/other/build-29-library.json'), ('validated', 'T1'))
+
+    def test_every_packet_schema_and_fixture_folder_is_a_packet_change(self):
+        for name in ('spoken-margins-package.schema.json', 'shared-commentary-layer.schema.json',
+                     'interjection-share-revision.schema.json', 'portable-listening-map-proposal.schema.json'):
+            with self.subTest(schema=name):
+                self.assertEqual(self.kind('Contracts/schemas/' + name), ('packet', 'T2'))
+                self.assertEqual(self.kind('Contracts/other/' + name), ('validated', 'T1'))  # only schemas/ counts
+        self.assertEqual(self.kind('Contracts/schemas/spoken-margins-other.schema.json'), ('validated', 'T1'))
+        for folder in ('interjection-packages', 'sharing'):
+            with self.subTest(fixtures=folder):
+                self.assertEqual(self.kind(f'Contracts/fixtures/{folder}/basic.json'), ('packet', 'T2'))
+        self.assertEqual(self.kind('Contracts/fixtures/shares/basic.json'), ('validated', 'T1'))
+
+    def test_sessionkit_targets_and_files_that_carry_packets_audio_or_persistence_escalate(self):
+        for path, category in ((KIT + 'SessionKitAudio/PlaybackStallDetector.swift', 'audio'),
+                               (KIT + 'SessionKitPersistence/SQLiteSessionStore.swift', 'persistence'),
+                               (KIT + 'SessionKitSharing/InterjectionPackageArchive.swift', 'packet'),
+                               (KIT + 'SessionKit/SharingModels.swift', 'packet'),
+                               (KIT + 'SessionKit/ShareableLinkPolicy.swift', 'packet')):
+            with self.subTest(path=path):
+                self.assertEqual(self.kind(path), (category, 'T2'))
+        self.assertEqual(self.kind(KIT + 'SessionKit/SharingSummary.swift'), ('sessionkit', 'T1'))  # not on the list
+
+    def test_each_audio_name_pattern_makes_an_app_file_an_audio_change(self):
+        for name in ('AudioRouteWatcher', 'PlaybackScreen', 'SpeechVoiceCatalog', 'SupertonicVoicePack',
+                     'RemoteControlCenter', 'MediaSessionBridge'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('audio', 'T3'))
+        self.assertEqual(self.kind(APP + 'ExperienceLibraryScreen.swift'), ('app-ui', 'T2'))
+
+    def test_each_packet_name_pattern_and_the_share_extension_make_an_app_file_a_packet_change(self):
+        for name in ('SharingExperience', 'ImportedMarginStore', 'PackageHandoffCoordinator', 'PacketBuilder'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('packet', 'T3'))
+        self.assertEqual(self.kind('App/SpokenMarginsShareExtension/ShareViewController.swift'), ('packet', 'T3'))
+        self.assertEqual(self.kind('App/SpokenMarginsShareExtension/Info.plist'), ('packet', 'T3'))
+        self.assertEqual(self.kind('App/SpokenMarginsWidgetExtension/Info.plist'), ('app-other', 'T2'))
+
+    def test_each_persistence_name_pattern_makes_an_app_file_a_persistence_change(self):
+        for name in ('ListeningEditionStore', 'ListeningLedger'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('persistence', 'T3'))
+        self.assertEqual(self.kind(APP + 'StoreKitHelper.swift'), ('app-ui', 'T2'))  # `Store.swift` ends the name
+
+    def test_each_orchestration_name_pattern_makes_an_app_file_orchestration(self):
+        for name in ('Gate1AppModel', 'LibraryCoordinator', 'PlayerController', 'SessionConductor', 'DeepLinkRouter',
+                     'LibraryViewModel'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('app-orchestration', 'T3'))
+
+    def test_every_kind_of_public_declaration_in_a_sessionkit_source_needs_an_app_compile(self):
+        source = KIT + 'SessionKit/ListeningEdition.swift'
+        for keyword in ('func', 'var', 'let', 'class', 'struct', 'enum', 'protocol', 'init', 'typealias', 'actor',
+                        'subscript', 'extension', 'case', 'associatedtype'):
+            with self.subTest(keyword=keyword):
+                self.assertEqual(self.kind(source, f'    public {keyword} edition'), ('public-api', 'T2'))
+        for line in ('    open class Edition {', '    public static let current = 1', '    public final class Edition {',
+                     '    @MainActor public final class Edition {', '    @available(iOS 26, *) public func edition() {}'):
+            with self.subTest(line=line):
+                self.assertEqual(self.kind(source, line), ('public-api', 'T2'))
+        removed = '@@ -1 +0,0 @@\n-    public func edition() {}\n'  # removing public API breaks the app as much as adding it
+        [found] = self.classify(source, diffs={source: removed})['files']
+        self.assertEqual(found['category'], 'public-api')
+        for line in ('    // public func edition() {}', '    func edition() {}', '    let publicEdition = 1',
+                     '    internal struct Edition {}', '++ public func edition() {}'):
+            with self.subTest(line=line):
+                self.assertEqual(self.kind(source, line), ('sessionkit', 'T1'))
+
     def test_orchestration_is_t3_with_matching_tests(self):
         result = self.classify(APP + 'Gate1AppModel.swift')
         self.assertEqual(result['tier'], 'T3')
@@ -145,6 +230,34 @@ class TestScopeTests(unittest.TestCase):
         self.assertEqual(self.classify('scripts/test-scope.py')['tier'], 'T1')
         self.assertEqual(self.classify('scripts/normalize-embedded-framework-minimum-os.sh')['tier'], 'T2')
 
+    def test_ops_tools_get_their_own_host_tests_not_a_compile(self):
+        # ops/ (the VPS Dial gate, the Mac's Codex audit) fell to "unclassified" and a simulator and device build.
+        result = self.classify('ops/dial/dial_gate.py', 'ops/dial/deploy.sh', 'ops/codex/audit.py')
+        self.assertEqual(result['tier'], 'T1')
+        self.assertEqual(result['why'], ['VPS and Mac ops tools, with their own Python tests'])
+        self.assertIn('.venv/bin/python -m unittest discover -s ops/dial', result['run'])
+        self.assertIn('.venv/bin/python -m unittest discover -s ops/codex', result['run'])
+        self.assertFalse(any('xcodebuild' in command for command in result['run']))
+        self.assertEqual(self.classify('ops/README.md')['tier'], 'T0')
+
+    def test_lane_paths_are_listed_so_the_runner_holds_them_for_an_audit(self):
+        # Owner rule 2026-10-01: a lane PR merges on PASS plus a clean Codex audit, like a packet change.
+        lane = ['.github/workflows/lane.yml', '.github/workflows/linux-t1.yml', 'scripts/lane-runner.py',
+                'scripts/lane_sim.py', 'scripts/lane_slots.py', 'scripts/lane_guard.py', 'scripts/lane-sim-boot',
+                'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
+                'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
+                'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan']
+        result = self.classify(*lane)
+        self.assertEqual(result['lane_paths'], sorted(lane))
+        self.assertTrue(any(note.startswith('Lane change:') for note in result['notes']))
+        # Ordinary PRs stay off it: the lane's tests, the Test Desk's journey list, other scripts, docs.
+        ordinary = ['scripts/tests/test_lane_runner.py', 'TestPlans/scripted-journeys.json', 'scripts/phone-build',
+                    'scripts/validate-contracts.py', 'docs/workstreams/test-lane.md', '.github/ISSUE_TEMPLATE/bug.md',
+                    '.claude/skills/lane-request/SKILL.md', 'ops/codex/sm_codex_worker.py', APP + 'PlaybackScreen.swift']
+        result = self.classify(*ordinary)
+        self.assertEqual(result['lane_paths'], [])
+        self.assertFalse(any(note.startswith('Lane change:') for note in result['notes']))
+
     def test_unknown_paths_default_to_a_compile(self):
         self.assertEqual(self.classify('NewTopLevel/thing.swift')['tier'], 'T2')
 
@@ -152,6 +265,129 @@ class TestScopeTests(unittest.TestCase):
         # The command-line path (git merge base, untracked files) must work in this checkout.
         paths, diffs = scope.changed_paths('HEAD')
         self.assertIsInstance(scope.classify(paths, diffs)['tier'], str)
+
+
+class LaneRunnerRoutingTests(unittest.TestCase):
+    def route(self, paths=(), labels=(), online=True, **overrides):
+        pr = {'labels': [{'name': label} for label in labels], 'changed_files': len(paths)}
+        files = [[{'filename': path} for path in paths]]
+        runners = [{'runners': [{'status': 'online' if online else 'offline', 'busy': True,
+                                'labels': [{'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]
+        return scope.runner_routing(overrides.get('pr', pr), overrides.get('files', files),
+                                    overrides.get('runners', runners))
+
+    def assert_normal(self, result):
+        self.assertEqual(result, {'lane': ['self-hosted', 'macOS', 'sm-lane'],
+                                  'automerge': ['self-hosted', 'macOS', 'sm-lane-build']})
+
+    def assert_priority(self, result):
+        for job in ('lane', 'automerge'):
+            self.assertEqual(result[job], ['self-hosted', 'sm-lane-priority'])
+
+    def test_priority_label_routes_even_app_changes_and_busy_runner(self):
+        self.assert_priority(self.route([APP + 'Gate1AppModel.swift'], ['priority']))
+
+    def test_ops_only_t1_with_lane_and_docs_routes_priority(self):
+        self.assert_priority(self.route(['ops/codex/sm_codex_worker.py', 'scripts/lane-runner.py',
+                                         '.github/workflows/lane.yml', 'docs/workstreams/test-lane.md']))
+
+    def test_mixed_t1_diff_stays_normal(self):
+        for path in ('Packages/SessionKit/Sources/SessionKit/ListeningEdition.swift',
+                     'scripts/tests/test_lane_runner.py', 'scripts/validate-contracts.py'):
+            with self.subTest(path=path):
+                self.assert_normal(self.route(['ops/codex/sm_codex_worker.py', path]))
+
+    def test_build_lane_script_and_app_diff_stay_normal(self):
+        for path in (APP + 'ExperienceLibraryScreen.swift', 'project.yml'):
+            with self.subTest(path=path):
+                self.assert_normal(self.route(['ops/codex/sm_codex_worker.py', path]))
+
+    def test_docs_and_workflow_only_t0_stay_normal(self):
+        self.assert_normal(self.route(['docs/journeys.md', '.github/workflows/lane.yml']))
+        self.assert_normal(self.route())
+
+    def test_no_online_runner_falls_back_for_both_priority_reasons(self):
+        self.assert_normal(self.route([APP + 'Gate1AppModel.swift'], ['priority'], online=False))
+        self.assert_normal(self.route(['ops/codex/sm_codex_worker.py'], online=False))
+        self.assert_normal(self.route(labels=['priority'], runners=[]))
+
+    def test_runner_must_match_all_priority_labels(self):
+        self.assert_normal(self.route(labels=['priority'], runners=[{'runners': [
+            {'status': 'online', 'labels': [{'name': 'sm-lane-build'}]},
+            {'status': 'online', 'labels': [{'name': 'sm-lane-priority'}]}]}]))
+
+    def test_runner_on_later_page_counts(self):
+        self.assert_priority(self.route(labels=['priority'], runners=[{'runners': []}, {'runners': [
+            {'status': 'online', 'labels': [{'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]))
+
+    def test_files_on_later_page_prevent_ops_only_route(self):
+        self.assert_normal(self.route(['ops/codex/a.py', APP + 'ExperienceLibraryScreen.swift'], files=[
+            [{'filename': 'ops/codex/a.py'}], [{'filename': APP + 'ExperienceLibraryScreen.swift'}]]))
+
+    def test_missing_files_or_api_failure_falls_back(self):
+        self.assert_normal(self.route(['ops/codex/a.py', APP + 'ExperienceLibraryScreen.swift'],
+                                      files=[[{'filename': 'ops/codex/a.py'}]]))
+        self.assert_normal(self.route(['ops/codex/a.py'], files=[]))
+        self.assert_normal(self.route(labels=['priority'], runners={}))
+
+    def test_rename_out_of_app_is_not_ops_only(self):
+        self.assert_normal(self.route(['ops/codex/a.py'], files=[[{
+            'filename': 'ops/codex/a.py', 'previous_filename': APP + 'ExperienceLibraryScreen.swift'}]]))
+
+
+    def test_t2_lane_path_stays_normal(self):
+        self.assert_normal(self.route(['ops/codex/a.py', 'project.yml']))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'project.yml').write_text('script: scripts/xcodebuild-lane\n')
+            result = scope.runner_routing({'labels': [], 'changed_files': 1},
+                                         [[{'filename': 'scripts/xcodebuild-lane'}]], [{'runners': [{
+                                             'status': 'online', 'labels': [
+                                                 {'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}], root=root)
+            self.assert_normal(result)
+
+    def test_ops_only_and_lane_only_t1_route_priority(self):
+        self.assert_priority(self.route(['ops/codex/sm_codex_worker.py']))
+        self.assert_priority(self.route(['scripts/lane_slots.py']))
+
+    def test_cli_reads_real_json_files_and_falls_back_on_bad_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ('event.json', 'files.json', 'runners.json')]
+            payloads = [{'pull_request': {'labels': [{'name': 'priority'}], 'changed_files': 0}}, [],
+                        [{'runners': [{'status': 'online', 'labels': [
+                            {'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]]
+            for path, payload in zip(paths, payloads):
+                path.write_text(json.dumps(payload))
+            command = [sys.executable, str(SCRIPTS / 'test-scope.py'), '--runner-routing', *map(str, paths)]
+            self.assert_priority(json.loads(subprocess.check_output(command, text=True)))
+            paths[-1].write_text('not JSON')
+            self.assert_normal(json.loads(subprocess.check_output(command, text=True)))
+
+    def test_workflow_routes_both_jobs_with_normal_defaults(self):
+        workflow = (SCRIPTS.parent / '.github/workflows/lane.yml').read_text()
+        route, mac_jobs = workflow.split('\n  lane:\n', 1)
+        # Routing runs on the owner's VPS runner, never a Mac runner, so it can't queue behind lane jobs.
+        self.assertIn('runs-on: [self-hosted, Linux, sm-vps]', route)
+        self.assertNotIn('macOS', route)
+        self.assertIn('--paginate --slurp', route)
+        self.assertIn('actions/runners?per_page=100', route)
+        self.assertIn('pulls/$PR_NUMBER/files?per_page=100', route)
+        self.assertIn('ref: ${{ github.event.pull_request.base.sha }}', route)
+        for job, text, normal in [('lane', mac_jobs.split('\n  automerge:\n')[0], 'sm-lane'),
+                                  ('automerge', mac_jobs.split('\n  automerge:\n')[1], 'sm-lane-build')]:
+            with self.subTest(job=job):
+                self.assertIn('needs: route', text)
+                # A failed or skipped route falls back to the normal queues; a cancelled run stays cancelled
+                # (always() would start a queued Mac job even after the run was cancelled).
+                self.assertIn('!cancelled() &&', text)
+                self.assertNotIn('always()', text)
+                self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
+                self.assertIn(f'"{normal}"', text)
+
+    def test_lane_routes_still_require_codex_audit(self):
+        result = scope.classify(['scripts/lane-runner.py'])
+        self.assertIn('scripts/lane-runner.py', result['lane_paths'])
+        self.assertTrue(any('Codex audit' in note for note in result['notes']))
 
 
 if __name__ == '__main__':

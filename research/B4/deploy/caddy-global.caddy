@@ -1,0 +1,24 @@
+{
+	# managed-by: spokenmargins-server (research/B4/deploy/deploy.sh)
+	# Caddy writes no access logs on this box, but its error logger records
+	# the client IP and every request header when a handler fails (for
+	# example a 502 while smserver is down). Attested requests carry an
+	# install's key id in a header, so strip those fields from every log,
+	# and a map fetch's path names an episode, so reduce it to the route.
+	# Box-wide: other sites' error logs lose client IPs and headers too.
+	log default {
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+				request>tls delete
+				# A listening-map path names an episode (#551).
+				# Never log episode keys or share link ids, even on proxy failures.
+				request>uri regexp ^(/api/v1/maps|/l)/.* $1/*
+			}
+		}
+	}
+}

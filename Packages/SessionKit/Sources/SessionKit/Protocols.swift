@@ -49,7 +49,12 @@ public protocol ListeningSessionRepository {
     func loadImportedCommentaryLayers(itemId: String) throws -> [ImportedCommentaryLayer]
     func loadImportedCommentaryInterjections(layerId: String) throws -> [ImportedCommentaryInterjection]
     func saveImportedCommentaryLayer(_ layer: ImportedCommentaryLayer) throws
+    /// Keeps a stored `firstHeardAt` when `interjection` has none, so a copy loaded before
+    /// the listener heard it can't make it new again (#469).
     func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws
+    /// Records the first time the listener heard this shared Margin's voice (#469). A later
+    /// call keeps the first time. Returns the stored record, or nil when there is none.
+    func markImportedCommentaryInterjectionHeard(id: String, at date: Date) throws -> ImportedCommentaryInterjection?
     func saveTurn(_ turn: ConversationTurn) throws
     func loadTurns(sessionId: String) throws -> [ConversationTurn]
     func saveAIJob(_ job: AIJob) throws
@@ -128,6 +133,12 @@ public protocol OfflineStorageRepository {
     /// inside the store's transaction, which can't be nested.
     @discardableResult
     func updateOwnedOfflineAsset(id: String, _ change: (inout OwnedOfflineAsset) -> Void) throws -> OwnedOfflineAsset?
+    /// Deletes the row only if `shouldDelete` accepts it as it is now, with no other write in between
+    /// (#530): a protection saved after the caller's earlier read keeps the row. Returns whether a row
+    /// was deleted. `shouldDelete` must not call the repository, for the same reason as `change` above;
+    /// it may remove the row's file, so no reader sees the row gone while the file is still there.
+    @discardableResult
+    func deleteOwnedOfflineAsset(id: String, if shouldDelete: (OwnedOfflineAsset) -> Bool) throws -> Bool
     func saveOfflineStorageReservation(_ reservation: OfflineStorageReservation) throws
     func loadOfflineStorageReservations() throws -> [OfflineStorageReservation]
     func deleteOfflineStorageReservation(id: String) throws
@@ -396,6 +407,20 @@ public protocol RecordingClient {
     func beginRecording() throws
     func finishRecording(audioRef: String?) throws -> String
     func cancelRecording() throws
+    /// What the recorder has actually taken in so far, or nil when it can't tell (#937).
+    func captureReading() -> RecordingCaptureReading?
+    /// Starts a new recorder on a new file after one that never got audio. Throws when it can't.
+    func restartCapture() throws
+    /// Privacy-safe fields about the capture in progress (route, restarts, level), for the diagnostics log.
+    func captureDiagnostics() -> [String: String]
+}
+
+extension RecordingClient {
+    public func captureReading() -> RecordingCaptureReading? { nil }
+    public func restartCapture() throws {
+        throw SessionKitError.persistenceFailed("recording_restart_unsupported")
+    }
+    public func captureDiagnostics() -> [String: String] { [:] }
 }
 
 public protocol TranscriptionClient {

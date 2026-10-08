@@ -36,9 +36,21 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case localPDF(String)
         case browserText(BrowserTextSharePayload)
         case spokenMarginsPackage
+
+        /// A link the app would download again, rather than content the share carried.
+        var isLink: Bool {
+            switch self {
+            case .sourceLink, .remotePDF: true
+            case .localPDF, .browserText, .spokenMarginsPackage: false
+            }
+        }
     }
 
     private var didProcess = false
+    /// Each attachment's registered types, for the share diagnostics (#271).
+    private var sharedAttachmentTypes: [[String]] = []
+    /// A link found while files, PDFs or page results were still untried (#271).
+    private var linkFallback = ShareSheetLinkFallback<SharedImport>()
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let cardView = UIView()
@@ -70,39 +82,26 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         let providers = extensionContext?.inputItems
             .compactMap { $0 as? NSExtensionItem }
             .flatMap { $0.attachments ?? [] } ?? []
+        sharedAttachmentTypes = providers.map(\.registeredTypeIdentifiers)
         guard !providers.isEmpty else {
             completion(.failure(SourceLinkShareError.noInput))
             return
         }
-        // Rank the representations per content type so the extension does the
-        // least expensive reliable handoff for each source.
-        let candidates = providers.flatMap { provider -> [ProviderCandidate] in
-            let presentsPDF = provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
-            // Safari's PDF viewer can vend both a remote URL and a PDF file.
-            // Hand the URL to the main app first so a large document is not
-            // parsed inside the memory-constrained share extension. Ordinary
-            // webpages still prefer the readable-page property list.
-            let preferredIdentifiers = presentsPDF
-                ? [
-                    SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
-                    UTType.url.identifier,
-                    UTType.pdf.identifier,
-                    UTType.fileURL.identifier,
-                    UTType.propertyList.identifier
-                ]
-                : [
-                    SpokenMarginsPackageHandoffStore.uniformTypeIdentifier,
-                    UTType.propertyList.identifier,
-                    UTType.fileURL.identifier,
-                    UTType.url.identifier
-                ]
-            let identifiers = preferredIdentifiers.filter(provider.hasItemConformingToTypeIdentifier)
-                + provider.registeredTypeIdentifiers.filter {
+        // Safari's PDF viewer offers the PDF it is showing as well as its URL.
+        // The PDF comes first: a re-download of the link can return an HTML
+        // page instead (#271). The file is only copied here, never parsed.
+        // Ordinary webpages still prefer the readable-page property list, and
+        // links wait until every other representation has been tried.
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: providers,
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { provider, preferredIdentifiers in
+                provider.registeredTypeIdentifiers.filter {
                     !preferredIdentifiers.contains($0)
                         && Self.acceptsRegisteredIdentifier($0, suggestedName: provider.suggestedName)
                 }
-            return identifiers.map { ProviderCandidate(provider: provider, identifier: $0) }
-        }
+            }
+        ).map { ProviderCandidate(provider: $0.provider, identifier: $0.identifier) }
         loadFirstSharedImport(candidates, index: 0, completion: completion)
     }
 
@@ -112,6 +111,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         completion: @escaping ExtractionCompletion
     ) {
         guard index < candidates.count else {
+            if let deferredLink = linkFallback.deferredLink {
+                completion(.success(deferredLink))
+                return
+            }
             let identifiers = Array(Set(candidates.map(\.identifier))).sorted().joined(separator: ", ")
             completion(.failure(SourceLinkShareError.unsupportedInput(identifiers)))
             return
@@ -138,11 +141,21 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
         if candidateType?.conforms(to: .pdf) == true {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
-                if let url, let sharedImport = Self.persistedPDFImport(
-                    from: url,
-                    suggestedName: candidate.provider.suggestedName
-                ) {
-                    completion(.success(sharedImport))
+                if let url {
+                    if let sharedImport = Self.persistedPDFImport(
+                        from: url,
+                        suggestedName: candidate.provider.suggestedName
+                    ) {
+                        completion(.success(sharedImport))
+                    } else {
+                        // The file exists but couldn't be copied (over the
+                        // size limit, say). Loading the same bytes into the
+                        // extension's memory won't help, so fall back to the
+                        // next representation, such as the URL.
+                        DispatchQueue.main.async {
+                            self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
+                        }
+                    }
                 } else {
                     DispatchQueue.main.async {
                         self?.loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
@@ -179,13 +192,29 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     ) {
         candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { [weak self] item, _ in
             let presentsPDF = candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
-            if let sharedImport = Self.sharedImport(
-                from: item,
-                identifier: candidate.identifier,
-                presentsPDF: presentsPDF,
-                suggestedName: candidate.provider.suggestedName
-            ) {
-                completion(.success(sharedImport))
+            // A PDF representation that loads as a web URL would send the link again (#271),
+            // so for those only a file or bytes count; otherwise try the data representation.
+            // The link is kept as the last fallback, after the data and every other attachment.
+            let isPDFCandidate = UTType(candidate.identifier)?.conforms(to: .pdf) == true
+            let pdfFallbackLink = isPDFCandidate
+                ? SourceLinkShareRepresentation.pdfFallbackLink(from: item).map { SharedImport.remotePDF($0.absoluteString) }
+                : nil
+            let sharedImport = isPDFCandidate
+                ? Self.sharedPDFImport(from: item, suggestedName: candidate.provider.suggestedName)
+                : Self.sharedImport(
+                    from: item,
+                    identifier: candidate.identifier,
+                    presentsPDF: presentsPDF,
+                    suggestedName: candidate.provider.suggestedName
+                )
+            if let sharedImport {
+                guard sharedImport.isLink else {
+                    completion(.success(sharedImport))
+                    return
+                }
+                DispatchQueue.main.async {
+                    self?.acceptLink(sharedImport, candidates: candidates, index: index, completion: completion)
+                }
             } else if presentsPDF {
                 candidate.provider.loadDataRepresentation(forTypeIdentifier: candidate.identifier) { data, _ in
                     if let data,
@@ -194,6 +223,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                            suggestedName: candidate.provider.suggestedName
                        ) {
                         completion(.success(sharedImport))
+                    } else if let pdfFallbackLink {
+                        DispatchQueue.main.async {
+                            self?.acceptLink(pdfFallbackLink, candidates: candidates, index: index, completion: completion)
+                        }
                     } else {
                         DispatchQueue.main.async {
                             self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
@@ -208,7 +241,22 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
     }
 
+    /// Hands off a link only once no file, PDF or page result is left to try (#271).
+    private func acceptLink(
+        _ link: SharedImport,
+        candidates: [ProviderCandidate],
+        index: Int,
+        completion: @escaping ExtractionCompletion
+    ) {
+        if let accepted = linkFallback.accept(link, isLink: true, at: index, in: candidates.map(\.identifier)) {
+            completion(.success(accepted))
+        } else {
+            loadFirstSharedImport(candidates, index: index + 1, completion: completion)
+        }
+    }
+
     private func handle(_ result: Result<SharedImport, Error>) {
+        recordShareDiagnostics(result)
         do {
             switch result {
             case .success(.sourceLink(let inputURL)):
@@ -249,6 +297,34 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         } catch {
             completeWithError(error)
         }
+    }
+
+    /// Writes what the share offered and which route won to the App Group, so a lane run
+    /// can tell which representations Safari sent (#271). Type identifiers and the route
+    /// only: no URLs, titles or text. Best effort; a failure never affects the share.
+    private func recordShareDiagnostics(_ result: Result<SharedImport, Error>) {
+        let route: String
+        switch result {
+        case .success(.sourceLink): route = "share_sheet"
+        case .success(.remotePDF): route = "share_sheet_pdf"
+        case .success(.localPDF): route = "share_sheet_pdf_file"
+        case .success(.browserText): route = "browser_text"
+        case .success(.spokenMarginsPackage): route = "spoken_margins_package"
+        case .failure: route = "failed"
+        }
+        let record: [String: Any] = [
+            "recordedAt": ISO8601DateFormatter().string(from: Date()),
+            "attachmentTypes": sharedAttachmentTypes,
+            "route": route
+        ]
+        guard let containerURL = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: SourceLinkHandoffStore.appGroupIdentifier
+        ), let data = try? JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys]) else {
+            return
+        }
+        let directory = containerURL.appendingPathComponent("ShareExtensionDiagnostics", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? data.write(to: directory.appendingPathComponent("last-share.json"), options: [.atomic])
     }
 
     private func saveBrowserText(_ payload: BrowserTextSharePayload) throws {
@@ -356,17 +432,25 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         presentsPDF: Bool,
         suggestedName: String? = nil
     ) -> SharedImport? {
-        if identifier == UTType.propertyList.identifier {
-            if let results = browserResultsFromPropertyList(item),
-               browserResultsDescribePDF(results),
-               let url = firstWebURL(in: results) {
-                return .remotePDF(url.absoluteString)
+        if identifier == UTType.propertyList.identifier,
+           var results = browserResultsFromPropertyList(item) {
+            // The preprocessor sends the open PDF's bytes when it can (#271). Take them out
+            // first, so the link search below never scans megabytes of base64.
+            let pagePDF = SourceLinkShareRepresentation.pagePDF(fromPageResults: results)
+            results.removeValue(forKey: SourceLinkShareRepresentation.pagePDFKey)
+            if browserResultsDescribePDF(results) {
+                if let pagePDF,
+                   let persisted = persistedPDFImport(from: pagePDF.data, suggestedName: pagePDF.suggestedFilename) {
+                    return persisted
+                }
+                if let url = firstWebURL(in: results) {
+                    return .remotePDF(url.absoluteString)
+                }
             }
-            if let payload = browserPayloadFromPropertyList(item) {
+            if let payload = browserPayload(fromResults: results) {
                 return .browserText(payload)
             }
-            if let results = browserResultsFromPropertyList(item),
-               let url = firstWebURL(in: results) {
+            if let url = firstWebURL(in: results) {
                 return sharedURLImport(
                     url,
                     forcePDF: presentsPDF || browserResultsDescribePDF(results)
@@ -405,6 +489,17 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 return sharedURLImport(url, forcePDF: presentsPDF)
             }
             return nil
+        }
+        return nil
+    }
+
+    /// A PDF representation's item: a copied file or bytes, never a link.
+    nonisolated private static func sharedPDFImport(from item: Any?, suggestedName: String?) -> SharedImport? {
+        if let url = SourceLinkShareRepresentation.url(from: item), url.isFileURL {
+            return persistedPDFImport(from: url, suggestedName: suggestedName)
+        }
+        if let data = item as? Data {
+            return persistedPDFImport(from: data, suggestedName: suggestedName)
         }
         return nil
     }
@@ -482,8 +577,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         )
     }
 
-    nonisolated private static func browserPayloadFromPropertyList(_ item: Any?) -> BrowserTextSharePayload? {
-        guard let results = browserResultsFromPropertyList(item) else { return nil }
+    nonisolated private static func browserPayload(fromResults results: [String: Any]) -> BrowserTextSharePayload? {
         let markdown = (results["markdown"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let fallbackText = (results["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let content = markdown.isEmpty ? fallbackText : markdown

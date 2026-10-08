@@ -44,6 +44,8 @@ public enum ServerService {
     public static let bridge = "bridge"
     /// Attested requests. Not used by the app yet.
     public static let attest = "attest"
+    /// Community listening maps: transcript uploads (#552) and map fetches (#553).
+    public static let maps = "maps"
 }
 
 /// Why a server feature is off. Shown in diagnostics; the listener sees "not updating".
@@ -97,12 +99,16 @@ public enum ServerFeatureGate {
     public static func parse(_ data: Data) throws -> ServerConfig {
         guard data.count <= maximumConfigBytes else { throw ServerConfigError.oversized }
         guard let config = try? JSONDecoder().decode(ServerConfig.self, from: data),
-              config.schema == ServerConfig.schema,
-              config.version == ServerConfig.version,
-              config.serial >= 0 else {
+              isValid(config) else {
             throw ServerConfigError.malformed
         }
         return config
+    }
+
+    private static func isValid(_ config: ServerConfig) -> Bool {
+        config.schema == ServerConfig.schema && config.version == ServerConfig.version &&
+        config.serial >= 0 && (config.checkAfterSeconds.map { $0 > 0 } ?? true) &&
+        config.services.values.allSatisfy { $0.minimumBuild.map { $0 >= 0 } ?? true }
     }
 
     /// Whether `service` may be used now. Pure: the store supplies the cache, the clock
@@ -117,6 +123,9 @@ public enum ServerFeatureGate {
         guard let cached else { return .off(.noConfig) }
         if cached.malformed { return .off(.malformedConfig) }
         guard let config = cached.config else { return .off(.noConfig) }
+        // Cache decoding and callers constructing typed values must pass the
+        // same validation as a download; Codable alone does not validate fields.
+        guard isValid(config) else { return .off(.malformedConfig) }
         // A fetch time in the future (clock changed) counts as stale rather than fresh forever.
         let age = now.timeIntervalSince(cached.fetchedAt)
         guard age >= -300, age <= maximumAge else { return .off(.staleConfig) }
