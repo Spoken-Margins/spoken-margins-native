@@ -26,7 +26,7 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 - The automerge label asks for the checks a finished PR needs, with no request comment (the
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
-  committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
+  committed diff: T0 (docs, research notes) runs nothing, T1 runs --plan fast, and T2 or
   higher runs --plan fast and both builds. An explicit request on the PR goes first. Before any of
   that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
   Gate1RootView.swift above its ceiling, unless the PR has the hot-file-ok label.
@@ -461,8 +461,11 @@ def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
     if code is None:
         return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
                                 f'evidence: {log_path}']
-    if code == 0 and _read_manifest(output).get('status') == 'verified':
-        return 'PASS', []
+    manifest = _read_manifest(output)
+    if code == 0 and manifest.get('status') == 'verified':
+        # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
+        return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
+                        if isinstance(step.get('skipped'), list) for reason in step['skipped']]
     return 'FAIL', [f'host tests (--plan fast) — expected: verified. observed: exit {code}. evidence: {log_path}',
                     *[f'  {line}' for line in first_errors(log_path)]]
 
@@ -478,7 +481,7 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
                                                                           for line in too_big]
     if tier == 0:
         return 'PASS', 'no build', 'nothing to build or test', details + [
-            'nothing here reaches the host tests or the app (docs, research or server only)']
+            'nothing here reaches the host tests or the app (docs or research notes only)']
     verdict, more = fast(evidence)
     details += more
     if verdict != 'PASS':
