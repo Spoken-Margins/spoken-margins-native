@@ -997,7 +997,7 @@ class MergeTests_Runner(unittest.TestCase):
             return over_ceiling if path == 'scripts/hot_file_ratchet.py' else real_policy(tree, base, path)
 
         def automerge(scope, evidence, **kwargs):
-            return real_automerge(scope, evidence, fast=lambda e: ('PASS', []), **kwargs)
+            return real_automerge(scope, evidence, fast=lambda e, changed=None: ('PASS', []), **kwargs)
 
         host_only = {'tier': 'T1', 'why': ['scripts'], 'files': [{'path': 'scripts/x.py', 'category': 'scripts'}]}
         with mock.patch.object(lane, 'base_policy', side_effect=policy):
