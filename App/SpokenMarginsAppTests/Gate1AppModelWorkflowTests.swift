@@ -2479,7 +2479,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
-        XCTAssertEqual(try store.loadAllInterjections().map(\.itemId), [liveID])
+        XCTAssertTrue(try store.loadInterjections(itemId: "item-pill").isEmpty)
+        XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
 
     func testEmptyRecentlyDeletedRemovesEveryTrashedItemsMarginRecordings() throws {
@@ -2520,7 +2521,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
-        XCTAssertEqual(try store.loadAllInterjections().map(\.itemId), [liveID])
+        XCTAssertTrue(try trashed.allSatisfy { try store.loadInterjections(itemId: $0).isEmpty })
+        XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
 
     private func startAndEndSession(_ model: Gate1AppModel, itemId: String) throws -> String {
