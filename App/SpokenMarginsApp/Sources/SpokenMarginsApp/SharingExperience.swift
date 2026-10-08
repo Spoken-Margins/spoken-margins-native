@@ -119,16 +119,6 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     }
 }
 
-struct ImportedCommentaryPrompt: Identifiable {
-    var id: String { interjection.id }
-    let layer: ImportedCommentaryLayer
-    let interjection: ImportedCommentaryInterjection
-    let index: Int
-    let count: Int
-
-    var senderLabel: String { layer.displayLabel?.nilIfEmpty ?? "Unsigned sender" }
-}
-
 private enum MarginReviewToken: Identifiable {
     case word(AlignedTranscriptSegment)
     case pause(InterjectionCleanupDecision)
