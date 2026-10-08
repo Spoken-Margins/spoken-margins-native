@@ -894,7 +894,12 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
         Self.lock.withLock { Self.seen.append("\(method) \(url.path)\(ranged ? " range" : "")") }
         let audio = Self.lock.withLock { Self.responseAudio }
         let status: Int
-        var headers: [String: String] = ["Content-Type": "audio/wav"]
+        // Match the served PCM WAV with its download filename on every platform;
+        // the .mp3 scenario URL must not make AVFoundation select an MP3 decoder.
+        var headers: [String: String] = [
+            "Content-Type": "audio/wav",
+            "Content-Disposition": "attachment; filename=\"episode.wav\"",
+        ]
         var body = Data()
         switch (url.path, method) {
         case ("/gone.mp3", _):
