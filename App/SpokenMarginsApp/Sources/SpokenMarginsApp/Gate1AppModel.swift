@@ -2287,7 +2287,7 @@ final class Gate1AppModel: ObservableObject {
             source: .init(
                 pause: { [weak self] in self?.pause() },
                 resume: { [weak self] in self?.resumePlayback() },
-                seek: { [weak self] in self?.seekMedia(toMediaTimeMs: $0) }
+                seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
             ),
             voiceURL: { voiceURLs[$0] }
         )
@@ -5970,10 +5970,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func seekMedia(toMediaTimeMs mediaTimeMs: Int) {
+    @discardableResult
+    func seekMedia(toMediaTimeMs mediaTimeMs: Int) -> Bool {
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
-        run { engine in
+        return run { engine in
             snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
             recordMediaSeekEvidence(from: engine)
             refreshSelectedItem()
@@ -6109,11 +6110,12 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["mediaSeek"] = evidence
     }
 
-    func seekText(toCharOffset charOffset: Int) {
+    @discardableResult
+    func seekText(toCharOffset charOffset: Int) -> Bool {
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()
-        run { engine in
+        return run { engine in
             snapshot = try engine.seekText(toCharOffset: charOffset)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
@@ -6218,19 +6220,11 @@ final class Gate1AppModel: ObservableObject {
 
     func beginInterjection() {
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
-        guard playingImportedCommentary == nil else {
-            reportWarning("Return to Source before recording a Margin.")
-            return
-        }
-        guard marginMomentConductor?.isPlayingVoice != true else {
-            reportWarning("Skip or finish the Margin that's playing before recording a new one.")
-            return
-        }
         guard snapshot.skimBridgeState == nil else {
             reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
         }
-        guard !recordingNavigationIsLocked else { return }
+        guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
         let voiceCaptureRequestID = UUID()
         pendingVoiceCaptureRequestID = voiceCaptureRequestID
         recordingPermissionDenied = false
@@ -6266,6 +6260,38 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
+    /// and the source moves to the playing Margin's place so the new Margin is anchored there. False when that move
+    /// failed: nothing records, rather than recording at the wrong place.
+    private func handOffPlayingMarginToRecording() -> Bool {
+        let handoff: MarginCaptureHandoff
+        if let prompt = playingImportedCommentary {
+            handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
+            announcedImportedInterjectionIDs.insert(prompt.id) // the rejoin mustn't offer it again
+            stopImportedCommentaryPlayback(resumeSource: false)
+        } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
+            handoff = MarginCaptureHandoff(moment: conductor.sequence)
+            endMarginMoment()
+        } else if let playingID = playingInterjectionAudioId {
+            // Your own Margin heard from its detail: it sits where it was recorded.
+            let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
+            handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
+            stopInterjectionAudioPlayback()
+        } else {
+            return true
+        }
+        let move = handoff.sourceMove(from: snapshot)
+        diagnostics["marginCaptureHandoff"] = String(describing: move)
+        let moved: Bool
+        switch move {
+        case .stay: return true
+        case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
+        case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
+        }
+        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is.") }
+        return moved
     }
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
@@ -9416,6 +9442,8 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
+        if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
+           !handOffPlayingMarginToRecording() { return }
         if playingImportedCommentary != nil {
             switch command {
             case .play: resumePlayback()
@@ -9782,7 +9810,8 @@ final class Gate1AppModel: ObservableObject {
 
     func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
-    func run(_ operation: (SessionEngine) throws -> Void) {
+    @discardableResult
+    func run(_ operation: (SessionEngine) throws -> Void) -> Bool {
         if engine == nil {
             do {
                 let store = try requireStore()
@@ -9791,11 +9820,13 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure(error, context: "Playback setup failed")
             }
         }
-        guard let engine else { return }
+        guard let engine else { return false }
         do {
             try operation(engine)
+            return true
         } catch {
             reportFailure(error)
+            return false
         }
     }
 
@@ -16326,44 +16357,3 @@ private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {
     return "Default"
 }
 #endif
-
-enum KeychainStore {
-    @discardableResult
-    static func save(_ value: String, service: String, account: String) -> OSStatus {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        guard let data = value.data(using: .utf8), !value.isEmpty else {
-            let deleteStatus = SecItemDelete(query as CFDictionary)
-            return deleteStatus == errSecItemNotFound ? errSecSuccess : deleteStatus
-        }
-        let protectedAttributes: [String: Any] = [
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        ]
-        let updateStatus = SecItemUpdate(query as CFDictionary, protectedAttributes as CFDictionary)
-        guard updateStatus == errSecItemNotFound else { return updateStatus }
-
-        var addAttributes = query
-        protectedAttributes.forEach { addAttributes[$0.key] = $0.value }
-        return SecItemAdd(addAttributes as CFDictionary, nil)
-    }
-
-    static func load(service: String, account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else {
-            return nil
-        }
-        return String(data: data, encoding: .utf8)
-    }
-}
