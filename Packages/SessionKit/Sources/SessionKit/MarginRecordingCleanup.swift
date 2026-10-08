@@ -4,24 +4,25 @@ import Foundation
 ///
 /// A spoken Margin keeps its audio as a file that only the Margin's database row names. Deleting an
 /// item deleted the rows and left the files on the phone, so "permanently deleted" kept the person's
-/// own voice. The caller reads the item's Margin rows before deleting them and the Margin rows that
-/// stay afterwards; this removes what only the deleted rows named.
+/// own voice. The caller reads the item's Margin rows before deleting them and, afterwards, every audio
+/// path the Margins that stay name (including rows that no longer decode); this removes what only the
+/// deleted rows named.
 ///
 /// It only ever removes a regular file that lies inside `root` (the folder the app keeps recordings in)
 /// and that no remaining Margin names. A path it can't resolve, a path outside `root`, a folder, and a
 /// file a surviving row still points at are all left alone.
 public enum MarginRecordingCleanup {
-    /// The files that go with `deleted`, once nothing in `surviving` uses them. `resolve` turns a stored
+    /// The files that go with `deleted`, once nothing in `survivingAudioPaths` uses them. `resolve` turns a stored
     /// path into the file's current location, or nil when there is no such file.
     public static func filesToRemove(
         deleted: [Interjection],
-        surviving: [Interjection],
+        survivingAudioPaths: [String],
         within root: URL,
         resolve: (String) -> URL?
     ) -> [URL] {
         let rootPath = canonical(root).path
         let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-        let keptPaths = Set(surviving.compactMap(\.audioPath))
+        let keptPaths = Set(survivingAudioPaths)
         let keptFiles = Set(keptPaths.compactMap(resolve).map { canonical($0).path })
 
         var seen = Set<String>()
@@ -42,12 +43,12 @@ public enum MarginRecordingCleanup {
     @discardableResult
     public static func removeFiles(
         deleted: [Interjection],
-        surviving: [Interjection],
+        survivingAudioPaths: [String],
         within root: URL,
         fileManager: FileManager = .default,
         resolve: (String) -> URL?
     ) -> [URL] {
-        filesToRemove(deleted: deleted, surviving: surviving, within: root, resolve: resolve).filter { file in
+        filesToRemove(deleted: deleted, survivingAudioPaths: survivingAudioPaths, within: root, resolve: resolve).filter { file in
             (try? fileManager.removeItem(at: file)) != nil
         }
     }

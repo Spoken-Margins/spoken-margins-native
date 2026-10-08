@@ -159,9 +159,41 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadByItem(kind: "interjection", itemId: itemId)
     }
 
-    /// Every Margin row of every item, for the check that no Margin still uses a file before it is removed (#1035).
-    public func loadAllInterjections() throws -> [Interjection] {
-        try query("SELECT kind, id, payload FROM records WHERE kind = ? ORDER BY updated_at, id;", ["interjection"])
+    /// Every audio path any stored Margin names, read from the stored JSON itself: live rows, rows that no
+    /// longer decode as a Margin, and rows already moved to quarantine. It is the check that no Margin
+    /// still uses a recording before the recording is deleted (#1035), so it fails closed: a row it can't
+    /// read, or a read that doesn't reach the end of the table, throws instead of leaving a reference out.
+    public func allMarginAudioPaths() throws -> [String] {
+        let live = try marginAudioPaths(sql: "SELECT payload FROM records WHERE kind = 'interjection';")
+        let quarantined = try marginAudioPaths(sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection';")
+        return live + quarantined
+    }
+
+    private func marginAudioPaths(sql: String) throws -> [String] {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
+            }
+            defer { sqlite3_finalize(statement) }
+            var paths: [String] = []
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return paths }
+                guard step == SQLITE_ROW else {
+                    throw SessionKitError.persistenceFailed("step_margin_audio_paths")
+                }
+                guard let raw = sqlite3_column_text(statement, 0),
+                      let object = try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] else {
+                    throw SessionKitError.persistenceFailed("margin_row_unreadable")
+                }
+                switch object["audioPath"] {
+                case nil, is NSNull: continue
+                case let path as String: paths.append(path)
+                default: throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
+                }
+            }
+        }
     }
 
     public func saveInterjectionShareRevision(_ revision: InterjectionShareRevision) throws {

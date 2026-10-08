@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import SessionKit
 import SessionKitPersistence
 import XCTest
@@ -52,7 +53,9 @@ final class MarginRecordingCleanupTests: XCTestCase {
     }
 
     private func clean(deleted: [Interjection], surviving: [Interjection]) -> [URL] {
-        MarginRecordingCleanup.removeFiles(deleted: deleted, surviving: surviving, within: root, resolve: resolve)
+        MarginRecordingCleanup.removeFiles(
+            deleted: deleted, survivingAudioPaths: surviving.compactMap(\.audioPath), within: root, resolve: resolve
+        )
     }
 
     // MARK: The bug, through a real database
@@ -75,14 +78,14 @@ final class MarginRecordingCleanupTests: XCTestCase {
         XCTAssertTrue(exists("gone-1.m4a"), "deleting the rows alone leaves the voice on the phone (#1035)")
 
         let removed = MarginRecordingCleanup.removeFiles(
-            deleted: deleted, surviving: try store.loadAllInterjections(), within: root, resolve: resolve
+            deleted: deleted, survivingAudioPaths: try store.allMarginAudioPaths(), within: root, resolve: resolve
         )
 
         XCTAssertEqual(Set(removed.map(\.lastPathComponent)), ["gone-1.m4a", "gone-2.m4a"])
         XCTAssertFalse(exists("gone-1.m4a"))
         XCTAssertFalse(exists("gone-2.m4a"))
         XCTAssertTrue(exists("kept-1.m4a"), "a live item's recording is never touched")
-        XCTAssertEqual(try store.loadAllInterjections().map(\.id), ["kept-1"])
+        XCTAssertEqual(try store.allMarginAudioPaths(), ["SpokenMargins/interjections/kept-1.m4a"])
     }
 
     func testEmptyingSeveralItemsAtOnceTakesEveryRecordingOfEach() throws {
@@ -97,7 +100,7 @@ final class MarginRecordingCleanupTests: XCTestCase {
         try store.deleteItems(ids: ["a", "b"])
 
         MarginRecordingCleanup.removeFiles(
-            deleted: deleted, surviving: try store.loadAllInterjections(), within: root, resolve: resolve
+            deleted: deleted, survivingAudioPaths: try store.allMarginAudioPaths(), within: root, resolve: resolve
         )
 
         for name in ["a-1", "a-2", "b-1", "b-2"] { XCTAssertFalse(exists("\(name).m4a"), name) }
@@ -124,6 +127,86 @@ final class MarginRecordingCleanupTests: XCTestCase {
         ]
         XCTAssertEqual(clean(deleted: deleted, surviving: surviving), [], "an absolute or dotted path to the same file")
         XCTAssertTrue(exists("shared.m4a"))
+    }
+
+    // MARK: A Margin row that can't be decoded still counts as using its file (Codex audit of #1135)
+
+    /// Writes a Margin row straight into the database, bypassing the encoder, the way a damaged or
+    /// future-format row would be there.
+    private func insertRawMargin(databasePath: String, id: String, itemId: String, json: String) throws {
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open(databasePath, &database), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        let escaped = json.replacingOccurrences(of: "'", with: "''")
+        let sql = "INSERT INTO records(kind,id,item_id,payload) VALUES('interjection','\(id)','\(itemId)','\(escaped)');"
+        XCTAssertEqual(sqlite3_exec(database, sql, nil, nil, nil), SQLITE_OK)
+    }
+
+    private func sharedRecordingFixture() throws -> (store: SQLiteSessionStore, path: String, deleted: [Interjection]) {
+        let databasePath = root.appending(path: "store.sqlite").path
+        let store = try SQLiteSessionStore(path: databasePath)
+        for id in ["gone", "live"] {
+            try store.saveItem(Item(id: id, title: id, mediaType: "text", text: "Body", externalReference: nil, status: "ready"))
+        }
+        let shared = try record("shared.m4a")
+        try store.saveInterjection(margin("gone-1", item: "gone", audioPath: shared))
+        // A live item's Margin naming the same file, with a field that no longer decodes (createdAt is no date).
+        try insertRawMargin(
+            databasePath: databasePath, id: "live-damaged", itemId: "live",
+            json: #"{"id":"live-damaged","itemId":"live","sessionId":"session-live","audioPath":"SpokenMargins/interjections/shared.m4a","createdAt":"not a date"}"#
+        )
+        return (store, shared, try store.loadInterjections(itemId: "gone"))
+    }
+
+    func testAFileADamagedLiveMarginStillNamesIsNotRemoved() throws {
+        let fixture = try sharedRecordingFixture()
+        XCTAssertEqual(fixture.deleted.map(\.id), ["gone-1"])
+        try fixture.store.deleteItem(id: "gone")
+
+        let removed = MarginRecordingCleanup.removeFiles(
+            deleted: fixture.deleted, survivingAudioPaths: try fixture.store.allMarginAudioPaths(),
+            within: root, resolve: resolve
+        )
+
+        XCTAssertEqual(removed, [])
+        XCTAssertTrue(exists("shared.m4a"), "the live item's damaged Margin still points at it")
+    }
+
+    func testAFileAQuarantinedMarginNamesIsNotRemoved() throws {
+        let fixture = try sharedRecordingFixture()
+        // Reading the live item's Margins moves the damaged row to quarantine, where an ordinary load can't see it.
+        XCTAssertEqual(try fixture.store.loadInterjections(itemId: "live"), [])
+        XCTAssertEqual(try fixture.store.quarantinedRecordCount(), 1)
+        try fixture.store.deleteItem(id: "gone")
+
+        let removed = MarginRecordingCleanup.removeFiles(
+            deleted: fixture.deleted, survivingAudioPaths: try fixture.store.allMarginAudioPaths(),
+            within: root, resolve: resolve
+        )
+
+        XCTAssertEqual(removed, [])
+        XCTAssertTrue(exists("shared.m4a"), "a quarantined row is still a reference")
+    }
+
+    func testTheSurvivorScanRefusesInsteadOfLeavingAReferenceOut() throws {
+        let databasePath = root.appending(path: "store.sqlite").path
+        let store = try SQLiteSessionStore(path: databasePath)
+        XCTAssertEqual(try store.allMarginAudioPaths(), [], "an empty library has no references")
+
+        try insertRawMargin(databasePath: databasePath, id: "no-audio", itemId: "live", json: #"{"id":"no-audio","audioPath":null}"#)
+        try insertRawMargin(databasePath: databasePath, id: "missing-key", itemId: "live", json: #"{"id":"missing-key"}"#)
+        XCTAssertEqual(try store.allMarginAudioPaths(), [], "a Margin with no recording names nothing")
+
+        try insertRawMargin(databasePath: databasePath, id: "wrong-type", itemId: "live", json: #"{"id":"wrong-type","audioPath":7}"#)
+        XCTAssertThrowsError(try store.allMarginAudioPaths(), "an audioPath that is not text can't be read")
+        try SQLiteTestSupport.deleteRow(databasePath: databasePath, id: "wrong-type")
+
+        try insertRawMargin(databasePath: databasePath, id: "not-json", itemId: "live", json: "{not-json")
+        XCTAssertThrowsError(try store.allMarginAudioPaths(), "a row that isn't JSON can't be read")
+        try SQLiteTestSupport.deleteRow(databasePath: databasePath, id: "not-json")
+
+        try insertRawMargin(databasePath: databasePath, id: "array", itemId: "live", json: "[1,2]")
+        XCTAssertThrowsError(try store.allMarginAudioPaths(), "a row that isn't an object can't be read")
     }
 
     // MARK: Nothing outside the app's own folder, and nothing that isn't a recording file
@@ -190,5 +273,16 @@ final class MarginRecordingCleanupTests: XCTestCase {
         try record("kept.m4a")
         XCTAssertEqual(clean(deleted: [], surviving: [margin("k", item: "live", audioPath: "SpokenMargins/interjections/kept.m4a")]), [])
         XCTAssertTrue(exists("kept.m4a"))
+    }
+}
+
+private enum SQLiteTestSupport {
+    static func deleteRow(databasePath: String, id: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(databasePath, &database) == SQLITE_OK else { throw CocoaError(.fileReadUnknown) }
+        defer { sqlite3_close(database) }
+        guard sqlite3_exec(database, "DELETE FROM records WHERE id = '\(id)';", nil, nil, nil) == SQLITE_OK else {
+            throw CocoaError(.fileWriteUnknown)
+        }
     }
 }
