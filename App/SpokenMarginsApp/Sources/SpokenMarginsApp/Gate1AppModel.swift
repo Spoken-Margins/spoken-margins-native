@@ -5784,16 +5784,6 @@ final class Gate1AppModel: ObservableObject {
         trashUndo = nil
     }
 
-    func dismissError() {
-        lastError = nil
-        if feedbackEvent?.kind == .error {
-            feedbackEvent = nil
-        }
-        if statusMessage == "Error" {
-            statusMessage = "Ready."
-        }
-    }
-
     func dismissFeedback(id: UUID? = nil) {
         guard id == nil || feedbackEvent?.id == id else { return }
         feedbackEvent = nil
