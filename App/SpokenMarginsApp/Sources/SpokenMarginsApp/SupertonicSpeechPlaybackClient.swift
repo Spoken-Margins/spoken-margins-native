@@ -677,6 +677,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
+        settleHandOverBeforePlay()
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -1706,6 +1707,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 standInOffsets.removeAll()
                 failedRenderReasons.removeAll()
                 preparedAudioAssemblyStarted = false
+                // Another hand-over replaces one still waiting for its voice; its kept chunk is among `urls`.
+                if !keepsChunk { handOverAwaitingStart = nil }
                 return (Array(urls), renderControl, kept)
             }
             stopped.renderControl?.cancel()
@@ -2194,86 +2197,125 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         return handedOver
     }
 
-    private enum HandOverStart { case confirmed, failed, waiting, superseded }
+    private enum HandOverVerdict { case waiting, spoke, returned, gaveUp, gone }
 
     /// Waits for the iOS voice that took over from a stalled player to say its first word, for as long as a
     /// Supertonic player gets to start moving. If it never does, the stall pauses for a tap (#540).
     private func confirmHandOverStart() async {
         let deadline = ContinuousClock.now + stallThreshold
         while !Task.isCancelled {
-            switch await MainActor.run(body: { self.handOverStartState() }) {
-            case .confirmed:
-                await MainActor.run { self.finishHandOver() }
-                return
-            case .failed:
-                await MainActor.run { self.undoHandOver() }
-                return
-            case .superseded:
-                return
-            case .waiting:
-                if ContinuousClock.now >= deadline {
-                    await MainActor.run { self.undoHandOver() }
-                    return
+            let timedOut = ContinuousClock.now >= deadline
+            if await MainActor.run(body: { self.settleHandOver(timedOut: timedOut) }) { return }
+            try? await Task.sleep(for: min(stallSampleInterval, .milliseconds(250)))
+        }
+    }
+
+    /// Decides what became of the waiting hand-over and ends the wait, in one main-actor operation: a seek or a
+    /// pause can't land between the look at the voice and the change that follows it (#540 audit). True when
+    /// nothing is waiting any more.
+    @MainActor
+    private func settleHandOver(timedOut: Bool) -> Bool {
+        guard let looked = lock.withLock({ handOverAwaitingStart }) else { return true }
+        let startStatus = fallback.playbackStartStatus(targetId: looked.targetId)
+        let settled = lock.withLock { () -> (awaiting: HandOverAwaitingStart, verdict: HandOverVerdict, stopReason: String)? in
+            guard let awaiting = handOverAwaitingStart, awaiting.playback == looked.playback else { return nil }
+            let speaking = fallbackIsActive && currentTargetId == awaiting.targetId
+                && systemVoicePlayback == awaiting.playback
+            let verdict: HandOverVerdict
+            if !speaking {
+                // Not this hand-over's voice any more: the iOS voice was started again, or the chosen voice is back.
+                verdict = fallbackIsActive ? .spoke : .gone
+            } else if transportIntent != .playing {
+                // The listener paused, or the system interrupted, before the voice said a word.
+                verdict = .returned
+            } else {
+                switch startStatus {
+                case .confirmed: verdict = .spoke
+                case .failed: verdict = .gaveUp
+                case .pending: verdict = timedOut ? .gaveUp : .waiting
                 }
-                try? await Task.sleep(for: min(stallSampleInterval, .milliseconds(250)))
             }
+            let stopReason = generationDisabledReasons[awaiting.targetId] ?? awaiting.stopReason
+            if verdict != .waiting { endHandOverWait(awaiting, as: verdict) }
+            return (awaiting, verdict, stopReason)
         }
+        guard let settled else { return false }
+        let awaiting = settled.awaiting
+        switch settled.verdict {
+        case .waiting:
+            return false
+        case .gone:
+            return true
+        case .spoke:
+            finishSystemFallback(
+                targetId: awaiting.targetId, sourceOffset: awaiting.sourceOffset, reason: awaiting.reason,
+                stopReason: settled.stopReason, kept: awaiting.kept
+            )
+            releaseHandOverBackgroundTimeIfHeld()
+        case .returned:
+            returnToChosenVoice(releasesAudioSession: true)
+        case .gaveUp:
+            // The iOS voice never began: it is stopped, the chosen voice has its place and chunk back, and the
+            // stall pauses for a tap as it did before the hand-over.
+            try? fallback.stop()
+            var fields = awaiting.stallFields
+            fields["recovery"] = "hand_over_failed"
+            onStall?("supertonic.stall_handover_failed", fields)
+            pauseForTap(fields)
+        }
+        return true
     }
 
-    @MainActor
-    private func handOverStartState() -> HandOverStart {
-        let (awaiting, current) = lock.withLock { () -> (HandOverAwaitingStart?, Bool) in
-            guard let awaiting = handOverAwaitingStart else { return (nil, false) }
-            let current = fallbackIsActive && transportIntent == .playing
-                && currentTargetId == awaiting.targetId && systemVoicePlayback == awaiting.playback
-            return (awaiting, current)
+    /// Ends the wait for the iOS voice's first word. `returned` and `gaveUp` give the chosen voice back the place,
+    /// chunk length and engine state it had before the hand-over; `spoke` leaves the iOS voice in charge. Caller
+    /// holds `lock`.
+    private func endHandOverWait(_ awaiting: HandOverAwaitingStart, as verdict: HandOverVerdict) {
+        handOverAwaitingStart = nil
+        guard verdict == .returned || verdict == .gaveUp else { return }
+        fallbackIsActive = false
+        currentStartOffset = awaiting.chunkStart
+        currentChunkLength = awaiting.chunkLength
+        // The listener may have stopped generation since: that choice stays.
+        if generationDisabledReasons[awaiting.targetId] == awaiting.stopReason {
+            generationDisabledReasons.removeValue(forKey: awaiting.targetId)
         }
-        guard let awaiting else { return .superseded }
-        // The listener paused, stopped or moved on: whatever they did already tidied up after the hand-over.
-        guard current else {
-            lock.withLock { handOverAwaitingStart = nil }
-            return .superseded
-        }
-        switch fallback.playbackStartStatus(targetId: awaiting.targetId) {
-        case .confirmed: return .confirmed
-        case .failed: return .failed
-        case .pending: return .waiting
-        }
+        resourceFallbackTargetIds.remove(awaiting.targetId)
     }
 
-    @MainActor
-    private func finishHandOver() {
-        guard let awaiting = lock.withLock({ () -> HandOverAwaitingStart? in
-            defer { handOverAwaitingStart = nil }
-            return handOverAwaitingStart
-        }) else { return }
-        finishSystemFallback(
-            targetId: awaiting.targetId, sourceOffset: awaiting.sourceOffset, reason: awaiting.reason,
-            stopReason: awaiting.stopReason, kept: awaiting.kept
-        )
+    /// The wait ended before the iOS voice spoke, and the chosen voice goes on: the voice that never began is
+    /// stopped and the kept chunk goes back in the cache at its place, as after a media-services reset. The next
+    /// play starts it in a new player that is watched for its end, rather than the player the hand-over left
+    /// without one (#540 audit). The app isn't told of a pause: the listener's own pause or play ended the wait.
+    private func returnToChosenVoice(releasesAudioSession: Bool) {
+        try? fallback.stop()
+        markMediaServicesReset(announcesPause: false)
+        if releasesAudioSession { try? releaseBackgroundAudio() }
         releaseHandOverBackgroundTimeIfHeld()
     }
 
-    /// The iOS voice never began. It is stopped, the chosen voice is given back its place and chunk, and the
-    /// stall pauses for a tap as it did before the hand-over.
-    @MainActor
-    private func undoHandOver() {
-        guard let awaiting = lock.withLock({ () -> HandOverAwaitingStart? in
-            defer { handOverAwaitingStart = nil }
-            return handOverAwaitingStart
-        }) else { return }
-        try? fallback.stop()
-        lock.withLock {
-            fallbackIsActive = false
-            currentStartOffset = awaiting.chunkStart
-            currentChunkLength = awaiting.chunkLength
-            generationDisabledReasons.removeValue(forKey: awaiting.targetId)
-            resourceFallbackTargetIds.remove(awaiting.targetId)
+    /// A play, seek or next-item request that lands while a hand-over still waits for the voice's first word
+    /// ends the wait before anything else moves. The chosen voice comes back with this play, as after any
+    /// hand-over, unless it may not render now; then the iOS voice stays and the stalled chunk is let go.
+    private func settleHandOverBeforePlay() {
+        guard lock.withLock({ handOverAwaitingStart != nil }) else { return }
+        let returns = onDeviceRenderingAllowed()
+        let ended = lock.withLock { () -> (awaiting: HandOverAwaitingStart, stopReason: String)? in
+            guard let awaiting = handOverAwaitingStart else { return nil }
+            let stopReason = generationDisabledReasons[awaiting.targetId] ?? awaiting.stopReason
+            endHandOverWait(awaiting, as: returns ? .returned : .spoke)
+            return (awaiting, stopReason)
         }
-        var fields = awaiting.stallFields
-        fields["recovery"] = "hand_over_failed"
-        onStall?("supertonic.stall_handover_failed", fields)
-        pauseForTap(fields)
+        guard let ended else { return }
+        if returns {
+            returnToChosenVoice(releasesAudioSession: false)
+        } else {
+            let awaiting = ended.awaiting
+            finishSystemFallback(
+                targetId: awaiting.targetId, sourceOffset: awaiting.sourceOffset, reason: awaiting.reason,
+                stopReason: ended.stopReason, kept: awaiting.kept
+            )
+            releaseHandOverBackgroundTimeIfHeld()
+        }
     }
 
     /// What the stalled player's short life looked like, so an export says why it never made sound (#540):
@@ -2850,12 +2892,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         #endif
     }
 
-    private func markMediaServicesReset() {
+    /// `announcesPause` is false when the caller is the listener's own pause or play, which the app already knows.
+    private func markMediaServicesReset(announcesPause: Bool = true) {
         removePlaybackEndObserver()
+        var endedWaitingHandOver = false
         let reset = lock.withLock { () -> (
             didPause: Bool,
             interrupted: (url: URL, duration: TimeInterval, targetId: String, chunkStart: Int, generation: UUID)?
         ) in
+            // A reset while the iOS voice has not yet begun: the kept chunk is the one to retain, with the place
+            // and length it had before the hand-over took them (#540 audit).
+            if let waiting = handOverAwaitingStart {
+                endHandOverWait(waiting, as: .returned)
+                endedWaitingHandOver = true
+            }
             let didPause = transportIntent == .playing
             if let player, activeAudioDuration > 0, currentChunkLength > 0 {
                 let fraction = max(0, min(1, playerTime(player) / activeAudioDuration))
@@ -2875,7 +2925,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             player?.replaceCurrentItem(with: nil)
             player = nil
             transportIntent = .paused
-            shouldResumeAfterInterruption = false
+            // The listener's pause or play, and a system interruption that already asked to resume, keep their say.
+            if announcesPause { shouldResumeAfterInterruption = false }
             playbackFailure = nil
             pendingStartTargetId = nil
             startedTargetId = nil
@@ -2887,8 +2938,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             activeAudioDuration = 0
             return (didPause, value)
         }
+        if endedWaitingHandOver {
+            try? fallback.stop()
+            releaseHandOverBackgroundTimeIfHeld()
+        }
         guard let interrupted = reset.interrupted else {
-            if reset.didPause { interruptionHandler?(.began) }
+            if reset.didPause, announcesPause { interruptionHandler?(.began) }
             return
         }
         // The request the chunk was made with, not one rebuilt from the whole text: a preface chunk rebuilt
@@ -2905,7 +2960,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generation: interrupted.generation
               ) else {
             discardAudio(interrupted.url)
-            if reset.didPause { interruptionHandler?(.began) }
+            if reset.didPause, announcesPause { interruptionHandler?(.began) }
             return
         }
         let retained = lock.withLock { () -> Bool in
@@ -2920,7 +2975,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return true
         }
         if !retained { discardAudio(interrupted.url) }
-        if reset.didPause { interruptionHandler?(.began) }
+        if reset.didPause, announcesPause { interruptionHandler?(.began) }
     }
 }
 
