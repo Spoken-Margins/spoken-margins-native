@@ -109,6 +109,45 @@ final class OPMLTests: XCTestCase {
         XCTAssertEqual(again.alreadyFollowed.count, 2)
     }
 
+    /// #945: a private feed written with percent-encoding is withheld like its plain spelling, and the
+    /// public feeds that hold escapes are written exactly as they were followed (no decoding).
+    func testExportWithholdsEncodedPrivateFeedsAndKeepsPublicOnesUnchanged() throws {
+        let token = "Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq"
+        let privateFeeds = [
+            ("Encoded marker", "https://feeds.example.net/%70rivate/abc.rss"),
+            ("Encoded premium", "https://feeds.example.net/%70remium/feed.rss"),
+            ("Encoded token", "https://feeds.example.net/%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode.mp3"),
+            ("Mixed-case escapes", "https://feeds.example.net/Pre%6dium/%5ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq.rss"),
+            ("Encoded separator", "https://feeds.example.net/shows%2Fpremium%2Ffeed.rss"),
+            ("Double encoded", "https://feeds.example.net/%2570remium/feed.rss"),
+            ("Malformed escape", "https://feeds.example.net/%70remium.rss%zz"),
+            ("Encoded query name", "https://feeds.example.net/feed.rss?%74oken=abc"),
+            ("Plain token", "https://feeds.example.net/\(token)/episode.mp3"),
+        ]
+        let publicFeeds = [
+            ("Cafe", "https://feeds.example.net/caf%C3%A9/feed.rss"),
+            ("Spaced show", "https://feeds.example.net/my%20show/feed.rss?page=2&q=100%25"),
+            ("Anchor", "https://anchor.fm/s/abc123/podcast/play/12345678/https%3A%2F%2Fd3ctxlq1ktw2nl.cloudfront.net%2Fstaging%2F2026-9-1%2F12345678-44100-2-abcdef1234567890.m4a"),
+            ("Amperwave", "https://rss.amperwave.net/v2/feed/audacynetwork/16aa3c6bf526fae9db63070c73cad09f"),
+        ]
+        let subscriptions = (privateFeeds + publicFeeds).map { Self.subscription($0.0, $0.1) }
+        let export = OPMLExporter.export(subscriptions, createdAt: Date(timeIntervalSince1970: 0))
+        XCTAssertEqual(export.exportedCount, publicFeeds.count)
+        XCTAssertEqual(export.withheldPrivateCount, privateFeeds.count)
+
+        let text = String(decoding: export.data, as: UTF8.self)
+        for (name, url) in privateFeeds {
+            XCTAssertFalse(text.contains(url), "\(name): the private address must not be written")
+        }
+        for secret in [token, "%5Ak9x", "%5ak9x", "%70rivate", "%70remium", "%6dium", "%2570remium", "%74oken", "%zz"] {
+            XCTAssertFalse(text.contains(secret), "\(secret) must not appear anywhere in the file")
+        }
+        for (name, url) in publicFeeds {
+            XCTAssertTrue(text.contains(OPMLExporter.escape(url)), "\(name): the public address is written as followed")
+        }
+        XCTAssertEqual(Set(try OPMLParser.parse(export.data).feeds.map(\.feedURL)), Set(publicFeeds.map(\.1)))
+    }
+
     func testImportFollowsOnlyTickedFeedsInFileOrderAndKeepsGoingAfterAFailure() async throws {
         let preview = OPMLImportPlanner.preview(try OPMLParser.parse(Self.fixture("pocket-casts")), existing: [])
         XCTAssertEqual(preview.toFollow.map(\.title), ["The Daily", "Stuff You Should Know", "Science Vs", "Hidden Brain"])

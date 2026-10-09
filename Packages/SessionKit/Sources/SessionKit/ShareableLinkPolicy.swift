@@ -60,10 +60,13 @@ public enum ShareableLinkPolicy {
         for segment in components.percentEncodedPath.split(separator: "/") {
             if pathSegmentHoldsCredential(String(segment), allowsHexIdentifiers: allowsHexIdentifiers) { return false }
         }
-        for item in components.queryItems ?? [] {
-            let name = item.name.lowercased()
+        // Each name and value is decoded here, not by `queryItems`, which leaves a whole item
+        // undecoded when one escape in it is malformed (`?%74oken=abc%zz`, #945).
+        for item in (components.percentEncodedQuery ?? "").split(separator: "&") {
+            let pair = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            let name = fullyDecoded(String(pair[0])).lowercased()
             if credentialQueryNameFragments.contains(where: name.contains) { return false }
-            if let itemValue = item.value, looksLikeSecret(itemValue) { return false }
+            if pair.count > 1, looksLikeSecret(fullyDecoded(String(pair[1]))) { return false }
         }
         if let fragment = components.percentEncodedFragment, fragmentHoldsCredential(fragment) { return false }
         return true
@@ -73,10 +76,19 @@ public enum ShareableLinkPolicy {
     private static func pathSegmentHoldsCredential(_ segment: String, allowsHexIdentifiers: Bool) -> Bool {
         let decoded = fullyDecoded(segment)
         // An encoded slash (`%2F`) keeps several segments inside one; a marker behind it still counts.
-        // The secret shape is judged on the whole segment, so an encoded URL inside a segment
-        // (anchor.fm) is not mistaken for a long token.
-        for part in decoded.split(separator: "/") where privatePathMarkers.contains(stem(of: part).lowercased()) {
+        let parts = decoded.split(separator: "/")
+        for part in parts where privatePathMarkers.contains(stem(of: part).lowercased()) {
             return true
+        }
+        // An encoded URL inside a segment (anchor.fm) holds a long run of its own, which the secret
+        // shape would mistake for a token, so it is judged whole. Any other segment that an encoded
+        // slash split is several path segments, and each one is judged as a path segment would be (#945).
+        if parts.count > 1, !decoded.contains("://") {
+            return parts.contains { part in
+                let partStem = stem(of: part)
+                if allowsHexIdentifiers, isHyphenlessUUID(partStem) { return false }
+                return looksLikeSecret(partStem)
+            }
         }
         let wholeStem = stem(of: decoded[...])
         if allowsHexIdentifiers, isHyphenlessUUID(wholeStem) { return false }
@@ -126,19 +138,57 @@ public enum ShareableLinkPolicy {
 
     /// Percent-decodes `value` until it stops changing, at most three rounds. Some servers and
     /// proxies decode twice, so `%2570remium` can reach the origin as `premium`.
+    ///
+    /// Decoding is lenient, as a browser or a tolerant server is: an escape that is not two hex
+    /// digits (`%zz`, a lone `%`) stays as written and the valid escapes around it still decode, so
+    /// one bad escape cannot keep `%70remium.rss%zz` from being read as `premium.rss%zz` (#945).
+    /// Bytes that are not valid UTF-8 after decoding become U+FFFD, which no check treats as a secret.
     private static func fullyDecoded(_ value: String) -> String {
         var current = value
         for _ in 0..<3 {
-            guard let decoded = current.removingPercentEncoding, decoded != current else { break }
+            let decoded = decodedOnce(current)
+            guard decoded != current else { break }
             current = decoded
         }
         return current
     }
 
+    private static func decodedOnce(_ value: String) -> String {
+        let input = Array(value.utf8)
+        var output: [UInt8] = []
+        output.reserveCapacity(input.count)
+        var index = 0
+        while index < input.count {
+            if input[index] == UInt8(ascii: "%"), index + 2 < input.count,
+               let high = hexValue(input[index + 1]), let low = hexValue(input[index + 2]) {
+                output.append(high << 4 | low)
+                index += 3
+            } else {
+                output.append(input[index])
+                index += 1
+            }
+        }
+        return String(decoding: output, as: UTF8.self)
+    }
+
+    private static func hexValue(_ byte: UInt8) -> UInt8? {
+        switch byte {
+        case UInt8(ascii: "0")...UInt8(ascii: "9"): return byte - UInt8(ascii: "0")
+        case UInt8(ascii: "a")...UInt8(ascii: "f"): return byte - UInt8(ascii: "a") + 10
+        case UInt8(ascii: "A")...UInt8(ascii: "F"): return byte - UInt8(ascii: "A") + 10
+        default: return nil
+        }
+    }
+
     /// A long opaque run of letters and digits, as used for tokens, signatures and API keys.
     /// UUIDs are excluded: public podcast hosts (Simplecast, Omny, Art19) put them in every link.
+    ///
+    /// A `%` that is left after decoding is a stray one (`%zz`, a trailing `%`) or a literal percent
+    /// sign. It is dropped first, so a bad escape beside a token cannot keep the token from being seen (#945).
     private static func looksLikeSecret(_ value: String) -> Bool {
-        let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "="))
+        let trimmed = value
+            .replacingOccurrences(of: "%", with: "")
+            .trimmingCharacters(in: CharacterSet(charactersIn: "="))
         guard trimmed.count >= 32, UUID(uuidString: trimmed) == nil else { return false }
         let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
         guard trimmed.unicodeScalars.allSatisfy(allowed.contains) else { return false }
