@@ -513,6 +513,9 @@ class ListenerRuleTests(unittest.TestCase):
         self.assertEqual(self.module.owner_check({'body': 'Owner check: open a chapter list.', 'issues': [none]}),
                          'open a chapter list.')
         self.assertIsNone(self.module.owner_check({'body': 'Owner check: nothing (lane only)', 'issues': []}))
+        # #1193: #177's "none now; #178's journey covers ..." must not reach the plan as a check.
+        now = {'body': "**Owner check:** none now; #178's journey covers the paid-feed case on the phone."}
+        self.assertIsNone(self.module.owner_check({'body': '', 'issues': [now]}))
         real = {'body': '**Owner check:** Nothing plays twice after a call.\n'}
         self.assertEqual(self.module.owner_check({'body': '', 'issues': [real]}), 'Nothing plays twice after a call.')
 
@@ -638,11 +641,20 @@ class ListenerRuleTests(unittest.TestCase):
     def test_ways_of_saying_there_is_no_check(self):
         none = self.module.NO_CHECK
         for text in ('none.', 'None this time: diagnostics only.', 'none needed.', 'Nothing yet.', 'n/a',
-                     'none (needs the app deleted)'):
+                     'none (needs the app deleted)',
+                     # #1193: #177 said "none now; #178's journey covers the paid-feed case" and reached the plan
+                     "none now; #178's journey covers the paid-feed case on the phone.", 'None now.',
+                     'none at the moment', 'none currently', 'None right now.', 'none for now', 'none yet',
+                     'not needed', 'Not needed.', 'no owner check', 'No owner check needed.', 'no phone check.',
+                     'None needed for now.', 'none needed right now', 'none required', 'none at all.',
+                     'none at this time', 'no check', 'No check needed.'):
             with self.subTest(text=text):
                 self.assertTrue(none.match(text))
         for text in ('Nothing plays twice after a call.', 'None of the Margins move when you seek.',
-                     'Nonetheless, play it.'):
+                     'Nonetheless, play it.', 'None nowhere near the end: skip to the last chapter.',
+                     'Not needed offline? Turn Wi-Fi off and play it.', 'No owner checkpoint here, open it.',
+                     'Nowadays the title reads wrong.', 'Nothing at all plays after the call.',
+                     'None required fields stay empty.', 'No checkmark shows.'):
             with self.subTest(text=text):
                 self.assertFalse(none.match(text))
 
