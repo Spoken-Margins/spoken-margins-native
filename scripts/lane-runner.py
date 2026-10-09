@@ -470,9 +470,26 @@ def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
                     *[f'  {line}' for line in first_errors(log_path)]]
 
 
+def recheck_on_base(github, base_sha: str):
+    """#1204: a failed --plan fast run's failing tests, re-run on plain <base> at base_sha before the PR is
+    blamed (scripts/lane_next_rerun.py). If they fail there too the verdict is INCONCLUSIVE, not FAIL."""
+    def recheck(evidence: Path, details: list[str]) -> tuple[str, list[str]]:
+        try:
+            import lane_next_rerun
+        except ImportError:  # a tree without the helper, before base_scripts_fallback could supply it
+            return 'FAIL', details
+        python = ROOT / '.venv/bin/python'
+        return lane_next_rerun.recheck(ROOT, base_sha, evidence, details, github.api, github.repo, github.pr,
+                                       runner=run_bounded, python=str(python if python.exists() else sys.executable))
+    return recheck
+
+
 def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
-                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
-    """Returns verdict, where, ran, details for the checks the PR's diff needs."""
+                  ratchet=lambda: [], recheck=None) -> tuple[str, str, str, list[str]]:
+    """Returns verdict, where, ran, details for the checks the PR's diff needs.
+
+    recheck(evidence, details): what a FAIL of the host tests becomes once their failing tests have been
+    re-run on plain next (#1204); None leaves the FAIL as it is."""
     tier = int(scope['tier'][1:])
     details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
     too_big = ratchet()
@@ -483,6 +500,8 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
         return 'PASS', 'no build', 'nothing to build or test', details + [
             'nothing here reaches the host tests or the app (docs or research notes only)']
     verdict, more = fast(evidence)
+    if verdict == 'FAIL' and recheck:
+        verdict, more = recheck(evidence, more)
     details += more
     if verdict != 'PASS':
         return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
@@ -822,7 +841,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 return 'INCONCLUSIVE', 'no build', 'nothing', notes + [
                     f'{no_room}. Push again, or remove and re-add automerge, to try again.']
             verdict, where, ran, checks = run_automerge(
-                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
+                recheck=recheck_on_base(github, base_sha))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
@@ -1496,7 +1516,8 @@ TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
-                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
+                   ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 
