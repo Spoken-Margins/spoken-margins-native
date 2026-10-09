@@ -621,15 +621,13 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #540 audit: a chunk kept through a failed hand-over keeps the boundaries it was made with. Rebuilt from
     // the whole text, an Overview chunk would cover the article's first sentence too and skip it once played.
+    // The offsets are the client's own, read before the stall and after the kept chunk has played.
     func testAFailedHandOverKeepsTheOverviewChunkApartFromTheArticle() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
         let article = (1...8).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }
             .joined(separator: " ")
         let preface = "Overview. The paper studies evaluation agents and how they choose their tools.\n\n"
-        let spoken = SpeechTextNormalizer.normalize(preface + article)
-        let articleStart = try XCTUnwrap(spoken.range(of: "Sentence 1 of the article")).lowerBound
-        let articleOffset = spoken.distance(from: spoken.startIndex, to: articleStart)
         let log = StallEventLog()
         let fallback = RecordingFallbackAudioClient()
         fallback.playError = NSError(domain: "test", code: 1)
@@ -640,8 +638,9 @@ final class SupertonicSpeechTests: XCTestCase {
         _ = try client.prepareSpeechText(preface + article)
         try client.play(targetId: "overview", from: 0)
         for _ in 0..<100 where log.startCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
-        let firstChunkEnd = try XCTUnwrap(client.currentPlaybackPosition()?.textEnd)
-        XCTAssertLessThanOrEqual(firstChunkEnd, articleOffset, "precondition: the Overview is a chunk of its own")
+        let overviewEnd = try XCTUnwrap(client.currentPlaybackPosition()?.textEnd)
+        XCTAssertGreaterThan(overviewEnd, 0)
+        XCTAssertLessThanOrEqual(overviewEnd, preface.count, "precondition: the Overview is a chunk of its own, not run into the article")
 
         for _ in 0..<250 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(log.values.contains("supertonic.stall_paused"), "\(log.values)")
@@ -651,9 +650,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.startCount, 3, "the tap plays the kept Overview chunk")
 
         client.debugFinishActiveChunk()
-        let next = try XCTUnwrap(client.currentCharOffset())
-        XCTAssertGreaterThan(next, 0)
-        XCTAssertLessThanOrEqual(next, articleOffset, "the article's first sentence is next, not skipped")
+        XCTAssertEqual(
+            try XCTUnwrap(client.currentCharOffset()), overviewEnd,
+            "after the kept Overview chunk the article's first sentence is next, not skipped"
+        )
         try client.stop()
     }
 
