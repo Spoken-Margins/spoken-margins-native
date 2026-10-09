@@ -551,7 +551,8 @@ class VerificationTests(unittest.TestCase):
             run.manifest['input_sha256'] = 'inputs'
             commands = {}
 
-            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=()):
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=(),
+                        startup=None):
                 commands[name] = (args, expected, probation)
                 return ''
 
@@ -771,8 +772,9 @@ class VerificationTests(unittest.TestCase):
             run.manifest['input_sha256'] = 'inputs'
             commands = {}
 
-            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None):
-                commands[name] = (args, expected)
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
+                        startup=None):
+                commands[name] = (args, expected, startup)
                 return ''
 
             capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
@@ -786,10 +788,124 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=command):
                 run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
-            args, expected = commands['xcode-tests']
+            args, expected, startup = commands['xcode-tests']
             method = 'SpokenMarginsAppTests/SpeechTests/testBundled'
             self.assertEqual([a for a in args if a.startswith('-only-testing:')], [f'-only-testing:{method}'])
             self.assertEqual(expected, {method})
+            # #705: the app-hosted plans watch for a run that never starts its tests.
+            self.assertEqual((startup['seconds'], startup['retries']),
+                             (verification.STARTUP_STALL_SECONDS, verification.STARTUP_RETRIES))
+
+    def test_ui_plans_have_no_startup_watch(self):
+        # Their runner is a separate app and starts on its own schedule; they keep their single launch.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsUISeams').mkdir(parents=True)
+            (root / 'TestPlans/Smoke.xctestplan').write_text(json.dumps({'testTargets': [dict(
+                target={'name': 'SpokenMarginsAppTests'}, selectedTests=['SpeechTests/testBundled()'])]}))
+            run = verification.Run(Path(temporary) / 'run', 'smoke')
+            run.manifest['input_sha256'] = 'inputs'
+            commands = {}
+
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
+                        startup=None):
+                commands[name] = startup
+                return ''
+
+            capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
+            device = {'udid': 'synthetic-device', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', side_effect=capture), \
+                    patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=command):
+                run.xcode('smoke', None, rebuild=True)
+            self.assertIsNone(commands['xcode-tests'])
+
+    STALLS_THEN_RUNS = (
+        'import os, sys, time\n'
+        'marker = sys.argv[1]\n'
+        'if not os.path.exists(marker):\n'
+        '    open(marker, "w").close()\n'
+        '    print("Writing result bundle at path:", flush=True)\n'
+        '    time.sleep(60)\n'
+        'print("Test Suite \'Selected tests\' started at now.", flush=True)\n'
+        'print("Test Case \'-[SpokenMarginsAppTests.SpeechTests testBundled]\' started.", flush=True)\n'
+        'print("Test Case \'-[SpokenMarginsAppTests.SpeechTests testBundled]\' passed (0.1 seconds).", flush=True)\n')
+
+    def watch(self, seconds=1, retries=1):
+        calls = {'diagnose': [], 'reset': []}
+        return calls, {'seconds': seconds, 'retries': retries,
+                       'diagnose': lambda folder: calls['diagnose'].append(folder.name) or {'processes': 2},
+                       'reset': lambda attempt: calls['reset'].append(attempt)}
+
+    def test_run_that_never_starts_its_tests_is_diagnosed_and_launched_again(self):
+        # #705: the adapters step sat 300 s with no Test Suite line, 0 tests, exit 124. One stalled launch is
+        # recorded and the same command runs again; the second launch's real test result is the evidence.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['exit_code'], 0)
+            self.assertEqual(step['counts']['passed'], 1)
+            self.assertEqual(step['startup_attempts'], 2)
+            self.assertEqual([(s['attempt'], s['last_log_line'], s['processes']) for s in step['startup_stalls']],
+                             [(1, 'Writing result bundle at path:', 2)])
+            self.assertEqual((calls['diagnose'], calls['reset']), (['xcode-tests-stall-1'], [1]))
+            self.assertLess(step['seconds'], 30)  # not the 60 s the stalled launch would have slept
+
+    def test_run_that_stalls_on_every_launch_reports_why_within_its_budget(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            script = 'import time; print("Writing result bundle at path:", flush=True); time.sleep(60)'
+            with self.assertRaisesRegex(RuntimeError, r'printed no test output in 2 launch\(es\) of 1s'):
+                run.command('xcode-tests', [sys.executable, '-c', script], timeout=60, tests=True, startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['exit_code'], 124)
+            self.assertFalse(step['interrupted'])  # the lane's report says "ran out of budget" for interrupted steps
+            self.assertEqual([s['attempt'] for s in step['startup_stalls']], [1, 2])
+            self.assertEqual(calls['reset'], [1])  # no third launch
+            self.assertLess(step['seconds'], 30)
+
+    def test_slow_run_that_has_started_its_tests_is_not_relaunched(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            script = ('import time; print("Test Suite \'Selected tests\' started at now.", flush=True); time.sleep(3)')
+            run.command('xcode-tests', [sys.executable, '-c', script], timeout=60, startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertNotIn('startup_stalls', step)
+            self.assertEqual((calls['diagnose'], calls['reset']), ([], []))
+
+    def test_stall_evidence_never_raises_and_lists_this_devices_processes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / 'stall'
+            device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+            listing = (f'  101 05:10 S /x/Devices/{device}/data/Containers/Bundle/Application/Y/SpokenMarginsApp.app/SpokenMarginsApp\n'
+                       '  102 05:10 S /Applications/Other.app/Other\n')
+            sampled = []
+
+            def run_(args, **kwargs):
+                if args[0] == 'ps':
+                    return subprocess.CompletedProcess(args, 0, stdout=listing)
+                sampled.append(args[:2])
+                return subprocess.CompletedProcess(args, 0, stdout='')
+
+            with patch.object(verification.subprocess, 'run', side_effect=run_):
+                found = verification.stall_evidence(device, folder)
+            self.assertEqual(found, {'processes': 1, 'samples': [{'pid': 101, 'exit': 0}]})
+            self.assertEqual(sampled, [['sample', '101']])
+            self.assertIn(device, (folder / 'processes.txt').read_text())
+            with patch.object(verification.subprocess, 'run', side_effect=OSError('no ps')):
+                self.assertIn('error', verification.stall_evidence(device, folder))
 
     def test_unclassified_trace_and_fixture_and_empty_selection_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
