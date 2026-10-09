@@ -131,3 +131,39 @@ public enum ListeningTimeEstimator {
         return rate
     }
 }
+
+extension ListeningTimeEstimate {
+    /// The text scrubber's VoiceOver value: "42 percent, about 12 minutes left".
+    public func scrubberAccessibilityValue(percent: Int) -> String {
+        "\(percent) percent, \(remainingSpokenText)"
+    }
+}
+
+/// The trailing label and VoiceOver value of the plain progress bar the player shows instead of a scrubber:
+/// for a text item whose starter audio is still being prepared, or media with no known length.
+public struct PlaybackProgressBarLabels: Equatable, Sendable {
+    public var trailing: String
+    public var accessibilityValue: String
+
+    /// A text item still shows its time left, as the scrubber does (Codex audit on #832); without an
+    /// estimate (media, or no text) the bar keeps "100%" and a bare percentage.
+    public init(percent: Int, estimate: ListeningTimeEstimate?) {
+        trailing = estimate?.remainingText ?? "100%"
+        accessibilityValue = estimate?.scrubberAccessibilityValue(percent: percent) ?? "\(percent) percent"
+    }
+}
+
+extension ListeningTimeEstimator {
+    /// A Library row's length for a text item at the listener's speed: "about 25 min". Nil for an
+    /// item with no text, such as a podcast, which shows no estimate.
+    /// A text item's length in the units the player counts: `String.count`, the same characters
+    /// its position and scrubber use, so the Library total and the time left agree (#305).
+    public static func characterCount(of text: String?) -> Int? {
+        text?.count
+    }
+
+    public static func libraryTotalText(textCharacterCount: Int?, playbackSpeed: Double) -> String? {
+        guard let textCharacterCount else { return nil }
+        return estimate(totalCharacters: textCharacterCount, charactersHeard: 0, playbackSpeed: playbackSpeed)?.totalText
+    }
+}

@@ -96,20 +96,7 @@ struct LibraryItemRow: Identifiable, Hashable {
     var usesNewReader = false
     /// Marked complete by hand, not finished by listening, so Mark Unfinished can clear it (#273).
     var canMarkUnfinished = false
-
-    var mediaSymbol: String {
-        if hasNativeAudio { return "headphones" }
-        return switch mediaType.lowercased() {
-        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
-            "headphones"
-        case "pdf":
-            "doc.richtext"
-        case "epub":
-            "book.closed"
-        default:
-            "doc.text"
-        }
-    }
+    var textCharacterCount: Int?  // a text item's length for its time estimate (#305); nil for recorded audio
 
     init(
         id: String,
@@ -9878,6 +9865,7 @@ final class Gate1AppModel: ObservableObject {
             )
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
             row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)
+            row.textCharacterCount = row.hasNativeAudio ? nil : ListeningTimeEstimator.characterCount(of: item.text)
             return row
         }
     }
