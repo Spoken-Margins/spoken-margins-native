@@ -122,6 +122,8 @@ final class OPMLTests: XCTestCase {
             ("Double encoded", "https://feeds.example.net/%2570remium/feed.rss"),
             ("Malformed escape", "https://feeds.example.net/%70remium.rss%zz"),
             ("Encoded query name", "https://feeds.example.net/feed.rss?%74oken=abc"),
+            ("Token with a trailing encoded slash", "https://feeds.example.net/\(token)%2F/episode.mp3"),
+            ("Token with a leading encoded slash", "https://feeds.example.net/%2F\(token)/episode.mp3"),
             ("Plain token", "https://feeds.example.net/\(token)/episode.mp3"),
         ]
         let publicFeeds = [

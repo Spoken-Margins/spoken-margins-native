@@ -92,6 +92,15 @@ final class PrivateFeedLinkTests: XCTestCase {
             enclosureURL: "https://cdn.example.net/%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq%zz/episode-12.mp3",
             episodeGUID: "example-episode-12",
             publicEpisodeURL: "https://example.net/show/episode-12"
+        ),
+        PrivateFeed(
+            name: "Token with an encoded slash at its edge",
+            secret: "k9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq",
+            feedURL: "https://feeds.example.net/Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq%2F/show.rss",
+            episodeURL: "https://example.net/show/episode-12",
+            enclosureURL: "https://cdn.example.net/%2F%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode-12.mp3",
+            episodeGUID: "example-episode-12",
+            publicEpisodeURL: "https://example.net/show/episode-12"
         )
     ]
 

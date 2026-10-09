@@ -81,9 +81,10 @@ public enum ShareableLinkPolicy {
             return true
         }
         // An encoded URL inside a segment (anchor.fm) holds a long run of its own, which the secret
-        // shape would mistake for a token, so it is judged whole. Any other segment that an encoded
-        // slash split is several path segments, and each one is judged as a path segment would be (#945).
-        if parts.count > 1, !decoded.contains("://") {
+        // shape would mistake for a token, so it is judged whole. Any other segment is judged part by
+        // part, as the path segments an encoded slash makes of it: that includes a token with a slash
+        // before or after it (`TOKEN%2F`), which leaves one part, not several (#945).
+        if !decoded.contains("://") {
             return parts.contains { part in
                 let partStem = stem(of: part)
                 if allowsHexIdentifiers, isHyphenlessUUID(partStem) { return false }

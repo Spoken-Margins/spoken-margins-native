@@ -37,6 +37,15 @@ final class ShareableLinkPolicyEncodingTests: XCTestCase {
             ("/shows/premium.rss", ["/shows/premium%2Erss", "/shows/%70remium%2erss"]),
             ("/shows/\(token)/e.mp3", ["/shows%2F\(token)/e.mp3", "/shows%2f%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/e.mp3"]),
 
+            // A token with an encoded slash before it, after it, or repeated, at either end of a segment.
+            ("/\(token)/e.mp3", [
+                "/\(token)%2F/e.mp3", "/\(token)%2f/e.mp3", "/%2F\(token)/e.mp3", "/%2F\(token)%2F/e.mp3",
+                "/\(token)%2F%2F/e.mp3", "/%2F%2F\(token)/e.mp3", "/\(token)%252F/e.mp3", "/%252F\(token)/e.mp3",
+                "/%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq%2F/e.mp3", "/\(token)%2F.mp3",
+            ]),
+            ("/\(token)", ["/\(token)%2F", "/%2F\(token)"]),
+            ("/premium/feed.rss", ["/%2F%70remium/feed.rss", "/%70remium%2F/feed.rss", "/%252F%2570remium/feed.rss"]),
+
             // Encoded more than once, as a server or proxy that decodes twice would read it.
             ("/premium/feed.rss", ["/%2570remium/feed.rss", "/%252570remium/feed.rss", "/%2550remium/feed.rss"]),
             ("/\(token)/e.mp3", ["/%255Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/e.mp3"]),
@@ -133,6 +142,12 @@ final class ShareableLinkPolicyEncodingTests: XCTestCase {
 
             // An encoded URL inside one segment is one segment, not a long token.
             "/s/abc123/play/12345678/https%3A%2F%2Fd3ctxlq1ktw2nl.cloudfront.net%2Fstaging%2F2026-9-1%2F12345678-44100-2-abcdef1234567890.m4a",
+
+            // An encoded slash at the edge of an ordinary segment.
+            "/shows%2F/feed.rss",
+            "/%2Fshows/feed.rss",
+            "/%2F%2F/feed.rss",
+            "/news%2F/%38f2c1c9e-1a2b-4c3d-9e8f-0a1b2c3d4e5f.mp3",
 
             // A literal percent sign in the query is ordinary text.
             "/feed.rss?q=100%25&page=2",
