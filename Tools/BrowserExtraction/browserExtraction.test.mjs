@@ -488,19 +488,24 @@ test("only Safari's no-access refusals are told apart from other injection error
     SAFARI_REFUSAL,
     "This extension does not have access to this tab",
     "THIS EXTENSION DOES NOT HAVE ACCESS TO THIS TAB.",
-    "  invalid call to scripting.executeScript()  ",
-    "Cannot access contents of the page. Extension manifest must request permission to access the respective host."
+    "  Invalid call to scripting.executeScript().\n\tThis extension does not have access to this tab.  ",
+    { message: SAFARI_REFUSAL }
   ];
-  for (const message of refusals) {
-    await assert.rejects(capturePage(refusedTabAPI({ url: "https://example.com/x" }, { refuse: message })), (error) => {
-      assert.match(error.message, SHARE_SHEET_ADVICE, message);
-      assert.equal(canRetry(error), false, message);
+  for (const refusal of refusals) {
+    const label = JSON.stringify(refusal);
+    await assert.rejects(capturePage(refusedTabAPI({ url: "https://example.com/x" }, { refuse: refusal })), (error) => {
+      assert.match(error.message, SHARE_SHEET_ADVICE, label);
+      assert.equal(canRetry(error), false, label);
       return true;
     });
   }
   const transient = [
     new Error("The network connection was lost."),
     new Error("Script execution timed out."),
+    // Same "Invalid call" prefix, different reason: Try Again may fix these.
+    new Error("Invalid call to scripting.executeScript(). No tab with id 11."),
+    new Error("Invalid call to scripting.executeScript(). The file browserTextCapture.js was not found."),
+    new Error("Cannot access contents of the page."),
     new Error(""),
     "plain string failure",
     null

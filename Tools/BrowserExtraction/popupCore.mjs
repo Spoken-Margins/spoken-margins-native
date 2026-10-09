@@ -56,15 +56,15 @@ export function canRetry(error) {
   return !(error instanceof TabAccessError);
 }
 
-const TAB_ACCESS_REFUSALS = [
-  /does not have access to this tab/i,
-  /invalid call to scripting\.executeScript/i,
-  /cannot access contents of/i
-];
+// Safari words it "Invalid call to scripting.executeScript(). This extension
+// does not have access to this tab." The "Invalid call" prefix alone also covers
+// other reasons (no such tab, a bad target) that Try Again may fix, so match the
+// no-access sentence only.
+const TAB_ACCESS_REFUSAL = /does not have access to this tab/i;
 
 function isTabAccessRefusal(error) {
-  const message = error instanceof Error ? error.message : String(error);
-  return TAB_ACCESS_REFUSALS.some((pattern) => pattern.test(message));
+  const message = typeof error?.message === "string" ? error.message : String(error);
+  return TAB_ACCESS_REFUSAL.test(message);
 }
 
 // The PDF import takes https addresses only, and a PDF's path ends in .pdf.
