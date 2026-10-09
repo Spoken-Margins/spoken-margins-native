@@ -11962,40 +11962,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func shareAnchorWarning(for interjection: Interjection) -> String? {
-        guard selectedItem.isNativeAudio && (interjection.podcastAnchorEvidence ?? []).isEmpty else {
-            return nil
-        }
-        switch interjection.podcastAnchorEvidenceCaptureStatus {
-        case .pendingPostResumeSample:
-            return "High-reliability evidence is capturing. Continue podcast playback for about 12 seconds before sharing this Margin."
-        case .pendingExactLocalCapture:
-            return "High-reliability evidence is being prepared from the podcast edition currently playing."
-        case .ready:
-            return nil
-        case .unavailable, nil:
-            return "High-reliability anchor evidence was unavailable at capture. Transcript context may still resolve this Margin; a timestamp alone will not be treated as verified."
-        }
-    }
-
-    static func mapProposalsForMarginExport(_ proposals: [PortableListeningMapProposalArtifact]) -> [PortableListeningMapProposalArtifact] {
-        // The app exports reviewed Margins and textual map proposals, not the
-        // local/imported Skim audio. Do not reference unselected voice assets.
-        proposals.map { proposal in
-            PortableListeningMapProposalArtifact(
-                id: proposal.id, schemaVersion: proposal.schemaVersion,
-                languageCode: proposal.languageCode, createdAt: proposal.createdAt,
-                generator: proposal.generator,
-                scenes: proposal.scenes.map { scene in
-                    PortableListeningMapScene(
-                        id: scene.id, order: scene.order, title: scene.title,
-                        summaryText: scene.summaryText, summaryAssetId: nil,
-                        summaryProvenance: scene.summaryProvenance,
-                        eligibility: scene.eligibility, eligibilityReason: scene.eligibilityReason,
-                        startAnchor: scene.startAnchor, endAnchor: scene.endAnchor
-                    )
-                }
-            )
-        }
+        SharedMarginExport.anchorWarning(for: interjection, isNativeAudio: selectedItem.isNativeAudio)
     }
 
     func exportSharedInterjections(presentsReadySheet: Bool = true) {
@@ -12014,7 +11981,7 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             let item = try store.loadItem(id: selectedItem.id)
             let itemIdentity = sharedItemIdentity(for: item, drafts: drafts)
-            let itemTransport = reviewedItemTransport(for: item, identity: itemIdentity)
+            let itemTransport = SharedMarginExport.itemTransport(item: item, identity: itemIdentity, isAppAuthored: sharingState.isAppAuthoredItem, confirmsPrivateRights: sharingState.confirmsPrivateSharingRights)
             var machineEvidence: [ReviewedMachineEvidenceAsset] = []
             var selections: [ReviewedInterjectionSelection] = []
 
@@ -12050,9 +12017,11 @@ final class Gate1AppModel: ObservableObject {
                         provenance: ($0.provenance ?? .exactLocalPlaybackEdition).rawValue
                     )
                 })
-                let anchor = portableAnchor(
+                let anchor = SharedMarginExport.anchor(
                     for: draft.interjection,
                     item: item,
+                    isNativeAudio: selectedItem.isNativeAudio,
+                    mediaChapters: selectedItem.mediaChapters,
                     machineEvidenceAssetIds: evidence.map(\.id)
                 )
                 let representation: ReviewedRepresentationSelection
@@ -12079,7 +12048,7 @@ final class Gate1AppModel: ObservableObject {
                 ))
             }
 
-            let mapProposals = Self.mapProposalsForMarginExport(try store.loadPortableListeningMapProposals(itemId: item.id))
+            let mapProposals = SharedMarginExport.mapProposals(try store.loadPortableListeningMapProposals(itemId: item.id))
             let fingerprintSpines = sharingState.includesAcousticEvidence
                 ? try store.loadEditionFingerprintSpine(itemId: item.id).map { [$0] } ?? []
                 : []
@@ -12117,7 +12086,7 @@ final class Gate1AppModel: ObservableObject {
             let directory = try applicationSupportDirectory()
                 .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let destination = directory.appending(path: "\(safeShareFilename(item.title))-\(packageID.suffix(8)).spokenmargins")
+            let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
             _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
@@ -12147,25 +12116,6 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func reviewedItemTransport(
-        for item: Item,
-        identity: SharedItemIdentity
-    ) -> ReviewedItemTransportSelection {
-        if identity.canonicalURL != nil {
-            return .reference
-        }
-        let text = item.text ?? ""
-        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           sharingState.isAppAuthoredItem || sharingState.confirmsPrivateSharingRights {
-            return .embeddedText(
-                text: text,
-                originalMediaType: identity.itemType.rawValue,
-                rightsBasis: sharingState.isAppAuthoredItem ? .appAuthored : .senderConfirmedPrivateRights
-            )
-        }
-        return .recipientSupplied
-    }
-
     /// Mirrors the link the packet builder keeps, so the share screen never promises a private feed link (#168).
     private func secureSharedItemURL(for item: Item) -> String? {
         ShareableLinkPolicy.shareableLink(
@@ -12178,52 +12128,9 @@ final class Gate1AppModel: ObservableObject {
         SharedPacketItemMatcher.itemType(for: item)
     }
 
-    private func portableAnchor(
-        for interjection: Interjection,
-        item: Item,
-        machineEvidenceAssetIds: [String]
-    ) -> PortableAnchorEvidence {
-        let exactText: String?
-        if !selectedItem.isNativeAudio,
-           interjection.anchor.endChar > interjection.anchor.startChar,
-           interjection.anchor.endChar <= (item.text ?? "").count {
-            let text = item.text ?? ""
-            let lower = text.index(text.startIndex, offsetBy: interjection.anchor.startChar)
-            let upper = text.index(text.startIndex, offsetBy: interjection.anchor.endChar)
-            exactText = String(text[lower..<upper])
-        } else {
-            exactText = nil
-        }
-        let chapter = selectedItem.mediaChapters.last {
-            $0.startMs <= (interjection.anchor.mediaTimeMs ?? -1)
-        }?.title
-        return PortableAnchorEvidence(
-            anchorType: interjection.anchor.anchorType,
-            startChar: selectedItem.isNativeAudio ? nil : interjection.anchor.startChar,
-            endChar: selectedItem.isNativeAudio ? nil : interjection.anchor.endChar,
-            exactText: exactText,
-            prefix: interjection.anchor.anchorBefore,
-            suffix: interjection.anchor.anchorAfter,
-            mediaTimeMs: interjection.anchor.mediaTimeMs,
-            roughPercent: interjection.roughPercent,
-            transcriptSegmentId: interjection.anchor.transcriptSegmentId,
-            chapterTitle: chapter,
-            machineEvidenceAssetIds: machineEvidenceAssetIds
-        )
-    }
-
     private func audioDurationMs(at url: URL) -> Int? {
         guard let file = try? AVAudioFile(forReading: url), file.processingFormat.sampleRate > 0 else { return nil }
         return max(1, Int((Double(file.length) / file.processingFormat.sampleRate * 1_000).rounded()))
-    }
-
-    private func safeShareFilename(_ value: String) -> String {
-        let normalized = value.replacingOccurrences(
-            of: #"[^A-Za-z0-9._-]+"#,
-            with: "-",
-            options: .regularExpression
-        ).trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-        return String((normalized.isEmpty ? "Spoken-Margins" : normalized).prefix(80))
     }
 
     func setImportedCommentaryLayerEnabled(_ layerID: String, enabled: Bool) {
