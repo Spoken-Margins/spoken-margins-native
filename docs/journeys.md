@@ -62,6 +62,8 @@ Steps are written in terms of what the listener wants, not exact button labels, 
 
 This journey needs two installs: the sender's phone and a second device or simulator as the recipient.
 
+The owner's one-phone version, with prepared packets and an episode that shares its intro with another, is the [sharing test kit](sharing-test-kit/README.md).
+
 1. The sender shares an item that has several podcast Margins.
    - Pass: the packet is created without an error. A Margin with incomplete positioning evidence is flagged, not silently dropped.
 2. The recipient opens the packet. They have not added the podcast beforehand.

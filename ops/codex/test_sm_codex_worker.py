@@ -1577,8 +1577,8 @@ class FreezeDialTests(unittest.TestCase):
 
     def test_ticked_milestone(self):
         self.assertEqual(w.parse_codex_focus(focus_group('Build 30')), ('Build 30', []))
-        group = focus_group('Build 31', options=('Build 31 (only its issues)', 'None'))
-        self.assertEqual(w.parse_codex_focus(group), ('Build 31', []))
+        group = focus_group('Solid Ground', options=('Solid Ground (only its issues)', 'None'))
+        self.assertEqual(w.parse_codex_focus(group), ('Solid Ground', []))
 
     def test_none_lifts_the_freeze(self):
         self.assertEqual(w.parse_codex_focus(focus_group('None')), ('', []))
