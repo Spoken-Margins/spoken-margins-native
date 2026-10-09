@@ -65,3 +65,23 @@ python3 -m unittest discover -s ops/release -t ops/release
 ```
 
 The tests use a scratch git origin and fake `gh`, phone-build, `launchctl` and notification commands. Nothing reaches GitHub, launchd or a phone.
+
+## Archive and upload
+
+`AGENTS.md` ("Releasing a build") keeps the guardrails; these are the steps. The owner decides when a build goes to testers. Once they say to upload, archive and upload a normal App Store Connect build, then assign it only to the authorized tester groups. Normal uploads remain eligible for external TestFlight and App Store review; that eligibility does not authorize external distribution, review submission or public release. Never select TestFlight Internal Only unless the owner explicitly requests that restriction.
+
+Apple build numbers identify uploads, not product milestones. Each replacement upload needs a new, unused build number even when its functionality stays at the same milestone. Preserve historical tags and uploaded build identities.
+
+1. Bump `CURRENT_PROJECT_VERSION` in `project.yml` (every target), run `xcodegen generate`, and commit.
+2. Verify through layer 3 (journeys, in `AGENTS.md` "Verification") and list anything not verified.
+3. Archive (`artifacts/` is git-ignored):
+   `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release -destination generic/platform=iOS -archivePath artifacts/SpokenMargins-<build>.xcarchive -allowProvisioningUpdates archive`
+   Check the archive's `CFBundleVersion` is the new build number.
+4. Upload with external-review eligibility retained (`testFlightInternalTestingOnly` is false in the default plist), then assign only the authorized tester groups:
+   `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
+   The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
+   Check App Store Connect does not mark the uploaded build `Internal`. Confirm its version, build number and group assignment before calling the upload complete. External review and tester notification remain separate owner decisions.
+5. Tag the archived commit `testflight/0.1-build-N`, push the tag, and fast-forward `main` to the release (ask before merging if it isn't a fast-forward).
+6. Delete the archive and export folders unless the owner wants them kept.
+
+Give the owner a short test checklist: the journeys to try, what changed, and known issues.

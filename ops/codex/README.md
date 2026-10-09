@@ -257,6 +257,8 @@ existing verdict parsers.
 
 ## Codex Test Desk
 
+Retired: its launchd job was not loaded on 2026-10-09 (`launchctl list`). The notes below describe it as it ran.
+
 `sm_codex_testdesk.py` tests fresh `origin/next` at most once per SHA and once every two hours. Its 20-minute tick holds on the worker's Dial and pacing rules, under 30 GiB free disk, or any busy simulator slot. It reserves the existing simulator and decision locks without waiting; `verify-tests.py` inherits the reservation for `--plan app` followed by `--plan journeys` (gating and probation). Both plans use the dedicated Test Runner. It never selects the journey simulator or boots a device itself.
 
 It posts PASS / FAIL / INCONCLUSIVE with test counts and evidence on #184. Completed non-probation test failures get a read-only Codex diagnosis, grouped by root cause. It searches open issues for each failing method, comments on a match, or files `ready,priority,bug` for the worker. Probation failures do not turn a run red. Per-SHA journey results and the last start time live in `~/SpokenMarginsOps/codex-testdesk/state.json`; two consecutive passes are reported for the owner/Test Desk to promote, never promoted automatically. Class selectors count as passing only if every expected method passed. A flood or interrupted/stalled runner is INCONCLUSIVE and never retried on the same SHA.
