@@ -799,7 +799,10 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #540 audit: a memory warning that lands while the iOS voice has not begun brings the chosen voice back by
     // itself once memory is free. The end of the hand-over wait must not remove the marker that says so, or the
-    // listener is left with the iOS voice and a Retry to tap.
+    // listener is left with the iOS voice and a Retry to tap. In an article of several chunks, the render queue
+    // the hand-over cancelled stays stopped while memory is short, and starts again from the chunk after the kept
+    // one when the chosen voice comes back. Without that, the next chunk renders only after the kept one has
+    // ended, in a rendering-length silence.
     func testAMemoryWarningWhileTheIOSVoiceHasNotBegunStillLetsTheChosenVoiceReturn() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -809,10 +812,14 @@ final class SupertonicSpeechTests: XCTestCase {
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
         let client = stallClient(
             log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
-            renderingAllowed: { true }
+            renderingAllowed: { true }, maxCharacters: 120
         )
-        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let spoken = try client.prepareSpeechText(source)
+        let chunkCount = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: 120).chunks.count
+        XCTAssertGreaterThanOrEqual(chunkCount, 3, "precondition: the article is several chunks")
         try client.play(targetId: "memory", from: 0)
+        for _ in 0..<250 where await renderer.renderCount < chunkCount { try await Task.sleep(for: .milliseconds(10)) }
         for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
         try await Task.sleep(for: .milliseconds(30))
@@ -820,6 +827,9 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.pause()
         for _ in 0..<100 where client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertFalse(client.isSystemVoiceActive, "the wait ended with the pause")
+        try await Task.sleep(for: .milliseconds(300))
+        let rendersWhileMemoryIsShort = await renderer.renderCount
+        XCTAssertEqual(rendersWhileMemoryIsShort, chunkCount, "nothing renders while memory is short")
 
         // Memory is free again: the play goes back to the chosen voice, with the kept chunk, as promised.
         fallback.startStatus = .confirmed
@@ -829,6 +839,12 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.startCount, 3, "the chosen voice plays again without a Retry")
         XCTAssertEqual(fallback.playedOffsets.count, voiceAsksBefore, "and the iOS voice is not asked again")
         XCTAssertFalse(client.isSystemVoiceActive)
+
+        // The kept chunk is 3 s long; the chunk after it renders well inside that.
+        for _ in 0..<50 where await renderer.renderCount <= chunkCount { try await Task.sleep(for: .milliseconds(20)) }
+        let rendersAfterReturn = await renderer.renderCount
+        XCTAssertGreaterThan(rendersAfterReturn, chunkCount, "the queue starts again behind the kept chunk while it plays")
+        XCTAssertEqual(log.startCount, 3, "before the kept chunk has ended")
         try client.stop()
     }
 
