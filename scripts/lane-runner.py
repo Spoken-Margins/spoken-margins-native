@@ -462,6 +462,9 @@ def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
         return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
                                 f'evidence: {log_path}']
     manifest = _read_manifest(output)
+    if manifest.get('lane_fault'):  # #909: the Mac, not the PR (its lid is closed, so there is no sound output)
+        return 'INCONCLUSIVE', [f'host tests (--plan fast) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
+                                f'the lid or connect an audio output, then re-run. evidence: {log_path}']
     if code == 0 and manifest.get('status') == 'verified':
         # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
         return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])

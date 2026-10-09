@@ -846,6 +846,20 @@ class AutomergeTests(unittest.TestCase):
                 self.assertEqual(verdict, expected)
 
 
+    def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
+        # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
+        def run(command, log, timeout):
+            output = Path(command[command.index('--output') + 1])
+            output.mkdir(parents=True, exist_ok=True)
+            (output / 'manifest.json').write_text(json.dumps({
+                'status': 'failed_or_incomplete', 'lane_fault': 'no audio output: lid closed'}))
+            return 1
+
+        with tempfile.TemporaryDirectory() as folder:
+            verdict, details = lane.run_fast(Path(folder), runner=run)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('lane fault: no audio output: lid closed', details[0])
+
     def test_the_host_tests_are_verify_tests_py_s_fast_plan_writing_into_the_evidence_folder(self):
         # The runners above write a verified manifest into whatever --output they get, whatever plan they were
         # asked for, so none of them could tell the fast plan from a retired one (`--plan ui`).
