@@ -31,6 +31,7 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 - **Escalate one tier** for anything touching the audio session, players, playback state, persistence/migrations, or packet import/export. These are where Build 28 → co-op went wrong.
 - **Never escalate to T5 on a stream branch.** Full regression runs on `next`'s merged tip, in the integration run.
 - A new regression test must be run once **without** the fix and seen to fail (`AGENTS.md`). That run counts as T1, not an extra tier.
+- **A change to the lane's own cost** (a new step, tier rule or per-PR check) states its "Cost and catch" in the PR (`AGENTS.md`): cost per run, how often, what it catches with evidence, and the waste signal the step ledger watches. The audit blocks it without one.
 - When unsure, ask the lane for the tier (A1 ships `scripts/test-scope.py`, which maps a diff to its minimum tier and suggested test filters). If the tool and your judgment disagree, take the higher tier and say why in the request.
 
 ## Scripted journeys
