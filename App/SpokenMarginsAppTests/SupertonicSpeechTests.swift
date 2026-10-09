@@ -848,6 +848,51 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #540 audit: heat held the render queue back when the hand-over ended, and heat clears without a fallback
+    // marker (the hand-over's own marker is gone with the wait). The next play still starts the queue behind the
+    // kept chunk once the phone has cooled, so the chunk after it renders while the kept one plays.
+    func testHeatWhileTheIOSVoiceHasNotBegunStillStartsTheRenderQueueWhenThePhoneCools() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let condition = ResourceConditionSwitch(allowed: true)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { condition.allowed }, maxCharacters: 120
+        )
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let spoken = try client.prepareSpeechText(source)
+        let chunkCount = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: 120).chunks.count
+        XCTAssertGreaterThanOrEqual(chunkCount, 3, "precondition: the article is several chunks")
+        try client.play(targetId: "heat", from: 0)
+        for _ in 0..<250 where await renderer.renderCount < chunkCount { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        try await Task.sleep(for: .milliseconds(30))
+        condition.allowed = false
+        try client.pause()
+        for _ in 0..<100 where client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(client.isSystemVoiceActive, "the wait ended with the pause")
+        try await Task.sleep(for: .milliseconds(300))
+        let rendersWhileWarm = await renderer.renderCount
+        XCTAssertEqual(rendersWhileWarm, chunkCount, "nothing renders while the phone is too warm")
+
+        // The phone has cooled: the play brings the kept chunk back, and the queue starts behind it.
+        condition.allowed = true
+        fallback.startStatus = .confirmed
+        try client.play(targetId: "heat", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "the kept chunk plays again")
+        for _ in 0..<50 where await renderer.renderCount <= chunkCount { try await Task.sleep(for: .milliseconds(20)) }
+        let rendersAfterCooling = await renderer.renderCount
+        XCTAssertGreaterThan(rendersAfterCooling, chunkCount, "the queue starts again behind the kept chunk while it plays")
+        XCTAssertEqual(log.startCount, 3, "before the kept chunk has ended")
+        try client.stop()
+    }
+
     // #540 audit: a chunk kept through a failed hand-over keeps the boundaries it was made with. Rebuilt from
     // the whole text, an Overview chunk would cover the article's first sentence too and skip it once played.
     // The offsets are the client's own, read before the stall and after the kept chunk has played.

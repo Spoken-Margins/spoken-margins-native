@@ -747,19 +747,22 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// I14: the chosen voice comes back once the condition that forced the fallback clears.
     /// It switches at a play (resume, seek, next item), never mid-sentence.
     private func restoreOnDeviceRenderingIfConditionCleared(targetId: String) {
-        guard lock.withLock({ resourceFallbackTargetIds.contains(targetId) }),
-              onDeviceRenderingAllowed() else { return }
-        try? fallback.pause()
+        let restoresVoice = onDeviceRenderingAllowed() && lock.withLock { resourceFallbackTargetIds.contains(targetId) }
+        if restoresVoice { try? fallback.pause() }
         let restartsHeldQueue = lock.withLock { () -> Bool in
-            resourceFallbackTargetIds.remove(targetId)
-            generationDisabledReasons.removeValue(forKey: targetId)
-            fallbackIsActive = false
-            defer { heldRenderQueueGeneration = nil }
+            if restoresVoice {
+                resourceFallbackTargetIds.remove(targetId)
+                generationDisabledReasons.removeValue(forKey: targetId)
+                fallbackIsActive = false
+            }
+            defer { if restoresVoice { heldRenderQueueGeneration = nil } }
             return heldRenderQueueGeneration == generation
         }
-        onRestore?(targetId)
-        // A memory warning during a hand-over held back the queue behind the kept chunk; the kept chunk plays
-        // from the cache now, so the chunk after it must start rendering with it, not after it (#540 audit).
+        if restoresVoice { onRestore?(targetId) }
+        // A hand-over that ended while a memory warning or heat held back the queue behind the kept chunk leaves it
+        // held; the kept chunk plays from the cache now, so the chunk after it must start rendering with it, not
+        // after it. Heat clears without a fallback marker, so this runs whether or not the voice was restored; the
+        // restart itself checks that rendering is allowed and that nothing stopped generation (#540 audit).
         if restartsHeldQueue { restartRenderQueueBehindKeptChunk() }
     }
 
