@@ -27,6 +27,14 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     public static let podcastFileName = "ui-test-episode.caf"
     public static let podcastRemoteURL = "https://cdn.example.invalid/ui-test-episode.caf"
 
+    /// The friend's Margin that a co-op relaunch imports onto the seeded podcast (#474).
+    public static let coopLayerId = "layer-ui-coop"
+    public static let coopMarginId = "margin-ui-coop"
+    public static let coopSenderLabel = "Sam"
+    /// Five minutes in: well before the place the co-op journey pauses at, so it is a Margin the listener has skipped past.
+    public static let coopMarginMediaTimeMs = 300_000
+    public static let coopMarginDurationMs = 6_000
+
     public init(arguments: [String], environment: [String: String]) {
         guard arguments.contains("--ui-testing") else {
             self = .none
@@ -96,6 +104,40 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
             state: .availableOffline,
             bytesWritten: bytesWritten,
             expectedBytes: bytesWritten
+        )
+    }
+
+    /// Whether a keep-library UI-test relaunch also imports one friend's Margin onto the seeded podcast, the way a
+    /// co-op packet would: `SPOKEN_MARGINS_UI_TEST_COOP=1` (J5-style co-op journey, #474). It adds to the kept
+    /// Library and never changes which seed runs.
+    public static func importsCoopLayer(arguments: [String], environment: [String: String]) -> Bool {
+        arguments.contains("--ui-testing")
+            && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
+            && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
+    }
+
+    /// The friend's collection that arrives with the co-op relaunch: enabled and placed on the seeded podcast, as an
+    /// import of a packet for an episode the listener already has leaves it.
+    public static func coopLayer(importedAt: Date) -> ImportedCommentaryLayer {
+        ImportedCommentaryLayer(
+            id: coopLayerId, itemId: podcastItemId,
+            packageDigest: "ui-test-coop-digest", packageId: "ui-test-coop-package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "UI Test Episode", durationMs: 1_500_000),
+            displayLabel: coopSenderLabel, importedAt: importedAt,
+            sourceResolutionStatus: .resolved, isEnabled: true
+        )
+    }
+
+    /// The friend's one new Margin: a voice, placed at `coopMarginMediaTimeMs`, not yet heard.
+    public static func coopInterjection(audioPath: String, createdAt: Date) -> ImportedCommentaryInterjection {
+        ImportedCommentaryInterjection(
+            id: coopMarginId, layerId: coopLayerId, packageScopedId: coopMarginId, createdAt: createdAt,
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: coopMarginMediaTimeMs),
+            approvedTranscript: "A friend's UI test Margin.",
+            audioPath: audioPath, audioDurationMs: coopMarginDurationMs,
+            resolution: ImportedAnchorResolution(
+                evidenceClass: .exactEdition, localMediaTimeMs: coopMarginMediaTimeMs, confidence: 1
+            )
         )
     }
 

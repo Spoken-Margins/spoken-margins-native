@@ -1773,7 +1773,8 @@ final class Gate1AppModel: ObservableObject {
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
             switch UITestingLaunchSeed.current {
-            case .none, .keepLibrary: break
+            case .none: break
+            case .keepLibrary: try UITestingLaunchSeedWriter.importCoopLayerIfRequested(into: store)
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
