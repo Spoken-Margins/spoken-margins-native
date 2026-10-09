@@ -126,6 +126,62 @@ class ParseUsage(unittest.TestCase):
         self.assertFalse(g.parse_usage(comments)['halted'])
 
 
+class UsageBreakerPerProvider(unittest.TestCase):
+    """Owner, 2026-10-09: a provider over its line halts only the work that runs on it."""
+
+    def comments(self, *bodies):
+        return [{'body': b, 'created_at': ts(NOW - dt.timedelta(hours=len(bodies) - i))}
+                for i, b in enumerate(bodies)]
+
+    def advice_tick(self, advice):
+        return (f'**02:16 CDT (Mac tick)** · next x\n- pace: Claude 80% used, 83% of the week gone '
+                f'(3 under the line). Codex 85% used, 30% gone (far over its line).\n'
+                f'- advice for dispatch: {advice}\n')
+
+    def test_codex_halt_leaves_claude_running(self):
+        u = g.parse_usage(self.comments(self.advice_tick('HALT (usage breaker: Codex): Codex tasks pause.')))
+        self.assertFalse(u['halted'])
+        self.assertEqual(u['halted_by'], ['codex'])
+        self.assertTrue(g.decide(NOW, g.parse_dial(BODY), dict(u, usage={'percent': 82, 'at': NOW}),
+                                 10, None, {}, 0)['fire'])
+
+    def test_claude_halt_holds_claude(self):
+        u = g.parse_usage(self.comments(self.advice_tick('HALT (usage breaker: Claude): no new threads.')))
+        self.assertTrue(u['halted'])
+        self.assertEqual(u['halted_by'], ['claude'])
+
+    def test_both_named_then_one_resumed(self):
+        u = g.parse_usage(self.comments(
+            self.advice_tick('HALT (usage breaker: Claude, Codex): start nothing.'),
+            '**RESUMED (usage breaker: Claude)** · under the line again'))
+        self.assertFalse(u['halted'])
+        self.assertEqual(u['halted_by'], ['codex'])
+
+    def test_unscoped_resumed_clears_every_provider(self):
+        u = g.parse_usage(self.comments(
+            '**HALT (usage breaker: Claude, Codex)** (Mac tick) at 81',
+            '**RESUMED (usage breaker)** · owner override'))
+        self.assertEqual(u['halted_by'], [])
+
+    def test_unscoped_halt_in_first_line_still_halts_claude(self):
+        u = g.parse_usage(self.comments('**HALT (usage breaker)** (Mac tick) at 81'))
+        self.assertTrue(u['halted'])
+        self.assertEqual(u['halted_by'], ['claude', 'codex'])
+
+    def test_unscoped_halt_in_advice_line_is_ignored(self):
+        # The old tick wording; it can't tell which provider is over, so the gate leaves it.
+        u = g.parse_usage(self.comments(self.advice_tick('HALT (usage breaker): start no new threads.')))
+        self.assertFalse(u['halted'])
+
+    def test_quoted_marker_in_a_plain_comment_is_ignored(self):
+        u = g.parse_usage(self.comments('Please do not post HALT (usage breaker: Claude) yet'))
+        self.assertFalse(u['halted'])
+
+    def test_provider_names_ignore_case_and_spacing(self):
+        u = g.parse_usage(self.comments('**HALT (usage breaker:  codex ,CLAUDE )** (Mac tick)'))
+        self.assertEqual(u['halted_by'], ['claude', 'codex'])
+
+
 class Decide(unittest.TestCase):
     def setUp(self):
         self.dial = g.parse_dial(BODY)
@@ -339,6 +395,24 @@ class Durations(unittest.TestCase):
         decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
         text = g.status_text(NOW, dial, usage, 10, None, {}, decision, threads)
         self.assertIn('Thread runs ended in the last 24 h: 2 with a stop note, median 90 min', text)
+
+
+class StatusBreaker(unittest.TestCase):
+    def status(self, halt):
+        dial = g.parse_dial(BODY)
+        usage = g.parse_usage([tick(82, NOW - dt.timedelta(minutes=30)),
+                               {'body': f'**{halt}** (Mac tick)', 'created_at': ts(NOW)}])
+        decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
+        return g.status_text(NOW, dial, usage, 10, None, {}, decision, [])
+
+    def test_codex_halt_is_named_and_does_not_hold(self):
+        text = self.status('HALT (usage breaker: Codex)')
+        self.assertIn('Usage breaker: Codex halted (not Claude, so this gate is unaffected)', text)
+
+    def test_claude_halt_is_named_and_holds(self):
+        text = self.status('HALT (usage breaker: Claude)')
+        self.assertIn('Usage breaker: Claude halted (Claude, so this gate holds)', text)
+        self.assertIn('HALT (usage breaker: Claude)', text)
 
 
 class Status(unittest.TestCase):

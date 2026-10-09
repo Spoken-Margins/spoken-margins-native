@@ -288,6 +288,8 @@ final class Gate2CompactControlController {
     private var nowPlayingEnabled = true
     private var lastPublishedSnapshot: CompactControlSnapshot?
     private var latestAppSnapshot: SessionSnapshot?
+    /// Where the model's Skim plans land (#115), carried to the Lock Screen with the snapshot.
+    private var latestSkimDestinations: (forward: Int?, backward: Int?) = (nil, nil)
     /// Whether the microphone is really taking in sound, for the Live Activity's REC indicator (#937).
     private(set) var microphone = Gate2LiveActivityMicrophone.capturing
     private(set) var lastCommand: CompactControlCommand?
@@ -361,12 +363,15 @@ final class Gate2CompactControlController {
     func update(
         snapshot: SessionSnapshot,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt? = nil,
-        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = [],
+        skimForwardDestinationMs: Int? = nil,
+        skimBackwardDestinationMs: Int? = nil
     ) {
         guard dispatcher != nil else { return }
         let activityContextChanged = self.sharedMarginPrompt != sharedMarginPrompt
             || self.upcomingSharedMargins != upcomingSharedMargins
         latestAppSnapshot = snapshot
+        latestSkimDestinations = (skimForwardDestinationMs, skimBackwardDestinationMs)
         self.sharedMarginPrompt = sharedMarginPrompt
         self.upcomingSharedMargins = upcomingSharedMargins
         let drainedCommand = drainQueuedWidgetCommands()
@@ -558,6 +563,11 @@ final class Gate2CompactControlController {
         if !app.isRecording, app.canSkimForward, compact.exposedCommands.contains(.skimForward) {
             compact.availableCommands.append(.skimForward)
         }
+        // Only for a button that is shown, so a hidden Skim never leaves a stale time behind.
+        compact.skimForwardDestinationMs = compact.availableCommands.contains(.skimForward)
+            ? latestSkimDestinations.forward : nil
+        compact.skimBackwardDestinationMs = compact.availableCommands.contains(.skimBackward)
+            ? latestSkimDestinations.backward : nil
         return compact
     }
 
@@ -737,7 +747,9 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             isRecording: snapshot.isRecording,
             microphone: snapshot.isRecording ? microphone : .capturing,
             availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue),
-            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel
+            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel,
+            skimForwardDestinationMs: snapshot.skimForwardDestinationMs,
+            skimBackwardDestinationMs: snapshot.skimBackwardDestinationMs
         )
         activityTask = Task { @MainActor in
             await previousActivityTask?.value

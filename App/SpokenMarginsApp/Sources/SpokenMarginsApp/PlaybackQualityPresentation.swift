@@ -31,12 +31,8 @@ enum PreparedRenderFrontier {
 }
 
 enum PlaybackQualityPresentation {
+    /// Shared with the Lock Screen's Skim buttons (#115).
     static func skimTitle(destinationMs: Int?, backward: Bool) -> String {
-        guard let destinationMs else { return backward ? "Skim Back" : "Skim Forward" }
-        let seconds = max(0, destinationMs / 1_000)
-        let time = seconds >= 3600
-            ? String(format: "%d:%02d:%02d", seconds / 3600, seconds / 60 % 60, seconds % 60)
-            : String(format: "%d:%02d", seconds / 60, seconds % 60)
-        return (backward ? "Back to " : "Skim to ") + time
+        SkimDestinationLabel.title(destinationMs: destinationMs, backward: backward)
     }
 }

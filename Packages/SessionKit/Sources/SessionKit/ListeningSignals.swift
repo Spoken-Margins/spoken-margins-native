@@ -285,9 +285,13 @@ public enum ListeningSignalContext {
     /// a webpage several episodes share decides only when one entry has it, so signals are never
     /// filed under whichever of them the feed listed first. A GUID is only unique within one feed,
     /// so it counts only inside the item's own followed source; another feed needs a URL match.
-    /// The entry an article was noted as imported from wins while its feed is still followed.
+    /// The entry an article was noted as imported from wins while its feed is still followed; the
+    /// record for this Library item comes before the one for its URL, which a later edition of
+    /// the same article may have replaced (#865).
     static func importedEntry(for item: Item, among entries: [FeedEntry], knownSubscriptionId: String?,
                               importedEntryIds: [String: String] = [:]) -> FeedEntry? {
+        if let entryId = importedEntryIds[ListeningSignalImportedEntries.itemKey(item.id)],
+           let entry = entries.first(where: { $0.id == entryId }) { return entry }
         let itemKeys = Set([item.externalReference, item.media?.url].compactMap(FollowedSourceMatching.normalizedFollowSourceURL))
         let noted = Set(itemKeys.compactMap { importedEntryIds[$0] })
         if noted.count == 1, let entry = entries.first(where: { noted.contains($0.id) }) { return entry }

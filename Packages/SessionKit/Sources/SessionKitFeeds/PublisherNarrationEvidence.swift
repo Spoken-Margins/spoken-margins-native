@@ -69,11 +69,26 @@ public enum PublisherNarrationEvidence {
     }
 
     /// Whether a shared link's page is worth one fetch to look for a voiceover: an HTTPS Substack address
-    /// (`substack.com` or a publication's `<name>.substack.com`). Publications on their own domain aren't
-    /// recognised from the address alone.
+    /// (`substack.com` or a publication's `<name>.substack.com`), or an HTTPS post address `/p/<slug>` on any
+    /// host. Publications on their own domain (`www.platformer.news/p/<slug>`) keep Substack's post path, and the
+    /// Substack app shares that address, not a `substack.com` one (#810, owner's phone 2026-10-05). The page only
+    /// counts when its `_preloads` name a completed voiceover of that same post.
     public static func mayHaveVoiceover(_ url: URL) -> Bool {
-        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased() else { return false }
-        return host == "substack.com" || host.hasSuffix(".substack.com")
+        guard url.scheme?.lowercased() == "https", let host = url.host?.lowercased(), !host.isEmpty else { return false }
+        return host == "substack.com" || host.hasSuffix(".substack.com") || isPostPath(url.path)
+    }
+
+    /// Whether a page the link resolver already read declares Substack's `_preloads`, so it can be read for a
+    /// voiceover whatever its address. Reading costs no request.
+    public static func declaresPreloads(_ page: Data) -> Bool {
+        page.range(of: Data("window._preloads".utf8)) != nil
+    }
+
+    /// `/p/<slug>`, with an optional trailing slash: Substack's post path on every publication's domain.
+    private static func isPostPath(_ path: String) -> Bool {
+        var segments = path.split(separator: "/", omittingEmptySubsequences: false)
+        if segments.last == "" { segments.removeLast() }
+        return segments.count == 3 && segments[0].isEmpty && segments[1] == "p" && !segments[2].isEmpty
     }
 
     /// Same scheme, host and path, ignoring case in the host, a trailing slash, the query (`?r=…&utm_…`

@@ -24,21 +24,39 @@ public final class ListeningSignalImportedEntries: @unchecked Sendable {
     /// Remembers that the handoff's article came from `entry`, and returns the handoff unchanged.
     @discardableResult
     public func note(_ handoff: BrowserTextHandoff, for entry: FeedEntry) -> BrowserTextHandoff {
-        guard let url = FollowedSourceMatching.normalizedFollowSourceURL(handoff.source.url) else { return handoff }
+        if let url = FollowedSourceMatching.normalizedFollowSourceURL(handoff.source.url) {
+            store(key: url, entryId: entry.id)
+        }
+        return handoff
+    }
+
+    /// Remembers that the Library item `itemId` was imported from `entry`. The URL record above
+    /// belongs to whichever import came last, so a second edition of the same article (from another
+    /// feed, or after the text changed) would take over the first edition's entry; the item id
+    /// names exactly one edition (#865).
+    public func note(itemId: String, for entry: FeedEntry) {
+        store(key: Self.itemKey(itemId), entryId: entry.id)
+    }
+
+    /// The key an imported Library item is recorded under. A normalized article URL always starts
+    /// with its scheme, so the two kinds of key never meet in the one map.
+    public static func itemKey(_ itemId: String) -> String { "item:\(itemId)" }
+
+    private func store(key: String, entryId: String) {
         lock.withLock {
             var map = loadLocked()
-            guard map[url] != entry.id else { return }
-            map[url] = entry.id
+            guard map[key] != entryId else { return }
+            map[key] = entryId
             cache = map
             if let data = try? JSONEncoder().encode(map) {
                 try? FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? data.write(to: fileURL, options: .atomic)
             }
         }
-        return handoff
     }
 
-    /// Normalized article URL to the id of the feed entry it was imported from.
+    /// Normalized article URL, or `itemKey(_:)` of an imported Library item, to the id of the feed
+    /// entry it was imported from.
     public func entryIds() -> [String: String] {
         lock.withLock { loadLocked() }
     }

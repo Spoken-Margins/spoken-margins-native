@@ -384,10 +384,10 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                 self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
                 self.assertIn(f'"{normal}"', text)
 
-    def test_lane_routes_still_require_codex_audit(self):
+    def test_lane_routes_still_require_codex_or_claude_audit(self):
         result = scope.classify(['scripts/lane-runner.py'])
         self.assertIn('scripts/lane-runner.py', result['lane_paths'])
-        self.assertTrue(any('Codex audit' in note for note in result['notes']))
+        self.assertTrue(any('Codex or Claude audit' in note for note in result['notes']))
 
 
 if __name__ == '__main__':

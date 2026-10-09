@@ -7,13 +7,13 @@ Codex, no Claude.
 
 A PR is audited when all of these hold:
   * it is open, not a draft, and targets `next`;
-  * no audit comment (starting "**Codex audit (Astra)" or "## Codex audit",
+  * no audit comment (a headless Claude heading or a legacy Codex heading,
     the lane runner's own match) names its current head sha7;
   * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head;
   * its changed files touch a risky area (sharing/packets, persistence/SQLite/
     migrations/ledger, audio session/players/Supertonic, the lane: workflows,
     the runner and its helpers, owner rule 2026-10-01), or the lane runner's
-    newest report says it won't merge the PR until it has a Codex audit (the
+    newest report says it won't merge the PR until it has a Codex or Claude audit (the
     runner classifies files with scripts/test-scope.py, which is wider than the
     list here: #402 and #439 waited on an audit this script never ran), or a
     comment on the PR or its linked issue asks for a Codex audit.
@@ -163,8 +163,8 @@ _REQUEST_RE = re.compile(
 )
 _NEGATION_RE = re.compile(r"(?i)(\bno\b|\bnot\b|n't\b|\bwithout\b|\bnever\b)[^.\n]{0,20}$")
 # The runner's hold line: 'not merged by the runner: it touches the audio session and has no
-# "Codex audit (Astra)" comment yet' (next), or '... and has no Codex audit of its head: ...' (#495).
-_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*\bhas no \"?Codex audit\b")
+# "Codex audit (Astra)" comment yet' (legacy), or the current "Codex or Claude audit" wording.
+_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*\bhas no \"?(?:Codex(?: or Claude)?|Claude) audit\b")
 # The runner's clean-audit rule (#441, lane-runner.py CLEAN_AUDIT): the verdict line opens so.
 _CLEAN_AUDIT_RE = re.compile(r"no (blocking )?findings\b", re.I)
 
@@ -181,15 +181,16 @@ def comment_time(c: dict) -> str:
     return c.get("created_at") or c.get("createdAt") or ""
 
 
-# How a real audit comment starts: this script's own heading (build_comment), or an older manual
-# "## Codex audit". The same prefixes as AUDITS in scripts/lane-runner.py, so this script counts
-# exactly the audits the runner merges on. A finisher's reply such as "**Codex audit on `a919a79`
-# (P2): fixed in `d00dd82`" is not an audit of `d00dd82` (#812).
-AUDIT_HEADINGS = ("**Codex audit (Astra)", "## Codex audit")
+# Headless Claude audits and legacy Codex headings use the same recognition as the lane.
+# A finisher's reply such as "**Codex audit on `a919a79` (P2): fixed in `d00dd82`"
+# is not an audit of `d00dd82` (#812). Claude headings must name only the audited head.
+AUDIT_HEADINGS = ("**Codex audit (Astra)", "## Codex audit", "**Claude audit on `")
 
 
 def is_audit_comment(c: dict) -> bool:
-    return comment_body(c).lstrip().startswith(AUDIT_HEADINGS)
+    body = comment_body(c).lstrip()
+    return bool(body.startswith(AUDIT_HEADINGS[:2]) or
+                re.fullmatch(r'\*\*Claude audit on `[0-9a-f]{7,40}`\*\*', body.partition('\n')[0].rstrip()))
 
 
 def names_sha(line: str, head_sha: str) -> bool:
@@ -249,7 +250,7 @@ def lane_pass_for_head(comments: list[dict], head_sha: str) -> tuple[bool, str]:
 
 
 def runner_waits_on_audit(comments: list[dict]) -> bool:
-    """The newest lane report says the runner won't merge until a Codex audit exists."""
+    """The newest lane report says the runner won't merge until a Codex or Claude audit exists."""
     c = newest_lane_comment(comments)
     return c is not None and bool(_RUNNER_WAITS_RE.search(comment_body(c)))
 
@@ -466,9 +467,14 @@ def split_sections(output: str, numbers: list[int]) -> dict[int, str]:
     return out
 
 
-def build_comment(number: int, sha: str, section: str, batch: list[int]) -> str:
-    lines = [f"**Codex audit (Astra) on `{sha[:7]}`**", "", section.strip(), "", "---"]
-    footer = FOOTER
+def build_comment(number: int, sha: str, section: str, batch: list[int], *, reviewer: str = "Codex") -> str:
+    """Format an honestly named read-only audit; the scheduled Codex job keeps its default."""
+    heading, footer = {
+        "Codex": ("Codex audit (Astra)", FOOTER),
+        "Claude": ("Claude audit", "Posted by the mechanical audit script; Claude ran read-only; "
+                   "findings are Claude's own."),
+    }[reviewer]
+    lines = [f"**{heading} on `{sha[:7]}`**", "", section.strip(), "", "---"]
     others = [n for n in batch if n != number]
     if others:
         footer += " Batched with " + ", ".join(f"#{n}" for n in others) + "."
