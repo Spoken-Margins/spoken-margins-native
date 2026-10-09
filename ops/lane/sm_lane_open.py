@@ -19,7 +19,8 @@ Rules, all of them failing toward quiet:
   queue, or a failed POST sends nothing and exits 0: this must never turn a lane run red.
 
 Stdlib only, Python 3.9+. `--dry-run` prints the decision and neither sends nor writes.
-Environment: GH_REPO, RUNNERS_TOKEN (admin-read; falls back to GH_TOKEN), SM_LANE_OPEN_STATE.
+Environment: GH_REPO, GH_TOKEN (runs and jobs), RUNNERS_TOKEN (runner list; falls back to GH_TOKEN),
+SM_LANE_OPEN_STATE.
 """
 from __future__ import annotations
 
@@ -92,13 +93,15 @@ def parse_time(stamp: str) -> dt.datetime:
 
 
 class GitHub:
-    def __init__(self, repo: str, token: str):
-        self.repo, self.token = repo, token
+    def __init__(self, repo: str, token: str, runners_token: str | None = None):
+        # The runner list needs more than the workflow token (admin read); runs and jobs need only actions: read.
+        self.repo, self.token, self.runners_token = repo, token, runners_token or token
 
     def get(self, path: str):
+        token = self.runners_token if path.startswith('actions/runners') else self.token
         req = urllib.request.Request(
             f'https://api.github.com/repos/{self.repo}/{path}',
-            headers={'Authorization': f'Bearer {self.token}', 'Accept': 'application/vnd.github+json',
+            headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json',
                      'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'sm-lane-open'})
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
@@ -210,11 +213,11 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--dry-run', action='store_true', help='print the decision; send and write nothing')
     args = ap.parse_args(argv)
-    token = os.environ.get('RUNNERS_TOKEN') or os.environ.get('GH_TOKEN') or ''
+    token = os.environ.get('GH_TOKEN') or os.environ.get('RUNNERS_TOKEN') or ''
     repo = os.environ.get('GH_REPO', DEFAULT_REPO)
-    state = Path(os.environ.get('SM_LANE_OPEN_STATE') or Path.home() / '.sm-lane-open' / 'state.json')
     try:
-        line = run(GitHub(repo, token), dt.datetime.now(dt.timezone.utc), state,
+        state = Path(os.environ.get('SM_LANE_OPEN_STATE') or Path.home() / '.sm-lane-open' / 'state.json')
+        line = run(GitHub(repo, token, os.environ.get('RUNNERS_TOKEN')), dt.datetime.now(dt.timezone.utc), state,
                    os.environ.get('SM_LANE_OPEN_URL', ''), os.environ.get('SM_LANE_OPEN_TOKEN', ''),
                    dry_run=args.dry_run)
     except Exception as error:  # noqa: BLE001 - a ping must never turn a lane run red

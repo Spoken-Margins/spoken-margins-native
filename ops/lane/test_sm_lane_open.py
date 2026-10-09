@@ -204,6 +204,37 @@ class Run(unittest.TestCase):
         self.assertEqual(self.sent, [])
 
 
+class Tokens(unittest.TestCase):
+    def test_the_runner_list_uses_the_runners_token_and_the_rest_the_workflow_token(self):
+        seen = {}
+
+        class Response:
+            def read(self):
+                return b'{}'
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+        def fake_open(req, timeout=0):
+            seen[req.full_url.split('/repos/x/y/')[1]] = req.get_header('Authorization')
+            return Response()
+
+        real = o.urllib.request.urlopen
+        o.urllib.request.urlopen = fake_open
+        self.addCleanup(lambda: setattr(o.urllib.request, 'urlopen', real))
+        api = o.GitHub('x/y', 'workflow', 'admin')
+        for path in ('actions/runners?per_page=100', 'actions/workflows/lane.yml/runs?status=queued',
+                     'actions/runs/1/jobs'):
+            api.get(path)
+        self.assertEqual(seen, {'actions/runners?per_page=100': 'Bearer admin',
+                                'actions/workflows/lane.yml/runs?status=queued': 'Bearer workflow',
+                                'actions/runs/1/jobs': 'Bearer workflow'})
+        self.assertEqual(o.GitHub('x/y', 'only').runners_token, 'only')
+
+
 class Main(unittest.TestCase):
     def test_main_never_fails_the_job(self):
         import os

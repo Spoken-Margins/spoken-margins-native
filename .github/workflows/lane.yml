@@ -264,6 +264,8 @@ jobs:
     timeout-minutes: 3
     permissions:
       contents: read
+      # read: the runs and jobs of lane.yml (the runner list uses RUNNERS_TOKEN below).
+      actions: read
     steps:
       - name: Tell the coordinator the lane is open
         # Not a lane result: a failure here must not make the run look red.
