@@ -303,9 +303,9 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/; the hot-file test
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
-# app test sources, and the sharing kit's test reads the packet builder and models under Packages/ and two app
-# files. A diff that touches those inputs (and no lane path) runs just these (a module, or a
-# module.Class); the rest of the suite reads only scripts/.
+# app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
+# Packages/ and App/ (re-measured 2026-10-09). A diff that touches those inputs (and no lane path) runs just
+# these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
 # `python -m unittest discover -s scripts/tests` there and on a full checkout: the classes that fail only in
 # the copy are the readers. Lists like this drift when tests are added, so non-lane runs and the Test Desk's
@@ -314,10 +314,13 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit')
-RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml')
+RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
+                      'docs/sharing-test-kit/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
-# files, so they follow the ops tools and anything the runner tests follow, plus the build inputs.
-OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/')
+# files, so they follow the ops tools and anything the runner tests follow, plus the build inputs. The Codex
+# audit's tests also check that AGENTS.md is at the repository root. Re-measured 2026-10-09 the same way as
+# the runner tests: with only these copied, every ops suite passes.
+OPS_TEST_TRIGGERS = ('ops/', 'scripts/', '.github/', 'project.yml', 'TestPlans/', 'AGENTS.md')
 
 
 def touches(changed, prefixes):

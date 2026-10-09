@@ -281,6 +281,11 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(self.ops_ran)
         self.assertEqual(list(self.skipped_steps(manifest)), ['runner-tests'])
 
+    def test_a_diff_touching_the_root_agents_file_runs_the_ops_tests(self):
+        # The Codex audit's tests check that AGENTS.md is at the repository root (Codex audit of #898 on 4ef1b0f).
+        self.host_step_calls({}, ['App/X.swift', 'AGENTS.md'])
+        self.assertTrue(self.ops_ran)
+
     def test_every_runner_test_that_reads_the_repository_outside_scripts_is_covered(self):
         # The lane's warm-build tests copy the root .gitignore, and next's research and hot-file tests read
         # research/ and the hot files under App/: a diff to any of them must still reach those tests (audit of #898).
@@ -297,6 +302,10 @@ class VerificationTests(unittest.TestCase):
                      'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
             self.assertIn(name, verification.RUNNER_TEST_READERS)
         for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        # The sharing kit's tests (next, #848) read the kit under docs/ and the packet sources under Packages/.
+        self.assertIn('test_sharing_kit', verification.RUNNER_TEST_READERS)
+        for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
 
