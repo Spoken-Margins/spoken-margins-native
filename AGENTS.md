@@ -4,12 +4,12 @@ Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners
 
 ## Working with the owner
 
-Calls from 2026-10-09. Every thread and the coordinator follow them.
+Every thread and the coordinator follow these.
 
-- **A question he can answer.** Owner: "you need to set me up to be able to answer these... they do not present a question for me to answer." A thread that waits on him ends with a `reply`, never only a status line. The reply stands on its own: what this is in one sentence, the question, the options on short lines with their cost, your pick, and what it blocks. He can answer in one word.
-- **Technical calls are ours.** Owner: "I don't want to be asked these questions. These are very simple and should be left to expert programmers such as yourself." and "I'm not very appreciative of the smaller questions that are outside my expertise." Take the default, post **Default taken**, keep going. What he is asked is in "Decide reversible and technical things yourself".
-- **The coordinator follows through.** Owner: "I thought, as the coordinator, this would be your job, but I keep on finding myself doing this." When a hold lifts, the coordinator tells every affected thread and re-arms held PRs in the same turn, without asking him. Whenever it is woken, it clears stale or technical "waiting on you" items.
-- **How to talk to him.** He is dyslexic and listens to replies: lead with the answer, use short plain sentences and numbered points, and list issue numbers at the end. He is red-green colorblind: red and green alone never carry meaning. When he must act, give numbered steps, the full link, exactly what to tap and type, and what happens after.
+- **A question he can answer (owner, 2026-10-09).** "you need to set me up to be able to answer these... they do not present a question for me to answer." A thread that waits on him ends with a `reply`, never only a status line. The reply stands on its own: what this is in one sentence, the question, your pick, the other options on short lines with their cost, and what it blocks. He can answer in one word.
+- **Technical calls are ours (owner, 2026-10-09).** "I don't want to be asked these questions. These are very simple and should be left to expert programmers such as yourself." and "I'm not very appreciative of the smaller questions that are outside my expertise." Take the default, post **Default taken**, keep going. What he is asked is in "Decide reversible and technical things yourself".
+- **The coordinator follows through (owner, 2026-10-09).** "I thought, as the coordinator, this would be your job, but I keep on finding myself doing this." When a hold lifts, the coordinator tells every affected thread and re-arms held PRs in the same turn, without asking him. Whenever it is woken, it clears stale or technical "waiting on you" items.
+- **How to talk to him (owner's standing needs, restated 2026-10-09).** He is dyslexic and listens to replies: lead with the answer, use short plain sentences and numbered points, and list issue numbers at the end. He is red-green colorblind: red and green alone never carry meaning. When he must act, give numbered steps, the full link, exactly what to tap and type, and what happens after.
 
 ## Current focus
 
