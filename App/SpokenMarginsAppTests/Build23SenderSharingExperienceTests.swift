@@ -164,7 +164,22 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertTrue(Build23SenderPresentation.requiresPayloadRightsAssertion(for: .embeddedText))
     }
 
-    private func makeCoordinator(marginCount: Int = 1) -> Build23SharingCoordinator {
+    /// #1185: a voice Margin with no transcript is "included" in the list but can't go in the
+    /// packet, so the Review and Share buttons must not count it.
+    func testTheShareButtonsCountOnlyMarginsThePacketCanCarry() {
+        let coordinator = makeCoordinator(marginCount: 2, marginsWithoutTranscript: [0])
+        coordinator.send(.begin)
+        let snapshot = coordinator.snapshot
+
+        XCTAssertEqual(snapshot.margins.filter(\.isIncluded).count, 2)
+        XCTAssertEqual(snapshot.selectionSummary.packetCount, 1)
+        XCTAssertEqual(snapshot.selectionSummary.notice, "1 Margin has no transcript and wasn't included.")
+        let leftOut = snapshot.margins.filter(\.isLeftOutForMissingText)
+        XCTAssertEqual(leftOut.count, 1)
+        XCTAssertEqual(leftOut.first?.reviewedText, "")
+    }
+
+    private func makeCoordinator(marginCount: Int = 1, marginsWithoutTranscript: Set<Int> = []) -> Build23SharingCoordinator {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let itemID = model.selectedItem.id
@@ -185,7 +200,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
                 anchorBefore: "Before \(index)",
                 anchorAfter: "After \(index)"
             )
-            let transcript: String = "Reviewed Margin \(index)."
+            let transcript: String = marginsWithoutTranscript.contains(index) ? "" : "Reviewed Margin \(index)."
             let interjection = Interjection(
                 id: marginID,
                 itemId: itemID,

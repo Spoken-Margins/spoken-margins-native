@@ -65,6 +65,13 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     let cleanedVoiceURL: URL?
 }
 
+extension Build23SharingMarginSnapshot {
+    /// Included, but with no reviewed words, so the packet can't carry it (#1185).
+    var isLeftOutForMissingText: Bool {
+        isIncluded && !SharedMarginTextRequirement.hasReviewedText(reviewedText)
+    }
+}
+
 struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
     let id: String
     let reviewedText: String
@@ -112,6 +119,13 @@ struct Build23SharingSnapshot: Equatable {
     let errorMessage: String?
     let canAdvance: Bool
     let canShareVerifiedFile: Bool
+}
+
+extension Build23SharingSnapshot {
+    /// What the packet will hold. The Review and Share buttons count this, not the include flags.
+    var selectionSummary: SharedMarginSelectionSummary {
+        SharedMarginSelectionSummary(margins, isIncluded: { $0.isIncluded }, text: { $0.reviewedText })
+    }
 }
 
 struct Build23RecipientImportSnapshot: Equatable {

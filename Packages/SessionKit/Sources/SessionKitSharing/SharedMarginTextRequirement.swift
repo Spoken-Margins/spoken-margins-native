@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 
 /// A shared Margin must carry reviewed words. `SpokenMarginsPackageBuilder` and every
 /// packet reader back to Build 29 reject an empty transcript, voice Margins included,
@@ -7,6 +8,12 @@ import Foundation
 public enum SharedMarginTextRequirement {
     public static func hasReviewedText(_ approvedTranscript: String) -> Bool {
         !approvedTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The words the sender starts reviewing with: cleaned, then raw, then display text.
+    /// Both the count on the Share Margins button and the review sheet start here, so they agree (#1185).
+    public static func initialReviewedText(for interjection: Interjection) -> String {
+        interjection.cleanedTranscript ?? interjection.transcript ?? interjection.displayText ?? ""
     }
 
     /// Shown on the Margin itself while the listener reviews what to share.
@@ -39,5 +46,31 @@ public enum SharedMarginTextRequirement {
         return omitted == 1
             ? "The selected Margin has no transcript yet, so there's nothing to share. Retry its transcription in Margin detail."
             : "None of the selected Margins has a transcript yet, so there's nothing to share. Retry their transcription in Margin detail."
+    }
+}
+
+/// What a packet will actually carry out of the Margins the listener included (#1185).
+/// A Margin with no reviewed words is "included" in the list but can't go in the packet,
+/// so every count the listener sees must come from here, not from the include flags.
+public struct SharedMarginSelectionSummary: Equatable, Sendable {
+    /// Margins that will be in the packet: included and carrying reviewed words.
+    public let packetCount: Int
+    /// Included Margins that had to be left out for want of words.
+    public let leftOutCount: Int
+
+    public init<Margin>(
+        _ margins: [Margin],
+        isIncluded: (Margin) -> Bool,
+        text: (Margin) -> String
+    ) {
+        let included = margins.filter(isIncluded)
+        let shareable = included.filter { SharedMarginTextRequirement.hasReviewedText(text($0)) }
+        packetCount = shareable.count
+        leftOutCount = included.count - shareable.count
+    }
+
+    /// What to tell the listener about Margins left out; `nil` when nothing was.
+    public var notice: String? {
+        SharedMarginTextRequirement.omissionNotice(omitted: leftOutCount, remaining: packetCount)
     }
 }

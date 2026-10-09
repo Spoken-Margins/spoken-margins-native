@@ -241,9 +241,9 @@ struct Build23MarginSelectionRow: View {
                             .foregroundStyle(AppColors.text)
                             .multilineTextAlignment(.leading)
 
-                        Text(margin.isIncluded ? "Included" : "Tap to include")
+                        Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include"))
                             .font(.caption)
-                            .foregroundStyle(margin.isIncluded ? AppColors.evergreen : AppColors.secondaryText)
+                            .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -297,9 +297,15 @@ struct Build23ReviewSelectionRow: View {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
 
-                    Label("Included", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.evergreen)
+                    if margin.isLeftOutForMissingText {
+                        Label("Left out: no transcript yet", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else {
+                        Label("Included", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.evergreen)
+                    }
                 }
             }
         }
@@ -324,9 +330,9 @@ struct Build23MarginEditor: View {
                         .foregroundStyle(AppColors.text)
                         .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
                     Spacer()
-                    Text(margin.isIncluded ? "Included" : "Not included")
+                    Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(margin.isIncluded ? AppColors.evergreen : AppColors.secondaryText)
+                        .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
                 }
 
                 if margin.isPreparing {

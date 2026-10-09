@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitSharing
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
@@ -32,7 +33,8 @@ struct ExportScreen: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(shareableMarginCount == 0)
+                            // Stay tappable while Margins exist but lack words: the sheet says why they're left out.
+                            .disabled(model.exportShareCandidates.isEmpty)
                         }
                     }
                     Text("Export listening session")
@@ -181,7 +183,9 @@ struct ExportScreen: View {
     }
 
     private var shareableMarginCount: Int {
-        model.exportShareCandidates.count
+        model.exportShareCandidates.filter {
+            SharedMarginTextRequirement.hasReviewedText(SharedMarginTextRequirement.initialReviewedText(for: $0))
+        }.count
     }
 
     #if canImport(UIKit)

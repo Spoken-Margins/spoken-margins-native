@@ -71,4 +71,38 @@ final class SharedMarginTextRequirementTests: XCTestCase {
         XCTAssertEqual(all, ["Only thought."])
         XCTAssertNil(quiet)
     }
+
+    /// #1185: one spoken Margin with no transcript and one written Margin, both included,
+    /// used to read "2" on the Share button while the packet held 1.
+    func testTheCountOnTheButtonIsTheCountInThePacket() {
+        struct Draft { var included: Bool; var text: String }
+        let drafts = [Draft(included: true, text: ""), Draft(included: true, text: "Second note for sharing")]
+        let summary = SharedMarginSelectionSummary(drafts, isIncluded: { $0.included }, text: { $0.text })
+        XCTAssertEqual(summary.packetCount, 1)
+        XCTAssertEqual(summary.leftOutCount, 1)
+        XCTAssertEqual(summary.notice, "1 Margin has no transcript and wasn't included.")
+        // The packet is built from exactly this split (Gate1AppModel.exportSharePackage).
+        let packet = SharedMarginTextRequirement.shareable(drafts.filter { $0.included }, text: { $0.text })
+        XCTAssertEqual(packet.margins.count, summary.packetCount)
+        XCTAssertEqual(packet.omission, summary.notice)
+    }
+
+    func testTheSummaryIgnoresMarginsTheListenerLeftOut() {
+        struct Draft { var included: Bool; var text: String }
+        let drafts = [
+            Draft(included: false, text: ""), Draft(included: false, text: "Not chosen"),
+            Draft(included: true, text: " \n"), Draft(included: true, text: "A"), Draft(included: true, text: "B"),
+        ]
+        let summary = SharedMarginSelectionSummary(drafts, isIncluded: { $0.included }, text: { $0.text })
+        XCTAssertEqual(summary.packetCount, 2)
+        XCTAssertEqual(summary.leftOutCount, 1)
+
+        let none = SharedMarginSelectionSummary([Draft(included: true, text: "")], isIncluded: { $0.included }, text: { $0.text })
+        XCTAssertEqual(none.packetCount, 0)
+        XCTAssertEqual(none.notice, SharedMarginTextRequirement.omissionNotice(omitted: 1, remaining: 0))
+
+        let empty = SharedMarginSelectionSummary([Draft](), isIncluded: { $0.included }, text: { $0.text })
+        XCTAssertEqual(empty.packetCount, 0)
+        XCTAssertNil(empty.notice)
+    }
 }
