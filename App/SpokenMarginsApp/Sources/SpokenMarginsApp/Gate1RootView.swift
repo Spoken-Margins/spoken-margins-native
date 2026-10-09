@@ -41,27 +41,8 @@ struct Gate1RootView: View {
             }
         }
         .background(AppColors.background.ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 8) {
-            if !model.recordingNavigationIsLocked,
-               model.feedbackEvent != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
-                VStack(spacing: 8) {
-                    if let resetNotice = model.legacyLibraryResetNotice {
-                        LegacyLibraryResetBanner(message: resetNotice)
-                    }
-                    if let progressMessage = model.sourceImportProgressMessage {
-                        SourceOperationBanner(message: progressMessage)
-                    }
-                    if let feedback = model.feedbackEvent {
-                        UserFeedbackBanner(feedback: feedback)
-                    }
-                    if let undo = model.trashUndo {
-                        TrashUndoBanner(undo: undo)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-            }
-        }
+        .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners() }
+        .overlay(alignment: .top) { FloatingFeedbackBanner() }
         .safeAreaInset(edge: .bottom, spacing: 8) {
             if model.screen != .home && model.screen != .timeline && !model.recordingNavigationIsLocked && model.shouldShowMiniPlayer && !keyboardIsPresented {
                 MiniPlayerBar()
@@ -195,43 +176,6 @@ private struct Build23RecipientSharingHost: View {
             .documentOrBook
         case .other:
             .linkOrPodcast
-        }
-    }
-}
-
-private struct LegacyLibraryResetBanner: View {
-    @EnvironmentObject private var model: Gate1AppModel
-    let message: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "archivebox")
-                .foregroundStyle(AppColors.secondaryText)
-            Text(message)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button(action: model.dismissLegacyLibraryResetNotice) {
-                Image(systemName: "xmark")
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss library notice")
-        }
-        .padding(12)
-        .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
-        .accessibilityIdentifier("libraryReset.notice.banner")
-        .task {
-            do {
-                try await Task.sleep(for: .seconds(8))
-                guard model.legacyLibraryResetNotice == message else { return }
-                model.dismissLegacyLibraryResetNotice()
-            } catch {
-                // The banner disappeared or changed before its auto-dismiss timer fired.
-            }
         }
     }
 }
@@ -387,56 +331,6 @@ struct MiniPlayerBar: View {
         .shadow(color: .black.opacity(0.14), radius: 18, y: 7)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("miniPlayer.bar")
-    }
-}
-
-private struct SourceOperationBanner: View {
-    let message: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-            Text(message)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-            Spacer()
-            Text("You can keep listening")
-                .font(.caption)
-                .foregroundStyle(AppColors.secondaryText)
-        }
-        .padding(12)
-        .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
-        .allowsHitTesting(false)
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier("sourceImport.progress.banner")
-    }
-}
-
-private struct TrashUndoBanner: View {
-    @EnvironmentObject private var model: Gate1AppModel
-    let undo: TrashUndoState
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Text("Moved \(undo.title) to Recently Deleted")
-                .font(.subheadline)
-                .lineLimit(2)
-            Spacer()
-            Button("Undo", action: model.undoLastTrash)
-                .font(.subheadline.bold())
-            Button(action: model.dismissTrashUndo) {
-                Image(systemName: "xmark")
-            }
-            .accessibilityLabel("Dismiss")
-        }
-        .padding(12)
-        .foregroundStyle(.white)
-        .background(Color.black.opacity(0.88))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityIdentifier("trash.undo.banner")
     }
 }
 

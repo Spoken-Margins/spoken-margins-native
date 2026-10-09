@@ -67,6 +67,8 @@ public final class ListeningSignalCollector: @unchecked Sendable {
     public func record(_ event: ListeningSignalEvent, itemId: String?,
                        repository: (any SessionRepository)?, at: Date = Date()) {
         queue.async {
+            // An item without a followed source logs no row, but the packet is still ours (#867).
+            if case .export(let packetId?, _) = event { self.recorder.noteExportedPacket(packetId) }
             guard let itemId, let repository, let context = self.resolve(itemId, repository) else { return }
             self.recorder.record(event, source: context.source, item: context.item, at: at)
         }
