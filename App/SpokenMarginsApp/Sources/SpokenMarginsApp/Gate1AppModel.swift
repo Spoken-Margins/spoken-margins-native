@@ -13774,9 +13774,9 @@ final class Gate1AppModel: ObservableObject {
                     let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
                     // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
                     if openWhenFinished, !entry.hasPublisherAudio, !self.hasActiveSession {
-                        imported = self.importBrowserText(handoff)
+                        imported = self.importBrowserTextItem(handoff).map { self.listeningSignals.followedArticleImported($0, for: entry) } != nil
                     } else {
-                        let itemId = try self.importBrowserTextInBackground(handoff)
+                        let itemId = self.listeningSignals.followedArticleImported(try self.importBrowserTextInBackground(handoff), for: entry)
                         if let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId)) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
                         if openWhenFinished { self.openItem(id: itemId) }
                         imported = true
