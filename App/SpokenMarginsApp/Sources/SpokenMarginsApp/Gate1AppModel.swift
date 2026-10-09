@@ -7234,8 +7234,12 @@ final class Gate1AppModel: ObservableObject {
                     itemId = try self.installEmbeddedItem(from: review.contents, store: store)
                 } else if review.contents.manifest.item.itemType == .podcast {
                     itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.item)
+                } else if let articleURL = SharedArticleReferencePolicy.articleURL(for: review.contents.manifest.item) {
+                    itemId = try await self.acquireArticleForImportedPackage(articleURL)
                 } else {
-                    itemId = nil
+                    // A layer saved with no item reports success but can't play (#916). Say so instead.
+                    self.diagnostics["lastSpokenMarginsPackageImport"] = "no_source_to_acquire"
+                    throw SessionKitError.persistenceFailed("shared_item_not_in_library")
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map { SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: self.localAudiobookDigest(for: $0)) }
@@ -7424,6 +7428,20 @@ final class Gate1AppModel: ObservableObject {
         )
         try store.seed(item: item)
         return itemID
+    }
+
+    /// Reads the shared article from its link and adds it to the Library without touching Now Playing (#916).
+    private func acquireArticleForImportedPackage(_ url: URL) async throws -> String {
+        let handoff: BrowserTextHandoff
+        do {
+            handoff = try await readablePageExtractor.extract(url: url)
+        } catch {
+            if error is URLError { throw error } // offline and timeouts get the connection message
+            diagnostics["lastSharedArticleAcquisition"] = "failed:\(error.localizedDescription)"
+            throw SessionKitError.persistenceFailed("shared_article_unreadable")
+        }
+        diagnostics["lastSharedArticleAcquisition"] = "fetched:\(url.absoluteString)"
+        return try importBrowserTextInBackground(handoff)
     }
 
     private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {

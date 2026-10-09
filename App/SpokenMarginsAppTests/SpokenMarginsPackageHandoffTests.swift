@@ -608,6 +608,113 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["recipientAlignmentTranscript:\(item.id)"], "consumed_and_deleted")
     }
 
+    /// #916: a packet shared by link for a web article the recipient hasn't added fetches the article and
+    /// attaches the Margins to it, instead of saving a layer with no item and reporting success.
+    @MainActor
+    func testArticlePackageFetchesTheArticleAndAttachesItsMargins() async throws {
+        let (model, store, manifest, extractor) = try makeArticlePackageImport(named: "article-fetch", extraction: .success(
+            BrowserTextHandoff(
+                captureMode: .readablePage,
+                source: BrowserTextSource(url: Self.articleURL, title: Self.articleTitle),
+                text: "# \(Self.articleTitle)\n\nBefore it the durable prefix has exactly enough unique words here and then the following suffix is also uniquely present right now.",
+                contentFormat: .markdown
+            )
+        ))
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        XCTAssertEqual(extractor.requested.map(\.absoluteString), [Self.articleURL])
+        let imported = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.articleTitle }))
+        let layer = try XCTUnwrap(store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
+        XCTAssertEqual(layer.itemId, imported.id)
+        XCTAssertNotEqual(layer.sourceResolutionStatus, .wrongSource)
+        XCTAssertNil(model.spokenMarginsPackageImportError)
+        XCTAssertEqual(model.selectedItem.id, imported.id)
+        XCTAssertNil(model.snapshot.sessionId, "Import must not start playback")
+    }
+
+    @MainActor
+    func testArticlePackageThatCannotBeFetchedFailsInsteadOfSavingMarginsWithNoSource() async throws {
+        let (model, store, manifest, _) = try makeArticlePackageImport(
+            named: "article-unreadable",
+            extraction: .failure(ReadablePageExtractionError.httpStatus(403))
+        )
+        let before = model.libraryItems.map(\.id)
+        model.confirmSpokenMarginsPackageImport()
+        for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(
+            model.spokenMarginsPackageImportError,
+            SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_article_unreadable"))
+        )
+        XCTAssertNil(try store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)), "no layer without a source")
+        XCTAssertEqual(model.libraryItems.map(\.id), before)
+        XCTAssertNotNil(model.spokenMarginsPackageImportReview, "the sheet stays open so the listener can retry")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
+    private static let articleTitle = "A shared essay on slow listening"
+    private static let articleURL = "https://essays.example.com/slow-listening"
+
+    @MainActor
+    private func makeArticlePackageImport(
+        named name: String,
+        extraction: Result<BrowserTextHandoff, Error>
+    ) throws -> (Gate1AppModel, SQLiteSessionStore, SpokenMarginsPackageManifest, ArticlePackageExtractor) {
+        let root = try temporaryDirectory(named: "spoken-margins-\(name)")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("\(name).spokenmargins")
+        let revision = InterjectionShareRevision(
+            id: "revision-\(name)",
+            interjectionId: "sender-margin",
+            itemId: "sender-item",
+            sessionId: "sender-session",
+            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+            approvedTranscript: "A sender-reviewed observation.",
+            anchorBefore: "the durable prefix has exactly enough unique words here",
+            anchorAfter: "the following suffix is also uniquely present right now",
+            status: .senderApproved
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "package-\(name)",
+            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+            item: SharedItemIdentity(
+                itemType: .text,
+                canonicalURL: Self.articleURL,
+                originalURL: Self.articleURL,
+                title: Self.articleTitle
+            ),
+            itemTransportSelection: .reference,
+            selections: [ReviewedInterjectionSelection(
+                packageScopedId: "margin-001",
+                revision: revision,
+                anchor: PortableAnchorEvidence(
+                    anchorType: .text,
+                    prefix: "the durable prefix has exactly enough unique words here",
+                    suffix: "the following suffix is also uniquely present right now"
+                ),
+                representation: .textOnly
+            )],
+            senderDisplayLabel: "Cole",
+            suggestedRevealMode: .companion
+        )
+        let manifest = try SpokenMarginsPackageArchive.write(prepared, to: packageURL)
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let extractor = ArticlePackageExtractor(extraction)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        model.readablePageExtractor = extractor
+        model.handleIncomingURL(packageURL)
+        XCTAssertNotNil(model.spokenMarginsPackageImportReview)
+        XCTAssertNil(model.spokenMarginsPackageImportReview?.matchingItemId)
+        return (model, store, manifest, extractor)
+    }
+
     private static let podcastTitle = "Can you spot the imported story?"
     private static let podcastURL = "https://podcasts.example.com/episodes/imported-story"
     private static let podcastAudioURL = "https://cdn.example.com/imported-story.mp3"
@@ -751,5 +858,22 @@ private final class PackagePodcastLinkResolver: LinkResolutionClient {
 private final class FailingPackagePodcastLinkResolver: LinkResolutionClient {
     func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
         throw URLError(.badServerResponse)
+    }
+}
+
+private final class ArticlePackageExtractor: ReadablePageExtracting {
+    private let outcome: Result<BrowserTextHandoff, Error>
+    private(set) var requested: [URL] = []
+    private(set) var lastExtractor: String?
+
+    init(_ outcome: Result<BrowserTextHandoff, Error>) {
+        self.outcome = outcome
+    }
+
+    func extract(url: URL) async throws -> BrowserTextHandoff {
+        requested.append(url)
+        let handoff = try outcome.get()
+        lastExtractor = "recorded"
+        return handoff
     }
 }
