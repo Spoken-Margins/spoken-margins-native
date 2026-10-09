@@ -995,6 +995,11 @@ final class Gate1AppModel: ObservableObject {
         record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
         outcomeChanged: { [weak self] in self?.diagnostics["textAudioBackgroundStartup"] = $0.rawValue }
     )
+    /// Background time over each seam between two chunks of on-device narration (#540).
+    private lazy var handOverBackgroundHold = HandOverBackgroundHold(
+        begin: NarrationStartupBackgroundTime.begin,
+        record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+    )
     #if canImport(AVFoundation)
     private var interjectionAudioPlayer: AVPlayer?
     private var interjectionAudioCompletionTask: Task<Void, Never>?
@@ -9790,7 +9795,9 @@ final class Gate1AppModel: ObservableObject {
                 },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
-                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } }
+                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
+                onRenderPace: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["onDeviceRenderPace"] = summary } },
+                handOverHold: handOverBackgroundHold
             )
         }
         diagnostics["sessionTTS"] = "System speech"

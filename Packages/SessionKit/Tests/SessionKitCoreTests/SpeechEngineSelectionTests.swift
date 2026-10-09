@@ -38,6 +38,23 @@ final class SpeechEngineSelectionTests: XCTestCase {
         }
     }
 
+    // #540: a player that stopped making sound hands over to the iOS voice without a tap, and gets another try
+    // at the next play instead of waiting for Retry.
+    func testAStalledPlayerHandsOverAndTheChosenVoiceGetsAnotherTryAtTheNextPlay() {
+        XCTAssertEqual(SpeechFallbackReason(supertonicCode: "supertonic_player_stalled", resourceBlock: nil), .playerStalled)
+        XCTAssertEqual(SpeechFallbackReason.playerStalled.rawValue, "player_stalled")
+        XCTAssertTrue(SpeechFallbackReason.playerStalled.returnsAutomatically)
+        XCTAssertTrue(SpeechEnginePolicy.restoresChosenVoice(after: .playerStalled, conditions: SpeechEngineConditions()))
+        XCTAssertFalse(
+            SpeechEnginePolicy.restoresChosenVoice(after: .playerStalled, conditions: SpeechEngineConditions(thermal: .serious)),
+            "still too warm to render: the iOS voice stays"
+        )
+        let line = SpeechFallbackReason.playerStalled.listenerExplanation
+        XCTAssertTrue(line.contains("stopped playing"), line)
+        XCTAssertTrue(line.contains("next time you press play"), line)
+        XCTAssertFalse(line.contains("Retry"), "nothing for the listener to do")
+    }
+
     func testEveryFallbackNamesItsCauseForTheListenerAndTheLog() {
         XCTAssertEqual(SpeechFallbackReason(supertonicCode: "supertonic_resource_pressure", resourceBlock: .memoryWarning), .memoryWarning)
         XCTAssertEqual(SpeechFallbackReason(supertonicCode: "supertonic_resource_pressure", resourceBlock: .deviceTooWarm), .deviceTooWarm)
