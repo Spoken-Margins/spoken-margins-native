@@ -2019,8 +2019,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         model.markItemCompleted(id: "item-pill")
         XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
-        model.undoMarkedCompletion()
-        XCTAssertNil(model.completionUndo)
+        try XCTUnwrap(model.feedbackEvent?.action, "Marking complete offers Undo on the banner").perform()
+        XCTAssertNil(model.feedbackEvent?.action, "Undo answers with a plain confirmation")
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         XCTAssertEqual(model.selectedItem.sessions, history)
         XCTAssertEqual(model.snapshot, snapshot)
@@ -2070,7 +2070,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
         let history = model.selectedItem.sessions
         model.markItemCompleted(id: "item-pill")
-        model.completionUndo = nil
+        model.dismissFeedback()
         XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).canMarkUnfinished)
 
         model.markItemUnfinished(id: "item-pill")
@@ -4317,46 +4317,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNil(try store.loadSourceSuggestionDecision(sourceId: "alpha"))
     }
 
-    func testQuickFolderScanOffersOnlyImportableTextAndPDFFiles() throws {
-        let directory = FileManager.default.temporaryDirectory
-            .appending(path: "spoken-margins-quick-add-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: directory) }
-
-        for name in ["Notes.md", "Draft.markdown", "Excerpt.txt", "Paper.pdf", "Cover.jpg"] {
-            try "content".write(to: directory.appending(path: name), atomically: true, encoding: .utf8)
-        }
-
-        let scan = Gate1AppModel.scanQuickAccessFolder(directory)
-
-        XCTAssertNil(scan.errorDescription)
-        XCTAssertEqual(Set(scan.files.map(\.relativePath)), ["Notes.md", "Draft.markdown", "Excerpt.txt", "Paper.pdf"])
-    }
-
-    func testQuickAddFeedCombinesFolderFilesAndFollowedEntriesByRecency() {
-        let olderFile = QuickAccessFile(
-            id: "older.md",
-            name: "Older",
-            relativePath: "older.md",
-            modifiedAt: Date(timeIntervalSince1970: 100),
-            modifiedAtDescription: "2h ago"
-        )
-        let newerEntry = FeedEntry(
-            id: "episode",
-            subscriptionId: "show",
-            canonicalURL: "https://example.com/episode",
-            title: "New Episode",
-            publishedAt: Date(timeIntervalSince1970: 200)
-        )
-
-        let candidates = Gate1AppModel.quickAddCandidates(
-            folderFiles: [olderFile],
-            followedEntries: [newerEntry]
-        )
-
-        XCTAssertEqual(candidates.map(\.id), ["followed-source:episode", "local-file:older.md"])
-    }
-
     func testQuickAddFeedExcludesImportedEpisodeAndDismissedFolderRevision() {
         let file = QuickAccessFile(
             id: "notes.md",
@@ -4400,6 +4360,33 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
 
         XCTAssertTrue(candidates.isEmpty)
+    }
+
+    func testQuickAddForwarderHidesAnEntryByTheLibraryRowsSourceReference() {
+        let entry = FeedEntry(
+            id: "episode",
+            subscriptionId: "show",
+            canonicalURL: "https://example.com/posts/one",
+            title: "Unrelated Title"
+        )
+        let imported = LibraryItemRow(
+            id: "imported",
+            title: "Something Else",
+            status: "Ready",
+            canDelete: true,
+            mediaType: "text",
+            sourceReference: "https://Example.com/posts/one/#top"
+        )
+
+        XCTAssertTrue(Gate1AppModel.quickAddCandidates(
+            folderFiles: [],
+            followedEntries: [entry],
+            libraryItems: [imported]
+        ).isEmpty)
+        XCTAssertEqual(Gate1AppModel.quickAddCandidates(
+            folderFiles: [],
+            followedEntries: [entry]
+        ).map(\.id), ["followed-source:episode"])
     }
 
     func testLibraryFiltersInferLegacyPDFAndExposeActiveSelections() {

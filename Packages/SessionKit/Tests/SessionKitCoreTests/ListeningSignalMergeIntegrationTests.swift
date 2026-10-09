@@ -48,13 +48,13 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
 
     func testManualCompletionRecordsFinishOnlyAfterTheCompletionHelperChangesTheItem() throws {
         let source = try appSource("Gate1AppModel.swift")
-        let completion = try body(source, from: "func markItemCompleted(id:", to: "func undoMarkedCompletion()")
+        let completion = try body(source, from: "func markItemCompleted(id:", to: "func undoMarkedCompletion(")
         XCTAssertFalse(completion.contains("<<<<<<<"), "The completion merge must be resolved")
         try assertOrdered([
             "guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }",
             "listeningSignals.finish(itemId: id)",
             "try refreshLibraryRows(store: store)",
-            "completionUndo = (id, item.title, item.sourceCompletedAt ?? Date())",
+            "presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())",
         ], in: completion)
         XCTAssertFalse(completion.contains("try store.saveItem"), "Completion stays in the host-tested helper")
     }
