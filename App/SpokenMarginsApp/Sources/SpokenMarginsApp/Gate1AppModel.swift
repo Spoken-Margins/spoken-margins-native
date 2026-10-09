@@ -6920,17 +6920,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func diagnosticsExportText() -> String? {
-        var stored: [String: String] = [:]
-        if let store {
-            stored = PodcastAnchorCaptureDiagnostics.exportEntries(
-                sessions: (try? store.loadSessions()) ?? [],
-                interjections: { try store.loadInterjections(sessionId: $0) }
-            )
-        }
-        let entries = DiagnosticsExport.entries(
+    /// What the diagnostics export reads from the running app, copied here on the main actor (#1191).
+    func diagnosticsExportInputs() -> DiagnosticsExportInputs {
+        DiagnosticsExportInputs(
             live: diagnostics,
-            stored: stored,
+            store: store,
             fixed: DiagnosticsExport.Fixed(
                 developerBuild: developerDiagnosticBuild,
                 developerRecording: developerRecording.exportJSON(),
@@ -6942,12 +6936,6 @@ final class Gate1AppModel: ObservableObject {
                 pendingAIJobs: snapshot.pendingAiJobCount
             )
         )
-        do {
-            return try DiagnosticsExport.jsonText(entries)
-        } catch {
-            reportFailure(error, context: "Diagnostics export failed")
-            return nil
-        }
     }
 
     func dispatchGate2CompactCommand(
