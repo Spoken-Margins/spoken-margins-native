@@ -250,7 +250,7 @@ struct Build23MarginSelectionRow: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!isEnabled)
-                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(margin.isIncluded ? "included" : "not included")")
+                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(margin.shareStatusDescription)")
                 .accessibilityHint("Double tap to \(margin.isIncluded ? "exclude" : "include") this Margin")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
@@ -264,7 +264,7 @@ struct Build23MarginSelectionRow: View {
                 .font(.caption.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel("Include this Margin in the package")
-                .accessibilityValue(margin.isIncluded ? "Included" : "Not included")
+                .accessibilityValue(margin.isLeftOutForMissingText ? "Included, but left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
                 .disabled(!isEnabled)
             }
@@ -310,7 +310,7 @@ struct Build23ReviewSelectionRow: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Included Margin, \(margin.reviewedText), \(isSelected ? "editor open" : "open editor")")
+        .accessibilityLabel("\(margin.isLeftOutForMissingText ? "Left out Margin, no transcript yet" : "Included Margin, \(margin.reviewedText)"), \(isSelected ? "editor open" : "open editor")")
         .accessibilityIdentifier("build23.sender.review.selector.\(margin.id)")
     }
 }

@@ -183,7 +183,7 @@ struct ExportScreen: View {
     }
 
     private var shareableMarginCount: Int {
-        model.exportShareCandidates.filter {
+        SharedMarginTextRequirement.initiallyIncluded(model.exportShareCandidates).filter {
             SharedMarginTextRequirement.hasReviewedText(SharedMarginTextRequirement.initialReviewedText(for: $0))
         }.count
     }

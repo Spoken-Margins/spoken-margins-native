@@ -16,6 +16,13 @@ public enum SharedMarginTextRequirement {
         interjection.cleanedTranscript ?? interjection.transcript ?? interjection.displayText ?? ""
     }
 
+    /// The Margins the share sheet starts with included: only the starred ones when any
+    /// are starred, otherwise all of them. `prepareShareInterjections` applies the same rule.
+    public static func initiallyIncluded(_ interjections: [Interjection]) -> [Interjection] {
+        let starred = interjections.filter { $0.isStarredForSharing == true }
+        return starred.isEmpty ? interjections : starred
+    }
+
     /// Shown on the Margin itself while the listener reviews what to share.
     public static let reviewWarningText = "No transcript yet, so this Margin can't be shared. Retry its transcription in Margin detail."
 

@@ -70,6 +70,11 @@ extension Build23SharingMarginSnapshot {
     var isLeftOutForMissingText: Bool {
         isIncluded && !SharedMarginTextRequirement.hasReviewedText(reviewedText)
     }
+
+    /// What VoiceOver says about the Margin's place in the packet; matches the visible status.
+    var shareStatusDescription: String {
+        isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
+    }
 }
 
 struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
