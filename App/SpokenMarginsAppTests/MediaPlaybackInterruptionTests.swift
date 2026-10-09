@@ -389,7 +389,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     /// #474: "Listen without them" is remembered, so the offer isn't made at every Continue; a Margin that arrives
     /// later brings it back, and a Margin whose recording is gone isn't counted.
     func testTurningDownTheOfferStopsItBeingRepeated() throws {
-        let fixture = try SharedMarginHearingFixture(itemID: "declined-source", makeWAV: makeTestWAV)
+        // Its own item, so what this test turns down can't reach another test's offer.
+        let fixture = try SharedMarginHearingFixture(itemID: "declined-source", makeWAV: makeTestWAV, seedsItem: true)
         defer { fixture.cleanUp() }
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
@@ -402,10 +403,10 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.continueWithoutNewMargins(itemId: "declined-source")
         XCTAssertEqual(model.snapshot.itemId, "declined-source")
         model.pause()
+        XCTAssertEqual(model.newSharedMargins(itemId: "declined-source").count, 1, "still new, and Review new Margins still offers it")
         offered = nil
         model.continueListening(itemId: "declined-source") { offered = $0 }
         XCTAssertNil(offered, "turned down, so Continue just continues")
-        XCTAssertEqual(model.newSharedMargins(itemId: "declined-source").count, 1, "still new, and Review new Margins still offers it")
     }
 
     /// #474 (owner's co-op test): Continue on an item with new shared Margins asks first, and starts the item at once
@@ -627,7 +628,8 @@ private struct SharedMarginHearingFixture {
         makeWAV: (TimeInterval) throws -> URL,
         recordingClient: RecordingClient? = nil,
         layerIsMuted: Bool = true,
-        secondMarginAtMs: Int? = nil
+        secondMarginAtMs: Int? = nil,
+        seedsItem: Bool? = nil
     ) throws {
         root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -640,7 +642,7 @@ private struct SharedMarginHearingFixture {
         model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, databaseURLOverride: db)
         model.resetAndSeed()
         store = try SQLiteSessionStore(path: db.path)
-        if itemID == "real-source" {
+        if seedsItem ?? (itemID == "real-source") {
             try store.seed(item: Item(id: itemID, title: "Real source", mediaType: "audiobook", text: nil,
                 externalReference: sourceURL.absoluteString, status: "ready", externalReferenceType: "audiobook",
                 media: ItemMedia(sourceType: .nativeMediaFile, url: sourceURL.absoluteString, durationMs: 30_000, nativeMediaId: "source-audio")))
