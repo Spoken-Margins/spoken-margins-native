@@ -27,9 +27,9 @@ Holds (every slip fails toward spending less):
 - The usage read fails, or no stop line is ticked.
 - Less than 30 GiB free disk.
 
-Freeze (Build 30, owner 2026-10-06; #902): the Dial's `**Codex focus**` group names the frozen
-milestone (`- [x] Build 30`) or lifts it (`- [x] None`). Without that group, or with no box
-ticked, FOCUS_MILESTONE applies (SM_CODEX_FOCUS_MILESTONE, default 'Build 30'). During a freeze:
+Freeze (#902): the Dial's `**Codex focus**` group names the frozen milestone
+(`- [x] Solid Ground`) or lifts it (`- [x] None`). Without that group, or with no box
+ticked, FOCUS_MILESTONE applies (SM_CODEX_FOCUS_MILESTONE, default 'Listening Baseline'). During a freeze:
 - issues: the milestone's first; outside it, only issues whose Likely files are all outside
   App/, Packages/ and Contracts/. Anything unclear is skipped with the reason.
 - PRs: finished only when linked to a milestone issue (by branch, title or body) or when their
@@ -95,8 +95,8 @@ CLAIM_WINDOW = dt.timedelta(hours=24)
 
 EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked',
                    'status: needs-human-validation'}  # a fix already merged; it waits on the owner's phone
-# Only this milestone's issues and their PRs while it is set (Build 30 freeze); '' lifts it.
-FOCUS_MILESTONE = os.environ.get('SM_CODEX_FOCUS_MILESTONE', 'Build 30')
+# Only this milestone's issues and their PRs while it is set; '' lifts it.
+FOCUS_MILESTONE = os.environ.get('SM_CODEX_FOCUS_MILESTONE', 'Listening Baseline')
 CLAIM_MARK = 'Claimed by project thread "'
 # Issues whose body points at SessionKit or host tests go first: Codex can verify those itself.
 HOST_HINT_RE = re.compile(
@@ -224,7 +224,7 @@ def parse_codex_focus(body: str) -> tuple[Optional[str], list[str]]:
             continue
         box = re.match(r'\s*[-*]\s*\[([ xX])\]\s*(.+)', line)
         if box and current and current.startswith('codex focus') and box.group(1).lower() == 'x':
-            # "Build 30 (only its issues ...)" -> "Build 30"
+            # "Solid Ground (only its issues ...)" -> "Solid Ground"
             ticked.append(re.split(r'\s+\(|\s+[—–-]\s+', box.group(2), maxsplit=1)[0].strip())
     if not found:
         return None, []
