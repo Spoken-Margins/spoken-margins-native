@@ -36,7 +36,7 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
   it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
-  (test-scope.py's lane_paths) until a Codex audit of its head says "No blocking findings": those pass
+  (test-scope.py's lane_paths) until a Codex or Claude audit of its head says "No blocking findings": those pass
   or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
   wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
   its own workflow and helpers. A PR someone asked T3 for merges only on a
@@ -120,7 +120,7 @@ PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout nam
 HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
 NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
-AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
+AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
@@ -498,7 +498,7 @@ CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit ta
 
 
 def audit_blocker(comments: list[dict], head: str) -> str | None:
-    """Why the Codex audits on the PR don't clear its head, or None when the newest audit of the head is clean.
+    """Why the Codex or Claude audits on the PR don't clear its head, or None when the newest audit of the head is clean.
 
     #441: any audit comment used to clear the PR, whatever commit it covered or what it found. An audit
     counts only if its heading names the head commit (the hourly task's says "on `<sha7>`"), and it clears
@@ -508,24 +508,25 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
     audits = []
     for comment in comments:
         body = (comment.get('body') or '').lstrip()
-        if body.startswith(AUDITS):
+        if (body.startswith(AUDITS[:2]) or
+                re.fullmatch(r'\*\*Claude audit on `[0-9a-f]{7,40}`\*\*', body.partition('\n')[0].rstrip())):
             heading, _, rest = body.partition('\n')
             verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
             audits.append((AUDIT_SHA.findall(heading), verdict))
     if not audits:
-        return 'has no "Codex audit (Astra)" comment yet'
+        return 'has no Codex or Claude audit comment yet'
     on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
     if not on_head:
         audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
-        return (f'has no Codex audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
-                else f'has no Codex audit naming its head `{head[:7]}`')
+        return (f'has no Codex or Claude audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'has no Codex or Claude audit naming its head `{head[:7]}`')
     if not CLEAN_AUDIT.match(on_head[-1]):
-        return f'the Codex audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
+        return f'the Codex or Claude audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
     return None
 
 
 def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
-    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex
+    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex or Claude
     audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
     2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges."""
     reasons = []
@@ -842,7 +843,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                                                    f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
         if blockers:
-            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex audit '
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
                                                    'of its head says "No blocking findings".' for b in blockers]
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
