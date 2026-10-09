@@ -487,6 +487,9 @@ def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = Non
         return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
                                 f'evidence: {log_path}']
     manifest = _read_manifest(output)
+    if manifest.get('lane_fault'):  # #909: the Mac, not the PR (its lid is closed, so there is no sound output)
+        return 'INCONCLUSIVE', [f'host tests (--plan fast) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
+                                f'the lid or connect an audio output, then re-run. evidence: {log_path}']
     if code == 0 and manifest.get('status') == 'verified':
         # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
         return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
@@ -1522,7 +1525,8 @@ TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
-                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
+                   ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 
