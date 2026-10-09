@@ -85,6 +85,15 @@ jobs:
           # Denied runner-list access, API outages, and uninstalled runners all fall back.
           GH_TOKEN="$RUNNERS_TOKEN" timeout 30s gh api --paginate --slurp "repos/$GH_REPO/actions/runners?per_page=100" > "$RUNNER_TEMP/runners.json" || echo '[]' > "$RUNNER_TEMP/runners.json"
           timeout 30s gh api --paginate --slurp "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > "$RUNNER_TEMP/files.json" || echo '[]' > "$RUNNER_TEMP/files.json"
+      - name: Choose queues
+        id: route
+        run: |
+          # The base can predate this helper while this workflow is first being introduced.
+          if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
+            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/route.json" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::Runner routing unavailable; using the normal Mac queues.'
+          fi
       - name: Drop stale and duplicate runs
         id: dedupe
         env:
@@ -96,23 +105,15 @@ jobs:
           WANT_LANE: ${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
           WANT_AUTO: ${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
         run: |
+          # A same-head run still waiting in a different queue than the one chosen above is replaced (#1194).
           # Closed or moved-on PRs and duplicate runs stop here; older-head runs still waiting for a Mac are
           # cancelled. Any failure (including a base without the helper) leaves both outputs unset: run as before.
           # Bound all API calls together; discovery uses at most 60s, leaving 60s for checkout and routing.
           if timeout 60s python3 scripts/lane_dedupe.py --pr "$PR_NUMBER" --head "$EVENT_HEAD" --run-id "$RUN_ID" \
-              --lane "$WANT_LANE" --auto "$WANT_AUTO" > "$RUNNER_TEMP/dedupe.json"; then
+              --lane "$WANT_LANE" --auto "$WANT_AUTO" --queues "$RUNNER_TEMP/route.json" > "$RUNNER_TEMP/dedupe.json"; then
             jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/dedupe.json" >> "$GITHUB_OUTPUT"
           else
             echo '::warning::Lane dedupe unavailable; running as before.'
-          fi
-      - name: Choose queues
-        id: route
-        run: |
-          # The base can predate this helper while this workflow is first being introduced.
-          if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
-            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/route.json" >> "$GITHUB_OUTPUT"
-          else
-            echo '::warning::Runner routing unavailable; using the normal Mac queues.'
           fi
 
   lane:
