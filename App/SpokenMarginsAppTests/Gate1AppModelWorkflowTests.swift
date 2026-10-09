@@ -2019,8 +2019,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         model.markItemCompleted(id: "item-pill")
         XCTAssertFalse(model.visibleLibraryItems.contains { $0.id == "item-pill" })
-        model.undoMarkedCompletion()
-        XCTAssertNil(model.completionUndo)
+        try XCTUnwrap(model.feedbackEvent?.action, "Marking complete offers Undo on the banner").perform()
+        XCTAssertNil(model.feedbackEvent?.action, "Undo answers with a plain confirmation")
         XCTAssertTrue(model.visibleLibraryItems.contains { $0.id == "item-pill" })
         XCTAssertEqual(model.selectedItem.sessions, history)
         XCTAssertEqual(model.snapshot, snapshot)
@@ -2070,7 +2070,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.startItem(id: "item-pill")
         let history = model.selectedItem.sessions
         model.markItemCompleted(id: "item-pill")
-        model.completionUndo = nil
+        model.dismissFeedback()
         XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).canMarkUnfinished)
 
         model.markItemUnfinished(id: "item-pill")
