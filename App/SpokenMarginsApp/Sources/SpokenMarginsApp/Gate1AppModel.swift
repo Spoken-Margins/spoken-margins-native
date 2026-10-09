@@ -13754,14 +13754,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func podcastResolution(
-        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
-        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
-    ) -> ImportedAnchorResolution {
-        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
-            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
-    }
-
     private func resolveImportedPodcastCommentary(
         itemId: String,
         localURL: URL,
@@ -13776,12 +13768,8 @@ final class Gate1AppModel: ObservableObject {
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
         // transient transcript is evidence for the supplied recipient file.
-        let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
-            guard layer.deletedAt == nil,
-                  layer.itemIdentity.itemType == .podcast,
-                  let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
-                  !records.isEmpty || ImportedMarginResends.hasLayerArtifacts(layer) else { return nil }
-            return (layer, records)
+        let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
+            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
         }
         guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
         if recipientTranscriptOverride == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
@@ -13834,57 +13822,12 @@ final class Gate1AppModel: ObservableObject {
                         )
                     )) ?? [:]
                     try Task.checkCancellation()
-                    let monotonicResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
-                        queries: queries,
-                        resolutions: Dictionary(uniqueKeysWithValues: records.map { record in
-                            let transcriptResolution = recipientTranscript.map {
-                                PodcastTranscriptAnchorResolver.resolve(
-                                    anchor: record.anchorEvidence,
-                                    recipientTimeline: $0
-                                )
-                            } ?? ImportedAnchorResolution(
-                                evidenceClass: .unresolved,
-                                algorithmVersion: "podcast-transcript-anchor.v1"
-                            )
-                            let acousticResolution = resolutions[record.packageScopedId]
-                                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
-                            return (
-                                record.packageScopedId,
-                                PodcastAnchorFusionResolver.fuse(
-                                    transcript: transcriptResolution,
-                                    acoustic: acousticResolution
-                                )
-                            )
-                        })
-                    )
-                    let projectedResolutions = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
-                        queries: queries,
-                        resolutions: monotonicResolutions
-                    )
-                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingEditionRejection(
-                        acoustic: resolutions,
-                        resolutions: PodcastAnchorFusionResolver.enforcingMonotonicOrder(queries: queries, resolutions: projectedResolutions)
-                    )
-                    var updated = records
-                    for index in updated.indices {
-                        if let resolution = fusedResolutions[updated[index].packageScopedId] {
-                            updated[index].resolution = Self.podcastResolution(
-                                previous: updated[index].resolution, proposed: resolution,
-                                previousEdition: layer.resolvedRecipientEditionSHA256,
-                                currentEdition: recipientDigest, hasTranscript: recipientTranscript != nil)
-                        }
-                    }
-                    layer.resolvedRecipientEditionSHA256 = recipientDigest
-                    let resolutionValues = updated.map(\.resolution)
-                    if resolutionValues.allSatisfy(Self.isInlinePodcastResolution) {
-                        layer.sourceResolutionStatus = .resolved
-                    } else if resolutionValues.contains(where: { $0.evidenceClass == .ambiguous }) {
-                        layer.sourceResolutionStatus = .ambiguous
-                    } else if resolutionValues.allSatisfy({ $0.evidenceClass == .absentFromRecipientEdition }) {
-                        layer.sourceResolutionStatus = .unavailable
-                    } else {
-                        layer.sourceResolutionStatus = .contextOnly
-                    }
+                    let fusedResolutions = ImportedPodcastPlacement.fuse(
+                        queries: queries, records: records, acoustic: resolutions,
+                        recipientTranscript: recipientTranscript)
+                    let updated = ImportedPodcastPlacement.apply(
+                        fusedResolutions, to: records, layer: &layer,
+                        recipientDigest: recipientDigest, hasTranscript: recipientTranscript != nil)
                     var mapOutcome: SharedListeningMapPlacement.Outcome?
                     if layer.listeningMapProposals?.first != nil, layer.editionFingerprintSpines?.first == nil {
                         mapOutcome = .notPlaced(.init(sceneId: nil, sceneLabel: nil, reason: .noEvidence))
@@ -13974,21 +13917,9 @@ final class Gate1AppModel: ObservableObject {
         store: SQLiteSessionStore
     ) -> Bool {
         guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
-        return layers.contains { layer in
-            guard layer.deletedAt == nil,
-                  layer.itemIdentity.itemType == .podcast,
-                  let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id) else {
-                return false
-            }
-            return records.contains { record in
-                !Self.isInlinePodcastResolution(record.resolution)
-                    && PodcastTranscriptAnchorResolver.hasUsableContext(record.anchorEvidence)
-            }
-        }
-    }
-
-    private nonisolated static func isInlinePodcastResolution(_ resolution: ImportedAnchorResolution) -> Bool {
-        PodcastAnchorFusionResolver.isInlinePlacement(resolution)
+        return ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
+            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
+        }.contains { $0.1.contains(where: ImportedPodcastPlacement.recordNeedsTranscript) }
     }
 
     private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {
