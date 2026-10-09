@@ -99,9 +99,13 @@ NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|veri
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
-# "None this time: ..." and "none needed." aren't either (#927: #811's heading section).
-NO_CHECK = re.compile(r'^(none|n/?a|nothing)(?:\s+(?:this time|needed|for now|yet))?\s*(?:[.;:,(\u2014\u2013]|-\s|$)',
-                      re.I)
+# "None this time: ..." and "none needed." aren't either (#927: #811's heading section), nor "none now;
+# ..." / "none at the moment" / "not needed" / "no owner check" (#1193: #177 reached the plan as a check).
+NO_CHECK = re.compile(
+    r'^(?:(?:none|n/?a|nothing)(?:\s+(?:this time|at this time|needed|required|for now|right now|now|yet|currently'
+    r'|at the moment|at all))*'
+    r'|not needed|no (?:(?:owner|phone) )?checks?(?:\s+needed)?)'
+    r'\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
 REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
 # "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927). Plain text
