@@ -96,7 +96,11 @@ INSTRUCTION = (
     "Rank the most severe first. For each: file and line, the scenario, and the "
     "smallest fix. For a matching, sanitizing or page/title parsing finding, list "
     "sibling cases you suspect but did not confirm. Mark them suspected; they are "
-    "not blocking without a concrete failure scenario. No style notes. If you find nothing real, write "
+    "not blocking without a concrete failure scenario. A PR that adds or changes recurring cost (a lane step "
+    "or tier rule, a scheduled or launchd job, an agent loop or worker, a per-PR check, a CI workflow) and "
+    'whose description has no "Cost and catch" section (cost per run, how often, what it catches with '
+    "evidence, the signal that would show it's waste) violates AGENTS.md: report that as blocking. "
+    "No style notes. If you find nothing real, write "
     '"No blocking findings."'
 )
 

@@ -457,6 +457,13 @@ class OutputAndComment(unittest.TestCase):
         self.assertIn('concrete failure scenario', A.INSTRUCTION)
         self.assertIn('No style notes', A.INSTRUCTION)
 
+    def test_instruction_blocks_a_pipeline_pr_without_cost_and_catch(self):
+        # Owner, 2026-10-09: the per-PR app builds ran 140 times in a week and caught nothing (#1196); a PR adding
+        # recurring cost must say what it costs and catches, and the audit blocks one that doesn't (#1202).
+        self.assertIn('"Cost and catch"', A.INSTRUCTION)
+        self.assertIn('recurring cost', A.INSTRUCTION)
+        self.assertIn('report that as blocking', A.INSTRUCTION)
+
     ANSWER = (
         "### PR #366\n\n1. **Plausible:** `Foo.swift:12` scenario.\n\n"
         "### PR #372: Speak leftover URL fragments\nNo blocking findings.\n"
