@@ -21,7 +21,7 @@
    Each folder is checked again just before it's deleted. Other files in `/private/tmp/claude-<uid>/` are left alone.
 4. **Ad-hoc test folders in `/private/tmp`** named `spoken-margins-*`, your own, when no process works in or holds a file open in them and nothing in them changed for 12 hours. A Test Desk copy there held 4.2 GiB on 2026-10-09.
 5. **Old iOS DeviceSupport folders.** It keeps the newest one and the one with the highest iOS version.
-6. **Moves to the external drives.** It moves `artifacts/` folders in the main checkout untouched for 2 days, older phone builds (never `latest`, the installed one, or the newest two), and Claude and Codex session logs untouched for 3 days. Each goes to `/Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path under your home folder>`, plus a second copy on the separate mirror disk at `/Volumes/SlawArchiveMirror/Current/SlawBulk/...`. Each copy is written under a `.partial` name and checked by size and file count. The original is deleted only after both copies match and the original hasn't changed. Without SlawBulk or the mirror disk, moves are skipped and the other steps still run. A `MANIFEST.txt` on each drive lists every move. Moved artifacts and phone builds also get a `MOVED-TO-SLAWBULK.txt` note in their old folder.
+6. **Moves to the external drives.** It moves `artifacts/` folders in the main checkout untouched for 2 days, older phone builds (never `latest`, the installed one, or the newest two), and Claude and Codex session logs untouched for 3 days. Each goes to `/Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path under your home folder>`. When the mirror disk happens to be mounted, a second copy goes to `/Volumes/SlawArchiveMirror/Current/SlawBulk/...`; it isn't required, because the mirror is for highly sensitive data and is stored away from the desk (owner, 2026-10-09). Each copy is written under a `.partial` name and checked by size and file count. The original is deleted only after every copy matches and the original hasn't changed. Without SlawBulk, moves are skipped and the other steps still run. SlawBulk counts as "not writable" until the job's Python (`/Applications/Xcode.app/Contents/Developer/usr/bin/python3`) has Full Disk Access. A `MANIFEST.txt` on each drive lists every move. Moved artifacts and phone builds also get a `MOVED-TO-SLAWBULK.txt` note in their old folder.
 
 It never touches the self-hosted runner folders, `~/.codex/worktrees`, simulators (CoreSimulator), app data, or the external drives' existing files. It never removes a standing checkout (the main one, `-test-desk`, `-finisher` and the other `spoken-margins-native*` folders). Stale worktrees it may not remove are listed in the log with the reason, for you to remove.
 
@@ -61,9 +61,12 @@ launchctl bootout gui/$(id -u)/com.spokenmargins.disk-relief
 rm ~/Library/LaunchAgents/com.spokenmargins.disk-relief.plist
 ```
 
-## When free space looks stuck
+## Time Machine local snapshots
 
-A Time Machine local snapshot can keep deleted files on disk, so free space doesn't rise. The routine counts what it cleared and stops at the target by that count, so it doesn't clear everything chasing a number that won't move. The log and notification say when this happens. `tmutil listlocalsnapshots /` shows the snapshots. Deleting one is your call; the routine never does it.
+A Time Machine local snapshot keeps deleted files on disk, so free space doesn't rise. On 2026-10-04 the routine cleared 17 GiB and free space didn't move.
+
+- **Overnight clearing** (owner, 2026-10-09: "We can delete snapshots overnight"). Once a night, on the first run between 02:00 and 05:00, it deletes every local snapshot of the Mac's disk with `tmutil deletelocalsnapshots <date>`, whatever the free space. It skips a run while a backup is running, or when `tmutil status` can't be read, and tries again later in the window. Each deletion goes to the log, and `snapshots-cleared.txt` records the night. Backups on the Time Machine drive aren't touched. Excluding folders from Time Machine wouldn't help: a local snapshot holds the whole disk.
+- **During the day** the routine counts what it cleared and stops at the target by that count, so it doesn't clear everything chasing a number that won't move. The log and notification say when space is held. `tmutil listlocalsnapshots /` shows the snapshots.
 
 ## Tests
 
