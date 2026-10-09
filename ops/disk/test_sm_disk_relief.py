@@ -112,6 +112,7 @@ class Base(unittest.TestCase):
             codex_sessions=home / '.codex/sessions',
             claude_tmp=home / 'tmp/claude-501',
             claude_sessions=home / '.claude/sessions',
+            tmp_root=home / 'tmp',
             own_session=None,
             trigger_bytes=100 * MiB,
             target_bytes=104 * MiB,
@@ -126,7 +127,7 @@ class Base(unittest.TestCase):
         repo.mkdir(parents=True, exist_ok=True)
         git(repo, 'init', '-q', '-b', 'next')
         write(repo / 'README.md', 10)
-        (repo / '.gitignore').write_text('.build/\nartifacts/\nPackages/SessionKit/.build/\n')
+        (repo / '.gitignore').write_text('.build/\nartifacts/\nPackages/SessionKit/.build/\n.venv\nnode_modules\n.swiftpm\n')
         git(repo, 'add', '.')
         git(repo, 'commit', '-qm', 'one')
         git(repo, 'update-ref', 'refs/remotes/origin/next', 'HEAD')
@@ -157,15 +158,25 @@ class Thresholds(Base):
         self.assertFalse(result.acted)
         self.assertTrue(c.exists())
 
-    def test_drive_missing_means_no_action_at_all(self):
+    def test_without_the_drive_caches_still_go_and_moves_wait(self):
+        # 2026-10-04 to 10-09 every run logged "did nothing" because SlawBulk was unplugged or
+        # unwritable, while free space fell to 16.9 GiB: deleting caches needs no drive (#1211).
         _, (w,) = self.make_repo('a')
         c = self.cache(w, MiB)
+        evidence = write(self.cfg.repo / 'artifacts/lane/full-old/report.md', 1000).parent
+        age_tree(evidence, 5 * DAY)
         m = FakeMachine(self.cfg, base_free=10 * MiB, mounted=[])
         result = d.run(self.cfg, m, self.log)
-        self.assertFalse(result.acted)
-        self.assertIn('not mounted', result.reason)
-        self.assertTrue(c.exists())
-        self.assertEqual(m.notes, [])
+        self.assertTrue(result.acted)
+        self.assertFalse(c.exists())
+        self.assertTrue(evidence.exists(), 'moved evidence without the drive')
+        self.assertTrue(any('moves skipped' in line and 'not mounted' in line for line in self.log.lines),
+                        self.log.lines)
+
+    def test_default_trigger_leaves_room_for_a_build(self):
+        cfg = d.Config()
+        self.assertGreaterEqual(cfg.trigger_bytes, 50 * d.GiB, 'one app build takes 8 to 9 GiB')
+        self.assertGreater(cfg.target_bytes, cfg.trigger_bytes)
 
     def test_stops_once_free_space_reaches_the_target(self):
         _, (a, b, c) = self.make_repo('a', 'b', 'c')
@@ -517,15 +528,104 @@ class DryRun(Base):
         self.assertTrue(any(str(c) in line for line in out))
         self.assertEqual(list(self.cfg.drive.iterdir()), [])
 
-    def test_stale_worktrees_are_listed_not_removed(self):
-        repo, (clean, dirty, in_use) = self.make_repo('clean', 'dirty', 'in-use')
-        desk = self.cfg.home / 'Documents/GitHub/spoken-margins-native-test-desk'
-        git(repo, 'worktree', 'add', '-q', '--detach', str(desk))
-        write(dirty / 'wip.txt', 10)
-        m = FakeMachine(self.cfg, 0, procs=[d.Proc(5, str(in_use), 'claude')])
+    def test_dry_run_removes_no_worktree(self):
+        _, (done,) = self.make_repo('done')
+        age_tree(done, 2 * DAY)
+        out = d.dry_run(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB), None)
+        self.assertTrue(done.exists())
+        self.assertTrue(any('worktree' in line and str(done) in line for line in out), out)
+
+
+class Worktrees(Base):
+    """Real git worktrees; `git worktree remove` does the removing."""
+
+    def finished(self, tree: Path) -> Path:
+        self.cache(tree, MiB)
+        self.cache(tree, MiB, sub='Packages/SessionKit/.build')
+        os.symlink(self.cfg.repo / '.venv', tree / '.venv')
+        write(tree / 'Packages/SessionKit/.swiftpm/xcode/state.bin', 10)
+        age_tree(tree, 2 * DAY)
+        return tree
+
+    def test_a_finished_worktree_goes_whole_and_its_cache_is_not_planned_twice(self):
+        repo, (done,) = self.make_repo('done')
+        self.finished(done)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
         plan = d.make_plan(self.cfg, m)
-        self.assertEqual(plan.stale_worktrees, [clean])
-        self.assertTrue(clean.exists())
+        self.assertEqual([(c.step, c.path) for c in plan.candidates], [('worktree', done)])
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(done.exists())
+        listed = subprocess.run(['git', '-C', str(repo), 'worktree', 'list'], capture_output=True, text=True).stdout
+        self.assertNotIn(str(done), listed)
+        self.assertTrue((repo / 'README.md').exists())
+
+    def test_worktrees_that_must_stay(self):
+        repo, (dirty, busy, recent, evidence, locked, session, ahead) = self.make_repo(
+            'dirty', 'busy', 'recent', 'evidence', 'locked', 'session', 'ahead')
+        desk = self.cfg.home / 'Documents/GitHub/spoken-margins-native-test-desk'
+        elsewhere = self.cfg.home / 'SpokenMarginsOps/finisher/pr-1'
+        for path in (desk, elsewhere):
+            git(repo, 'worktree', 'add', '-q', '--detach', str(path))
+        write(dirty / 'wip.txt', 10)
+        write(evidence / 'artifacts/run/report.md', 10)
+        git(repo, 'worktree', 'lock', str(locked))
+        git(ahead, 'commit', '-q', '--allow-empty', '-m', 'not in next yet')
+        for tree in (dirty, busy, evidence, locked, session, ahead, desk, elsewhere):
+            age_tree(tree, 2 * DAY)
+        self.cfg.claude_sessions.mkdir(parents=True)
+        (self.cfg.claude_sessions / '77.json').write_text(json.dumps(
+            {'pid': 77, 'sessionId': 's', 'cwd': str(session / 'App')}))
+        m = FakeMachine(self.cfg, base_free=10 * MiB, procs=[d.Proc(5, str(busy), 'zsh')], live_pids={77})
+        plan = d.make_plan(self.cfg, m)
+        self.assertNotIn('worktree', {c.step for c in plan.candidates})
+        kept = dict(plan.stale_worktrees)
+        self.assertIn('24 hours', kept[recent])
+        self.assertIn('artifacts/', kept[evidence])
+        self.assertIn('locked', kept[locked])
+        self.assertIn('Claude Code session', kept[session])
+        self.assertIn('.claude/worktrees', kept[elsewhere])
+        for tree in (dirty, busy, ahead, desk):
+            self.assertNotIn(tree, kept, 'listed a worktree that is not stale or is in use')
+        d.run(self.cfg, m, self.log)
+        for tree in (dirty, busy, recent, evidence, locked, session, ahead, desk, elsewhere):
+            self.assertTrue(tree.exists(), tree)
+        self.assertTrue((dirty / 'wip.txt').exists())
+
+    def test_a_worktree_that_changes_after_planning_is_kept(self):
+        _, (done,) = self.make_repo('done')
+        self.finished(done)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        write(done / 'new-idea.txt', 10)
+        d.execute(self.cfg, m, plan, self.log, 10 * MiB)
+        self.assertTrue((done / 'new-idea.txt').exists())
+
+
+class TmpFolders(Base):
+    def folder(self, name: str, age: float) -> Path:
+        path = self.cfg.tmp_root / name
+        write(path / 'repo/blob', MiB)
+        age_tree(path, age)
+        return path
+
+    def test_old_test_folders_go_and_others_stay(self):
+        old = self.folder('spoken-margins-test-desk-1234', 2 * DAY)
+        recent = self.folder('spoken-margins-test-desk-5678', 2 * 3600)
+        other = self.folder('somebody-else', 9 * DAY)
+        held = self.folder('spoken-margins-held', 2 * DAY)
+        with open(held / 'repo/blob', 'rb'):
+            age_tree(held, 2 * DAY)
+            result = d.run(self.cfg, FakeMachine(self.cfg, base_free=90 * MiB), self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists() and other.exists() and held.exists())
+
+    def test_a_process_working_there_keeps_it(self):
+        old = self.folder('spoken-margins-x', 2 * DAY)
+        m = FakeMachine(self.cfg, base_free=90 * MiB, procs=[d.Proc(3, str(old / 'repo'), 'zsh')])
+        d.run(self.cfg, m, self.log)
+        self.assertTrue(old.exists())
 
 
 if __name__ == '__main__':
