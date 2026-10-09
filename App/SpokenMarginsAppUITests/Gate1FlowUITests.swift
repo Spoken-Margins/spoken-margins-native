@@ -183,15 +183,27 @@ final class Gate1FlowUITests: XCTestCase {
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+        let search = app.textFields["library.search.field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 4))
+        let searchTop = search.frame.minY
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
+        // #1149: the completion banner is the app's shared one and floats over the list.
         XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("app.feedback.banner").exists)
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "The banner must not push the Library down")
         XCTAssertFalse(row.exists)
         element("completion.undo.button").tap()
         XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "Undo must not move the Library")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
-        let search = app.textFields["library.search.field"]
+        XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        captureScreen(named: "library-completion-banner")
+        // The banner dismisses itself (#123); it also covers the top of the list while it shows.
+        XCTAssertTrue(element("app.feedback.banner").waitForNonExistence(timeout: 12))
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "The Library must not move when the banner goes")
+        captureScreen(named: "library-completion-notice-expired")
         search.tap()
         search.typeText("pill")
         XCTAssertFalse(row.exists)
@@ -199,9 +211,6 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["All items"].exists)
         captureScreen(named: "library-completed-search-and-undo")
-        XCTAssertTrue(element("completion.undo.banner").waitForNonExistence(timeout: 12))
-        XCTAssertTrue(row.exists)
-        captureScreen(named: "library-completion-notice-expired")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
