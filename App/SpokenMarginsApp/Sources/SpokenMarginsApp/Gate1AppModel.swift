@@ -13919,12 +13919,16 @@ final class Gate1AppModel: ObservableObject {
                     defer { self.sharedMarginPlacementPasses.end(.matching, itemId: itemId) }
                     guard let store = self.store else { return }
                     do {
-                        let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
+                        // A layer the listener deleted while the pass ran takes no part in its result (#915).
+                        let livingWork = try resolvedWork.filter { work in
+                            try store.loadImportedCommentaryLayer(id: work.0.id).map { $0.deletedAt == nil } ?? false
+                        }
+                        let outcomes = livingWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
                         let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
                         let activation = SharedListeningMapPlacement.activation(
                             outcomes, listenerHasMap: try Self.listenerHasListeningMap(itemId: itemId, store: store),
                             activeProjectionId: current?.id)
-                        for (layer, records, outcome) in resolvedWork {
+                        for (layer, records, outcome) in livingWork {
                             var layer = layer
                             layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
                             // Only the pass's own fields, onto the layer as stored now: the listener may have
@@ -13932,7 +13936,7 @@ final class Gate1AppModel: ObservableObject {
                             guard try store.savePlacementResult(of: layer) else { continue }
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
                         }
-                        let sharedProposals = Dictionary(resolvedWork.compactMap { work in
+                        let sharedProposals = Dictionary(livingWork.compactMap { work in
                             work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
                         }, uniquingKeysWith: { first, _ in first })
                         if activation.refusal != nil, let stale = current, sharedProposals[stale.id] != nil {
@@ -13959,8 +13963,8 @@ final class Gate1AppModel: ObservableObject {
                             }
                         }
                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
-                        let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
-                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count) \(SharedMarginPlacementSummary(resolvedWork.map { ($0.0, $0.1) }).diagnosticValue)"
+                        let resolvedCount = livingWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(livingWork.count) \(SharedMarginPlacementSummary(livingWork.map { ($0.0, $0.1) }).diagnosticValue)"
                         if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
                             self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
                         }
