@@ -7,10 +7,12 @@
 launchd starts it every 10 minutes. It stops at the first reason to wait:
 
 1. The tip already has a result here, or any runner's `Lane report integration-<sha7>` is on #184.
-2. Less than 30 minutes since its last start.
-3. Memory pressure isn't normal.
-4. Free disk is under 10 GB plus 4 GB per running `xcodebuild`.
-5. The Mac-wide simulator slot is busy (the lane's own lock, taken without waiting).
+2. Memory pressure isn't normal.
+3. Free disk is under 10 GB plus 4 GB per running `xcodebuild`.
+4. The Mac-wide simulator slot is busy (the lane's own lock, taken without waiting).
+5. A `/lane` request of T3 or above is waiting for a lane runner. Those decide what merges, so they go first. This holds only while `next` has had an integration report, or a start here, in the last 3 hours, so a busy lane can't starve it.
+
+There is no fixed spacing: when the lane is quiet, each new tip is tested within about 10 minutes, and tips that land during a run are tested together at the newest one.
 
 Otherwise it tests the tip in its own detached worktree (`~/SpokenMarginsOps/integration-run/worktree`):
 

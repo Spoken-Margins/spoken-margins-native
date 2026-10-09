@@ -2,7 +2,7 @@
 """Test each new tip of origin/next with --plan app, unattended and without a model (#1178).
 
 Stdlib only, Python 3.9+. launchd ticks every 10 minutes. A tip is tested once, by whoever
-reports first on #184, when the Mac has room. Failing tests are re-run twice on the same build
+reports first on #184, when the Mac has room and no lane app tests are waiting for the simulator. Failing tests are re-run twice on the same build
 to rule out a flake. Only a confirmed failure calls Claude (`claude -p`, read-only tools,
 structured output) to group the failures and name a likely culprit; the script files the
 issues itself. No job is installed by this script; see README.md.
@@ -30,7 +30,7 @@ HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME', Path.home() / 'SpokenMargi
 BASE_BRANCH = 'next'
 REPORT_ISSUE = 184
 RUN_BY = 'integration script'
-SPACING_SECONDS = 30 * 60
+LANE_YIELD_SECONDS = 3 * 60 * 60     # lane app tests go first, unless next has gone this long untested
 MIN_FREE_GB = 10
 PER_BUILD_GB = 4
 RERUNS = 2
@@ -51,6 +51,8 @@ import lane_slots  # noqa: E402
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
 REPORT_RE = re.compile(r'^Lane report integration-([0-9a-f]{7,40}) — (PASS|FAIL|INCONCLUSIVE)\b')
+LANE_REQUEST_RE = re.compile(r'^\s*/lane\s+T(\d)\b', re.M)  # as scripts/lane-runner.py reads requests
+WAITING_STATUSES = {'queued', 'waiting', 'pending', 'requested'}
 
 
 # Pure decisions and text: no simulator, GitHub or Claude needed in host tests.
@@ -74,15 +76,41 @@ def last_green(reports: list[tuple[str, str]]) -> Optional[str]:
     return next((sha7 for sha7, verdict in reversed(reports) if verdict == 'PASS'), None)
 
 
+def report_time(comments: list[dict]) -> Optional[float]:
+    """When the newest integration report on #184 was posted, whoever ran it."""
+    times = [dt.datetime.fromisoformat(c['created_at'].replace('Z', '+00:00')).timestamp()
+             for c in comments if reported([c['body']])]
+    return max(times, default=None)
+
+
+def lane_requests_waiting(runs: list[dict]) -> list[int]:
+    """PRs with a /lane request waiting for a lane runner, from lane.yml's run names (#860 format)."""
+    prs = []
+    for r in runs:
+        match = re.search(r'\bpr=(\d+)\b.*\blane=true\b', r.get('displayTitle') or '')
+        if r.get('status') in WAITING_STATUSES and match and int(match.group(1)) not in prs:
+            prs.append(int(match.group(1)))
+    return prs
+
+
+def needs_simulator(comment_bodies: list[str]) -> bool:
+    """Whether a PR's newest /lane request is T3 or above (app tests on a simulator), not a T2 build."""
+    tiers = [int(m) for body in comment_bodies for m in LANE_REQUEST_RE.findall(body or '')]
+    return bool(tiers) and tiers[-1] >= 3
+
+
 def hold_reason(sha: str, state: dict, reports: list[tuple[str, str]], now: float,
-                pressure: Optional[int], free_bytes: int, builds: int, slot_busy: bool) -> Optional[str]:
-    """Why this tick tests nothing, or None. Cheapest and most final reasons first."""
+                pressure: Optional[int], free_bytes: int, builds: int, slot_busy: bool,
+                lane_waiting: list[int] = (), last_tested: Optional[float] = None) -> Optional[str]:
+    """Why this tick tests nothing, or None. Cheapest and most final reasons first.
+
+    There is no fixed spacing: a new tip is tested as soon as the Mac has room. Lane app tests
+    waiting for the simulator go first, because they decide what merges, unless next has gone
+    LANE_YIELD_SECONDS without an integration run (a busy lane must not starve it)."""
     if sha in state.get('results', {}):
         return 'already tested ' + sha[:7]
     if any(sha7 == sha[:7] for sha7, _ in reports):
         return f'#{REPORT_ISSUE} already has an integration report for {sha[:7]}'
-    if 'last_started' in state and now - state['last_started'] < SPACING_SECONDS:
-        return f'less than {SPACING_SECONDS // 60} minutes since the last run started'
     if pressure != 1:
         return f"memory pressure is {lane_slots.PRESSURE_NAMES.get(pressure, 'unreadable')}, not normal"
     need = MIN_FREE_GB + PER_BUILD_GB * builds
@@ -90,6 +118,9 @@ def hold_reason(sha: str, state: dict, reports: list[tuple[str, str]], now: floa
         return f'{free_bytes / 10**9:.0f} GB free, needs {need} GB ({builds} build(s) running)'
     if slot_busy:
         return 'Mac-wide simulator slot is busy'
+    if lane_waiting and last_tested is not None and now - last_tested < LANE_YIELD_SECONDS:
+        return ('lane app tests are waiting (' + ', '.join(f'#{n}' for n in lane_waiting)
+                + '); they go first')
     return None
 
 
@@ -171,7 +202,8 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
              f'commit {sha[:8]} (next\'s tip) · integration run: --plan app · '
              f'{clock(started)}–{clock(finished)} local, {day}',
              f'run by: {RUN_BY}',
-             f'why it ran: {why}; the Mac had room (simulator slot free, memory normal, disk above the line).',
+             f'why it ran: {why}; the Mac had room (simulator slot free, memory normal, disk above the line) '
+             'and no lane app tests were waiting, or next had gone 3 hours untested.',
              'ran:',
              f"  1. --plan app: {c['passed']} passed, {c['failed']} failed, {c['skipped']} skipped  ← verdict input"]
     if result.get('reruns'):
@@ -375,12 +407,27 @@ class Ops:
     def gh_json(self, args: list):
         return json.loads(self.must(['gh', *args]).stdout or 'null')
 
-    def report_bodies(self) -> list[str]:
+    def report_comments(self) -> list[dict]:
+        """#184's recent comments, oldest first, as {'created_at', 'body'}."""
         since = (dt.datetime.now(dt.timezone.utc) - REPORT_LOOKBACK).strftime('%Y-%m-%dT%H:%M:%SZ')
         out = self.must(['gh', 'api', '--paginate',
                          f'repos/{REPO}/issues/{REPORT_ISSUE}/comments?since={since}&per_page=100',
-                         '--jq', '.[].body | @json']).stdout
+                         '--jq', '.[] | {created_at, body} | @json']).stdout
         return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+    def lane_waiting(self) -> list[int]:
+        """PRs whose waiting /lane request needs the simulator. A GitHub error counts as none
+        waiting: the simulator slot itself is still taken exclusively, so the lane can't be hurt."""
+        try:
+            runs = self.gh_json(['run', 'list', '-R', REPO, '--workflow', 'lane.yml', '--limit', '50',
+                                 '--json', 'status,displayTitle'])
+            return [n for n in lane_requests_waiting(runs or [])
+                    if needs_simulator(json.loads(self.must(
+                        ['gh', 'api', '--paginate', f'repos/{REPO}/issues/{n}/comments',
+                         '--jq', '[.[].body]']).stdout or '[]'))]
+        except (RuntimeError, ValueError) as error:
+            self.log('lane queue unreadable, not waiting for it: ' + str(error)[:200])
+            return []
 
     def free_bytes(self) -> int:
         return shutil.disk_usage(self.repo_root).free
@@ -539,9 +586,12 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             # The tick holds its lock for the whole run, so this one was cut off (restart, kill).
             record['verdict'] = 'INCONCLUSIVE'
             record['errors'] = record.get('errors', []) + ['run stopped before completion']
-    reports = reported(ops.report_bodies())
+    comments = ops.report_comments()
+    reports = reported([c['body'] for c in comments])
+    tested = [t for t in (report_time(comments), state.get('last_started')) if t is not None]
     why = hold_reason(sha, state, reports, now, lane_slots.memory_pressure_level(), ops.free_bytes(),
-                      ops.builds_running(), lane_slots.simulator_job_running())
+                      ops.builds_running(), lane_slots.simulator_job_running(),
+                      ops.lane_waiting(), max(tested, default=None))
     if why:
         say('hold: ' + why)
         return 'held'

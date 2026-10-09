@@ -17,6 +17,7 @@ TEST = 'SpokenMarginsAppTests/PlaybackTests/testResume'
 OTHER = 'SpokenMarginsAppTests/ImportTests/testPaste'
 JOURNEY = 'SpokenMarginsAppUITests/J1ListenToAnArticleJourneyUITests'
 GB = 10**9
+REPORTED_AT = 1791514182.0  # 2026-10-09T02:49:42Z, the time FakeOps gives its reports
 
 
 def manifest(tests: dict, interrupted=False, probation=None):
@@ -68,7 +69,6 @@ class HoldTests(unittest.TestCase):
     def test_each_reason_to_wait(self):
         cases = [(dict(state={'results': {SHA: {}}}), 'already tested'),
                  (dict(reports=[(SHA[:7], 'PASS')]), 'already has an integration report'),
-                 (dict(state={'results': {}, 'last_started': 10_000 - 29 * 60}), '30 minutes'),
                  (dict(pressure=2), 'warn'),
                  (dict(pressure=None), 'unreadable'),
                  (dict(free_bytes=9 * GB), 'needs 10 GB'),
@@ -77,13 +77,53 @@ class HoldTests(unittest.TestCase):
         for over, words in cases:
             with self.subTest(over=over):
                 self.assertIn(words, self.hold(**over))
-        self.assertIsNone(self.hold(state={'results': {}, 'last_started': 10_000 - 30 * 60}))
+        # No fixed spacing: a new tip right after the last run is tested at once.
+        self.assertIsNone(self.hold(state={'results': {OLD: {}}, 'last_started': 10_000 - 60}))
         self.assertIsNone(self.hold(free_bytes=18 * GB, builds=2))
 
     def test_another_runner_s_report_on_this_tip_counts_once_per_tip(self):
         # The scheduled task and the standing Test Desk post the same heading.
         self.assertIsNone(self.hold(reports=[(OLD[:7], 'PASS')]))
         self.assertIn('already', self.hold(reports=[(OLD[:7], 'PASS'), (SHA[:7], 'FAIL')]))
+
+
+class LaneYieldTests(unittest.TestCase):
+    HOUR = 3600
+
+    def hold(self, waiting, since_tested):
+        return run.hold_reason(SHA, {'results': {}}, [], 100_000, 1, 50 * GB, 0, False,
+                               waiting, None if since_tested is None else 100_000 - since_tested)
+
+    def test_waiting_lane_app_tests_go_first(self):
+        self.assertIn('lane app tests are waiting (#1179, #1172)', self.hold([1179, 1172], 600))
+        self.assertIsNone(self.hold([], 600))
+
+    def test_a_busy_lane_cannot_starve_next_for_more_than_three_hours(self):
+        self.assertIn('waiting', self.hold([1179], 3 * self.HOUR - 1))
+        self.assertIsNone(self.hold([1179], 3 * self.HOUR))
+        self.assertIsNone(self.hold([1179], None))  # never tested: test now
+
+    def test_reads_waiting_requests_from_lane_run_names(self):
+        runs = [{'status': 'queued', 'displayTitle': 'lane pr=1179 head=debe880 lane=true auto=false'},
+                {'status': 'queued', 'displayTitle': 'lane pr=1179 head=ebe9ebc lane=true auto=false'},
+                {'status': 'in_progress', 'displayTitle': 'lane pr=1172 head=270f77e lane=true auto=false'},
+                {'status': 'queued', 'displayTitle': 'lane pr=1182 head=fdb2ddc lane=false auto=true'},
+                {'status': 'waiting', 'displayTitle': 'lane pr=1166 head=3fcf206 lane=true auto=true'},
+                {'status': 'completed', 'displayTitle': 'lane pr=1176 head=cce1788 lane=true auto=false'}]
+        self.assertEqual(run.lane_requests_waiting(runs), [1179, 1166])
+
+    def test_only_a_t3_or_higher_request_needs_the_simulator(self):
+        self.assertTrue(run.needs_simulator(['/lane T2', 'LGTM', '/lane T3\ntests: PlaybackTests']))
+        self.assertFalse(run.needs_simulator(['/lane T3', 'later:\n/lane T2']))  # the newest request counts
+        self.assertFalse(run.needs_simulator(['Lane report 1179-t3 — PASS', 'no request here']))
+        self.assertTrue(run.needs_simulator(['  /lane T4\nrun: J1']))
+
+    def test_newest_report_time_from_any_runner(self):
+        comments = [{'created_at': '2026-10-09T02:49:42Z', 'body': report_comment('00769a9', 'PASS')},
+                    {'created_at': '2026-10-09T05:00:00Z', 'body': 'Test Desk hand-off'},
+                    {'created_at': '2026-10-08T20:00:00Z', 'body': report_comment('eed64d1', 'PASS', by='Test Desk')}]
+        self.assertEqual(run.report_time(comments), REPORTED_AT)
+        self.assertIsNone(run.report_time(comments[1:2]))
 
 
 class VerdictTests(unittest.TestCase):
@@ -225,9 +265,10 @@ class DiagnosisTests(unittest.TestCase):
 class FakeOps(run.Ops):
     """Real tick, fake boundaries: git, GitHub, the simulator and Claude."""
 
-    def __init__(self, tmp, plans, bodies=()):
+    def __init__(self, tmp, plans, bodies=(), waiting=()):
         super().__init__(home=Path(tmp) / 'home', repo_root=Path(tmp) / 'repo', run=self.fake_run, echo=False)
         (Path(tmp) / 'repo').mkdir()
+        self.waiting = list(waiting)
         self.plans, self.bodies, self.calls, self.posted, self.filed, self.diagnosed = list(plans), list(bodies), [], [], [], []
 
     def fake_run(self, cmd, cwd=None, timeout=None, stdin=None, env=None):
@@ -243,8 +284,11 @@ class FakeOps(run.Ops):
             return run.Result(0, 'Merge pull request #1170 from uncomposed/ws/1170-x\n')
         return run.Result(0, '')
 
-    def report_bodies(self):
-        return self.bodies
+    def report_comments(self):
+        return [{'created_at': '2026-10-09T02:49:42Z', 'body': b} for b in self.bodies]
+
+    def lane_waiting(self):
+        return self.waiting
 
     def free_bytes(self):
         return 50 * GB
@@ -283,6 +327,12 @@ class TickTests(unittest.TestCase):
             ops = FakeOps(tmp, [], bodies=[report_comment(SHA[:7], 'PASS', by='Test Desk')])
             self.assertEqual(run.tick(ops), 'held')
         self.assertFalse(any(c[:3] == ['git', 'worktree', 'add'] for c in ops.calls))
+        self.assertEqual(ops.posted, [])
+
+    def test_waiting_lane_app_tests_hold_a_new_tip(self):
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room(), patch.object(run.time, 'time', return_value=REPORTED_AT + 600):
+            ops = FakeOps(tmp, [], bodies=[report_comment(OLD[:7], 'PASS')], waiting=[1179])
+            self.assertEqual(run.tick(ops), 'held')
         self.assertEqual(ops.posted, [])
 
     def test_pass_posts_one_report_and_records_the_tip(self):
