@@ -387,6 +387,16 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// Whether the media session on `itemId` is playing `playbackURL`. A session keeps the edition it started on
+    /// (see `updatePlaybackTransport`), so a download that finishes mid-session is not what the listener hears (#914).
+    /// Nil when no media session on the item has chosen its edition yet.
+    public func mediaSessionPlays(itemId: String, playbackURL: String) -> Bool? {
+        guard let session = currentSession, session.itemId == itemId,
+              let pinned = pinnedMediaTransport,
+              pinned.sessionId == session.id, pinned.targetId == session.currentTargetId else { return nil }
+        return pinned.playbackURL == playbackURL
+    }
+
     @discardableResult
     public func stopPlayback() throws -> SessionSnapshot {
         try requireNavigationAllowed("stopPlayback")

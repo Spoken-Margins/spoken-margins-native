@@ -7185,6 +7185,44 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.startSession(itemId: item.id)
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
     }
+
+    /// #914: shared Margins are placed against the edition the listener hears, so the engine says which file a session plays.
+    func testMediaSessionReportsWhichEditionItPlays() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "podcast-edition-report",
+            displayName: "Podcast edition report",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/episode.mp3"
+        let local = URL(fileURLWithPath: "/tmp/episode-edition.mp3").absoluteString
+        let item = Item(
+            id: "episode-edition",
+            title: "Episode",
+            mediaType: "audio",
+            text: nil,
+            externalReference: remote,
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 120_000)
+        )
+        let engine = SessionEngine(
+            profile: profile, repository: InMemorySessionRepository(items: [item.id: item]), audio: RecordingAudioClient()
+        )
+        XCTAssertNil(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), "no session")
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), false, "streaming")
+        XCTAssertNil(engine.mediaSessionPlays(itemId: "another-item", playbackURL: local))
+
+        _ = try engine.updatePlaybackTransport(itemId: item.id, playbackURL: local, replaceActivePlayback: false)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), false, "the download finished mid-session")
+
+        _ = try engine.updatePlaybackTransport(itemId: item.id, playbackURL: local)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), true, "Download Again moved the session")
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), true, "a new session starts on the download")
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: "file:///tmp/other.mp3"), false)
+    }
 }
 
 private final class DelayedPositionAudioClient: AudioPlaybackClient {
