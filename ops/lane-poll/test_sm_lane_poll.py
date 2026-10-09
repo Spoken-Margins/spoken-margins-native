@@ -13,6 +13,9 @@ import sm_lane_poll as P  # noqa: E402
 REPO = P.REPO
 ROOT = Path(__file__).resolve().parents[2]
 SHARING = 'Packages/SessionKit/Sources/SessionKitSharing/Packet.swift'
+COMPAT = [P.glob_regex(pattern) for pattern in (
+    'Packages/SessionKit/Sources/SessionKitSharing/**', 'Packages/SessionKit/Sources/SessionKit/*Models*.swift',
+    'Packages/SessionKit/Tests/*/Build29DatabaseFixtureTests.swift', '.github/workflows/shipped-build-compat.yml')]
 
 
 def pr(number, head, labels=(), repo=REPO, base='next'):
@@ -35,14 +38,15 @@ def state(**changes):
     return base
 
 
-def decide(prs, events=(), next_sha='n1', current=None, files=()):
+def decide(prs, events=(), next_sha='n1', current=None, files=(), compat=None):
     asked = []
 
     def files_for(number):
         asked.append(number)
         return list(files)
 
-    jobs, new = P.decide(prs, list(events), next_sha, current or state(next_sha='n1'), files_for)
+    jobs, new = P.decide(prs, list(events), next_sha, current or state(next_sha='n1'), files_for,
+                         COMPAT if compat is None else compat)
     return jobs, new, asked
 
 
@@ -104,10 +108,26 @@ class GlobTests(unittest.TestCase):
                 self.assertEqual(bool(P.glob_regex(pattern).match(path)), expected)
 
     def test_touches_compat(self):
-        self.assertTrue(P.touches_compat(['README.md', SHARING]))
-        self.assertTrue(P.touches_compat(['scripts/freeze-shipped-reader.sh']))
-        self.assertFalse(P.touches_compat(['README.md', 'App/SpokenMarginsApp/Gate1AppModel.swift']))
-        self.assertFalse(P.touches_compat([]))
+        self.assertTrue(P.touches_compat(['README.md', SHARING], COMPAT))
+        self.assertTrue(P.touches_compat(['Packages/SessionKit/Sources/SessionKit/MarginModels.swift'], COMPAT))  # * inside a name
+        self.assertFalse(P.touches_compat(['Packages/SessionKit/Sources/SessionKit/Models/Deep.swift'], COMPAT))
+        self.assertFalse(P.touches_compat(['README.md', 'App/SpokenMarginsApp/Gate1AppModel.swift'], COMPAT))
+        self.assertFalse(P.touches_compat([], COMPAT))
+        self.assertFalse(P.touches_compat([SHARING], []))  # no filter loaded: nothing matches
+
+    def test_workflow_paths_reads_the_list_and_stops_at_the_next_key(self):
+        text = ("on:\n  pull_request:\n    branches: [next]\n    paths-ignore:\n      - 'docs/**'\n    paths:\n"
+                "      - 'a/**'\n      # a note between entries\n\n      - \"b/*.swift\"\n      - c/plain.sh  # trailing\n"
+                "\npermissions:\n  contents: read\n  - 'not/a/path'\n")
+        self.assertEqual(P.workflow_paths(text), ['a/**', 'b/*.swift', 'c/plain.sh'])
+        self.assertEqual(P.workflow_paths('on:\n  push:\n    branches: [next]\n'), [])
+
+    def test_a_negated_filter_is_refused_not_guessed(self):
+        with self.assertRaises(ValueError):
+            P.workflow_paths("paths:\n  - 'a/**'\n  - '!a/skip/**'\n")
+
+    def test_a_missing_workflow_file_means_no_compat_jobs(self):
+        self.assertEqual(P.load_compat_patterns(Path('/nonexistent/shipped-build-compat.yml')), [])
 
 
 class DecideTests(unittest.TestCase):
@@ -213,7 +233,8 @@ class RunOnceTests(unittest.TestCase):
         api = FakeApi(prs=[pr(7, 'h', ['automerge'])], events=[event(5, 'labeled', 7, 'automerge')], next_sha='n1abcdef')
         lines = self.run_once(api)
         self.assertEqual(len(lines), 1)
-        self.assertEqual(lines[0]['baseline'], {'open_prs': 1, 'armed_pairs': 1, 'event_cursor': 5, 'next': 'n1abcde'})
+        self.assertEqual({k: v for k, v in lines[0]['baseline'].items() if k != 'compat_paths'},
+                         {'open_prs': 1, 'armed_pairs': 1, 'event_cursor': 5, 'next': 'n1abcde'})
         self.assertEqual(json.loads(self.state.read_text())['dispatched'], {'7:automerge': 'h'})
         self.assertEqual(self.run_once(api), [])  # nothing changed since
 
@@ -265,7 +286,7 @@ class RunOnceTests(unittest.TestCase):
         second = [{'filename': 'new.swift', 'previous_filename': SHARING}]
         paths = P.changed_paths(FakeApi(files={7: {1: first, 2: second}}), REPO, 7)
         self.assertEqual(len(paths), 102)
-        self.assertTrue(P.touches_compat(paths))  # a rename out of a watched folder still counts
+        self.assertTrue(P.touches_compat(paths, COMPAT))  # a rename out of a watched folder still counts
 
     def test_the_api_class_can_only_read(self):
         public = {name for name in dir(P.GhApi) if not name.startswith('_')}
@@ -274,7 +295,8 @@ class RunOnceTests(unittest.TestCase):
 
 class WorkflowDriftTests(unittest.TestCase):
     """The poller copies decisions the workflows make. These fail when the workflows move on, so the
-    shadow comparison is never run against a stale copy. Delete them with the workflows at cutover."""
+    shadow comparison is never run against a stale copy. The compat filter is read from the file itself.
+    Delete these with the workflows at cutover."""
 
     def workflow(self, name):
         path = ROOT / '.github/workflows' / name
@@ -282,10 +304,13 @@ class WorkflowDriftTests(unittest.TestCase):
             self.skipTest(f'{name} is gone (cutover)')
         return path.read_text()
 
-    def test_the_compat_paths_match_shipped_build_compat_yml(self):
+    def test_the_poller_reads_the_real_compat_filter(self):
         text = self.workflow('shipped-build-compat.yml')
-        listed = re.findall(r"^\s+- '(.+)'$", text.split('paths:')[1].split('permissions:')[0], re.M)
-        self.assertEqual(tuple(listed), P.COMPAT_PATHS)
+        listed = P.workflow_paths(text)
+        self.assertIn('Packages/SessionKit/Sources/SessionKitSharing/**', listed)
+        self.assertEqual(len(P.load_compat_patterns()), len(listed))
+        self.assertTrue(P.touches_compat([SHARING], P.load_compat_patterns()))
+        self.assertFalse(P.touches_compat(['docs/x.md', 'App/SpokenMarginsApp/Gate1AppModel.swift'], P.load_compat_patterns()))
 
     def test_lane_yml_still_starts_on_the_events_and_labels_the_poller_models(self):
         text = self.workflow('lane.yml')

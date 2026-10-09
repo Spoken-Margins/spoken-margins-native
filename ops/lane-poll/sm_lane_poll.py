@@ -44,17 +44,10 @@ LABEL_FOR = {'lane': 'lane:queued', 'automerge': 'automerge'}
 # The workflow file that starts each kind today, for the "did Actions start it" lookup.
 WORKFLOW_FOR = {'lane': 'lane.yml', 'automerge': 'lane.yml',
                 'compat': 'shipped-build-compat.yml', 'merge-audit': 'merge-audit.yml'}
-# The `paths:` filter of shipped-build-compat.yml. test_sm_lane_poll.py keeps the two in step.
-COMPAT_PATHS = (
-    'Packages/SessionKit/Sources/SessionKitPersistence/**',
-    'Packages/SessionKit/Sources/SessionKitSharing/**',
-    'Packages/SessionKit/Tests/ShippedReader/**',
-    'Packages/SessionKit/Tests/*/Build29DatabaseFixtureTests.swift',
-    'scripts/check-build29-database.sh',
-    'scripts/build29-db-reader/**',
-    'scripts/freeze-shipped-reader.sh',
-    '.github/workflows/shipped-build-compat.yml',
-)
+# Where the compat filter lives. The poller reads the `paths:` list from this file in its own checkout
+# each run, so a change to the filter cannot leave a stale copy here.
+ROOT = Path(__file__).resolve().parents[2]
+COMPAT_WORKFLOW = ROOT / '.github/workflows/shipped-build-compat.yml'
 FILE_PAGES = 10  # a PR with more than 1,000 changed files is not a compat question
 
 
@@ -88,11 +81,41 @@ def glob_regex(pattern: str):
     return re.compile('^' + ''.join(out) + '$')
 
 
-COMPAT_RES = [glob_regex(pattern) for pattern in COMPAT_PATHS]
+def workflow_paths(text: str) -> list:
+    """The `paths:` list of a workflow file, read without a YAML library. Stops at the first line that is
+    not a list item. Negated patterns (`!x`) are refused: they depend on order, and the shadow must not
+    silently model them wrong."""
+    found, inside = [], False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not inside:
+            inside = stripped == 'paths:'
+            continue
+        if not stripped or stripped.startswith('#'):
+            continue
+        if not stripped.startswith('- '):
+            break
+        value = stripped[2:].split(' #')[0].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in '\'"':
+            value = value[1:-1]
+        if value.startswith('!'):
+            raise ValueError(f'negated path filter not supported: {value}')
+        found.append(value)
+    return found
 
 
-def touches_compat(paths) -> bool:
-    return any(rx.match(path) for path in paths for rx in COMPAT_RES)
+def load_compat_patterns(workflow: Path = None) -> list:
+    """Compiled compat path filters, or [] when the workflow file is gone (after a cutover)."""
+    workflow = COMPAT_WORKFLOW if workflow is None else workflow
+    try:
+        text = workflow.read_text()
+    except OSError:
+        return []
+    return [glob_regex(pattern) for pattern in workflow_paths(text)]
+
+
+def touches_compat(paths, patterns) -> bool:
+    return any(rx.match(path) for path in paths for rx in patterns)
 
 
 def empty_state() -> dict:
@@ -145,7 +168,7 @@ def baseline(prs, events, next_sha: str, repo: str) -> dict:
     return state
 
 
-def decide(prs, events, next_sha: str, state: dict, files_for, repo: str = REPO) -> tuple:
+def decide(prs, events, next_sha: str, state: dict, files_for, compat, repo: str = REPO) -> tuple:
     """The jobs to start, and the next state. Pure apart from `files_for(pr_number)`, which is asked only
     for a PR whose head the compat check has not seen."""
     jobs = []
@@ -178,7 +201,7 @@ def decide(prs, events, next_sha: str, state: dict, files_for, repo: str = REPO)
                 jobs.append({'kind': kind, 'pr': number, 'head': head, 'reasons': reasons})
             new['dispatched'][key] = head
         if state['compat'].get(str(number)) != head:
-            if touches_compat(files_for(number)):
+            if compat and touches_compat(files_for(number), compat):
                 jobs.append({'kind': 'compat', 'pr': number, 'head': head, 'reasons': ['push']})
             new['compat'][str(number)] = head
     # Forget PRs that are no longer open.
@@ -231,13 +254,15 @@ def run_once(api, state_path: Path, repo: str = REPO, compare: bool = True, now=
         save_state(state_path, state)
         armed = len(state['dispatched'])
         lines.append({'at': stamp, 'baseline': {'open_prs': len(prs), 'armed_pairs': armed,
-                                                'event_cursor': state['event_cursor'], 'next': next_sha[:7]}})
+                                                'event_cursor': state['event_cursor'], 'next': next_sha[:7],
+                                                'compat_paths': len(load_compat_patterns())}})
         return lines
     ids = [event['id'] for event in events]
     if ids and state['event_cursor'] and min(ids) > state['event_cursor']:
         lines.append({'at': stamp, 'warning': 'event feed gap: label events between polls may be missed; '
                                                'the head check still sees pushes'})
-    jobs, new = decide(prs, events, next_sha, state, lambda number: changed_paths(api, repo, number), repo)
+    compat = load_compat_patterns()
+    jobs, new = decide(prs, events, next_sha, state, lambda number: changed_paths(api, repo, number), compat, repo)
     for job in jobs:
         line = {'at': stamp, 'would_start': job['kind'], 'pr': job['pr'], 'head': job['head'],
                 'reasons': job['reasons']}

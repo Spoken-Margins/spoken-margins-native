@@ -12,7 +12,7 @@ Why: GitHub Actions is the only paid part of GitHub we use, and the lane uses it
    - the label was added again since the last run (`labeled`; remove and re-add is how the dispatcher retries), or
    - the PR was reopened (`reopened`), or
    - it has no earlier record (`first-seen`).
-3. Adds a `compat` job for a new head whose changed paths match `shipped-build-compat.yml`'s filter, and a `merge-audit` job when `next` moved.
+3. Adds a `compat` job for a new head whose changed paths match `shipped-build-compat.yml`'s `paths:` filter (read from that file in the checkout each run, so it cannot go stale), and a `merge-audit` job when `next` moved. If the workflow file is gone, no compat jobs are modelled.
 4. For each job, looks up whether Actions has a run of the matching workflow on the same head and prints it as `actions`.
 
 The first run only records a baseline (`baseline` line) and starts nothing. State is in `~/SpokenMarginsOps/lane-poll/state.json`, and is written only after every read succeeded.
@@ -77,4 +77,4 @@ rm ~/Library/LaunchAgents/com.spokenmargins.lane-poll-shadow.plist
 python3 -m unittest discover -s ~/Documents/GitHub/spoken-margins-native/ops/lane-poll -t ~/Documents/GitHub/spoken-margins-native/ops/lane-poll
 ```
 
-`scripts/verify-tests.py --plan fast` runs them too, as the `ops-lane-poll` step. Three tests read the workflow files and fail if `shipped-build-compat.yml`, `lane.yml` or `merge-audit.yml` change what they trigger on; they skip themselves once those files are gone.
+`scripts/verify-tests.py --plan fast` runs them too, as the `ops-lane-poll` step. Three tests read the real workflow files and fail if `shipped-build-compat.yml` stops listing `paths:`, or `lane.yml` or `merge-audit.yml` change what they trigger on; they skip themselves once those files are gone.
