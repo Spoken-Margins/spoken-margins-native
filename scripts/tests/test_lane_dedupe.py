@@ -389,37 +389,19 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual(dedupe.route(api, 580, NEW, 200, WANTS_AUTO, queues), {'lane': False, 'automerge': True})
         self.assertEqual(api.cancelled, [])
 
-    def test_a_failed_cancel_of_a_run_still_seen_waiting_stops_this_one_instead_of_doubling_up(self):
-        api = FakeApi([run(100, 580, NEW)], {100: [job('automerge', 'queued', labels=BUILD)]})
-        api.post = mock.Mock(side_effect=subprocess.CalledProcessError(1, 'gh'))
+    def test_a_failed_cancel_never_stops_the_replacement_run(self):
+        # GitHub cancels asynchronously: a timeout, a rejection, or a status read that still says "queued" can all
+        # be followed by the cancel completing, so stopping this run too could leave the PR with none (the Codex
+        # audit's P2 on #1227, twice; the code no longer reads the status at all). Two runs for one head is
+        # harmless; none is not.
         queues = {'lane': PRIORITY, 'automerge': PRIORITY}
-        self.assertEqual(dedupe.route(api, 580, NEW, 200, WANTS_AUTO, queues), {'lane': False, 'automerge': True})
-
-    def test_a_cancel_that_took_effect_before_the_client_gave_up_still_lets_this_run_go_ahead(self):
-        # GitHub cancelled the older run but gh timed out before the answer: stopping this run too would leave the
-        # PR with none (the Codex audit's P2 on #1227).
-        queues = {'lane': PRIORITY, 'automerge': PRIORITY}
-        for status in ('completed', 'cancelled'):
-            with self.subTest(status=status):
+        errors = (subprocess.TimeoutExpired('gh', 30), subprocess.CalledProcessError(1, 'gh'), OSError('lost'))
+        for error in errors:
+            with self.subTest(error=error):
                 api = FakeApi([run(100, 580, NEW)], {100: [job('automerge', 'queued', labels=BUILD)]})
-                api.run_status[100] = status
-                api.post = mock.Mock(side_effect=subprocess.TimeoutExpired('gh', 30))
+                api.post = mock.Mock(side_effect=error)
                 self.assertEqual(dedupe.route(api, 580, NEW, 200, WANTS_AUTO, queues),
                                  {'lane': False, 'automerge': False})
-
-    def test_an_unreadable_older_run_after_a_failed_cancel_lets_this_run_go_ahead(self):
-        # Both running beats neither: a duplicate run is harmless, a PR with no run needs another re-arm.
-        api = FakeApi([run(100, 580, NEW)], {100: [job('automerge', 'queued', labels=BUILD)]})
-        real_get = api.get
-
-        def get(path):
-            if re.fullmatch(r'actions/runs/\d+', path):
-                raise OSError('offline')
-            return real_get(path)
-        api.get = get
-        api.post = mock.Mock(side_effect=subprocess.TimeoutExpired('gh', 30))
-        queues = {'lane': PRIORITY, 'automerge': PRIORITY}
-        self.assertEqual(dedupe.route(api, 580, NEW, 200, WANTS_AUTO, queues), {'lane': False, 'automerge': False})
 
     def test_the_routing_file_is_read_leniently(self):
         import tempfile
