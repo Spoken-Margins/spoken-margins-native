@@ -7238,7 +7238,6 @@ final class Gate1AppModel: ObservableObject {
                     itemId = try await self.acquireArticleForImportedPackage(articleURL)
                 } else {
                     // A layer saved with no item reports success but can't play (#916). Say so instead.
-                    self.diagnostics["lastSpokenMarginsPackageImport"] = "no_source_to_acquire"
                     throw SessionKitError.persistenceFailed("shared_item_not_in_library")
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }

@@ -865,6 +865,7 @@ private final class ArticlePackageExtractor: ReadablePageExtracting {
     private let outcome: Result<BrowserTextHandoff, Error>
     private(set) var requested: [URL] = []
     private(set) var lastExtractor: String?
+    private(set) var contactedHosts: [String] = []
 
     init(_ outcome: Result<BrowserTextHandoff, Error>) {
         self.outcome = outcome
@@ -872,6 +873,7 @@ private final class ArticlePackageExtractor: ReadablePageExtracting {
 
     func extract(url: URL) async throws -> BrowserTextHandoff {
         requested.append(url)
+        contactedHosts = [url.host ?? ""]
         let handoff = try outcome.get()
         lastExtractor = "recorded"
         return handoff
