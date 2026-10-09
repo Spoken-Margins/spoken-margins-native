@@ -160,6 +160,13 @@ Taking turns: the scheduled "SM integration run" is the understudy. It runs only
 desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> worktree,
 and stays off the simulator while a desk pool device is booted.
 
+The integration script (ops/testdesk/README.md, launchd every 10 minutes) replaces the
+scheduled understudy once installed. It runs --plan app on any tip with no integration
+report on #184 when the Mac has room, letting waiting /lane T3+ requests go first unless
+next has gone three hours untested. It re-runs failing tests twice to rule out a flake,
+and calls Claude read-only only on a confirmed FAIL. Its reports say "run by: integration
+script". Like the understudy, it skips a tip this desk has already reported.
+
 Before the understudy starts inference, its `UserPromptSubmit` hook runs
 `/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/integration-precheck.py --claude-hook`.
 It blocks an unchanged task before the model processes its prompt. The normal CLI
