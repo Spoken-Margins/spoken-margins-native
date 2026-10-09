@@ -809,29 +809,40 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func deleteItem(id: String) throws {
-        try withConnectionLock {
-            var statement: OpaquePointer?
-            // Turns are saved with a session id and no item id, so they are found through the
-            // item's session rows. One statement: SQLite reads the session rows before it
-            // deletes any, and a failure leaves the item whole.
-            let sql = """
-            DELETE FROM records
-            WHERE item_id = ?
-               OR (kind = 'item' AND id = ?)
-               OR (kind = 'turn' AND session_id IN (
-                    SELECT id FROM records WHERE kind = 'session' AND item_id = ?
-               ));
-            """
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-                throw SessionKitError.persistenceFailed("prepare_delete_item")
+        // Turns are saved with a session id and no item id, so they are found through the item's
+        // session rows. They go first, as their own statement: a single DELETE that also removed the
+        // session rows could evaluate its subquery after those rows were gone and keep the turns
+        // (SQLite 3.37 on Linux did, #1219). One transaction, so a failure leaves the item whole.
+        try withTransaction {
+            try withConnectionLock {
+                try runDelete(
+                    """
+                    DELETE FROM records
+                    WHERE kind = 'turn' AND session_id IN (
+                        SELECT id FROM records WHERE kind = 'session' AND item_id = ?
+                    );
+                    """, prepareError: "prepare_delete_item_turns", stepError: "step_delete_item_turns", ids: [id])
+                try runDelete(
+                    """
+                    DELETE FROM records
+                    WHERE item_id = ?
+                       OR (kind = 'item' AND id = ?);
+                    """, prepareError: "prepare_delete_item", stepError: "step_delete_item", ids: [id, id])
             }
-            defer { if statement != nil { sqlite3_finalize(statement) } }
-            bind(statement, index: 1, value: id)
-            bind(statement, index: 2, value: id)
-            bind(statement, index: 3, value: id)
-            guard sqlite3_step(statement) == SQLITE_DONE else {
-                throw SessionKitError.persistenceFailed("step_delete_item")
-            }
+        }
+    }
+
+    private func runDelete(_ sql: String, prepareError: String, stepError: String, ids: [String]) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed(prepareError)
+        }
+        defer { if statement != nil { sqlite3_finalize(statement) } }
+        for (offset, value) in ids.enumerated() {
+            bind(statement, index: Int32(offset + 1), value: value)
+        }
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed(stepError)
         }
     }
 
