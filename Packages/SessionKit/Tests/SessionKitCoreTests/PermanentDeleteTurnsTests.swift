@@ -62,6 +62,30 @@ final class PermanentDeleteTurnsTests: XCTestCase {
         XCTAssertEqual(try turnRows(containing: "SECRET-ONE").count, 1)
     }
 
+    /// The turns go in their own statement before the item's other rows (#1218: on SQLite 3.37 a
+    /// single DELETE removed the session rows first and left the turns behind). That makes the
+    /// delete two statements, so it has to stay one transaction: when the item row cannot be
+    /// deleted, the turns that were already removed must come back.
+    func testFailedPermanentDeleteLeavesTheTurnsInPlace() throws {
+        let store = try SQLiteSessionStore(path: path)
+        try seed(store, itemId: "item-1", sessionIds: ["session-1a", "session-1b"], secret: "SECRET-ONE")
+        try execute("""
+        CREATE TRIGGER refuse_item_delete BEFORE DELETE ON records
+        WHEN old.kind = 'item' BEGIN SELECT RAISE(ABORT, 'refused'); END;
+        """)
+
+        XCTAssertThrowsError(try store.deleteItem(id: "item-1"))
+
+        XCTAssertEqual(try store.loadSessions(itemId: "item-1").count, 2)
+        XCTAssertEqual(try store.loadTurns(sessionId: "session-1a").count, 1)
+        XCTAssertEqual(try store.loadTurns(sessionId: "session-1b").count, 1)
+        XCTAssertEqual(try turnRows(containing: "SECRET-ONE").count, 2)
+
+        try execute("DROP TRIGGER refuse_item_delete;")
+        try store.deleteItem(id: "item-1")
+        XCTAssertEqual(try turnRows(containing: "SECRET-ONE"), [])
+    }
+
     // MARK: - Helpers
 
     private func seed(_ store: SQLiteSessionStore, itemId: String, sessionIds: [String], secret: String) throws {
@@ -79,6 +103,13 @@ final class PermanentDeleteTurnsTests: XCTestCase {
                 status: "complete", summary: secret, text: secret, rawText: secret, sourceInterjectionIds: []
             ))
         }
+    }
+
+    private func execute(_ sql: String) throws {
+        var database: OpaquePointer?
+        XCTAssertEqual(sqlite3_open_v2(path, &database, SQLITE_OPEN_READWRITE, nil), SQLITE_OK)
+        defer { sqlite3_close(database) }
+        XCTAssertEqual(sqlite3_exec(database, sql, nil, nil, nil), SQLITE_OK)
     }
 
     /// Raw `records` rows of kind `turn` whose payload mentions `needle`, read from a second
