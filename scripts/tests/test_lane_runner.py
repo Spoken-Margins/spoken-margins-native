@@ -36,6 +36,21 @@ def runner_report(verdict, wanted, url='https://example.test/r'):
                                'none', '/e', 'owner', wanted), login='github-actions[bot]', url=url)
 
 
+class ClaudeAuditGateTests(unittest.TestCase):
+    def test_claude_head_audit_clears_lane_and_risky_changes(self):
+        clean = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
+        scope = {'files': [{'category': 'audio'}, {'category': 'persistence'}, {'category': 'packet'}],
+                 'lane_paths': ['scripts/lane-runner.py']}
+        self.assertIsNone(lane.audit_blocker([clean], HEAD))
+        self.assertEqual(lane.merge_blockers(scope, [clean], HEAD), [])
+
+    def test_newest_head_audit_wins_across_reviewers(self):
+        claude = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
+        codex = comment('**Codex audit (Astra) on `aaaaaaa`**\n\n[P1] Broken.')
+        self.assertIsNone(lane.audit_blocker([codex, claude], HEAD))
+        self.assertIsNotNone(lane.audit_blocker([claude, codex], HEAD))
+
+
 class FakeGitHub:
     def __init__(self, labels=('lane:queued',), head=HEAD, comments=(), fail_comment=False):
         self.labels, self.head, self._comments = set(labels), head, list(comments)
@@ -1056,8 +1071,8 @@ class MergeTests_Runner(unittest.TestCase):
                 scope = {'tier': 'T1', 'why': [], 'lane_paths': [path], 'files': [{'path': path, 'category': category}]}
                 (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=scope)
                 self.assertEqual((verdict, events), ('PASS', ['build']))
-                self.assertEqual(details[-1], 'not merged by the runner: it touches the lane and has no "Codex audit '
-                                              '(Astra)" comment yet. It merges once a Codex audit of its head says '
+                self.assertEqual(details[-1], 'not merged by the runner: it touches the lane and has no Codex or Claude audit '
+                                              'comment yet. It merges once a Codex or Claude audit of its head says '
                                               '"No blocking findings".')
                 (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=[clean]),
                                                                  scope=scope)
@@ -1069,7 +1084,7 @@ class MergeTests_Runner(unittest.TestCase):
                                                         'category': 'packet'}]}
         (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky)
         self.assertEqual(events, ['build'])
-        self.assertIn('it touches packets and has no "Codex audit (Astra)" comment yet', details[-1])
+        self.assertIn('it touches packets and has no Codex or Claude audit comment yet', details[-1])
         for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.',
                       '## Codex audit (gpt-6-astra, high) of `aaaaaaaa`\n\nNo findings.'):
             with self.subTest(audit=audit[:20]):
@@ -1097,7 +1112,7 @@ class MergeTests_Runner(unittest.TestCase):
         (_, _, _, details), events = self.audited(
             '**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. The packet drops the anchor.')
         self.assertEqual(events, ['build'])
-        self.assertIn('the Codex audit on the head `aaaaaaa` has blocking findings', details[-1])
+        self.assertIn('the Codex or Claude audit on the head `aaaaaaa` has blocking findings', details[-1])
 
     def test_findings_that_only_mention_no_findings_elsewhere_still_hold(self):
         # The #414 audit's form: numbered findings, then "Nothing else found …" and "No packet or database changes."
@@ -1121,7 +1136,7 @@ class MergeTests_Runner(unittest.TestCase):
     def test_a_manual_audit_counts_only_if_it_names_the_head(self):
         (_, _, _, details), events = self.audited('## Codex audit (gpt-6-astra, high)\n\nNo findings. Audited the PR.')
         self.assertEqual(events, ['build'])
-        self.assertIn('has no Codex audit naming its head `aaaaaaa`', details[-1])
+        self.assertIn('has no Codex or Claude audit naming its head `aaaaaaa`', details[-1])
         older = '## Codex audit of `1234567`\n\nNo findings. The head `aaaaaaa` came later.'  # the sha only in the body
         self.assertEqual(self.audited(older)[1], ['build'])
 
@@ -1191,13 +1206,13 @@ class MergeTests_Runner(unittest.TestCase):
         scope = {'tier': 'T1', 'why': [], 'lane_paths': ['scripts/lane_sim.py'],
                  'files': [{'path': 'scripts/lane_sim.py', 'category': 'scripts'}]}
         held = lane.merge_blockers(scope, [], HEAD)
-        self.assertIn('it touches the lane and has no "Codex audit (Astra)" comment yet', held)
+        self.assertIn('it touches the lane and has no Codex or Claude audit comment yet', held)
         findings = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. The slot leaks.')]
         self.assertTrue(any('has blocking findings' in reason for reason in lane.merge_blockers(scope, findings, HEAD)))
         clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
         self.assertFalse(any('Codex audit' in reason for reason in lane.merge_blockers(scope, clean, HEAD)))
         packet_too = dict(scope, files=scope['files'] + [{'path': 'A/Share.swift', 'category': 'packet'}])
-        self.assertIn('it touches packets and the lane and has no "Codex audit (Astra)" comment yet',
+        self.assertIn('it touches packets and the lane and has no Codex or Claude audit comment yet',
                       lane.merge_blockers(packet_too, [], HEAD))
 
     def test_audio_persistence_and_packet_changes_are_each_held_for_a_codex_audit(self):
@@ -1207,7 +1222,7 @@ class MergeTests_Runner(unittest.TestCase):
                 scope = {'tier': 'T3', 'why': [], 'lane_paths': [], 'files': [
                     {'path': 'App/X.swift', 'category': 'app-ui'}, {'path': 'App/Y.swift', 'category': category}]}
                 self.assertEqual(lane.merge_blockers(scope, [], HEAD),
-                                 [f'it touches {what} and has no "Codex audit (Astra)" comment yet'])
+                                 [f'it touches {what} and has no Codex or Claude audit comment yet'])
                 clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
                 self.assertEqual(lane.merge_blockers(scope, clean, HEAD), [])
 

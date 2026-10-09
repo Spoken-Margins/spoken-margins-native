@@ -150,28 +150,114 @@ class ConsumerTests(unittest.TestCase):
 
     def test_previously_accepted_only_is_clean_for_all_four_consumers(self):
         section = f'No blocking findings.\n\nPreviously accepted\n- {FILE}: {TITLE}; follow-up #842.'
-        comment = {'body': audit.build_comment(580, HEAD, section, [580]),
-                   'created_at': '2026-10-06T01:00:00Z'}
-        pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [comment]}
-        lane = {'created_at': '2026-10-06T00:00:00Z', 'body':
-                'Lane report pr580-r1 — PASS | commit abcdef0 · tier T1\n'
-                '<!-- lane-request: {"commit":"abcdef0","tier":"T1"} -->',
-                'user': {'login': 'github-actions[bot]'}}
-        self.assertIsNone(worker.audit_findings_on_head(pr))
-        self.assertIsNone(self.runner.audit_blocker([comment], HEAD))
-        self.assertIsNone(self.merge.hand_merge_gap([lane, comment], HEAD, '2026-10-06T02:00:00Z'))
-        self.assertTrue(audit.rearm_decision(pr, [lane, comment], [
-            {'event': 'labeled', 'label': {'name': 'automerge'}, 'created_at': '2026-10-05T23:00:00Z'}])[0])
+        for reviewer in ('Codex', 'Claude'):
+            with self.subTest(reviewer=reviewer):
+                comment = {'body': audit.build_comment(580, HEAD, section, [580], reviewer=reviewer),
+                           'created_at': '2026-10-06T01:00:00Z'}
+                pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [comment]}
+                lane = {'created_at': '2026-10-06T00:00:00Z', 'body':
+                        'Lane report pr580-r1 — PASS | commit abcdef0 · tier T1\n'
+                        '<!-- lane-request: {"commit":"abcdef0","tier":"T1"} -->',
+                        'user': {'login': 'github-actions[bot]'}}
+                self.assertIsNone(worker.audit_findings_on_head(pr))
+                self.assertIsNone(self.runner.audit_blocker([comment], HEAD))
+                self.assertIsNone(self.merge.hand_merge_gap([lane, comment], HEAD, '2026-10-06T02:00:00Z'))
+                self.assertTrue(audit.rearm_decision(pr, [lane, comment], [
+                    {'event': 'labeled', 'label': {'name': 'automerge'}, 'created_at': '2026-10-05T23:00:00Z'}])[0])
 
     def test_new_finding_next_to_accepted_one_still_blocks(self):
         section = f'[P1] New wrong-item playback in Other.swift:10.\n\nPreviously accepted\n- {TITLE}; #842.'
-        comment = {'body': audit.build_comment(580, HEAD, section, [580]),
-                   'created_at': '2026-10-06T01:00:00Z'}
-        pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [comment]}
-        self.assertIsNotNone(worker.audit_findings_on_head(pr))
-        self.assertIsNotNone(self.runner.audit_blocker([comment], HEAD))
-        self.assertIn('blocking findings', self.merge.hand_merge_gap([comment], HEAD, '2026-10-06T02:00:00Z'))
-        self.assertFalse(audit.rearm_decision(pr, [comment], None)[0])
+        for reviewer in ('Codex', 'Claude'):
+            with self.subTest(reviewer=reviewer):
+                comment = {'body': audit.build_comment(580, HEAD, section, [580], reviewer=reviewer),
+                           'created_at': '2026-10-06T01:00:00Z'}
+                pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [comment]}
+                self.assertIsNotNone(worker.audit_findings_on_head(pr))
+                self.assertIsNotNone(self.runner.audit_blocker([comment], HEAD))
+                self.assertIn('blocking findings', self.merge.hand_merge_gap([comment], HEAD, '2026-10-06T02:00:00Z'))
+                self.assertFalse(audit.rearm_decision(pr, [comment], None)[0])
+
+
+
+class ClaudeConsumerTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.runner = load_script('claude_audit_runner', 'lane-runner.py')
+        cls.merge = load_script('claude_audit_merge', 'merge_audit.py')
+
+    def test_claude_comment_generation_and_rearm_once(self):
+        body = audit.build_comment(580, HEAD, 'No blocking findings.', [580], reviewer='Claude')
+        self.assertEqual(body.splitlines()[0], '**Claude audit on `abcdef0`**')
+        self.assertIn('Claude ran read-only', body)
+        self.assertNotIn('Codex ran', body)
+        clean = {'body': body, 'created_at': '2026-10-06T01:00:00Z'}
+        pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [clean]}
+        lane = {'created_at': '2026-10-06T00:00:00Z', 'body':
+                'Lane report pr580-r1 — PASS | commit abcdef0 · tier T1\n'
+                'not merged by the runner: it touches the lane and has no Codex or Claude audit comment yet.'}
+        self.assertTrue(audit.audited_on([clean], HEAD))
+        self.assertEqual(audit.last_audited_head([PRIOR, clean]), HEAD[:7])
+        self.assertTrue(audit.runner_waits_on_audit([lane]))
+        self.assertTrue(audit.rearm_decision(pr, [lane, clean], [])[0])
+        event = {'event': 'labeled', 'label': {'name': 'automerge'}, 'created_at': '2026-10-06T01:01:00Z'}
+        self.assertFalse(audit.rearm_decision(pr, [lane, clean], [event])[0])
+
+    def test_newest_mixed_reviewer_audit_controls_rearm_and_finisher(self):
+        lane = {'created_at': '2026-10-06T00:00:00Z',
+                'body': 'Lane report pr580-r1 — PASS | commit abcdef0 · tier T1'}
+        for reviewers in (('Codex', 'Claude'), ('Claude', 'Codex')):
+            for newer_clean in (True, False):
+                with self.subTest(reviewers=reviewers, newer_clean=newer_clean):
+                    comments = [lane]
+                    for index, reviewer in enumerate(reviewers):
+                        clean = newer_clean if index else not newer_clean
+                        verdict = 'No blocking findings.' if clean else '[P1] Broken.'
+                        comments.append({'created_at': f'2026-10-06T01:0{index}:00Z',
+                                         'body': audit.build_comment(580, HEAD, verdict, [580], reviewer=reviewer)})
+                    pr = {'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': comments}
+                    self.assertEqual(audit.rearm_decision(pr, comments, [])[0], newer_clean)
+                    self.assertEqual(worker.audit_findings_on_head(pr) is None, newer_clean)
+
+    def test_claude_heading_boundary_table(self):
+        canonical = '**Claude audit on `abcdef0`**'
+        # Matching neighbours: keep the protocol exact and preserve the existing leading-space tolerance.
+        rows = [
+            ('canonical', canonical, True),
+            ('full sha', f'**Claude audit on `{HEAD}`**', True),
+            ('short sha', '**Claude audit on `abcdef`**', False),
+            ('too long sha', f'**Claude audit on `{HEAD}0`**', False),
+            ('missing sha', '**Claude audit**', False),
+            ('leading whitespace', ' \n  ' + canonical, True),
+            ('case', canonical.lower(), False),
+            ('Unicode lookalike', canonical.replace('Claude', 'Clаude'), False),
+            ('punctuation', canonical.replace('**', '*'), False),
+            ('empty', '', False),
+            ('very long', canonical + 'x' * 10000, False),
+            ('other reviewer', '**Other audit on `abcdef0`**', False),
+            ('lookalike reply', '**Claude audit on `ff249c5` (P2): fixed in `abcdef0`**', False),
+            ('quoted', '> ' + canonical, False),
+            ('body-only sha', '**Claude audit on `ff249c5`**', False),
+        ]
+        for name, heading, clears in rows:
+            with self.subTest(name=name):
+                c = {'body': heading + '\n\nNo blocking findings. Head `abcdef0`.',
+                     'created_at': '2026-10-06T01:00:00Z'}
+                self.assertEqual(self.runner.audit_blocker([c], HEAD) is None, clears)
+                self.assertEqual(self.merge.audit_verdict([c], HEAD, self.merge.parse_time('2026-10-06T02:00:00Z'))
+                                 is not None, clears)
+                self.assertEqual(audit.audited_on([c], HEAD), clears)
+
+    def test_claude_findings_and_clean_verdict_reach_finisher(self):
+        for verdict, blocks in (('[P1] Wrong-item playback.', True), ('No blocking findings.', False)):
+            with self.subTest(verdict=verdict):
+                c = {'body': '**Claude audit on `abcdef0`**\n\n' + verdict,
+                     'created_at': '2026-10-06T01:00:00Z'}
+                pr = {'headRefOid': HEAD, 'comments': [c]}
+                self.assertEqual(worker.audit_findings_on_head(pr) is not None, blocks)
+                self.assertEqual(self.runner.audit_blocker([c], HEAD) is not None, blocks)
+                self.assertEqual(audit.head_audit([c], HEAD), (c['created_at'], verdict))
+                stale = dict(c, body=c['body'].replace('abcdef0', 'ff249c5'))
+                self.assertIsNone(worker.audit_findings_on_head({'headRefOid': HEAD, 'comments': [stale]}))
 
 
 if __name__ == '__main__':
