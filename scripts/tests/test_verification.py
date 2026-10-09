@@ -795,6 +795,17 @@ class VerificationTests(unittest.TestCase):
             # #705: the app-hosted plans watch for a run that never starts its tests.
             self.assertEqual((startup['seconds'], startup['retries']),
                              (verification.STARTUP_STALL_SECONDS, verification.STARTUP_RETRIES))
+            # The relaunch hook ends the stalled app and frees the result-bundle path for the second launch.
+            app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+            app.mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(verification.plistlib.dumps({'CFBundleIdentifier': 'com.example.app'}))
+            (run.output / 'tests.xcresult').mkdir()
+            with patch.object(verification, 'ROOT', root), patch.object(verification.subprocess, 'run') as terminate:
+                startup['reset'](1)
+            self.assertEqual(terminate.call_args.args[0],
+                             ['xcrun', 'simctl', 'terminate', 'synthetic-device', 'com.example.app'])
+            self.assertFalse((run.output / 'tests.xcresult').exists())
+            self.assertTrue((run.output / 'tests-stalled-1.xcresult').exists())
 
     def test_ui_plans_have_no_startup_watch(self):
         # Their runner is a separate app and starts on its own schedule; they keep their single launch.
