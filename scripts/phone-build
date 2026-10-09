@@ -38,8 +38,9 @@ pass; bugs are fine, crashes the runners would catch are not):
 - Memory pressure must be normal, and free disk at least 10 GB plus 4 GB per running build
   (counting this one). Otherwise it skips and exits 75; the next trigger tries again.
 - Checks on the exact commit: a tip the lane runner pushed after testing it (its "Merge check"
-  comment says so) has passed host tests and both builds. Any other commit (a merge by hand)
-  gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
+  comment says so) has passed host tests; its author built both targets, and the iPhone build
+  below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
+  merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
 
 The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).

@@ -786,19 +786,21 @@ class ScopeClassTests(unittest.TestCase):
 class AutomergeTests(unittest.TestCase):
     """The automerge label runs what the PR's diff needs (test-scope.py's tier)."""
 
-    def run_checks(self, tier, fast='PASS', t2='PASS', too_big=()):
+    def run_checks(self, tier, fast='PASS', too_big=()):
+        """run_automerge with fake host tests, and every process it starts recorded: no app build may run."""
         calls = []
 
         def fake_fast(evidence):
             calls.append('fast')
             return fast, [] if fast == 'PASS' else [f'host tests {fast}']
 
-        def fake_t2(evidence):
-            calls.append('t2')
-            return t2, f'simulator build ({t2.lower()})', []
+        def started(command, log, timeout, **_):
+            calls.append(Path(command[0]).name)
+            return 0
 
-        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2,
-                                    ratchet=lambda: list(too_big))
+        with tempfile.TemporaryDirectory() as evidence, mock.patch.object(lane, 'run_bounded', side_effect=started):
+            result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path(evidence), fast=fake_fast,
+                                        ratchet=lambda: list(too_big))
         return result, calls
 
     def test_a_hot_file_above_its_ceiling_fails_before_any_build(self):
@@ -816,12 +818,16 @@ class AutomergeTests(unittest.TestCase):
         self.assertEqual((verdict, calls), ('PASS', ['fast']))
         self.assertIn('no app build', details[-1])
 
-    def test_a_diff_that_reaches_the_app_runs_the_host_tests_then_both_builds(self):
+    def test_a_diff_that_reaches_the_app_runs_the_host_tests_and_no_app_build(self):
+        # Owner, 2026-10-09: from 10-02 to 10-09, 140 automerge runs built for simulator and device after the
+        # host tests (about 3.4 min each, ~8 runner-hours a week) and caught no compile failure. Authors build
+        # both targets before pushing, and the integration run on next's tip builds the merged app.
         for tier in ('T2', 'T3'):
             with self.subTest(tier=tier):
-                (verdict, _, ran, _), calls = self.run_checks(tier, t2='FAIL')
-                self.assertEqual((verdict, calls), ('FAIL', ['fast', 't2']))
-                self.assertIn('host tests (--plan fast): passed; simulator build (fail)', ran)
+                (verdict, where, ran, details), calls = self.run_checks(tier)
+                self.assertEqual((verdict, where, calls), ('PASS', 'host only', ['fast']))
+                self.assertEqual(ran, 'host tests (--plan fast): passed')
+                self.assertIn(lane.NO_APP_BUILD_PER_PR, details)
 
     def test_failing_host_tests_stop_before_the_builds(self):
         for fast in ('FAIL', 'INCONCLUSIVE'):
@@ -1793,8 +1799,7 @@ class MainFlowTests(unittest.TestCase):
         self.addCleanup(setattr, self, 'role', '')
         with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
                 mock.patch.object(lane, 'run_t3', return_value=('PASS', 'x', 'T/A', [], 'none', '')) as t3, \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait, \
-                mock.patch.object(lane, 'host_only_scope', return_value=False):  # a job that builds, whatever this tree's diff
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(no_room, None)) as wait:
             self.run_main(github, HEAD, 'PASS', '--mode', mode)
         self.role = ''
         return auto, t3, wait

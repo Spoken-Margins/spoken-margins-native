@@ -26,7 +26,7 @@ Replace this section when the focus changes; do not append to it.
   - **The design direction is not changing.** Build on the current look. Where the stream plan says a stream waits on D1, that gate is gone.
   - **The server on the owner's VPS is approved.** App features that use it go ahead. Any "waits on the owner's hosting call" gate is gone.
   - **No off switches for new features.** The way back is reverting the merge.
-  - **Merge finished work on host tests plus both builds.** The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
+  - **Merge finished work on host tests.** Per PR the author builds both targets locally and the lane runs host tests; the integration run on `next`'s tip builds and tests the merged app (owner, 2026-10-09). The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
 - **Owner's standing calls (2026-10-05).** Don't ask again:
   - **"Post-MVP" is a legacy label.** The app is past MVP. The `phase:` labels and `[Post-MVP]` title prefixes were removed on 2026-10-05; if one turns up, or `parked` does, it never stops work on an issue. Judge the issue on its merits.
   - **Default on only when it costs the listener nothing.** A background or sharing feature may be opt-out only if both are true:
