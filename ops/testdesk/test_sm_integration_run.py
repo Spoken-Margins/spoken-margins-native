@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
@@ -393,6 +394,143 @@ class TickTests(unittest.TestCase):
                 {'last_started': 0, 'results': {SHA: {'started': 0, 'in_progress': True}}}))
             self.assertEqual(run.tick(ops), 'held')
         self.assertEqual(ops.posted, [])
+
+
+APP_PATH = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift'
+
+
+def merge(n):
+    return {'sha': f'{n:040x}', 'parents': [f'{n - 1:040x}', f'{n + 100:040x}'],
+            'subject': f'Merge pull request #{n} from uncomposed/ws/{n}-x', 'body': f'Change {n}'}
+
+
+class CulpritOps(FakeOps):
+    """FakeOps plus the culprit search and the revert: merges #11..#14 since the last PASS; #13 broke TEST."""
+
+    def __init__(self, tmp, plans, paths=(APP_PATH,), open_reverts=(), **kw):
+        super().__init__(tmp, plans, **kw)
+        self.events, self.paths, self.open_reverts, self.comments, self.reverts = [], list(paths), list(open_reverts), [], []
+
+    def commits_since(self, green, sha):
+        self.events.append(('commits_since', green))
+        return [merge(n) for n in (11, 12, 13, 14)]
+
+    def check_commit(self, wt, evidence, commit, failed, fds):
+        self.events.append(('check', int(commit['sha'], 16)))
+        return 'fail' if int(commit['sha'], 16) >= 13 else 'pass'
+
+    def changed_paths(self, commit):
+        return self.paths
+
+    def open_revert_prs(self):
+        return self.open_reverts
+
+    def reverted_on_base(self, merge_sha):
+        return None
+
+    def comment(self, number, text, evidence, name):
+        self.comments.append((number, text))
+
+    def open_revert(self, wt, evidence, commit, sha, report, failed, checks, prose):
+        self.reverts.append((int(commit['sha'], 16), failed, checks, len(prose)))
+        return 'https://github.com/x/y/pull/9001', ''
+
+
+@contextlib.contextmanager
+def recording_slot(events):
+    @contextlib.contextmanager
+    def slot():
+        events.append(('slot', 'held'))
+        try:
+            yield (7, 8)
+        finally:
+            events.append(('slot', 'released'))
+    with patch.object(run.lane_slots, 'memory_pressure_level', return_value=1), \
+            patch.object(run.lane_slots, 'simulator_job_running', return_value=False), \
+            patch.object(run, 'exclusive_slot', slot):
+        yield
+
+
+def real_scope():
+    """test-scope.py from this checkout, reading the checkout's files whatever root the fake ops has."""
+    scope = run.revert.load_test_scope(run.REPO_ROOT)
+    return types.SimpleNamespace(is_lane_path=scope.is_lane_path,
+                                 classify_path=lambda root, path: scope.classify_path(run.REPO_ROOT, path))
+
+
+FAILING = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'})]
+
+
+class CulpritTests(unittest.TestCase):
+    def tick(self, tmp, **kw):
+        ops = CulpritOps(tmp, FAILING, bodies=[report_comment(OLD[:7], 'PASS')], **kw)
+        with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+            verdict = run.tick(ops)
+        return ops, verdict, json.loads((ops.home / 'state.json').read_text())
+
+    def test_a_confirmed_fail_finds_the_culprit_while_the_slot_is_held_and_opens_the_revert(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops, verdict, state = self.tick(tmp)
+        self.assertEqual(verdict, 'FAIL')
+        self.assertEqual([e for e in ops.events if e[0] == 'check'], [('check', 12), ('check', 13)])
+        self.assertLess(ops.events.index(('check', 13)), ops.events.index(('slot', 'released')))
+        self.assertEqual(ops.reverts, [(13, [TEST], [('0000000', 'pass'), ('0000000', 'fail')], 1)])
+        self.assertEqual(state['results'][SHA]['revert'], 'https://github.com/x/y/pull/9001')
+        self.assertEqual((ops.filed, ops.comments), ([], []))   # the re-land issue replaces the failure issue
+        self.assertEqual(state['results'][SHA]['issues'], [])
+
+    def test_each_reason_not_to_revert_tells_the_owner_and_files_the_failure_issue(self):
+        cases = [
+            ('persistence', dict(paths=['Packages/SessionKit/Sources/SessionKitPersistence/SQLiteSessionStore.swift']), 'persistence'),
+            ('packet', dict(paths=['Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift']), 'packet'),
+            ('lane', dict(paths=['scripts/lane-runner.py']), 'the lane'),
+            ('another revert', dict(open_reverts=['#1234']), '#1234'),
+        ]
+        for name, kw, words in cases:
+            with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
+                ops, verdict, state = self.tick(tmp, **kw)
+                self.assertEqual((verdict, ops.reverts), ('FAIL', []))
+                self.assertEqual([n for n, _ in ops.comments], [run.REPORT_ISSUE])
+                self.assertIn(words, ops.comments[0][1])
+                self.assertIn('#13', ops.comments[0][1])
+                self.assertEqual(ops.filed, [[[TEST]]])
+                self.assertNotIn('revert', state['results'][SHA])
+
+    def test_a_failed_revert_is_reported_not_swallowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, FAILING, bodies=[report_comment(OLD[:7], 'PASS')])
+            ops.open_revert = lambda *a: (None, 'git revert -m 1 does not apply cleanly on the newest next (x.swift)')
+            with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+                run.tick(ops)
+        self.assertIn('does not apply cleanly', ops.comments[0][1])
+        self.assertEqual(ops.filed, [[[TEST]]])
+
+    def test_no_single_culprit_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, FAILING, bodies=[report_comment(OLD[:7], 'PASS')])
+            ops.check_commit = lambda *a: 'unknown'
+            with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+                run.tick(ops)
+        self.assertEqual(ops.reverts, [])
+        self.assertIn('no single culprit merge', ops.comments[0][1])
+
+    def test_without_an_earlier_pass_nothing_is_searched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, FAILING, bodies=[])
+            with recording_slot(ops.events), patch.object(run.revert, 'load_test_scope', return_value=real_scope()):
+                run.tick(ops)
+        self.assertFalse(any(e[0] in ('commits_since', 'check') for e in ops.events))
+        self.assertIn('no earlier integration PASS', ops.comments[0][1])
+
+    def test_a_flaky_pass_never_searches_or_reverts(self):
+        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+            with recording_slot(ops.events):
+                self.assertEqual(run.tick(ops), 'PASS')
+        self.assertEqual((ops.reverts, ops.comments), ([], []))
+        self.assertFalse(any(e[0] == 'check' for e in ops.events))
+
 
 
 if __name__ == '__main__':

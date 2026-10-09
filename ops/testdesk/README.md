@@ -20,15 +20,13 @@ Otherwise it tests the tip in its own detached worktree (`~/SpokenMarginsOps/int
 - It runs the scripted journeys, which only change the verdict once one is on `gating`.
 - It frees the simulator, then posts one `Lane report integration-<sha7>` on #184 in test-lane.md's format, with `run by: integration script`. `scripts/phone-build` reads it unchanged.
 
-On a confirmed FAIL it also:
+On a confirmed FAIL it also (owner's "revert first" rule, #1180):
 
-- lists the merges since the last PASS as suspects;
-- asks Claude to group the failures and name a likely culprit;
-- comments on an open issue that names the test, or files a new one labelled `ready,priority,bug,regression`.
+- builds the commits since the last PASS and re-runs only the failing tests, while it still holds the simulator slot. It bisects (about log2 of the number of merges, at most 8 builds), so the culprit is the first commit where the tests fail and the commit before it passes. A test that is missing or a build that stops at some commit gives no answer, and then there is no culprit;
+- opens `Revert #N: <title> (integration-<sha7> FAIL)` from branch `revert/pr<N>` with the `automerge` label (plus `hot-file-ok` when the revert makes `Gate1AppModel.swift` or `Gate1RootView.swift` longer, saying why in the PR), and files `Re-land #N after an integration revert` labelled `ready,regression`, with the Claude diagnosis as its prose. It files no separate failure issue then;
+- does not revert, and comments on #184 (naming the owner) instead, then files the failure issue as before, when: the revert doesn't apply cleanly or changes nothing; the culprit touches persistence, a migration or a packet format; the culprit touches `.github/` or `scripts/lane*`; no single culprit is found, or it isn't a merged PR or is itself a revert; another revert PR is open, or next already reverts it.
 
-The Claude call is `claude -p` with only Read, Grep and Glob, `--permission-mode dontAsk`, structured JSON output and a $10 cap. Anything else is refused at once rather than waiting for a click. A missing token or a bad answer gives template text instead. A tip is tested at most once: a run cut off part-way is closed as INCONCLUSIVE, not repeated.
-
-Not yet: finding the culprit by re-running the failing test at each merge, and opening the revert PR. Until that lands, a FAIL becomes a `ready` issue for a thread.
+The diagnosis is `claude -p` with only Read, Grep and Glob, `--permission-mode dontAsk`, structured JSON output and a $10 cap. Anything else is refused at once rather than waiting for a click. A missing token or a bad answer gives template text instead. A tip is tested at most once: a run cut off part-way is closed as INCONCLUSIVE, not repeated.
 
 State and log: `~/SpokenMarginsOps/integration-run/`. Evidence: `artifacts/integration-run/` in the ops checkout; the newest 20 runs are kept, and a PASS run's `.xcresult` bundles are deleted.
 
