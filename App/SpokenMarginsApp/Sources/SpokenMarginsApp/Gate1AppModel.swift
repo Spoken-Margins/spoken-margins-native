@@ -11488,6 +11488,7 @@ final class Gate1AppModel: ObservableObject {
             let candidates = try store.loadInterjections(sessionId: session.id)
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             prepareShareInterjections(candidates: candidates)
+            if isSharingInterjectionsPresented { sharingState.draftsPreparedForExport = true }
         } catch { reportFailure(error, context: "Prepare session sharing failed") }
     }
 

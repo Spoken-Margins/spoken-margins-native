@@ -409,7 +409,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         switch action {
         case .begin:
             discardPreview(resetTo: .select)
-            model.prepareShareInterjections()
+            if model.sharingState.draftsPreparedForExport && model.isSharingInterjectionsPresented {
+                model.sharingState.draftsPreparedForExport = false
+            } else {
+                model.prepareShareInterjections()
+            }
             selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
             model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
         case .setFilter(let filter):

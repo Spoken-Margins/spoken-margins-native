@@ -179,7 +179,32 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
         XCTAssertEqual(leftOut.first?.reviewedText, "")
     }
 
+    /// #1185 audit: the export screen prepares drafts from the session picked there; opening the
+    /// sheet must keep them, so the count on the Share Margins button is the count in the sheet.
+    func testBeginKeepsDraftsTheExportScreenAlreadyPrepared() {
+        let (model, coordinator) = makeModelAndCoordinator(marginCount: 2)
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.margins.count, 2)
+
+        model.sharingState.drafts.removeLast()
+        model.sharingState.draftsPreparedForExport = true
+        model.isSharingInterjectionsPresented = true
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.margins.count, 1)
+        XCTAssertFalse(model.sharingState.draftsPreparedForExport)
+
+        coordinator.send(.begin)
+        XCTAssertEqual(coordinator.snapshot.margins.count, 2)
+    }
+
     private func makeCoordinator(marginCount: Int = 1, marginsWithoutTranscript: Set<Int> = []) -> Build23SharingCoordinator {
+        makeModelAndCoordinator(marginCount: marginCount, marginsWithoutTranscript: marginsWithoutTranscript).coordinator
+    }
+
+    private func makeModelAndCoordinator(
+        marginCount: Int = 1,
+        marginsWithoutTranscript: Set<Int> = []
+    ) -> (model: Gate1AppModel, coordinator: Build23SharingCoordinator) {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         let itemID = model.selectedItem.id
@@ -221,7 +246,7 @@ final class Build23SenderSharingExperienceTests: XCTestCase {
             interjections.append(interjection)
         }
         model.selectedItem.interjections = interjections
-        return Build23SharingCoordinator(model: model)
+        return (model, Build23SharingCoordinator(model: model))
     }
 
     private func waitForVerifiedPreview(
