@@ -19,14 +19,14 @@ Replace this section when the focus changes; do not append to it.
   - **Codex worker** (`ops/codex/sm_codex_worker.py`, launchd, `gpt-6.1-sol` high, up to 3 slots from the Dial #589). It first finishes stalled PRs (newest lane report on the head is FAIL, or `needs-mac`), then takes `ready` issues, `priority` first. It opens `automerge` PRs into `next`. It skips issues labelled `in-progress`, `where:mac`, `regression` or `blocked`, so file work for it as `ready` (plus `priority`, plus `bug` for failures).
   - **Codex Test Desk** (`ops/codex/sm_codex_testdesk.py`, launchd): `--plan app` plus scripted journeys on each new tip of `next`, reports on #184, files real failures as `ready,priority,bug`.
   - **Codex journey desk** (a Codex app automation with computer use, set up by the owner per #693): hands-on journeys on the tip, reports on #184.
-  - **Codex audit** (`ops/codex/sm_codex_audit.py`, launchd, `gpt-6-astra` high): audits risky and lane PRs; the runner merges those only after "No blocking findings" on the head.
+  - **Codex audit** (`ops/codex/sm_codex_audit.py`, launchd, `gpt-6-astra` high): audits risky and lane PRs; the runner accepts headless Claude audits alongside Codex and merges those only after "No blocking findings" on the head. The scheduled job still invokes Codex until the separate job switch in #1195.
   - **Rules for Codex app threads:** build only with `scripts/xcodebuild-lane`, boot simulators only with `scripts/lane-sim-boot` (one simulator Mac-wide; Claude's lane guard does not cover Codex), never boot 1330F268, and stop on a crash flood. Don't push to a PR that carries `automerge`; never force-push; don't touch `main`, releases or the owner's data.
 - **Owner's standing calls (2026-09-29).** Don't ask again:
   - **Use the token allowance.** The subscriptions are paid for. Aim for roughly linear use of each weekly allowance, Claude and Codex, by its reset. Waste means little working output per token, not high spend.
   - **The design direction is not changing.** Build on the current look. Where the stream plan says a stream waits on D1, that gate is gone.
   - **The server on the owner's VPS is approved.** App features that use it go ahead. Any "waits on the owner's hosting call" gate is gone.
   - **No off switches for new features.** The way back is reverting the merge.
-  - **Merge finished work on host tests plus both builds.** The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
+  - **Merge finished work on host tests.** Per PR the author builds both targets locally and the lane runs host tests; the integration run on `next`'s tip builds and tests the merged app (owner, 2026-10-09). The Test Desk tests the merged tip end to end, instead of per-PR simulator gating.
 - **Owner's standing calls (2026-10-05).** Don't ask again:
   - **"Post-MVP" is a legacy label.** The app is past MVP. The `phase:` labels and `[Post-MVP]` title prefixes were removed on 2026-10-05; if one turns up, or `parked` does, it never stops work on an issue. Judge the issue on its merits.
   - **Default on only when it costs the listener nothing.** A background or sharing feature may be opt-out only if both are true:

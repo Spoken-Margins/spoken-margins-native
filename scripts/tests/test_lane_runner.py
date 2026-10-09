@@ -36,6 +36,21 @@ def runner_report(verdict, wanted, url='https://example.test/r'):
                                'none', '/e', 'owner', wanted), login='github-actions[bot]', url=url)
 
 
+class ClaudeAuditGateTests(unittest.TestCase):
+    def test_claude_head_audit_clears_lane_and_risky_changes(self):
+        clean = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
+        scope = {'files': [{'category': 'audio'}, {'category': 'persistence'}, {'category': 'packet'}],
+                 'lane_paths': ['scripts/lane-runner.py']}
+        self.assertIsNone(lane.audit_blocker([clean], HEAD))
+        self.assertEqual(lane.merge_blockers(scope, [clean], HEAD), [])
+
+    def test_newest_head_audit_wins_across_reviewers(self):
+        claude = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
+        codex = comment('**Codex audit (Astra) on `aaaaaaa`**\n\n[P1] Broken.')
+        self.assertIsNone(lane.audit_blocker([codex, claude], HEAD))
+        self.assertIsNotNone(lane.audit_blocker([claude, codex], HEAD))
+
+
 class FakeGitHub:
     def __init__(self, labels=('lane:queued',), head=HEAD, comments=(), fail_comment=False):
         self.labels, self.head, self._comments = set(labels), head, list(comments)
@@ -786,19 +801,21 @@ class ScopeClassTests(unittest.TestCase):
 class AutomergeTests(unittest.TestCase):
     """The automerge label runs what the PR's diff needs (test-scope.py's tier)."""
 
-    def run_checks(self, tier, fast='PASS', t2='PASS', too_big=()):
+    def run_checks(self, tier, fast='PASS', too_big=()):
+        """run_automerge with fake host tests, and every process it starts recorded: no app build may run."""
         calls = []
 
         def fake_fast(evidence, changed=None):
             calls.append('fast')
             return fast, [] if fast == 'PASS' else [f'host tests {fast}']
 
-        def fake_t2(evidence):
-            calls.append('t2')
-            return t2, f'simulator build ({t2.lower()})', []
+        def started(command, log, timeout, **_):
+            calls.append(Path(command[0]).name)
+            return 0
 
-        result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path('/e'), fast=fake_fast, t2=fake_t2,
-                                    ratchet=lambda: list(too_big))
+        with tempfile.TemporaryDirectory() as evidence, mock.patch.object(lane, 'run_bounded', side_effect=started):
+            result = lane.run_automerge({'tier': tier, 'why': ['x']}, Path(evidence), fast=fake_fast,
+                                        ratchet=lambda: list(too_big))
         return result, calls
 
     def test_a_hot_file_above_its_ceiling_fails_before_any_build(self):
@@ -816,12 +833,16 @@ class AutomergeTests(unittest.TestCase):
         self.assertEqual((verdict, calls), ('PASS', ['fast']))
         self.assertIn('no app build', details[-1])
 
-    def test_a_diff_that_reaches_the_app_runs_the_host_tests_then_both_builds(self):
+    def test_a_diff_that_reaches_the_app_runs_the_host_tests_and_no_app_build(self):
+        # Owner, 2026-10-09: from 10-02 to 10-09, 140 automerge runs built for simulator and device after the
+        # host tests (about 3.4 min each, ~8 runner-hours a week) and caught no compile failure. Authors build
+        # both targets before pushing, and the integration run on next's tip builds the merged app.
         for tier in ('T2', 'T3'):
             with self.subTest(tier=tier):
-                (verdict, _, ran, _), calls = self.run_checks(tier, t2='FAIL')
-                self.assertEqual((verdict, calls), ('FAIL', ['fast', 't2']))
-                self.assertIn('host tests (--plan fast): passed; simulator build (fail)', ran)
+                (verdict, where, ran, details), calls = self.run_checks(tier)
+                self.assertEqual((verdict, where, calls), ('PASS', 'host only', ['fast']))
+                self.assertEqual(ran, 'host tests (--plan fast): passed')
+                self.assertIn(lane.NO_APP_BUILD_PER_PR, details)
 
     def test_failing_host_tests_stop_before_the_builds(self):
         for fast in ('FAIL', 'INCONCLUSIVE'):
@@ -844,6 +865,20 @@ class AutomergeTests(unittest.TestCase):
             with self.subTest(status=status, code=code), tempfile.TemporaryDirectory() as folder:
                 verdict, details = lane.run_fast(Path(folder), runner=runner_writing(status, code))
                 self.assertEqual(verdict, expected)
+
+    def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
+        # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
+        def run(command, log, timeout):
+            output = Path(command[command.index('--output') + 1])
+            output.mkdir(parents=True, exist_ok=True)
+            (output / 'manifest.json').write_text(json.dumps({
+                'status': 'failed_or_incomplete', 'lane_fault': 'no audio output: lid closed'}))
+            return 1
+
+        with tempfile.TemporaryDirectory() as folder:
+            verdict, details = lane.run_fast(Path(folder), runner=run)
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertIn('lane fault: no audio output: lid closed', details[0])
 
     def test_the_host_tests_are_verify_tests_py_s_fast_plan_writing_into_the_evidence_folder(self):
         # The runners above write a verified manifest into whatever --output they get, whatever plan they were
@@ -1036,8 +1071,8 @@ class MergeTests_Runner(unittest.TestCase):
                 scope = {'tier': 'T1', 'why': [], 'lane_paths': [path], 'files': [{'path': path, 'category': category}]}
                 (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=scope)
                 self.assertEqual((verdict, events), ('PASS', ['build']))
-                self.assertEqual(details[-1], 'not merged by the runner: it touches the lane and has no "Codex audit '
-                                              '(Astra)" comment yet. It merges once a Codex audit of its head says '
+                self.assertEqual(details[-1], 'not merged by the runner: it touches the lane and has no Codex or Claude audit '
+                                              'comment yet. It merges once a Codex or Claude audit of its head says '
                                               '"No blocking findings".')
                 (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',), comments=[clean]),
                                                                  scope=scope)
@@ -1049,7 +1084,7 @@ class MergeTests_Runner(unittest.TestCase):
                                                         'category': 'packet'}]}
         (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=risky)
         self.assertEqual(events, ['build'])
-        self.assertIn('it touches packets and has no "Codex audit (Astra)" comment yet', details[-1])
+        self.assertIn('it touches packets and has no Codex or Claude audit comment yet', details[-1])
         for audit in ('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.',
                       '## Codex audit (gpt-6-astra, high) of `aaaaaaaa`\n\nNo findings.'):
             with self.subTest(audit=audit[:20]):
@@ -1077,7 +1112,7 @@ class MergeTests_Runner(unittest.TestCase):
         (_, _, _, details), events = self.audited(
             '**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. The packet drops the anchor.')
         self.assertEqual(events, ['build'])
-        self.assertIn('the Codex audit on the head `aaaaaaa` has blocking findings', details[-1])
+        self.assertIn('the Codex or Claude audit on the head `aaaaaaa` has blocking findings', details[-1])
 
     def test_findings_that_only_mention_no_findings_elsewhere_still_hold(self):
         # The #414 audit's form: numbered findings, then "Nothing else found …" and "No packet or database changes."
@@ -1101,7 +1136,7 @@ class MergeTests_Runner(unittest.TestCase):
     def test_a_manual_audit_counts_only_if_it_names_the_head(self):
         (_, _, _, details), events = self.audited('## Codex audit (gpt-6-astra, high)\n\nNo findings. Audited the PR.')
         self.assertEqual(events, ['build'])
-        self.assertIn('has no Codex audit naming its head `aaaaaaa`', details[-1])
+        self.assertIn('has no Codex or Claude audit naming its head `aaaaaaa`', details[-1])
         older = '## Codex audit of `1234567`\n\nNo findings. The head `aaaaaaa` came later.'  # the sha only in the body
         self.assertEqual(self.audited(older)[1], ['build'])
 
@@ -1171,13 +1206,13 @@ class MergeTests_Runner(unittest.TestCase):
         scope = {'tier': 'T1', 'why': [], 'lane_paths': ['scripts/lane_sim.py'],
                  'files': [{'path': 'scripts/lane_sim.py', 'category': 'scripts'}]}
         held = lane.merge_blockers(scope, [], HEAD)
-        self.assertIn('it touches the lane and has no "Codex audit (Astra)" comment yet', held)
+        self.assertIn('it touches the lane and has no Codex or Claude audit comment yet', held)
         findings = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\n### Blocking findings\n1. The slot leaks.')]
         self.assertTrue(any('has blocking findings' in reason for reason in lane.merge_blockers(scope, findings, HEAD)))
         clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
         self.assertFalse(any('Codex audit' in reason for reason in lane.merge_blockers(scope, clean, HEAD)))
         packet_too = dict(scope, files=scope['files'] + [{'path': 'A/Share.swift', 'category': 'packet'}])
-        self.assertIn('it touches packets and the lane and has no "Codex audit (Astra)" comment yet',
+        self.assertIn('it touches packets and the lane and has no Codex or Claude audit comment yet',
                       lane.merge_blockers(packet_too, [], HEAD))
 
     def test_audio_persistence_and_packet_changes_are_each_held_for_a_codex_audit(self):
@@ -1187,7 +1222,7 @@ class MergeTests_Runner(unittest.TestCase):
                 scope = {'tier': 'T3', 'why': [], 'lane_paths': [], 'files': [
                     {'path': 'App/X.swift', 'category': 'app-ui'}, {'path': 'App/Y.swift', 'category': category}]}
                 self.assertEqual(lane.merge_blockers(scope, [], HEAD),
-                                 [f'it touches {what} and has no "Codex audit (Astra)" comment yet'])
+                                 [f'it touches {what} and has no Codex or Claude audit comment yet'])
                 clean = [comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')]
                 self.assertEqual(lane.merge_blockers(scope, clean, HEAD), [])
 
@@ -1557,7 +1592,10 @@ class MainFlowTests(unittest.TestCase):
                                                # and these tests run inside a lane job, maybe a re-run
                                                'SM_LANE_RUNNER_ROLE': self.role, 'GITHUB_RUN_ATTEMPT': self.attempt,
                                                # the test's own temp folder, never a real lane job's
-                                               'RUNNER_TEMP': temporary}), \
+                                               'RUNNER_TEMP': temporary,
+                                               # nor the Mac's lane state (the step ledger, #1200)
+                                               'SM_LANE_STATE_DIR': self.state_dir or temporary}), \
+                mock.patch.object(lane, 'Repo', return_value=self.ops), \
                 mock.patch.object(lane, 'run_t2', side_effect=t2,
                                   return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
@@ -1582,6 +1620,8 @@ class MainFlowTests(unittest.TestCase):
 
     conflicts = []
     role = ''  # the main runner, unless a test says otherwise
+    state_dir = None  # the lane state folder: the run's temporary folder unless a test names one
+    ops = mock.Mock()  # Repo(...): what main posts on #337
     attempt = '1'
 
     def retry_fault_report(self, released_t3=False, throws=False, exhausted=False):
@@ -1867,8 +1907,7 @@ class MainFlowTests(unittest.TestCase):
         self.addCleanup(setattr, self, 'role', '')
         with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
                 mock.patch.object(lane, 'run_t3', return_value=('PASS', 'x', 'T/A', [], 'none', '')) as t3, \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=no_room) as wait, \
-                mock.patch.object(lane, 'host_only_scope', return_value=False):  # a job that builds, whatever this tree's diff
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(no_room, None)) as wait:
             self.run_main(github, HEAD, 'PASS', '--mode', mode)
         self.role = ''
         return auto, t3, wait
@@ -2540,6 +2579,10 @@ class AutoRevertTests(unittest.TestCase):
                                          'report yet.'], '2026-10-01T13:30:00Z', n=2),
             self.report('FAIL', ['host tests (--plan fast) — expected: verified. observed: exit 1.'],
                         '2026-10-01T13:30:00Z', n=2),
+            # #909: the Mac's lid was closed, which no lane change causes; reverting one for it would be wrong.
+            self.report('INCONCLUSIVE', ['host tests (--plan fast) — lane fault: no audio output: lid closed with no '
+                                         'external display. Ask the owner to open the lid or connect an audio '
+                                         'output, then re-run.'], '2026-10-01T13:30:00Z', n=2),
         ]
         for second in not_faults:
             with self.subTest(second=second['body'].splitlines()[3][:30]):
