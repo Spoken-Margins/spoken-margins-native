@@ -2,6 +2,15 @@
 
 Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners play articles, PDFs and podcasts, record spoken or written **Margins** anchored to the source, and share Margins as `.spokenmargins` packets that another listener can import and hear at the right place in their own copy. The product owner is a systems engineer, not an iOS developer: explain trade-offs plainly and bring decisions, not options lists.
 
+## Working with the owner
+
+Every thread and the coordinator follow these.
+
+- **A question he can answer (owner, 2026-10-09).** "you need to set me up to be able to answer these... they do not present a question for me to answer." A thread that waits on him ends with a `reply`, never only a status line. The reply stands on its own: what this is in one sentence, the question, your pick, the other options on short lines with their cost, and what it blocks. He can answer in one word.
+- **Technical calls are ours (owner, 2026-10-09).** "I don't want to be asked these questions. These are very simple and should be left to expert programmers such as yourself." and "I'm not very appreciative of the smaller questions that are outside my expertise." Take the default, post **Default taken**, keep going. What he is asked is in "Decide reversible and technical things yourself".
+- **The coordinator follows through (owner, 2026-10-09).** "I thought, as the coordinator, this would be your job, but I keep on finding myself doing this." When a hold lifts, the coordinator tells every affected thread and re-arms held PRs in the same turn, without asking him. Whenever it is woken, it clears stale or technical "waiting on you" items.
+- **How to talk to him (owner's standing needs, restated 2026-10-09).** He is dyslexic and listens to replies: lead with the answer, use short plain sentences and numbered points, and list issue numbers at the end. He is red-green colorblind: red and green alone never carry meaning. When he must act, give numbered steps, the full link, exactly what to tap and type, and what happens after.
+
 ## Current focus
 
 Replace this section when the focus changes; do not append to it.
@@ -63,7 +72,7 @@ Replace this section when the focus changes; do not append to it.
   - **Build on your own unmerged branch only if you must, one level deep.** Branch the next issue from `next`. If it truly depends on your armed PR, branch from that PR's branch, but never from a branch that itself sits on another unmerged branch.
 - **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
 - **Branches.** Each PR gets its own branch, off `next` or, one level deep, off your own armed branch (project threads: `ws/<issue>-<slug>`). Don't push new work to a branch whose PR is armed: the runner could merge it half done. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
-- **Decide reversible things yourself.** When a choice can be undone later, post it on your stream's tracking issue under a **Default taken** heading (the options, your pick, why) and keep going on your pick; the owner vetoes by number. Stop and ask only when the choice touches the owner's data, packet or database compatibility, money, anything public, `main` or a release, or taste (design, voice).
+- **Decide reversible and technical things yourself.** When a choice can be undone later, or is an engineering call (dead code, refactors, deleting unused paths, internal structure, test and lane choices, when to schedule engineering work), post it on your stream's tracking issue under a **Default taken** heading (the options, your pick, why) and keep going on your pick; the owner vetoes by number. Stop and ask only when the choice touches the owner's data, packet or database compatibility, money, his accounts or machines, anything public, `main` or a release, or product taste he'd notice on the phone (design, voice). How to ask: "Working with the owner".
 - **Don't grow `Gate1AppModel`.** Put new logic in a focused type, in SessionKit when it can be host-tested, and call it from the model. In particular, don't add another "should the source resume" flag or another playback state machine.
 - **Keep packets compatible.** Packets exported by a new build must import into the last shipped build unless the owner explicitly accepts a break. Only require a new manifest capability when the packet actually uses the feature.
 - **Protect owner data.** Never reset, reseed or delete the owner's Library or recordings. Storage changes must let the previous build still open the database.
