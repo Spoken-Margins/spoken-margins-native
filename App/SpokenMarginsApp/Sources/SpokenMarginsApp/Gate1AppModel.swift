@@ -652,7 +652,6 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var sleepTimerRemainingSeconds: Int?
     @Published private(set) var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
-    @Published var completionUndo: (itemID: String, title: String, markedAt: Date)?
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
         didSet {
@@ -1830,7 +1829,6 @@ final class Gate1AppModel: ObservableObject {
         snapshot = SessionSnapshot()
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = []
-        completionUndo = nil
         dismissTrashUndo()
         selectedItem = try loadItemDetail(id: item.id, store: store)
         diagnostics = [
@@ -2349,7 +2347,6 @@ final class Gate1AppModel: ObservableObject {
             snapshot = SessionSnapshot()
             libraryItems = try loadLibraryRows(store: store)
             recentlyDeletedItems = []
-            completionUndo = nil
             dismissTrashUndo()
             selectedItem = try loadItemDetail(id: item.id, store: store)
             diagnostics = [
@@ -5110,22 +5107,14 @@ final class Gate1AppModel: ObservableObject {
             listeningSignals.finish(itemId: id)
             try refreshLibraryRows(store: store)
             if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
-            completionUndo = (id, item.title, item.sourceCompletedAt ?? Date())
-            let completion = completionUndo
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(10))
-                guard let self, self.completionUndo?.itemID == completion?.itemID,
-                      self.completionUndo?.markedAt == completion?.markedAt else { return }
-                self.completionUndo = nil
-            }
+            presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())
         } catch {
             reportFailure(error, context: "Mark complete failed")
         }
     }
 
-    func undoMarkedCompletion() {
-        guard let undo = completionUndo else { return }
-        clearMarkedCompletion(id: undo.itemID, markedAt: undo.markedAt)
+    func undoMarkedCompletion(itemId: String, markedAt: Date) {
+        clearMarkedCompletion(id: itemId, markedAt: markedAt)
     }
 
     /// Any time after the undo banner is gone (#273). Only a completion set by hand.
@@ -5133,14 +5122,15 @@ final class Gate1AppModel: ObservableObject {
 
     private func clearMarkedCompletion(id: String, markedAt: Date?) {
         guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_unfinished") else { return }
-        if completionUndo?.itemID == id { completionUndo = nil }
         do {
             let store = try requireStore()
             // Never a later completion, and never natural session completion.
             guard let item = try ManualItemCompletion.markUnfinished(itemId: id, markedAt: markedAt, in: store) else { return }
             try refreshLibraryRows(store: store)
             if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
-            reportConfirmation(markedAt == nil ? "Marked \(item.title) unfinished." : "Undid Mark Complete for \(item.title).")
+            reportConfirmation(markedAt == nil
+                ? ManualCompletionMessages.unfinished(title: item.title)
+                : ManualCompletionMessages.undone(title: item.title))
         } catch { reportFailure(error, context: "Mark unfinished failed") }
     }
 
