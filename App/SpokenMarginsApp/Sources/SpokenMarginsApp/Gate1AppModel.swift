@@ -983,8 +983,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
     private var importedPodcastResolutionURLs: [String: URL] = [:]
-    /// Downloads whose Margin placement waits for the listener's session to move off the stream it started on (#914).
-    private var deferredPodcastPlacementURLs: [String: URL] = [:]
+    var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
     private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
@@ -13721,8 +13720,7 @@ final class Gate1AppModel: ObservableObject {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        if deferredPodcastPlacementURLs[itemId] == nil,
-           importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+        if deferredPodcastPlacementURLs[itemId] == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
            let item = try? store.loadItem(id: itemId) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
@@ -13770,27 +13768,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func podcastResolution(
-        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
-        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
-    ) -> ImportedAnchorResolution {
-        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
-            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
-    }
-
-    /// The session changed, so the next one starts on the finished download: place the Margins against it now.
-    private func resumeDeferredPodcastPlacements() {
-        guard !deferredPodcastPlacementURLs.isEmpty else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            for (itemId, localURL) in self.deferredPodcastPlacementURLs {
-                self.diagnostics["podcastPlacementDeferred:\(itemId)"] = "resumed_after_session_change"
-                self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
-            }
-        }
-    }
-
-    private func resolveImportedPodcastCommentary(
+    func resolveImportedPodcastCommentary(
         itemId: String,
         localURL: URL,
         recipientTranscriptOverride: TranscriptTimeline? = nil
@@ -13800,15 +13778,7 @@ final class Gate1AppModel: ObservableObject {
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
               !layers.isEmpty else { deferredPodcastPlacementURLs[itemId] = nil; return }
-        // The Margins are placed against the file the listener hears. A session that started on the stream keeps it
-        // when the download finishes, so placing against the file now would play Margins at the wrong moment (#914).
-        if item.media?.sourceType == .remoteStream,
-           engine?.mediaSessionPlays(itemId: itemId, playbackURL: localURL.absoluteString) == false {
-            deferredPodcastPlacementURLs[itemId] = localURL
-            diagnostics["podcastPlacementDeferred:\(itemId)"] = "session_keeps_its_edition"
-            return
-        }
-        deferredPodcastPlacementURLs[itemId] = nil
+        guard !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: localURL) else { return }
         importedPodcastResolutionURLs[itemId] = localURL
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
