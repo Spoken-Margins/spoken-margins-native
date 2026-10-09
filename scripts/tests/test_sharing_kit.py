@@ -6,6 +6,7 @@ import re
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -644,6 +645,42 @@ class BuildTests(unittest.TestCase):
 
 
 class VerifyContentTests(unittest.TestCase):
+    def test_missing_audio_tools_cannot_make_content_verification_pass(self):
+        kit = kit_tool.load_kit()
+        for item in kit['items'].values():
+            if item['kind'] == 'podcast':
+                item['audio']['sha256'] = hashlib.sha256(b'pinned audio').hexdigest()
+                item['audio']['bytes'] = len(b'pinned audio')
+
+        def page_text(url):
+            item = next(i for i in kit['items'].values() if i['source']['page'] == url)
+            if item['kind'] == 'podcast':
+                return '', f"CC BY-SA Hosted by {item['source']['host']}"
+            return item['source']['pageTitle'], ' '.join(
+                m['quote'] for m in packet_of(kit, 'kit-4-article')['margins'])
+
+        def head(url):
+            return {'status': '200', 'content-length': str(len(b'pinned audio')), 'accept-ranges': 'bytes'}
+
+        for missing in ({'ffprobe'}, {'ffmpeg'}, {'ffprobe', 'ffmpeg'}, set()):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as work:
+                def run(command, **kwargs):
+                    if command[0] == 'which':
+                        return kit_tool.subprocess.CompletedProcess(command, int(command[1] in missing))
+                    self.assertEqual(command[0], 'ffprobe')
+                    item = kit['items'][Path(command[-1]).stem]
+                    return kit_tool.subprocess.CompletedProcess(command, 0,
+                                                               stdout=str(item['identity']['durationMs'] / 1000))
+
+                with patch.object(kit_tool.subprocess, 'run', side_effect=run), \
+                        patch.object(kit_tool, '_decode', return_value=[1] * 48000):
+                    problems = kit_tool.verify_content(
+                        kit, work, fetch=lambda url, dest: Path(dest).write_bytes(b'pinned audio'),
+                        page_text=page_text, head=head, log=lambda *a: None)
+                self.assertEqual(len(problems), len(missing), problems)
+                for tool in missing:
+                    self.assertTrue(any(tool in p and 'required' in p for p in problems), problems)
+
     def test_the_shared_intro_is_measured_from_the_sound(self):
         rate = 8000
         intro = [((i * 7919) % 20000) - 10000 for i in range(rate * 2)]

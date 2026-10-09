@@ -72,7 +72,7 @@ launchd runs `sm_codex_worker.py` every 10 minutes. Each run (a tick) reads:
 2. Codex usage (`codex app-server`, `account/rateLimits/read`). It holds at the Codex stop line minus 3, or when usage is more than 5 points ahead of a straight line from the Codex window's start to its finish-by time, scaled to the stop line. With no Codex pacing ticks, it uses the Dial's Stop line and Codex's reset. It also holds when the read fails or no readable stop line is ticked.
 3. Free disk. It holds below 30 GiB.
 4. Live slots: `~/SpokenMarginsOps/codex-worker/slot-N.lock` files whose pid is still a worker.
-5. The freeze (#902): the Dial's `**Codex focus**` group. A ticked milestone (`- [x] Build 30`) turns the freeze on for that milestone; a ticked `None` lifts it. With no group or no tick it uses `SM_CODEX_FOCUS_MILESTONE`, default `Build 30`. During a freeze it finishes only PRs linked to a milestone issue (by `ws/<n>-` branch, `(#n)` title or closing words) or whose diff stays out of `App/`, `Packages/` and `Contracts/`, and it holds when the milestone can't be read.
+5. The freeze (#902): the Dial's `**Codex focus**` group. A ticked milestone (`- [x] Solid Ground`) turns the freeze on for that milestone; a ticked `None` lifts it. With no group or no tick it uses `SM_CODEX_FOCUS_MILESTONE`, default `Listening Baseline`. During a freeze it finishes only PRs linked to a milestone issue (by `ws/<n>-` branch, `(#n)` title or closing words) or whose diff stays out of `App/`, `Packages/` and `Contracts/`, and it holds when the milestone can't be read. Planning milestones have independent names; uploading another Apple build does not advance the worker's focus.
 
 If a slot is free and nothing holds, it picks one job and starts one detached child, then exits. It starts at most one child per tick. PR finishing and issue runs share the same slots, Dial and pacing.
 
@@ -114,11 +114,11 @@ Paste this above the `---` line:
 - [ ] Codex reset
 
 **Codex focus** (during a freeze, Codex takes this milestone's issues and PRs, plus work outside App/, Packages/ and Contracts/)
-- [x] Build 30
+- [x] Solid Ground
 - [ ] None (no freeze: any ready issue)
 ```
 
-For the next freeze, edit the milestone line's name (for example `Build 31`) and tick it. A ticked milestone wins over a ticked None.
+For the next freeze, edit the milestone line's name (for example `Co-op Experience`) and tick it. A ticked milestone wins over a ticked None.
 
 The Codex pacing groups leave Claude's Dial unchanged. Two stops take the lower; two finish times take the later, resolved as the next occurrence after the Codex window's start in Eastern time. After that time the trend stays at the stop line. An unrecognized checked stop holds work; an unrecognized checked finish includes Codex reset among the choices. Each tick and dry run reports the chosen stop and resolved finish time. The worker never edits the Dial body.
 

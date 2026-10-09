@@ -759,13 +759,16 @@ def verify_content(kit, work, fetch=download, page_text=_page_text, log=print, h
         paths = fetch_audio(kit, audio_dir, fetch)
     except KitError as error:
         problems.append(str(error))
+    can_probe = bool(paths) and subprocess.run(['which', 'ffprobe'], capture_output=True).returncode == 0
+    if paths and not can_probe:
+        problems.append('ffprobe is required to verify the pinned audio durations; install it and rerun verify-content')
     for key, path in paths.items():
         item = kit['items'][key]
         if path.stat().st_size != item['audio']['bytes']:
             problems.append(f'{key}: {path.stat().st_size} bytes, kit.json says {item["audio"]["bytes"]}')
-        if subprocess.run(['which', 'ffprobe'], capture_output=True).returncode == 0:
+        if can_probe:
             seconds = float(subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0',
-                                            str(path)], capture_output=True, text=True).stdout)
+                                            str(path)], capture_output=True, text=True, check=True).stdout)
             if abs(seconds * 1000 - item['identity']['durationMs']) > 50:
                 problems.append(f"{key}: lasts {seconds * 1000:.0f} ms, kit.json says {item['identity']['durationMs']} ms")
         problems += head_problems(key, item, head(item['audio']['url']))
@@ -774,9 +777,13 @@ def verify_content(kit, work, fetch=download, page_text=_page_text, log=print, h
             problems.append(f"{key}: the episode page no longer says CC BY-SA")
         if f"Hosted by {item['source']['host']}" not in text:
             problems.append(f"{key}: the episode page no longer names {item['source']['host']} as host")
-        log(f'{key}: audio, length, size on HEAD, license and host checked')
+        log(f'{key}: audio, size on HEAD, license and host checked')
     podcasts = [k for k, v in kit['items'].items() if v['kind'] == 'podcast']
-    if len(podcasts) >= 2 and all(k in paths for k in podcasts) and subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode == 0:
+    compare_intro = len(podcasts) >= 2 and all(k in paths for k in podcasts)
+    can_decode = compare_intro and subprocess.run(['which', 'ffmpeg'], capture_output=True).returncode == 0
+    if compare_intro and not can_decode:
+        problems.append('ffmpeg is required to verify the shared intro; install it and rerun verify-content')
+    if can_decode:
         first = _decode(paths[podcasts[0]])
         for other in podcasts[1:]:
             seconds = shared_prefix_seconds(first, _decode(paths[other]))
