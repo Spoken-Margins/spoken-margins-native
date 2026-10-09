@@ -162,10 +162,10 @@ public enum SpokenMarginsPackageArchive {
         )
         defer { try? FileManager.default.removeItem(at: stagedURL) }
         let archive = try Archive(url: stagedURL, accessMode: .create)
-        try add(manifestData, path: "manifest.json", to: archive, compression: .deflate)
-        try add(previewData, path: "preview.md", to: archive, compression: .deflate)
+        try addDeflatedWithinReaderLimit(manifestData, path: "manifest.json", to: archive)
+        try addDeflatedWithinReaderLimit(previewData, path: "preview.md", to: archive)
         for path in prepared.artifactData.keys.sorted() {
-            try add(prepared.artifactData[path]!, path: path, to: archive, compression: .deflate)
+            try addDeflatedWithinReaderLimit(prepared.artifactData[path]!, path: path, to: archive)
         }
         for path in assetData.keys.sorted() {
             try add(assetData[path]!, path: path, to: archive, compression: .none)
@@ -220,8 +220,9 @@ public enum SpokenMarginsPackageArchive {
             if entry.path.hasPrefix("assets/evidence/"), entry.uncompressedSize > maximumEvidenceBytes {
                 throw SpokenMarginsPackageArchiveError.invalidAsset(entry.path)
             }
-            if entry.compressedSize > 0,
-               entry.uncompressedSize / max(1, entry.compressedSize) > maximumCompressionRatio {
+            if exceedsCompressionRatioLimit(
+                uncompressedSize: entry.uncompressedSize, compressedSize: entry.compressedSize
+            ) {
                 throw SpokenMarginsPackageArchiveError.excessiveCompression(entry.path)
             }
             var data = Data()
@@ -988,6 +989,23 @@ public enum SpokenMarginsPackageArchive {
         } else {
             try fileManager.moveItem(at: stagedURL, to: destinationURL)
         }
+    }
+
+    /// The reader's zip-bomb check, shared with the writer so the two cannot drift apart (#946).
+    private static func exceedsCompressionRatioLimit(uncompressedSize: UInt64, compressedSize: UInt64) -> Bool {
+        compressedSize > 0 && uncompressedSize / max(1, compressedSize) > maximumCompressionRatio
+    }
+
+    /// Deflates the entry, unless it squeezes past the ratio our own reader (and Build 29's) refuses.
+    /// Highly repetitive text can; such an entry is stored uncompressed, which both readers accept.
+    private static func addDeflatedWithinReaderLimit(_ data: Data, path: String, to archive: Archive) throws {
+        try add(data, path: path, to: archive, compression: .deflate)
+        guard let written = archive[path],
+              exceedsCompressionRatioLimit(
+                  uncompressedSize: written.uncompressedSize, compressedSize: written.compressedSize
+              ) else { return }
+        try archive.remove(written)
+        try add(data, path: path, to: archive, compression: .none)
     }
 
     private static func add(_ data: Data, path: String, to archive: Archive, compression: CompressionMethod) throws {
