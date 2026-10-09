@@ -3,21 +3,27 @@
 
 Owner, 2026-10-01: "I really hope we are not limiting ourselves because of disk space."
 
-When free space on /System/Volumes/Data drops below 35 GiB and the external drive
-/Volumes/SlawBulk is plugged in, this frees space in order, stopping as soon as free space
-reaches 60 GiB:
+When free space on /System/Volumes/Data drops below 50 GiB, this frees space in order, stopping
+as soon as free space reaches 70 GiB. Steps 1 to 5 only delete things that rebuild or are finished,
+so they run whether or not the external drive is plugged in; only step 6 needs the drives.
 
-1. Regenerable build caches in idle worktrees of this repo: `.build/dd`, `.build/verification`
+1. Finished worktrees: inside a checkout's `.claude/worktrees/`, clean, HEAD already in
+   origin/next, idle, untouched for 24 hours, no live Claude Code session working there, and
+   holding no ignored files except regenerable ones (`.build/`, `.venv`, `node_modules`, ...).
+   Removed with `git worktree remove`, which refuses dirty or locked worktrees.
+2. Regenerable build caches in idle worktrees of this repo: `.build/dd`, `.build/verification`
    (and anything else in `.build/` except lock files) and `Packages/SessionKit/.build`.
    Idle means no process has its working directory inside the worktree, no xcodebuild,
    swift-build or verify-tests command names it, no live agent holds its worktree lock, and
    nothing under the cache changed in the last 30 minutes.
-2. Scratch folders of Claude Code sessions that ended: /private/tmp/claude-<uid>/<project>/<session id>/.
+3. Scratch folders of Claude Code sessions that ended: /private/tmp/claude-<uid>/<project>/<session id>/.
    Ended means the session isn't in Claude Code's live session list (~/.claude/sessions/<pid>.json
    with a live pid), no process names the session id or has a file or working directory inside the
    folder, nothing in it changed in the last 12 hours, and it isn't this process's own session.
-3. iOS DeviceSupport folders except the newest one.
-4. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, with a
+4. Ad-hoc test folders in /private/tmp (`spoken-margins-*`) that no process uses and that
+   haven't changed in 12 hours.
+5. iOS DeviceSupport folders except the newest one.
+6. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, with a
    second copy on the separate mirror disk (/Volumes/SlawArchiveMirror/Current/SlawBulk/...),
    each copied under a `.partial` name and checked by size and file count before the source is
    deleted: `artifacts/` folders in the main checkout untouched for 2 days, older phone builds in
@@ -25,8 +31,8 @@ reaches 60 GiB:
    Codex session logs untouched for 3 days. Without the mirror disk, moves are skipped.
 
 It never touches the self-hosted runner folders, ~/.codex/worktrees, CoreSimulator, or app data.
-It never removes a worktree; stale ones (clean, HEAD already in origin/next) are listed for the
-owner instead. One run at a time (a lock file); every action goes to
+Stale worktrees it may not remove (outside `.claude/worktrees/`, or holding `artifacts/`) are
+listed for the owner instead. One run at a time (a lock file); every action goes to
 ~/SpokenMarginsOps/disk-relief/log.txt; a notification appears only when it acted.
 
 Stdlib only, Python 3.9+. `--dry-run` lists what it would do, with sizes, and changes nothing.
@@ -57,6 +63,12 @@ ARTIFACT_AGE_SECONDS = 2 * 86400
 SESSION_LOG_AGE_SECONDS = 3 * 86400
 PHONE_KEEP_NEWEST = 2
 SESSION_SCRATCH_IDLE_SECONDS = 12 * 3600
+TMP_IDLE_SECONDS = 12 * 3600
+STALE_WORKTREE_IDLE_SECONDS = 24 * 3600
+# Ignored paths `git worktree remove` may delete with a finished worktree: build output and the
+# links scripts/setup-worktree.sh makes. Anything else ignored (artifacts/ above all) keeps it.
+REGENERABLE_IGNORED = {'.venv', '.venv/', 'node_modules', 'node_modules/', '.claude/settings.local.json'}
+REGENERABLE_IGNORED_NAMES = {'.build', '.swiftpm', '__pycache__', '.DS_Store'}  # at any depth
 SESSION_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 BUSY_COMMAND_WORDS = ('xcodebuild', 'swift-build', 'verify-tests')
 PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
@@ -86,9 +98,13 @@ class Config:
     # Claude Code's per-session scratch (scratchpad/, tasks/ …) and its list of running sessions.
     claude_tmp: Path = Path(f'/private/tmp/claude-{os.getuid()}')
     claude_sessions: Path = HOME / '.claude/sessions'
+    # Ad-hoc test copies agents leave in /private/tmp (a Test Desk copy held 4.2 GiB, 2026-10-09).
+    tmp_root: Path = Path('/private/tmp')
+    tmp_globs: Tuple[str, ...] = ('spoken-margins-*',)
     own_session: Optional[str] = field(default_factory=lambda: os.environ.get('CLAUDE_CODE_SESSION_ID'))
-    trigger_bytes: int = 35 * GiB
-    target_bytes: int = 60 * GiB
+    # One app build into a worktree's .build/dd takes 8 to 9 GiB (log, 2026-10-09): start early.
+    trigger_bytes: int = 50 * GiB
+    target_bytes: int = 70 * GiB
     extra_protected: List[Path] = field(default_factory=list)
 
     @property
@@ -419,7 +435,7 @@ def busy_paths(paths: List[Path], procs: List[Proc]) -> set:
 
 @dataclass
 class Candidate:
-    step: str            # 'cache', 'session-scratch', 'device-support' or 'move'
+    step: str            # 'worktree', 'cache', 'session-scratch', 'tmp', 'device-support' or 'move'
     path: Path
     size: int            # bytes on disk it frees
     why: str
@@ -431,7 +447,8 @@ class Candidate:
 class Plan:
     candidates: List[Candidate] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
-    stale_worktrees: List[Path] = field(default_factory=list)
+    # Stale worktrees kept for the owner to remove, with why they were kept.
+    stale_worktrees: List[Tuple[Path, str]] = field(default_factory=list)
 
 
 def cache_dirs(worktree: Path) -> List[Path]:
@@ -450,11 +467,11 @@ def cache_dirs(worktree: Path) -> List[Path]:
 
 
 def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict,
-                protected: List[Path], plan: Plan) -> None:
+                protected: List[Path], plan: Plan, removing: set = frozenset()) -> None:
     idle_since = machine.now() - CACHE_IDLE_SECONDS
     found = []
     for tree in trees:
-        if is_protected(tree.path, protected):
+        if tree.path in removing or is_protected(tree.path, protected):
             continue
         dirs = cache_dirs(tree.path)
         if not dirs:
@@ -482,9 +499,9 @@ class SessionSignals:
     procs: List[Proc]
 
 
-def live_session_ids(cfg: Config, machine: Machine) -> set:
-    """Session ids in ~/.claude/sessions/<pid>.json whose pid is alive (read only)."""
-    live = set()
+def live_sessions(cfg: Config, machine: Machine) -> List[Tuple[str, Optional[str]]]:
+    """(session id, cwd) from ~/.claude/sessions/<pid>.json whose pid is alive (read only)."""
+    live = []
     for entry in sorted(cfg.claude_sessions.glob('*.json')) if cfg.claude_sessions.is_dir() else []:
         try:
             data = json.loads(entry.read_text())
@@ -492,8 +509,13 @@ def live_session_ids(cfg: Config, machine: Machine) -> set:
         except (OSError, ValueError, KeyError, TypeError):
             continue
         if machine.pid_alive(pid):
-            live.add(session)
+            cwd = data.get('cwd')
+            live.append((session, cwd if isinstance(cwd, str) else None))
     return live
+
+
+def live_session_ids(cfg: Config, machine: Machine) -> set:
+    return {session for session, _ in live_sessions(cfg, machine)}
 
 
 def session_signals(cfg: Config, machine: Machine, procs: List[Proc]) -> Optional[SessionSignals]:
@@ -571,6 +593,59 @@ def plan_session_scratch(cfg: Config, machine: Machine, procs: List[Proc], prote
                                    'scratch of an ended Claude Code session', recheck))
     if recent:
         plan.skipped.append(f'{recent} session scratch folder(s) in {cfg.claude_tmp}: changed in the last 12 hours')
+    plan.candidates += sorted(found, key=lambda c: -c.size)
+
+
+def tmp_folders(cfg: Config) -> List[Path]:
+    """This user's own folders in /private/tmp matching tmp_globs (not symlinks)."""
+    found = []
+    for pattern in cfg.tmp_globs:
+        for name in sorted(glob.glob(str(cfg.tmp_root / pattern))):
+            path = Path(name)
+            try:
+                st = path.lstat()
+            except OSError:
+                continue
+            if path.is_dir() and not path.is_symlink() and st.st_uid == os.getuid():
+                found.append(path)
+    return found
+
+
+def tmp_in_use(path: Path, procs: List[Proc], open_paths: List[Tuple[int, str]], idle_since: float) -> Optional[str]:
+    if real(path) in busy_paths([path], procs):
+        return 'a process works there'
+    roots = [path, real(path)]
+    for pid, held in open_paths:
+        if any(inside(Path(held), r) for r in roots):
+            return f'process {pid} has {held} open'
+    if tree_stats(path, stop_if_newer_than=idle_since).newest_mtime > idle_since:
+        return 'changed in the last 12 hours'
+    return None
+
+
+def plan_tmp(cfg: Config, machine: Machine, procs: List[Proc], protected: List[Path], plan: Plan) -> None:
+    folders = [f for f in tmp_folders(cfg) if not is_protected(f, protected)]
+    if not folders:
+        return
+    open_paths = machine.open_files()
+    if open_paths is None:
+        plan.skipped.append(f'test folders in {cfg.tmp_root}: could not list open files')
+        return
+    idle_since = machine.now() - TMP_IDLE_SECONDS
+    found = []
+    for folder in folders:
+        reason = tmp_in_use(folder, procs, open_paths, idle_since)
+        if reason:
+            plan.skipped.append(f'{folder}: {reason}')
+            continue
+
+        def recheck(folder=folder):
+            fresh = machine.open_files()
+            if fresh is None:
+                return 'could not list open files'
+            return tmp_in_use(folder, procs, fresh, machine.now() - TMP_IDLE_SECONDS)
+        found.append(Candidate('tmp', folder, tree_stats(folder).disk_bytes,
+                               'test folder in /private/tmp untouched for 12 hours', recheck))
     plan.candidates += sorted(found, key=lambda c: -c.size)
 
 
@@ -683,22 +758,79 @@ def plan_moves(cfg: Config, machine: Machine, procs: List[Proc], protected: List
         plan.candidates += sorted(found, key=lambda c: -c.size) if why != 'session log untouched for 3 days' else found
 
 
-def stale_worktrees(cfg: Config, machine: Machine, trees: List[Worktree], protected: List[Path],
-                    busy: dict) -> List[Path]:
-    """Clean worktrees whose HEAD is already in origin/next: the owner may remove them. Not the
-    standing checkouts (the main one, -test-desk, -finisher) and not one in use."""
-    stale = []
+def is_stale(machine: Machine, tree: Path) -> bool:
+    """Clean (no changes, no untracked files) and HEAD already in origin/next."""
+    code, status = machine.git(tree, 'status', '--porcelain')
+    if code != 0 or status.strip():
+        return False
+    code, _ = machine.git(tree, 'merge-base', '--is-ancestor', 'HEAD', 'origin/next')
+    return code == 0
+
+
+def worktree_keep_reason(cfg: Config, machine: Machine, tree: Worktree, live_cwds: List[str]) -> Optional[str]:
+    """Why a stale worktree must stay, or None when `git worktree remove` may take it."""
     standing = {real(cfg.repo)} | {real(p) for p in glob.glob(cfg.checkout_glob)}
+    if not any(inside(tree.path, root / '.claude/worktrees') and tree.path != root / '.claude/worktrees'
+               for root in standing):
+        return "not in a checkout's .claude/worktrees"
+    if tree.locked:
+        return 'locked'
+    for cwd in live_cwds:
+        if inside(real(cwd), tree.path):
+            return 'a live Claude Code session works there'
+    # matching: each ignored path as its pattern matched it, not collapsed into a parent folder.
+    code, ignored = machine.git(tree.path, 'status', '--porcelain', '--ignored=matching')
+    if code != 0:
+        return 'git status failed'
+    kept = sorted({path for path in (line[3:] for line in ignored.splitlines() if line.startswith('!! '))
+                   if path not in REGENERABLE_IGNORED
+                   and path.rstrip('/').rsplit('/', 1)[-1] not in REGENERABLE_IGNORED_NAMES})
+    if kept:
+        return 'holds ignored files that do not rebuild: ' + ', '.join(kept[:3])
+    idle_since = machine.now() - STALE_WORKTREE_IDLE_SECONDS
+    if tree_stats(tree.path, stop_if_newer_than=idle_since).newest_mtime > idle_since:
+        return 'changed in the last 24 hours'
+    return None
+
+
+def remove_worktree(machine: Machine, tree: Path) -> Tuple[bool, str]:
+    """`git worktree remove` without --force: git itself refuses a dirty or locked worktree."""
+    code, common = machine.git(tree, 'rev-parse', '--path-format=absolute', '--git-common-dir')
+    if code != 0 or not common.strip():
+        return False, 'could not find its repository'
+    code, _ = machine.git(Path(common.strip()), 'worktree', 'remove', str(tree))
+    if code != 0 or tree.exists():
+        return False, 'git worktree remove refused'
+    return True, 'removed (git worktree remove)'
+
+
+def plan_worktrees(cfg: Config, machine: Machine, trees: List[Worktree], protected: List[Path],
+                   busy: dict, plan: Plan) -> set:
+    """Finished worktrees go first, whole. Not the standing checkouts (the main one, -test-desk,
+    -finisher), not one in use; ones it may not remove are listed for the owner. Returns the
+    worktrees planned for removal, so their caches aren't planned twice."""
+    standing = {real(cfg.repo)} | {real(p) for p in glob.glob(cfg.checkout_glob)}
+    live_cwds = [cwd for _, cwd in live_sessions(cfg, machine) if cwd]
+    found = []
     for tree in trees:
         if tree.path in standing or tree.path in busy or is_protected(tree.path, protected):
             continue
-        code, status = machine.git(tree.path, 'status', '--porcelain')
-        if code != 0 or status.strip():
+        if not is_stale(machine, tree.path):
             continue
-        code, _ = machine.git(tree.path, 'merge-base', '--is-ancestor', 'HEAD', 'origin/next')
-        if code == 0:
-            stale.append(tree.path)
-    return stale
+        reason = worktree_keep_reason(cfg, machine, tree, live_cwds)
+        if reason:
+            plan.stale_worktrees.append((tree.path, reason))
+            continue
+
+        def recheck(tree=tree):
+            if not is_stale(machine, tree.path):
+                return 'no longer clean and in origin/next'
+            return worktree_keep_reason(cfg, machine, tree,
+                                        [cwd for _, cwd in live_sessions(cfg, machine) if cwd])
+        found.append(Candidate('worktree', tree.path, tree_stats(tree.path).disk_bytes,
+                               'finished worktree: clean, in origin/next, idle 24 hours', recheck))
+    plan.candidates += sorted(found, key=lambda c: -c.size)
+    return {c.path for c in found}
 
 
 def make_plan(cfg: Config, machine: Machine) -> Plan:
@@ -707,11 +839,12 @@ def make_plan(cfg: Config, machine: Machine) -> Plan:
     procs = machine.processes()
     trees = list_worktrees(cfg, machine)
     busy = busy_worktrees(trees, procs, machine)
-    plan_caches(cfg, machine, trees, busy, protected, plan)
+    removing = plan_worktrees(cfg, machine, trees, protected, busy, plan)
+    plan_caches(cfg, machine, trees, busy, protected, plan, removing)
     plan_session_scratch(cfg, machine, procs, protected, plan)
+    plan_tmp(cfg, machine, procs, protected, plan)
     plan_device_support(cfg, procs, protected, plan)
     plan_moves(cfg, machine, procs, protected, plan)
-    plan.stale_worktrees = stale_worktrees(cfg, machine, trees, protected, busy)
     return plan
 
 
@@ -885,9 +1018,14 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
     protected = cfg.protected()
     phone_lock = PhoneBuildLock(cfg.phone_dir)
     phone_root = real(cfg.phone_dir)
-    mirror_problem = mirror_ready(cfg, machine, write_probe=True)
+    has_moves = any(c.step == 'move' for c in plan.candidates)
+    drive_problem = drive_ready(cfg, machine, write_probe=True) if has_moves else None
+    mirror_problem = mirror_ready(cfg, machine, write_probe=True) if has_moves else None
     use_mirror = mirror_problem is None
-    if mirror_problem and cfg.require_mirror:
+    move_problem = drive_problem or (mirror_problem if cfg.require_mirror else None)
+    if drive_problem:
+        log(f'moves skipped this run: {drive_problem}')
+    elif mirror_problem and cfg.require_mirror:
         log(f'moves skipped this run: {mirror_problem}; moved files need a second copy on another disk')
     try:
         for c in plan.candidates:
@@ -905,7 +1043,7 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
                 log(f'skip {c.path}: {busy_now}')
                 continue
             if c.step == 'move':
-                if mirror_problem and cfg.require_mirror:
+                if move_problem:
                     continue
                 if inside(real(c.path), phone_root) and not phone_lock.acquire():
                     log(f'skip {c.path}: a phone build is running')
@@ -917,10 +1055,12 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
                     log(f'skip {c.path}: {v} has {size_text(f)} free, needs more than twice {size_text(c.size)}')
                     continue
                 ok, message = move_verified(cfg, machine, c.path, day, mirror=use_mirror)
+            elif c.step == 'worktree':
+                ok, message = remove_worktree(machine, c.path)
             else:
                 try:
                     machine.remove(c.path)
-                    ok, message = True, 'deleted' if c.step == 'session-scratch' else 'deleted (regenerable)'
+                    ok, message = True, 'deleted (regenerable)' if c.step in ('cache', 'device-support') else 'deleted'
                 except OSError as error:
                     ok, message = False, f'delete failed: {error}'
             if ok:
@@ -942,10 +1082,7 @@ def run(cfg: Config, machine: Machine, log: Log) -> Result:
     free = machine.free_bytes(cfg.data_volume)
     if not should_run(free, cfg):
         return Result(reason=f'{gib(free)} free; acts below {gib(cfg.trigger_bytes)}')
-    reason = drive_ready(cfg, machine, write_probe=True)
-    if reason:
-        log(f'{gib(free)} free, below {gib(cfg.trigger_bytes)}, but {reason}: did nothing')
-        return Result(reason=reason)
+    # No drive check here: only moves need the drives, and execute() skips them without one.
     log(f'start: {gib(free)} free, below {gib(cfg.trigger_bytes)}; freeing to {gib(cfg.target_bytes)}')
     plan = make_plan(cfg, machine)
     for line in plan.skipped:
@@ -958,8 +1095,8 @@ def run(cfg: Config, machine: Machine, log: Log) -> Result:
     if held:
         log('free space rose by less than half of what was cleared: a Time Machine local snapshot may hold it '
             '(tmutil listlocalsnapshots /). Deleting a snapshot is the owner\'s call.')
-    for tree in plan.stale_worktrees:
-        log(f'stale worktree (clean, already in origin/next; yours to remove): {tree}')
+    for tree, why in plan.stale_worktrees:
+        log(f'stale worktree kept ({why}; yours to remove): {tree}')
     if result.acted or result.failures:
         message = f'Cleared {size_text(result.freed)}; {gib(end)} free now.'
         if held:
@@ -979,13 +1116,14 @@ def dry_run(cfg: Config, machine: Machine, pretend_free: Optional[int]) -> List[
     out.append(f'Free on {cfg.data_volume}: {gib(free)}' + (' (pretend)' if pretend_free is not None else '')
                + f'. Acts below {gib(cfg.trigger_bytes)}, stops at {gib(cfg.target_bytes)}.')
     reason = drive_ready(cfg, machine, write_probe=False)
-    out.append(f'Drive: {reason}' if reason else f'Drive: {cfg.drive} mounted, {gib(machine.free_bytes(cfg.drive))} free')
+    out.append(f'Drive: {reason}; moves would be skipped' if reason else
+               f'Drive: {cfg.drive} mounted, {gib(machine.free_bytes(cfg.drive))} free')
     mirror_problem = mirror_ready(cfg, machine, write_probe=False)
     out.append(f'Mirror: {mirror_problem}; moves would be skipped' if mirror_problem and cfg.require_mirror else
                f'Mirror: {cfg.mirror} mounted, {gib(machine.free_bytes(cfg.mirror))} free')
     plan = make_plan(cfg, machine)
     start = free if triggered else cfg.trigger_bytes
-    out.append('Would act now.' if triggered and not reason else
+    out.append('Would act now.' if triggered else
                f'Would not act now. Below, the order it would take starting from {gib(start)} free:')
     running = 0
     stopped = False
@@ -1002,8 +1140,8 @@ def dry_run(cfg: Config, machine: Machine, pretend_free: Optional[int]) -> List[
                f'; all {size_text(running)} ({len(plan.candidates)} items).')
     for line in plan.skipped:
         out.append(f'Skipped: {line}')
-    for tree in plan.stale_worktrees:
-        out.append(f'Stale worktree (clean, in origin/next; not removed): {tree}')
+    for tree, why in plan.stale_worktrees:
+        out.append(f'Stale worktree kept ({why}): {tree}')
     return out
 
 

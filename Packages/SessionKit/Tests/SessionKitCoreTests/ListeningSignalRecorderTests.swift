@@ -206,6 +206,46 @@ final class ListeningSignalRecorderTests: XCTestCase {
         ])
     }
 
+    /// #867: an export from an item without a followed source logs no row, so the packet id is
+    /// noted in its own small file beside the log, and a later launch still knows it is ours.
+    func testANotedExportIsRememberedAcrossLaunchesWithoutAnyLogRow() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let (source, item) = Self.podcast
+        let first = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        first.noteExportedPacket("package-mine")
+        _ = first.writeError // waits for the queue, without flushing
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.path), "noting an export writes no log row")
+
+        let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        recorder.recordPacketImport(packetId: "package-mine", marginCount: 2, source: source, item: item)
+        recorder.recordPacketImport(packetId: "package-theirs", marginCount: 1, source: source, item: item)
+        XCTAssertEqual(recorder.signals().map(\.event), [
+            .packetImport(packetId: "package-mine", fromOther: false, marginCount: 2),
+            .packetImport(packetId: "package-theirs", fromOther: true, marginCount: 1),
+        ])
+    }
+
+    func testAnUnreadableExportedPacketsFileFallsBackToTheLogAndIsRewritten() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let noted = temporary.appendingPathComponent("exported-packets.json")
+        let (source, item) = Self.podcast
+        let first = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        first.record(.export(packetId: "package-logged", marginCount: 1), source: source, item: item)
+        first.flush()
+        try Data("not json".utf8).write(to: noted)
+
+        let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        recorder.recordPacketImport(packetId: "package-logged", marginCount: 1, source: source, item: item)
+        recorder.noteExportedPacket("package-noted")
+        _ = recorder.writeError
+        XCTAssertEqual(recorder.signals().map(\.event).last, .packetImport(packetId: "package-logged", fromOther: false, marginCount: 1))
+
+        let relaunched = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        relaunched.recordPacketImport(packetId: "package-noted", marginCount: 1, source: source, item: item)
+        XCTAssertEqual(relaunched.signals().map(\.event).last, .packetImport(packetId: "package-noted", fromOther: false, marginCount: 1))
+        XCTAssertEqual(try JSONDecoder().decode([String].self, from: Data(contentsOf: noted)), ["package-logged", "package-noted"])
+    }
+
     /// Unfollowing deletes a feed's unimported entries but keeps the log; following it again
     /// must not publish the same entries twice, in the same launch or a later one.
     func testAnEntryIsPublishedOnceEvenAfterRefollowing() {

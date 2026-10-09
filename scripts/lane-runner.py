@@ -531,19 +531,47 @@ def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
 
+def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
+    """Every path the tree changes against origin/<base>, both sides of a rename, for verify-tests.py's
+    --changed-files (#862). None when git can't say, which runs every step."""
+    try:
+        git = ['git', '-C', str(tree)]
+        merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
+        # NUL-delimited: git's default output quotes and escapes a name like scripts/tests/test_café.py, which
+        # then no longer starts with scripts/ and would leave the lane's own tests out.
+        raw = subprocess.check_output(git + ['diff', '--name-only', '--no-renames', '-z', merge_base, 'HEAD'])
+        paths = [path.decode() for path in raw.split(b'\0') if path]
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+        return None
+    # The hand-off is one path per line, so a name that line splitting or trimming would change can't be sent.
+    if any(path.splitlines() != [path] or path != path.strip() for path in paths):
+        return None
+    return sorted(set(paths)) or None
+
+
 @ledger_step('host tests', lambda args, result: (manifest_failures(args[0] / 'fast')[0], False))
-def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
-    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details)."""
+def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
+    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details).
+
+    changed: the PR's changed paths, so the plan can leave out the lane's own Python tests when nothing they
+    read changed (#862). Without it every step runs."""
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', 'fast',
                '--output', str(output)]
+    if changed:
+        changed_file = evidence / 'changed-files.txt'
+        changed_file.write_text('\n'.join(changed) + '\n')
+        command += ['--changed-files', str(changed_file)]
     with log_path.open('w') as log:
         code = runner(command, log, FAST_TIMEOUT)
     if code is None:
         return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
                                 f'evidence: {log_path}']
     manifest = _read_manifest(output)
+    if manifest.get('lane_fault'):  # #909: the Mac, not the PR (its lid is closed, so there is no sound output)
+        return 'INCONCLUSIVE', [f'host tests (--plan fast) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
+                                f'the lid or connect an audio output, then re-run. evidence: {log_path}']
     if code == 0 and manifest.get('status') == 'verified':
         # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
         return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
@@ -557,7 +585,7 @@ NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author buil
 
 
 def run_automerge(scope: dict, evidence: Path, fast=run_fast,
-                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
+                  ratchet=lambda: [], changed=lambda: None) -> tuple[str, str, str, list[str]]:
     """Returns verdict, where, ran, details for the checks the PR's diff needs: the hot-file ratchet, then
     --plan fast unless the diff is T0. Never an app build (NO_APP_BUILD_PER_PR)."""
     tier = int(scope['tier'][1:])
@@ -571,7 +599,7 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast,
     if tier == 0:
         return 'PASS', 'no build', 'nothing to build or test', details + [
             'nothing here reaches the host tests or the app (docs or research notes only)']
-    verdict, more = fast(evidence)
+    verdict, more = fast(evidence, changed=changed())
     details += more
     if verdict != 'PASS':
         return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
@@ -904,7 +932,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
             verdict, where, ran, checks = run_automerge(
-                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
+                changed=lambda: changed_paths_for_tests(ROOT, base))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
@@ -1571,7 +1600,8 @@ TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
-                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
+                   ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 
