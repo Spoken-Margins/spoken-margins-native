@@ -947,6 +947,7 @@ final class Gate1AppModel: ObservableObject {
     private var commentaryCuePlayer: AVAudioPlayer?
     #endif
     private var announcedImportedInterjectionIDs: Set<String> = []
+    private var sharedMarginOfferQueue = SharedMarginOfferQueue()
     private var sourceShouldResumeAfterImportedCommentary = false
     private var sourcePausedForImportedCommentaryPrompt = false
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
@@ -4994,6 +4995,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
+        sharedMarginOfferQueue.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
@@ -5019,6 +5021,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
         resetMixWithOtherAudioForNewSession()
         announcedImportedInterjectionIDs.removeAll()
+        sharedMarginOfferQueue.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         do {
@@ -5049,6 +5052,7 @@ final class Gate1AppModel: ObservableObject {
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
         announcedImportedInterjectionIDs.removeAll()
+        sharedMarginOfferQueue.removeAll()
         pendingImportedCommentary = nil
         guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
@@ -6673,9 +6677,13 @@ final class Gate1AppModel: ObservableObject {
               current.itemId == selectedItem.id else { return }
         let prompts = importedCommentaryPrompts(includeAnnounced: false)
         let crossed = SharedMarginPrompts.crossed(prompts: prompts, previous: previous, current: current)
-        guard let prompt = crossed.first else { return }
+        guard !crossed.isEmpty || !sharedMarginOfferQueue.isEmpty else { return }
         crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
-        guard prompt.layer.revealMode != .fresh else { return }
+        // One Margin is offered at a time; the others crossed with it wait their turn (#918).
+        guard let prompt = sharedMarginOfferQueue.nextOffer(
+            crossed: crossed,
+            announced: importedCommentaryPrompts(includeAnnounced: true)
+        ) else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
 
