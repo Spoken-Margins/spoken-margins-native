@@ -169,6 +169,56 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return live + quarantined
     }
 
+    /// Which sessions have Margins or AI turns saved after `after` (#1192), for the notes folder to rebuild their notes.
+    /// `after` is a `settledThrough` from an earlier call, or nil for "everything", which names no sessions.
+    ///
+    /// It reads only Margin and turn rows. Their payloads are small, so the check is one short scan; an item's
+    /// payload holds the whole article, and reading its `updated_at` would mean reading all of it.
+    ///
+    /// `updated_at` is whole seconds, so a row saved in the same second as a read could carry the read's own
+    /// timestamp. `settledThrough` is therefore two seconds behind the database clock: the next call starts there
+    /// and sees such a row again, and a write after the read can never land at or before it.
+    public func marginNoteChanges(after: String?) throws -> MarginNoteChanges {
+        try withConnectionLock {
+            var settled = ""
+            try readTexts("SELECT strftime('%Y-%m-%d %H:%M:%S', 'now', '-2 seconds');", [], name: "margin_note_clock") { settled = $0 }
+            guard let after else { return MarginNoteChanges(sessionIds: [], settledThrough: settled) }
+            var sessionIds: Set<String> = []
+            try readTexts(
+                "SELECT DISTINCT session_id FROM records WHERE kind IN ('interjection', 'turn') AND updated_at > ?1 AND session_id IS NOT NULL;",
+                [after], name: "margin_note_changes"
+            ) { sessionIds.insert($0) }
+            return MarginNoteChanges(sessionIds: sessionIds, settledThrough: settled)
+        }
+    }
+
+    /// The items that have a source transcript. Read from the item index alone, so it doesn't touch the transcripts.
+    public func itemIdsWithSourceTranscript() throws -> Set<String> {
+        var ids: Set<String> = []
+        try readTexts(
+            "SELECT item_id FROM records WHERE kind = 'source_transcript_timeline' AND item_id IS NOT NULL;",
+            [], name: "source_transcript_items"
+        ) { ids.insert($0) }
+        return ids
+    }
+
+    private func readTexts(_ sql: String, _ values: [String], name: String, _ body: (String) -> Void) throws {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_\(name)")
+            }
+            defer { sqlite3_finalize(statement) }
+            for (index, value) in values.enumerated() { bind(statement, index: Int32(index + 1), value: value) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_\(name)") }
+                if let raw = sqlite3_column_text(statement, 0) { body(String(cString: raw)) }
+            }
+        }
+    }
+
     private func marginAudioPaths(sql: String) throws -> [String] {
         try withConnectionLock {
             var statement: OpaquePointer?
@@ -1133,6 +1183,18 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             return
         }
         sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+    }
+}
+
+/// What `SQLiteSessionStore.marginNoteChanges(after:)` found.
+public struct MarginNoteChanges: Equatable, Sendable {
+    public var sessionIds: Set<String>
+    /// Pass this as `after` next time; everything up to it has been seen.
+    public var settledThrough: String
+
+    public init(sessionIds: Set<String>, settledThrough: String) {
+        self.sessionIds = sessionIds
+        self.settledThrough = settledThrough
     }
 }
 
