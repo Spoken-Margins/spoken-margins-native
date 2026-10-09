@@ -277,7 +277,10 @@ private struct Gate2LiveActivityView: View {
                         command: "skimBackward",
                         systemImage: "backward.end.alt.fill",
                         size: 50,
-                        accessibilityLabel: "Skim backward by scene summary"
+                        accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
+                            destinationMs: state.skimBackwardDestinationMs, backward: true
+                        ),
+                        caption: state.skimBackwardDestinationMs.map(SkimDestinationLabel.time)
                     )
                 }
                 if state.canRun("skipBack") {
@@ -297,7 +300,10 @@ private struct Gate2LiveActivityView: View {
                         command: "skimForward",
                         systemImage: "forward.end.alt.fill",
                         size: 50,
-                        accessibilityLabel: "Skim forward by scene summary"
+                        accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
+                            destinationMs: state.skimForwardDestinationMs, backward: false
+                        ),
+                        caption: state.skimForwardDestinationMs.map(SkimDestinationLabel.time)
                     )
                 }
                 if let nextChapterTitle = state.nextChapterTitle,
@@ -400,15 +406,31 @@ private struct CompactRoundIntentButton: View {
     let systemImage: String
     let size: CGFloat
     var accessibilityLabel: String? = nil
+    /// Skim's destination time, drawn under the icon inside the circle so the row keeps its height (#115).
+    var caption: String? = nil
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
-            Image(systemName: systemImage)
-                .font(.title2.weight(.semibold))
-                .frame(width: size, height: size)
-                .foregroundStyle(.white)
-                .background(Color.white.opacity(0.16))
-                .clipShape(Circle())
+            Group {
+                if let caption {
+                    VStack(spacing: 1) {
+                        Image(systemName: systemImage)
+                            .font(.body.weight(.semibold))
+                        Text(caption)
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, 4)
+                    }
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.title2.weight(.semibold))
+                }
+            }
+            .frame(width: size, height: size)
+            .foregroundStyle(.white)
+            .background(Color.white.opacity(0.16))
+            .clipShape(Circle())
         }
         .frame(width: size, height: size)
         .contentShape(Circle())
