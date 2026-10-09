@@ -13927,7 +13927,9 @@ final class Gate1AppModel: ObservableObject {
                         for (layer, records, outcome) in resolvedWork {
                             var layer = layer
                             layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
-                            try store.saveImportedCommentaryLayer(layer)
+                            // Only the pass's own fields, onto the layer as stored now: the listener may have
+                            // turned it off or deleted it while the pass ran (#915).
+                            guard try store.savePlacementResult(of: layer) else { continue }
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
                         }
                         let sharedProposals = Dictionary(resolvedWork.compactMap { work in

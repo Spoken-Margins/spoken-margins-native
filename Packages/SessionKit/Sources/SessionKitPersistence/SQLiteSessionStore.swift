@@ -391,6 +391,23 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         )
     }
 
+    /// Saves what a placement pass worked out (the edition it placed against, the placement status and any
+    /// map refusal) onto the layer as it is stored now. A pass starts from a copy of the layer and can end
+    /// minutes later; saving that whole copy undid anything the listener changed meanwhile, and could bring
+    /// back a layer they deleted (#915). Only the pass's own fields are written; a layer that is gone or
+    /// deleted is left alone and `false` is returned, so the caller skips that layer's Margins too.
+    @discardableResult
+    public func savePlacementResult(of layer: ImportedCommentaryLayer) throws -> Bool {
+        try withConnectionLock {
+            guard var stored = try loadImportedCommentaryLayer(id: layer.id), stored.deletedAt == nil else { return false }
+            stored.resolvedRecipientEditionSHA256 = layer.resolvedRecipientEditionSHA256
+            stored.sourceResolutionStatus = layer.sourceResolutionStatus
+            stored.sharedMapRefusalReason = layer.sharedMapRefusalReason
+            try saveImportedCommentaryLayer(stored)
+            return true
+        }
+    }
+
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
         // The lock, not a transaction: markImportedCommentaryInterjectionHeard calls this inside one.
         try withConnectionLock {
