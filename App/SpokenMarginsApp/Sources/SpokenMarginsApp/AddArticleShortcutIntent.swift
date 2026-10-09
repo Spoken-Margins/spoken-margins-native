@@ -170,14 +170,19 @@ struct AssembleListeningEditionIntent: AppIntent {
 
 struct ImportListeningEditionIntent: AppIntent {
     static let title: LocalizedStringResource = "Import Listening Edition"
-    static let description = IntentDescription("Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback.")
+    static let description = IntentDescription("Opens Spoken Margins to import an item and its supplied map. Does not regenerate the map or start playback. Pass the Assemble Listening Edition result straight in, with no Save step, or give the edition's JSON as text. A saved file works too.")
     static let supportedModes: IntentModes = .foreground(.immediate)
-    @Parameter(title: "Listening Edition JSON") var file: IntentFile
+    static var parameterSummary: some ParameterSummary {
+        Summary("Import \(\.$file)") { \.$json }
+    }
+    // Both are optional so the action never stops at a "Choose" file picker when the other is supplied.
+    @Parameter(title: "Listening Edition File") var file: IntentFile?
+    @Parameter(title: "Listening Edition JSON Text") var json: String?
     @MainActor func perform() async throws -> some IntentResult {
         guard let model = ListeningEditionShortcutBridge.model else {
             throw EditionError.invalid("Spoken Margins could not open its Library. Try the import again.")
         }
-        try model.importListeningEditionDataForShortcut(file.data)
+        try model.importListeningEditionDataForShortcut(try ListeningEdition.shortcutInput(file: file?.data, text: json))
         return .result()
     }
 }
