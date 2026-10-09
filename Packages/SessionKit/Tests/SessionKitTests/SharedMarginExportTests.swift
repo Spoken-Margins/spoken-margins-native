@@ -8,6 +8,27 @@ import XCTest
 final class SharedMarginExportTests: XCTestCase {
     private let date = Date(timeIntervalSince1970: 1_777_000_000)
 
+    func testPreExtractionOracleRetainsVerbatimHistoricalHelpers() throws {
+        let sourceURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appending(path: "PreExtractionSenderShareOracle.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        // SHA-256 of each complete declaration (including its unchanged body) at
+        // cc555ce9e873d58ebc82d9e1313d41b5e5e74fac:App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift.
+        let expected = [
+            "shareAnchorWarning": "86396d8a57a567cbbae95ef6b40cebdbf715f537be2bbb71aaaa6b89e28b8613",
+            "mapProposalsForMarginExport": "bd5ee5d5642c50c4b51ff8a6f9c9f9869e14ad228f37dd1ae320d57b12312147",
+            "reviewedItemTransport": "11b6c47f312e378370a595cc3e294d573ba8c5de23388798777686d4284699d0",
+            "portableAnchor": "a26f017d85fc10973841c751a9d7f051cc43e2179f2e872c3666a1ca5b7eed85",
+            "safeShareFilename": "ff309d363bbc11e8856a92548d226d748e2607cbee05f5273cd786d3e381a941",
+        ]
+        for (name, digest) in expected {
+            let begin = try XCTUnwrap(source.range(of: "// BEGIN VERBATIM \(name)\n"))
+            let end = try XCTUnwrap(source.range(of: "\n    // END VERBATIM \(name)", range: begin.upperBound..<source.endIndex))
+            let declaration = Data(source[begin.upperBound..<end.lowerBound].utf8)
+            XCTAssertEqual(SHA256.hash(data: declaration).map { String(format: "%02x", $0) }.joined(), digest, name)
+        }
+    }
+
     func testAnchorWarningsKeepExactCopyAndOnlyWarnForNativeAudioWithoutEvidence() {
         let cases: [(PodcastAnchorEvidenceCaptureStatus?, String?)] = [
             (.pendingPostResumeSample, "High-reliability evidence is capturing. Continue podcast playback for about 12 seconds before sharing this Margin."),
@@ -24,6 +45,10 @@ final class SharedMarginExportTests: XCTestCase {
                 XCTAssertEqual(SharedMarginExport.anchorWarning(for: margin, isNativeAudio: true),
                                (evidence ?? []).isEmpty ? warning : nil, "\(String(describing: status)), \(String(describing: evidence))")
                 XCTAssertNil(SharedMarginExport.anchorWarning(for: margin, isNativeAudio: false))
+                for native in [false, true] {
+                    XCTAssertEqual(SharedMarginExport.anchorWarning(for: margin, isNativeAudio: native),
+                                   historicalOracle(native: native).anchorWarning(for: margin))
+                }
             }
         }
     }
@@ -123,6 +148,7 @@ final class SharedMarginExportTests: XCTestCase {
         ]
         for (input, expected) in cases {
             XCTAssertEqual(SharedMarginExport.fileName(input), expected, input)
+            XCTAssertEqual(SharedMarginExport.fileName(input), historicalOracle(native: false).fileName(input), input)
         }
         let packageId = "package-12345678"
         XCTAssertEqual("\(SharedMarginExport.fileName("A title"))-\(packageId.suffix(8)).spokenmargins", "A-title-12345678.spokenmargins")
@@ -160,7 +186,7 @@ final class SharedMarginExportTests: XCTestCase {
         }
     }
 
-    func testPacketsKeepGoldenBytesAndBuild29ImportsEveryMarginAndAnchor() throws {
+    func testPacketsMatchVerbatimOracleKeepGoldenBytesAndBuild29ImportsEveryMarginAndAnchor() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "SharedMarginExportTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -174,10 +200,22 @@ final class SharedMarginExportTests: XCTestCase {
         try signatureData.write(to: signature)
         for (name, native, evidence) in [("text", false, false), ("podcast-evidence", true, true), ("podcast-none", true, false)] {
             let prepared = try packet(native: native, evidence: evidence, signature: signature)
+            let legacy = try packet(native: native, evidence: evidence, signature: signature,
+                                    oracle: historicalOracle(native: native))
+            XCTAssertEqual(prepared.manifest, legacy.manifest, "\(name): complete manifest")
+            XCTAssertEqual(prepared.artifactData, legacy.artifactData, "\(name): every artifact byte")
+            XCTAssertEqual(prepared.assetFiles, legacy.assetFiles, "\(name): selected asset paths and source files")
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let commentaryPath = "artifacts/commentary-layer.json"
+            let actualLayer = try decoder.decode(SharedCommentaryLayerArtifact.self, from: XCTUnwrap(prepared.artifactData[commentaryPath]))
+            let legacyLayer = try decoder.decode(SharedCommentaryLayerArtifact.self, from: XCTUnwrap(legacy.artifactData[commentaryPath]))
+            XCTAssertEqual(actualLayer.interjections.count, 2, name)
+            XCTAssertEqual(actualLayer.interjections, legacyLayer.interjections, "\(name): every complete Margin record")
             var bytes = prepared.artifactData
             bytes["manifest.json"] = try SpokenMarginsPackageArchive.encodeManifest(prepared.manifest)
             let digests = bytes.mapValues { SHA256.hash(data: $0).map { String(format: "%02x", $0) }.joined() }
-            // Captured from the verbatim old bodies before changing the model calls.
+            // Also retained after the historical oracle is removed in a later commit.
             // The commentary digest covers every complete Margin record.
             XCTAssertEqual(digests, goldenArtifacts[name], name)
 
@@ -186,26 +224,31 @@ final class SharedMarginExportTests: XCTestCase {
                            : [SharedCommentaryLayerArtifact.schemaVersion, EmbeddedTextItemArtifact.schemaVersion])
             let url = root.appending(path: "\(name).spokenmargins")
             _ = try exportPacket(prepared, to: url)
+            let legacyURL = root.appending(path: "\(name)-legacy.spokenmargins")
+            _ = try exportPacket(legacy, to: legacyURL)
+            XCTAssertEqual(try Data(contentsOf: url), try Data(contentsOf: legacyURL), "\(name): complete archive bytes")
             let archiveDigest = SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
             XCTAssertEqual(archiveDigest, goldenArchives[name], name)
-            XCTAssertEqual(try ShippedPacketReader.importPacket(at: url), ["margin-0001", "margin-0002"], name)
-            let imported = try ShippedPacketReader.importedMargins(at: url, includingAnchorEvidence: true).sorted { $0.packageScopedId < $1.packageScopedId }
-            XCTAssertEqual(imported.map(\.packageScopedId), ["margin-0001", "margin-0002"], name)
-            XCTAssertEqual(imported.map(\.approvedTranscript), ["Reviewed thought 1.", "Reviewed thought 2."], name)
-            for saved in imported {
-                let savedAnchor = try JSONDecoder().decode(PortableAnchorEvidence.self, from: XCTUnwrap(saved.anchorEvidenceJSON))
-                XCTAssertEqual(savedAnchor, PortableAnchorEvidence(
-                    anchorType: native ? .media : .text,
-                    startChar: native ? nil : 1, endChar: native ? nil : 3, exactText: native ? nil : "BC",
-                    prefix: "Before.", suffix: "After.", mediaTimeMs: 30_000, roughPercent: 37,
-                    transcriptSegmentId: "segment", chapterTitle: "Middle",
-                    machineEvidenceAssetIds: evidence ? ["evidence"] : []
-                ), name)
+            for packetURL in [url, legacyURL] {
+                XCTAssertEqual(try ShippedPacketReader.importPacket(at: packetURL), ["margin-0001", "margin-0002"], name)
+                let imported = try ShippedPacketReader.importedMargins(at: packetURL, includingAnchorEvidence: true).sorted { $0.packageScopedId < $1.packageScopedId }
+                XCTAssertEqual(imported.map(\.packageScopedId), ["margin-0001", "margin-0002"], name)
+                XCTAssertEqual(imported.map(\.approvedTranscript), ["Reviewed thought 1.", "Reviewed thought 2."], name)
+                for saved in imported {
+                    let savedAnchor = try JSONDecoder().decode(PortableAnchorEvidence.self, from: XCTUnwrap(saved.anchorEvidenceJSON))
+                    XCTAssertEqual(savedAnchor, PortableAnchorEvidence(
+                        anchorType: native ? .media : .text,
+                        startChar: native ? nil : 1, endChar: native ? nil : 3, exactText: native ? nil : "BC",
+                        prefix: "Before.", suffix: "After.", mediaTimeMs: 30_000, roughPercent: 37,
+                        transcriptSegmentId: "segment", chapterTitle: "Middle",
+                        machineEvidenceAssetIds: evidence ? ["evidence"] : []
+                    ), name)
+                }
             }
         }
     }
 
-    // Golden bytes from the removed pre-extraction oracle (fixed ids, dates and signature).
+    // Golden bytes from the pre-extraction oracle (fixed ids, dates and signature).
     private let goldenArtifacts: [String: [String: String]] = [
         "text": [
             "artifacts/commentary-layer.json": "cb6ab90ecd0c63872e610c4acfc4a81e45d2197e99eb68799c07d139690e73a4",
@@ -275,17 +318,25 @@ final class SharedMarginExportTests: XCTestCase {
         })
     }
 
-    private func packet(native: Bool, evidence: Bool, signature: URL) throws -> PreparedSpokenMarginsPackage {
+    private func historicalOracle(native: Bool) -> PreExtractionSenderShareOracle {
+        .init(selectedItem: .init(isNativeAudio: native, mediaChapters: chapters),
+              sharingState: .init(isAppAuthoredItem: true, confirmsPrivateSharingRights: false))
+    }
+
+    private func packet(native: Bool, evidence: Bool, signature: URL,
+                        oracle: PreExtractionSenderShareOracle? = nil) throws -> PreparedSpokenMarginsPackage {
         let item = item()
         let identity = SharedItemIdentity(itemType: native ? .podcast : .text,
                                           canonicalURL: native ? "https://example.com/episode" : nil, title: item.title,
                                           normalizedContentSHA256: native ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
                                           exactEditionSHA256: native ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
-        let transport = SharedMarginExport.itemTransport(item: item, identity: identity, isAppAuthored: true, confirmsPrivateRights: false)
+        let transport = oracle?.itemTransport(item: item, identity: identity)
+            ?? SharedMarginExport.itemTransport(item: item, identity: identity, isAppAuthored: true, confirmsPrivateRights: false)
         let selections = (1...2).map { index in
             let margin = margin(id: "note-\(index)", type: native ? .media : .text)
             let ids = evidence ? ["evidence"] : []
-            let anchor = self.anchor(margin, item: item, native: native, evidence: ids)
+            let anchor = oracle?.anchor(for: margin, item: item, machineEvidenceAssetIds: ids)
+                ?? self.anchor(margin, item: item, native: native, evidence: ids)
             return ReviewedInterjectionSelection(
                 packageScopedId: String(format: "margin-%04d", index),
                 revision: .init(id: "revision-\(index)", interjectionId: margin.id, itemId: margin.itemId, sessionId: margin.sessionId,
@@ -294,7 +345,8 @@ final class SharedMarginExportTests: XCTestCase {
                 anchor: anchor, representation: .textOnly
             )
         }
-        let proposals = SharedMarginExport.mapProposals([proposal(native: native)])
+        let proposals = oracle?.mapProposals([proposal(native: native)])
+            ?? SharedMarginExport.mapProposals([proposal(native: native)])
         return try SpokenMarginsPackageBuilder.prepare(
             packageId: "package-fixed-12345678", createdAt: date, item: identity, itemTransportSelection: transport,
             selections: selections, mapProposals: proposals,
