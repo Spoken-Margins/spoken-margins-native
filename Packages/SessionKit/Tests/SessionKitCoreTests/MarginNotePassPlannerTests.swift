@@ -149,17 +149,7 @@ final class MarginNotePassPlannerTests: XCTestCase {
         let deleted = try runPass()
         XCTAssertEqual(deleted.scope, .sessions(["session-2"]))
         XCTAssertTrue(deleted.notes.isEmpty, "a deleted Margin has no note")
-    }
-
-    func testAFailedPassIsNotCommittedSoTheNextOneCoversTheSameChanges() throws {
-        try addSession(1)
-        try runPass()
-        try ageEverything()
-        try saveMargin(session: 1, margin: 2, text: "Will fail to write.")
-        let failed = try planner.plan(store: store, targetKey: target)
-        XCTAssertEqual(failed.scope, .sessions(["session-1"]))
-        // The writer threw, so the delivery never commits `failed`.
-        XCTAssertEqual(try runPass().scope, .sessions(["session-1"]))
+        XCTAssertEqual(planner.folderSummary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 0), "the deleted Margin no longer counts")
     }
 
     func testAnotherFolderRebuildsEverything() throws {

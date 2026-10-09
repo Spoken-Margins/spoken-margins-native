@@ -127,9 +127,12 @@ public struct MarginNotePassPlanner: Sendable {
             lastFullAt = pass.plannedAt
             knownNoteIDs = Set(noteIDs)
             keptEditIDs = kept
-        case .sessions:
-            knownNoteIDs.formUnion(noteIDs)
-            keptEditIDs = keptEditIDs.subtracting(noteIDs).union(kept)
+        case .sessions(let sessionIds):
+            // A session's notes are rebuilt as a set: one whose Margin was deleted drops out of the count.
+            let prefixes = sessionIds.map { $0 + ":" }
+            func isRebuilt(_ id: String) -> Bool { prefixes.contains { id.hasPrefix($0) } }
+            knownNoteIDs = knownNoteIDs.filter { !isRebuilt($0) }.union(noteIDs)
+            keptEditIDs = keptEditIDs.filter { !isRebuilt($0) }.union(kept)
         case .nothing:
             break
         }
