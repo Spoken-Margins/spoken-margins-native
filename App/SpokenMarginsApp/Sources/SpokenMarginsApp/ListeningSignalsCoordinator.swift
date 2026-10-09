@@ -100,9 +100,11 @@ final class ListeningSignalsCoordinator {
     }
 
     /// The Library item a followed article was imported as, so its rows keep this entry even if a
-    /// later edition of the same article is imported from another feed (#865).
-    func followedArticleImported(itemId: String, for entry: FeedEntry) {
+    /// later edition of the same article is imported from another feed (#865). Returns `itemId`.
+    @discardableResult
+    func followedArticleImported(_ itemId: String, for entry: FeedEntry) -> String {
         collector.importedEntries.note(itemId: itemId, for: entry)
+        return itemId
     }
 
     /// A copy of the log for the share sheet, or nil when nothing has been logged yet.
