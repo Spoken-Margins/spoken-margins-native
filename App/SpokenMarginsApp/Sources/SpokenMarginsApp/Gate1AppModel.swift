@@ -11439,6 +11439,7 @@ final class Gate1AppModel: ObservableObject {
             let candidates = try store.loadInterjections(sessionId: session.id)
             selectedItem = try loadItemDetail(id: session.itemId, store: store)
             prepareShareInterjections(candidates: candidates)
+            if isSharingInterjectionsPresented { sharingState.draftsPreparedForExport = true }
         } catch { reportFailure(error, context: "Prepare session sharing failed") }
     }
 
@@ -11478,10 +11479,7 @@ final class Gate1AppModel: ObservableObject {
             sharingState.confirmsPrivateSharingRights = sharingState.isAppAuthoredItem
         }
         sharingState.drafts = candidates.map { interjection in
-            let transcript = interjection.cleanedTranscript
-                ?? interjection.transcript
-                ?? interjection.displayText
-                ?? ""
+            let transcript = SharedMarginTextRequirement.initialReviewedText(for: interjection)
             let hasAudio = interjection.audioPath.flatMap(resolvedInterjectionAudioURL(for:)) != nil
             let context = BoundedAnchorContext.select(
                 before: interjection.anchor.anchorBefore,
