@@ -480,7 +480,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// never started: the delay before it didn't run, or the start was refused before it got there (#540).
     private var playerCreatedAt: ContinuousClock.Instant?
     private var playerStartedAt: ContinuousClock.Instant?
-    /// The player's own last change of rate and the system's reason for it (#540).
+    /// The player's own last change of rate and the system's reason for it (#540). It has its own lock: the
+    /// system may post the change on the thread that set the rate, which can be inside `lock` (a pause while
+    /// re-seating), and the observer taking `lock` there would wait on itself.
+    private let rateChangeLock = NSLock()
     private var lastRateChange: (reason: String, rate: Float, at: ContinuousClock.Instant)?
     private var rateChangeObserver: NSObjectProtocol?
     private let stallThreshold: Duration
@@ -622,6 +625,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if let rateChangeObserver {
             NotificationCenter.default.removeObserver(rateChangeObserver)
+        }
+        if handOverHoldRequested, let hold = handOverHold {
+            Task { @MainActor in hold.nextChunkMoving() }
         }
         for observer in audioSessionObservers {
             audioSessionNotificationCenter.removeObserver(observer)
@@ -953,6 +959,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     func stop() throws {
         removePlaybackEndObserver()
+        defer { releaseHandOverBackgroundTimeIfHeld() }
         let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
             generation = UUID()
             let renderControl = activeRenderControl
@@ -1100,9 +1107,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func playbackItemFinished(_ item: AVPlayerItem) {
         guard lock.withLock({ player?.currentItem === item && transportIntent == .playing }) else { return }
-        holdBackgroundTimeForHandOver()
         removePlaybackEndObserver()
         let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?) in
+            // Set with the finished player detached, so the monitor never sees the old player as the next one.
+            handOverHoldRequested = handOverHold != nil
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
             // Commit audible progress before detaching the finished player.
             // During an underrun, timeout/fallback and pause/resume must start
@@ -1126,6 +1134,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 finishedURL
             )
         }
+        holdBackgroundTimeForHandOver()
         if let finishedURL = snapshot.6,
            !lock.withLock({ generationResults.values.contains(where: { $0.audioURL == finishedURL }) }) {
             discardAudio(finishedURL)
@@ -1144,6 +1153,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 }
                 return (generationPlan.isEmpty ? .inactive : .rendering, nil)
             }
+            // No chunk follows, so no hand-over is waiting for background time.
+            releaseHandOverBackgroundTimeIfHeld()
             try? releaseBackgroundAudio()
             reportGenerationState(stateAfterPlayback.0, stopReason: stateAfterPlayback.1)
             return
@@ -1624,7 +1635,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         )
     }
 
+    /// Why a stalled player hands over to the iOS voice (`SpeechEngineSelection`: `playerStalled`).
+    private static let stalledPlayerReason = "supertonic_player_stalled"
+
     private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String) {
+        // A stalled player's chunk is kept until the iOS voice is really speaking. If it can't start, the
+        // pause for a tap replays that chunk (#302) instead of rendering it again.
+        let keepsChunk = reason == Self.stalledPlayerReason
         let source = lock.withLock { preparedSourceText }
         // The stop names why the iOS voice took over, so the player's line needs nothing else (#314).
         let stopReason = SpeechFallbackReason(
@@ -1634,26 +1651,37 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         do {
             _ = try fallback.prepareSpeechText(source)
             removePlaybackEndObserver()
-            let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
+            let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?, kept: URL?) in
                 generation = UUID()
                 let renderControl = activeRenderControl
                 activeRenderControl = nil
                 generationDisabledReasons[targetId] = stopReason
-                if reason == "supertonic_resource_pressure" || reason == "supertonic_player_stalled" {
+                if reason == "supertonic_resource_pressure" || reason == Self.stalledPlayerReason {
                     resourceFallbackTargetIds.insert(targetId)
                 } else {
                     resourceFallbackTargetIds.remove(targetId)
                 }
-                player?.pause()
-                player?.replaceCurrentItem(with: nil)
-                player = nil
-                let urls = Set(
+                if keepsChunk {
+                    // Silent already; the player, its place and its chunk go once the iOS voice speaks.
+                    player?.pause()
+                } else {
+                    player?.pause()
+                    player?.replaceCurrentItem(with: nil)
+                    player = nil
+                }
+                var urls = Set(
                     renderedCache.values.map(\.url)
                         + generationResults.values.map(\.audioURL)
                         + [activeAudioURL].compactMap { $0 }
                 )
-                activeAudioURL = nil
-                activeAudioDuration = 0
+                let kept = keepsChunk ? activeAudioURL : nil
+                if let kept { urls.remove(kept) }
+                if !keepsChunk {
+                    activeAudioURL = nil
+                    activeAudioDuration = 0
+                    initialPlaybackOffset = nil
+                    initialRequestedSpokenOffset = nil
+                }
                 renderedCache.removeAll()
                 inFlightOffsets.removeAll()
                 pendingAutoplayOffset = nil
@@ -1662,15 +1690,24 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 generationResults.removeAll()
                 standInOffsets.removeAll()
                 failedRenderReasons.removeAll()
-                initialPlaybackOffset = nil
-                initialRequestedSpokenOffset = nil
                 preparedAudioAssemblyStarted = false
-                return (Array(urls), renderControl)
+                return (Array(urls), renderControl, kept)
             }
             stopped.renderControl?.cancel()
             for url in stopped.urls { discardAudio(url) }
             try fallback.play(targetId: targetId, from: sourceOffset)
             let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
+            if keepsChunk {
+                lock.withLock {
+                    player?.replaceCurrentItem(with: nil)
+                    player = nil
+                    activeAudioURL = nil
+                    activeAudioDuration = 0
+                    initialPlaybackOffset = nil
+                    initialRequestedSpokenOffset = nil
+                }
+                if let kept = stopped.kept { discardAudio(kept) }
+            }
             lock.withLock {
                 fallbackIsActive = true
                 systemVoicePlayback += 1
@@ -1690,6 +1727,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 fallbackIsActive = false
                 playbackFailure = "supertonic_and_system_fallback_failed"
                 pendingStartTargetId = nil
+                if keepsChunk {
+                    // The chosen voice was never given up: the tap must not be sent to the voice that just failed.
+                    generationDisabledReasons.removeValue(forKey: targetId)
+                    resourceFallbackTargetIds.remove(targetId)
+                }
             }
             try? releaseBackgroundAudio()
         }
@@ -1723,6 +1765,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             item.audioTimePitchAlgorithm = .timeDomain
             let nextPlayer = AVPlayer(playerItem: item)
             nextPlayer.volume = level
+            rateChangeLock.withLock { lastRateChange = nil }
             if observesPlayerLifecycle {
                 installPlaybackObservers(for: item, player: nextPlayer, request: request)
             }
@@ -2011,6 +2054,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             stallMonitor = nil
             return fallbackIsActive
         }
+        // The monitor would have given back the background time held for this chunk's hand-over; it is gone.
+        releaseHandOverBackgroundTimeIfHeld()
         if usesSystemVoice {
             // The iOS voice keeps its place; the next play speaks from it with a new synthesizer.
             let paused = lock.withLock { () -> Bool in
@@ -2080,9 +2125,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         fields["recovery"] = "hand_over_to_system_voice"
         fields["sourceOffset"] = String(offset)
         onStall?("supertonic.stall_handover", fields)
-        activateSystemFallback(targetId: target, sourceOffset: offset, reason: "supertonic_player_stalled")
+        activateSystemFallback(targetId: target, sourceOffset: offset, reason: Self.stalledPlayerReason)
         let handedOver = lock.withLock { fallbackIsActive }
-        if !handedOver {
+        if handedOver {
+            releaseHandOverBackgroundTimeIfHeld()
+        } else {
             fields["recovery"] = "hand_over_failed"
             onStall?("supertonic.stall_handover_failed", fields)
         }
@@ -2097,18 +2144,22 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let now = ContinuousClock.now
         func ms(_ duration: Duration) -> String { String(Self.milliseconds(duration)) }
         let snapshot = lock.withLock {
-            (created: playerCreatedAt, started: playerStartedAt, rate: lastRateChange,
+            (created: playerCreatedAt, started: playerStartedAt,
              standIn: standInOffsets.contains(currentStartOffset), audioSeconds: activeAudioDuration)
         }
-        var fields = [
+        let lastChange = rateChangeLock.withLock { lastRateChange }
+        let playerAge: String = snapshot.created.map { ms(now - $0) } ?? "none"
+        let startAgo: String = snapshot.started.map { ms(now - $0) } ?? "never"
+        let chunkAudio = String(Int((snapshot.audioSeconds * 1_000).rounded()))
+        var fields: [String: String] = [
             "appState": Self.applicationStateName(),
             "conditions": SupertonicResourcePolicy.currentConditions().logDescription,
             "chunkEngine": snapshot.standIn ? "system_voice" : "supertonic",
-            "chunkAudioMs": String(Int((snapshot.audioSeconds * 1_000).rounded())),
-            "playerAgeMs": snapshot.created.map { ms(now - $0) } ?? "none",
-            "startRequestedAgoMs": snapshot.started.map { ms(now - $0) } ?? "never"
+            "chunkAudioMs": chunkAudio,
+            "playerAgeMs": playerAge,
+            "startRequestedAgoMs": startAgo
         ]
-        if let change = snapshot.rate {
+        if let change = lastChange {
             fields["lastRateChange"] = "\(change.reason) to \(String(format: "%.2f", change.rate))"
             fields["lastRateChangeAgoMs"] = ms(now - change.at)
         }
@@ -2145,12 +2196,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// player's callbacks arrive on the main thread; anything else hops there.
     private func holdBackgroundTimeForHandOver() {
         guard let hold = handOverHold else { return }
-        lock.withLock { handOverHoldRequested = true }
         if Thread.isMainThread {
             MainActor.assumeIsolated { hold.chunkEnded() }
         } else {
             Task { @MainActor in hold.chunkEnded() }
         }
+    }
+
+    /// Gives the hold back if one is out. For the paths that end the monitor, which would otherwise release it.
+    private func releaseHandOverBackgroundTimeIfHeld() {
+        if lock.withLock({ handOverHoldRequested }) { releaseHandOverBackgroundTime() }
     }
 
     private func releaseHandOverBackgroundTime() {
@@ -2459,12 +2514,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // play call. A stalled player's export then says whether anything stopped it (#540).
         rateChangeObserver = NotificationCenter.default.addObserver(
             forName: AVPlayer.rateDidChangeNotification, object: player, queue: nil
-        ) { [weak self, weak player] notification in
-            guard let self, let player else { return }
+        ) { [weak self] notification in
+            guard let self, let changed = notification.object as? AVPlayer else { return }
             let reason = ((notification.userInfo?[AVPlayer.rateDidChangeReasonKey] as? String) ?? "none")
                 .replacingOccurrences(of: "AVPlayerRateDidChangeReason", with: "")
-            let rate = player.rate
-            self.lock.withLock { self.lastRateChange = (reason, rate, ContinuousClock.now) }
+            let rate = changed.rate
+            self.rateChangeLock.withLock { self.lastRateChange = (reason, rate, ContinuousClock.now) }
         }
         playbackEndObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,

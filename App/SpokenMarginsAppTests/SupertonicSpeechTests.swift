@@ -438,10 +438,11 @@ final class SupertonicSpeechTests: XCTestCase {
     private func stallClient(
         _ log: StallEventLog, template: URL, plays: Bool,
         playsFromStart: Int? = nil, onStart: (@Sendable (AVPlayer) -> Void)? = nil,
-        fallback: RecordingFallbackAudioClient = RecordingFallbackAudioClient()
+        fallback: RecordingFallbackAudioClient = RecordingFallbackAudioClient(),
+        renderer: CountingAudioSupertonicRenderer? = nil
     ) -> SupertonicSpeechPlaybackClient {
         SupertonicSpeechPlaybackClient(
-            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            renderer: renderer ?? CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
             fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {},
             audioPlayerStarter: { player, rate in
@@ -523,7 +524,8 @@ final class SupertonicSpeechTests: XCTestCase {
         let log = StallEventLog()
         let fallback = RecordingFallbackAudioClient()
         fallback.playError = NSError(domain: "test", code: 1)
-        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback)
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer)
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "tap", from: 0)
         for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
@@ -537,10 +539,14 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.startCount, 2, "one re-seat, then a pause")
         XCTAssertGreaterThanOrEqual(client.debugBackgroundAudioReleaseCount, 1, "other apps' audio is no longer lowered")
         fallback.playError = nil
+        let rendersBeforeTap = await renderer.renderCount
 
         try client.play(targetId: "tap", from: 0)
         for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(log.startCount, 3, "one tap starts a new player")
+        let rendersAfterTap = await renderer.renderCount
+        XCTAssertEqual(rendersAfterTap, rendersBeforeTap, "the failed hand-over kept the chunk: the tap replays it, not renders it again")
+        XCTAssertFalse(client.isSystemVoiceActive, "the tap goes back to the chosen voice, not to the voice that just failed")
         let before = client.currentCharOffset() ?? 0
         try await Task.sleep(for: .milliseconds(900))
         XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
@@ -606,6 +612,7 @@ final class SupertonicSpeechTests: XCTestCase {
 
         client.debugFinishActiveChunk()
         XCTAssertEqual(ledger.begins, 1, "the end of a chunk holds background time")
+        XCTAssertEqual(ledger.ends, 0, "and keeps it while nothing is playing")
         await waitUntil { starts.value >= 2 }
         await waitUntil { ledger.ends >= 1 }
         XCTAssertEqual(ledger.ends, 1, "and gives it back once the next chunk is heard moving")
