@@ -167,6 +167,21 @@ final class SharedMarginReviewTests: XCTestCase {
                        "2 new Margins from Ana. Hear them in place first, then carry on from where you were.")
     }
 
+    func testAnOfferTurnedDownStaysQuietUntilAnotherMarginArrives() {
+        var memory = NewMarginsOfferMemory()
+        XCTAssertFalse(memory.isDeclined(itemId: "ep", margins: ["m1"]), "nothing has been turned down yet")
+
+        memory.decline(itemId: "ep", margins: ["m1", "m2"])
+        XCTAssertTrue(memory.isDeclined(itemId: "ep", margins: ["m1", "m2"]))
+        XCTAssertTrue(memory.isDeclined(itemId: "ep", margins: ["m2"]), "hearing one some other way doesn't bring the offer back")
+        XCTAssertFalse(memory.isDeclined(itemId: "ep", margins: ["m1", "m2", "m3"]), "a new Margin arrived")
+        XCTAssertFalse(memory.isDeclined(itemId: "other", margins: ["m1"]), "per item")
+
+        memory.decline(itemId: "ep", margins: ["m1", "m2", "m3"])
+        XCTAssertTrue(memory.isDeclined(itemId: "ep", margins: ["m3", "m1"]))
+        XCTAssertTrue(memory.isDeclined(itemId: "ep", margins: []), "nothing new is nothing to ask about")
+    }
+
     /// A review plays what the list says, in that order, end to end.
     func testAListFromTheReviewDrivesASequenceThroughEveryMargin() throws {
         let entries = SharedMarginReview.entries(

@@ -17,7 +17,7 @@ private struct NewMarginsOffer: ViewModifier {
         ) { id in
             Button("Hear new Margins first") { model.reviewNewMargins(itemId: id, thenContinue: true) }
                 .accessibilityIdentifier("newMarginsOffer.review")
-            Button("Listen without them") { model.startItem(id: id) }
+            Button("Listen without them") { model.continueWithoutNewMargins(itemId: id) }
                 .accessibilityIdentifier("newMarginsOffer.skip")
             Button("Cancel", role: .cancel) {}
         } message: { id in

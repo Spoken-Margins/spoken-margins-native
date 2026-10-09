@@ -87,3 +87,22 @@ public enum SharedMarginReview {
         return lhs.marginId < rhs.marginId
     }
 }
+
+/// What the listener turned down on the new-Margins offer ("Listen without them", #474). The offer stays quiet for
+/// that item until a Margin arrives that it hadn't asked about, so Continue on a two-hour episode with a friend's
+/// Margin at minute 90 doesn't ask at every press. Hearing a Margin some other way never brings the offer back.
+public struct NewMarginsOfferMemory: Sendable, Equatable {
+    private var declined: [String: Set<String>] = [:]
+
+    public init() {}
+
+    /// The listener chose to carry on without hearing `margins` (their `marginId`s) on this item.
+    public mutating func decline(itemId: String, margins: [String]) {
+        declined[itemId, default: []].formUnion(margins)
+    }
+
+    /// Whether every one of `margins` has already been turned down on this item.
+    public func isDeclined(itemId: String, margins: [String]) -> Bool {
+        Set(margins).isSubset(of: declined[itemId] ?? [])
+    }
+}

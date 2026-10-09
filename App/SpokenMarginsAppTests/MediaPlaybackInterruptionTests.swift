@@ -380,6 +380,32 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(1.5))
         XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the second Margin never plays after Stop")
         XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertFalse(model.announcedImportedInterjectionIDs.contains("note2"),
+                       "the Margin Stop never reached goes back to the automatic prompts")
+        XCTAssertTrue(model.announcedImportedInterjectionIDs.contains(fixture.record.id),
+                      "the one already heard isn't prompted again")
+    }
+
+    /// #474: "Listen without them" is remembered, so the offer isn't made at every Continue; a Margin that arrives
+    /// later brings it back, and a Margin whose recording is gone isn't counted.
+    func testTurningDownTheOfferStopsItBeingRepeated() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "declined-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+
+        var offered: String?
+        model.continueListening(itemId: "declined-source") { offered = $0 }
+        XCTAssertEqual(offered, "declined-source")
+        XCTAssertEqual(model.newSharedMargins(itemId: "declined-source").count, 1)
+
+        model.continueWithoutNewMargins(itemId: "declined-source")
+        XCTAssertEqual(model.snapshot.itemId, "declined-source")
+        model.pause()
+        offered = nil
+        model.continueListening(itemId: "declined-source") { offered = $0 }
+        XCTAssertNil(offered, "turned down, so Continue just continues")
+        XCTAssertEqual(model.newSharedMargins(itemId: "declined-source").count, 1, "still new, and Review new Margins still offers it")
     }
 
     /// #474 (owner's co-op test): Continue on an item with new shared Margins asks first, and starts the item at once
