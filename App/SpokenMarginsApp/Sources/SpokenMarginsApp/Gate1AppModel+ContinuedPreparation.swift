@@ -15,6 +15,14 @@ extension Gate1AppModel {
         foregroundAudioPreparationTask = nil
     }
 
+    /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
+    /// memory warning cancelled restarts and waits the backoff out (#1107).
+    var playbackAllowsLibraryAudioPreparation: Bool {
+        !snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
+            || snapshot.preparedTextAudioStatus == "ready"
+            || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
+    }
+
     func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
 
     /// The foreground preparation loop: runs passes while they have work, and after a pass that
