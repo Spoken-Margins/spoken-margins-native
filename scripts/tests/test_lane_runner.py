@@ -789,7 +789,7 @@ class AutomergeTests(unittest.TestCase):
     def run_checks(self, tier, fast='PASS', t2='PASS', too_big=()):
         calls = []
 
-        def fake_fast(evidence):
+        def fake_fast(evidence, changed=None):
             calls.append('fast')
             return fast, [] if fast == 'PASS' else [f'host tests {fast}']
 
@@ -845,7 +845,6 @@ class AutomergeTests(unittest.TestCase):
                 verdict, details = lane.run_fast(Path(folder), runner=runner_writing(status, code))
                 self.assertEqual(verdict, expected)
 
-
     def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
         # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
         def run(command, log, timeout):
@@ -879,6 +878,81 @@ class AutomergeTests(unittest.TestCase):
                                            str(Path(folder) / 'fast')])
         self.assertIn(command[0], (str(lane.ROOT / '.venv/bin/python'), sys.executable))
         self.assertEqual(timeout, lane.FAST_TIMEOUT)
+
+
+class ChangedPathsForTestsTests(unittest.TestCase):
+    """#862: the lane hands verify-tests.py the PR's changed paths so it can skip suites nothing can affect."""
+
+    def test_run_fast_passes_the_changed_paths_only_when_it_has_them(self):
+        for changed, expected in ((['docs/a.md'], True), (None, False), ([], False)):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as folder:
+                seen = []
+
+                def runner(command, log, timeout):
+                    seen.append(command)
+                    return 0
+
+                lane.run_fast(Path(folder), runner=runner, changed=changed)
+                self.assertEqual('--changed-files' in seen[0], expected)
+                if expected:
+                    listing = Path(seen[0][seen[0].index('--changed-files') + 1])
+                    self.assertEqual(listing.read_text(), 'docs/a.md\n')
+
+    def test_both_sides_of_a_rename_count_and_a_git_failure_runs_everything(self):
+        with tempfile.TemporaryDirectory() as folder:
+            repo = Path(folder)
+
+            def git(*args):
+                subprocess.check_call(['git', '-C', folder, '-c', 'user.name=t', '-c', 'user.email=t@t', *args],
+                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            git('init', '-q', '-b', 'next')
+            (repo / 'scripts').mkdir()
+            (repo / 'scripts/tool.py').write_text('print("a long enough file body so git sees a rename")\n' * 20)
+            git('add', '.')
+            git('commit', '-qm', 'base')
+            git('update-ref', 'refs/remotes/origin/next', 'HEAD')
+            git('checkout', '-qb', 'pr')
+            (repo / 'docs').mkdir()
+            git('mv', 'scripts/tool.py', 'docs/tool.py')  # a lane script moved out of scripts/
+            git('commit', '-qm', 'move')
+            self.assertEqual(lane.changed_paths_for_tests(repo, 'next'), ['docs/tool.py', 'scripts/tool.py'])
+            self.assertIsNone(lane.changed_paths_for_tests(repo / 'nowhere', 'next'))
+            self.assertIsNone(lane.changed_paths_for_tests(repo, 'no-such-base'))
+
+    def pr_changing(self, folder, *names):
+        """A repository whose PR branch adds each name, one tracked file per name, on top of origin/next."""
+        def git(*args):
+            subprocess.check_call(['git', '-C', folder, '-c', 'user.name=t', '-c', 'user.email=t@t', *args],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        git('init', '-q', '-b', 'next')
+        git('commit', '-qm', 'base', '--allow-empty')
+        git('update-ref', 'refs/remotes/origin/next', 'HEAD')
+        git('checkout', '-qb', 'pr')
+        for name in names:
+            (Path(folder) / name).parent.mkdir(parents=True, exist_ok=True)
+            (Path(folder) / name).write_text('x\n')
+        git('add', '.')
+        git('commit', '-qm', 'change')
+        return Path(folder)
+
+    def test_names_git_would_quote_come_through_exactly(self):
+        # Audit of #898: git prints scripts/tests/test_café.py as "scripts/tests/test_caf\303\251.py" unless it is
+        # asked for NUL-delimited names; the quoted form doesn't start with scripts/, so the lane's own tests
+        # would have been skipped for a scripts change.
+        names = ['scripts/tests/test_café.py', 'scripts/tab\tname.py', 'scripts/quote"name.py',
+                 'scripts/back\\slash.py', 'docs/note ü.md']
+        with tempfile.TemporaryDirectory() as folder:
+            repo = self.pr_changing(folder, *names)
+            self.assertEqual(lane.changed_paths_for_tests(repo, 'next'), sorted(names))
+
+    def test_a_name_the_one_path_per_line_hand_off_would_change_runs_everything(self):
+        for name in ('scripts/line\nbreak.py', ' scripts/leading-space.py', 'scripts/trailing-space.py '):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as folder:
+                repo = self.pr_changing(folder, 'docs/a.md', name)
+                self.assertIsNone(lane.changed_paths_for_tests(repo, 'next'))
+
 
 class MergeTests_Runner(unittest.TestCase):
     """The runner merges what it passes (decision 3): blockers, order, retries. Git is faked here;
@@ -937,7 +1011,7 @@ class MergeTests_Runner(unittest.TestCase):
             return over_ceiling if path == 'scripts/hot_file_ratchet.py' else real_policy(tree, base, path)
 
         def automerge(scope, evidence, **kwargs):
-            return real_automerge(scope, evidence, fast=lambda e: ('PASS', []), **kwargs)
+            return real_automerge(scope, evidence, fast=lambda e, changed=None: ('PASS', []), **kwargs)
 
         host_only = {'tier': 'T1', 'why': ['scripts'], 'files': [{'path': 'scripts/x.py', 'category': 'scripts'}]}
         with mock.patch.object(lane, 'base_policy', side_effect=policy):
@@ -1181,7 +1255,7 @@ class MergeTests_Runner(unittest.TestCase):
         real_automerge = lane.run_automerge
 
         def automerge(scope, evidence, **kwargs):
-            return real_automerge(scope, evidence, fast=lambda e: lane.run_fast(e, runner=verify_tests), **kwargs)
+            return real_automerge(scope, evidence, fast=lambda e, changed=None: lane.run_fast(e, runner=verify_tests, changed=changed), **kwargs)
 
         host_only = {'tier': 'T1', 'why': ['scripts'], 'files': [{'path': 'scripts/x.py', 'category': 'scripts'}]}
         with mock.patch.object(verification, 'input_identity', return_value='x'):
