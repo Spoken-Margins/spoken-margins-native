@@ -59,8 +59,9 @@ public enum MarginNoteComposer {
 ///   That repair pass also covers what the change check can't see: an item renamed or deleted, a clock set
 ///   backwards, or a note the listener deleted.
 /// - Any other pass rebuilds only the sessions whose Margins or AI turns were saved since the last pass that finished,
-///   plus those of an item whose source transcript has just arrived (a note's context comes from it), and does
-///   nothing when there are none. A renamed item or a replaced transcript waits for the next repair pass.
+///   plus those of an item whose source transcript has just arrived or changed size (a note's context comes from it),
+///   and does nothing when there are none. A renamed item or a transcript replaced by one of the same size waits for
+///   the next repair pass.
 ///
 /// A pass that fails is not committed, so the next one covers the same ground again.
 public struct MarginNotePassPlanner: Sendable {
@@ -75,7 +76,7 @@ public struct MarginNotePassPlanner: Sendable {
         fileprivate var targetKey: String
         fileprivate var settledThrough: String
         fileprivate var plannedAt: Date
-        fileprivate var transcriptItemIds: Set<String>
+        fileprivate var transcriptSizes: [String: Int]
     }
 
     public static let repairInterval: TimeInterval = 30 * 60
@@ -83,7 +84,7 @@ public struct MarginNotePassPlanner: Sendable {
     private var targetKey: String?
     private var settledThrough: String?
     private var lastFullAt: Date?
-    private var transcriptItemIds: Set<String> = []
+    private var transcriptSizes: [String: Int] = [:]
     private var knownNoteIDs: Set<String> = []
     private var keptEditIDs: Set<String> = []
 
@@ -96,23 +97,23 @@ public struct MarginNotePassPlanner: Sendable {
     public init() {}
 
     public func plan(store: SQLiteSessionStore, targetKey: String, now: Date = Date()) throws -> Pass {
-        let transcripts = try store.itemIdsWithSourceTranscript()
+        let transcripts = try store.sourceTranscriptSizes()
         if let settledThrough, let lastFullAt, self.targetKey == targetKey, now >= lastFullAt,
            now.timeIntervalSince(lastFullAt) < Self.repairInterval {
             let changes = try store.marginNoteChanges(after: settledThrough)
             var sessionIds = changes.sessionIds
-            for itemId in transcripts.subtracting(transcriptItemIds) {
+            for (itemId, size) in transcripts where transcriptSizes[itemId] != size {
                 sessionIds.formUnion(try store.loadSessions(itemId: itemId).map(\.id))
             }
             return Pass(
                 scope: sessionIds.isEmpty ? .nothing : .sessions(sessionIds),
-                targetKey: targetKey, settledThrough: changes.settledThrough, plannedAt: now, transcriptItemIds: transcripts
+                targetKey: targetKey, settledThrough: changes.settledThrough, plannedAt: now, transcriptSizes: transcripts
             )
         }
         let changes = try store.marginNoteChanges(after: nil)
         return Pass(
             scope: .everything, targetKey: targetKey, settledThrough: changes.settledThrough, plannedAt: now,
-            transcriptItemIds: transcripts
+            transcriptSizes: transcripts
         )
     }
 
@@ -121,7 +122,7 @@ public struct MarginNotePassPlanner: Sendable {
     public mutating func commit(_ pass: Pass, noteIDs: [String], keptEditIDs kept: Set<String>) {
         targetKey = pass.targetKey
         settledThrough = pass.settledThrough
-        transcriptItemIds = pass.transcriptItemIds
+        transcriptSizes = pass.transcriptSizes
         switch pass.scope {
         case .everything:
             lastFullAt = pass.plannedAt

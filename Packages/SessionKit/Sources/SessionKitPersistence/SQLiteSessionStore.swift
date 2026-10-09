@@ -192,14 +192,36 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
-    /// The items that have a source transcript. Read from the item index alone, so it doesn't touch the transcripts.
-    public func itemIdsWithSourceTranscript() throws -> Set<String> {
-        var ids: Set<String> = []
-        try readTexts(
-            "SELECT item_id FROM records WHERE kind = 'source_transcript_timeline' AND item_id IS NOT NULL;",
-            [], name: "source_transcript_items"
-        ) { ids.insert($0) }
-        return ids
+    /// How many bytes of source transcript each item has, to see a transcript arrive or change without reading it.
+    /// An item can hold a chapters-only timeline first (publisher chapters) and its real transcript later, under the same
+    /// row, so the size, not the presence, is what changes. `octet_length` (SQLite 3.43) reads the length from the row
+    /// header; older SQLite falls back to `length`, which reads the whole payload.
+    public func sourceTranscriptSizes() throws -> [String: Int] {
+        func read(_ function: String) throws -> [String: Int] {
+            var sizes: [String: Int] = [:]
+            try readPairs(
+                "SELECT item_id, \(function)(payload) FROM records WHERE kind = 'source_transcript_timeline' AND item_id IS NOT NULL;",
+                name: "source_transcript_sizes"
+            ) { sizes[$0, default: 0] += $1 }
+            return sizes
+        }
+        do { return try read("octet_length") } catch { return try read("length") }
+    }
+
+    private func readPairs(_ sql: String, name: String, _ body: (String, Int) -> Void) throws {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_\(name)")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_\(name)") }
+                if let raw = sqlite3_column_text(statement, 0) { body(String(cString: raw), Int(sqlite3_column_int64(statement, 1))) }
+            }
+        }
     }
 
     private func readTexts(_ sql: String, _ values: [String], name: String, _ body: (String) -> Void) throws {

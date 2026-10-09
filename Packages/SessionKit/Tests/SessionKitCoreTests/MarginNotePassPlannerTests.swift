@@ -134,6 +134,35 @@ final class MarginNotePassPlannerTests: XCTestCase {
         XCTAssertTrue(repair.notes.contains { $0.markdown.contains("Renamed article") })
     }
 
+    func testTheFirstRealTranscriptRebuildsNotesEvenWhenAChaptersOnlyTimelineWasThereFirst() throws {
+        try addSession(1); try addSession(2)
+        let start = Date()
+        // Publisher chapters are saved as a timeline with no segments, under the same row id the transcript later uses.
+        try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "timeline-2", itemId: "item-2", createdAt: start,
+            timeline: TranscriptTimeline(
+                segments: [],
+                chapters: [MediaTimelineChapter(id: "chapter-1", title: "Intro", startMs: 0, transcriptSegmentId: "segment-2")],
+                durationMs: 5_000
+            )
+        ))
+        try runPass(at: start)
+        try ageEverything()
+        XCTAssertEqual(try runPass(at: start.addingTimeInterval(60)).scope, .nothing)
+
+        try store.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "timeline-2", itemId: "item-2", createdAt: start,
+            timeline: TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "segment-2", startMs: 0, endMs: 5_000, text: "Opening. Middle. End.")],
+                chapters: [MediaTimelineChapter(id: "chapter-1", title: "Intro", startMs: 0, transcriptSegmentId: "segment-2")],
+                durationMs: 5_000
+            )
+        ))
+        try ageEverything()
+        XCTAssertEqual(try runPass(at: start.addingTimeInterval(120)).scope, .sessions(["session-2"]))
+        XCTAssertEqual(try runPass(at: start.addingTimeInterval(180)).scope, .nothing)
+    }
+
     func testEditingOrDeletingAMarginChangesOnlyItsSession() throws {
         try addSession(1); try addSession(2)
         try runPass()
