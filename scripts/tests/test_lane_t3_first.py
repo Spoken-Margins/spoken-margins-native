@@ -58,7 +58,7 @@ class T3RequestForHeadTests(unittest.TestCase):
 
 class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
     run_main = test_lane_runner.MainFlowTests.run_main
-    conflicts, role, attempt = [], '', '1'
+    conflicts, role, attempt, state_dir, ops = [], '', '1', None, mock.Mock()
 
     def run_auto_job(self, github, role=''):
         self.role = role

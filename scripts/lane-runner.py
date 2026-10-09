@@ -67,6 +67,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
   Trial (2026-10-01): an automerge job, which runs no xcodebuild, may start there beside a simulator job
   while memory pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
+- The step ledger (#1200, scripts/lane_ledger.py). Each step a job runs (the hot-file ratchet, host tests, app
+  builds, app tests) is noted with its verdict and wall time, and when the job has reported, they go into
+  step-ledger.json in the lane state folder: runs, time, PASS / FAIL / runner faults, and catches. A rule that
+  trips (a step 20 runs without a FAIL at over a minute a run, 3 runner faults in a row, one test failing on
+  two PRs against the same next) posts one "Lane step alarm" comment on #337 at once. Never fails a job.
 - Auto-revert of a lane change that broke the lane (owner rule 2026-10-01, auto_revert). Each job on
   next starts by finding the newest merge into next that touched the lane (test-scope.py's lane
   paths). If the first two lane reports on PRs after it, from jobs that tested a next with it, were
@@ -84,6 +89,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -257,6 +263,79 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
     return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n'
 
 
+# ---- Step ledger --------------------------------------------------------------------------------
+
+STEP_RUNS: list[dict] = []  # this job's step runs, for the step ledger once the job has reported (flush_ledger)
+TESTED_BASE = ''  # the next commit the job is testing now (remember_tested)
+
+
+def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False) -> None:
+    STEP_RUNS.append({'step': name, 'verdict': verdict, 'seconds': seconds, 'base': TESTED_BASE,
+                      'failed': list(failed), 'zero_tests': zero_tests})
+
+
+def ledger_step(name: str, read=None):
+    """Note each run of the decorated step for the step ledger: its verdict (the result's first item) and wall
+    time, and through read(args, result) what failed and whether it ran zero tests. A step that raises is a
+    runner fault."""
+    def wrap(function):
+        @functools.wraps(function)
+        def run(*args, **kwargs):
+            started = time.monotonic()
+            try:
+                result = function(*args, **kwargs)
+            except BaseException:
+                note_step(name, 'ERROR', time.monotonic() - started)
+                raise
+            failed, zero = [], False
+            try:
+                failed, zero = read(args, result) if read else ([], False)
+            except Exception:  # noqa: BLE001 - the ledger never changes a step's result
+                pass
+            note_step(name, result[0], time.monotonic() - started, failed, zero)
+            return result
+        return run
+    return wrap
+
+
+def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
+    """(The failed tests, or failed steps when a step names no tests, and whether no test ran) in the
+    verify-tests.py manifests under <outputs>."""
+    failed, counted = [], 0
+    for output in outputs:
+        for step in _read_manifest(output).get('steps', []):
+            tests = step.get('tests') or {}
+            counted += len(tests)
+            failed += [test for test, record in tests.items() if record.get('status') == 'failed']
+            if step.get('exit_code') and not step.get('interrupted') and not tests:
+                failed.append(str(step.get('name')))
+    return failed, counted == 0
+
+
+def flush_ledger(pr: int, head: str, post) -> list[str]:
+    """Put this job's step runs in the step ledger and post each new alarm with post(body). Returns the alarms.
+    Best effort: the job has already reported, and nothing here can fail it."""
+    runs = list(STEP_RUNS)
+    STEP_RUNS.clear()
+    if not runs:
+        return []
+    try:
+        import lane_ledger
+        from lane_slots import state_dir
+        alarms = lane_ledger.record_runs(state_dir(), [
+            dict(run, result=lane_ledger.outcome(run['verdict'], run['zero_tests'])) for run in runs], pr, head)
+    except Exception as error:  # noqa: BLE001
+        print(f'[lane] step ledger not updated: {error!r}')
+        return []
+    for body in alarms:
+        try:
+            post(f'{body}\n_Posted by the lane runner\'s step ledger (scripts/lane_ledger.py, #1200), after PR #{pr}. '
+                 'The numbers are in step-ledger.json in the lane state folder on the Mac._')
+        except Exception as error:  # noqa: BLE001
+            print(f'[lane] could not post the step alarm: {error!r}\n{body}')
+    return alarms
+
+
 # ---- Processes ----------------------------------------------------------------------------------
 
 # The workflow's command files. A step's processes append to them to set its outputs (the verdict the
@@ -337,6 +416,8 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
+@ledger_step('app builds', lambda args, result: (
+    [part.rsplit(' (', 1)[0] for part in result[1].split(', ') if not part.endswith('(pass)')], False))
 def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
     runner = runner or (lambda command, log, timeout: run_bounded(command, log, timeout, env=pr_build_env()))
     results, details = [], []
@@ -450,6 +531,7 @@ def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
 
+@ledger_step('host tests', lambda args, result: (manifest_failures(args[0] / 'fast')[0], False))
 def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
     """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details)."""
     python = ROOT / '.venv/bin/python'
@@ -480,7 +562,9 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast,
     --plan fast unless the diff is T0. Never an app build (NO_APP_BUILD_PER_PR)."""
     tier = int(scope['tier'][1:])
     details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
+    started = time.monotonic()
     too_big = ratchet()
+    note_step('hot-file ratchet', 'FAIL' if too_big else 'PASS', time.monotonic() - started)
     if too_big:
         return 'FAIL', 'no build', 'hot-file ratchet: failed', details + [f'hot-file ratchet — {line}'
                                                                           for line in too_big]
@@ -1316,6 +1400,7 @@ def first_boot(udid: str, log) -> tuple:
     return None, info
 
 
+@ledger_step('app tests (T3)', lambda args, result: manifest_failures(*sorted(args[2].glob('verify-*'))))
 def run_t3(tests: list[str], request_id: str, evidence: Path,
            classes: list[str] = ()) -> tuple[str, str, str, list[str], str, str]:
     """Returns verdict, where, ran, details, crashes, cc.
@@ -1805,6 +1890,8 @@ TESTED_RECORD: Path | None = None  # main() sets it to a file in this job's RUNN
 def remember_tested(base: str, sha: str) -> None:
     """Note which base this job is testing, so cleanup() can name it if the job stops before its report:
     the auto-revert counts a stopped job only against a lane change that the tested base contained."""
+    global TESTED_BASE
+    TESTED_BASE = sha  # the step ledger's shared-failure rule compares failures on the same next
     if TESTED_RECORD is None:
         return
     try:
@@ -1917,6 +2004,7 @@ def main(argv=None) -> int:
             f'sm-lane-tested-{args.run_id}-{os.environ.get("GITHUB_RUN_ATTEMPT") or "1"}.json'
     if args.cleanup:
         return cleanup(github, run_url, args.mode)
+    STEP_RUNS.clear()
     if args.base == 'next':  # lane-check/** bases test lane changes; only next gets reverted
         try:
             print(f'Lane auto-revert check: {auto_revert(ROOT, args.base, Repo(repo))}')
@@ -1985,6 +2073,7 @@ def main(argv=None) -> int:
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
         if request['tier'] == 'T3' and earlier_verdict == 'PASS':
             after_t3_pass(f'started by the T3 PASS ({url}) in the same lane job')
+        flush_ledger(args.pr, head, lambda body: Repo(repo).comment(OPS_ISSUE, body))
         return 0
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
@@ -2075,6 +2164,7 @@ def main(argv=None) -> int:
         # Remove, then add: adding a label the PR already has is no `labeled` event, and the Hourly dispatch
         # wakes on lane:done's. The lane and automerge jobs run side by side, so the other may have added it.
         github.relabel(DONE, DONE)
+    flush_ledger(args.pr, head, lambda body: Repo(repo).comment(OPS_ISSUE, body))
     if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
         for derived in (ROOT / '.build').glob('dd*'):
             shutil.rmtree(derived, ignore_errors=True)

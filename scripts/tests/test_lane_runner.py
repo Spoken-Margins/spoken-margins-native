@@ -1489,7 +1489,10 @@ class MainFlowTests(unittest.TestCase):
                                                # and these tests run inside a lane job, maybe a re-run
                                                'SM_LANE_RUNNER_ROLE': self.role, 'GITHUB_RUN_ATTEMPT': self.attempt,
                                                # the test's own temp folder, never a real lane job's
-                                               'RUNNER_TEMP': temporary}), \
+                                               'RUNNER_TEMP': temporary,
+                                               # nor the Mac's lane state (the step ledger, #1200)
+                                               'SM_LANE_STATE_DIR': self.state_dir or temporary}), \
+                mock.patch.object(lane, 'Repo', return_value=self.ops), \
                 mock.patch.object(lane, 'run_t2', side_effect=t2,
                                   return_value=(verdict, 'simulator build (pass), device build (pass)', [])), \
                 mock.patch.object(lane, 'sweep_runner_simulators'), \
@@ -1514,6 +1517,8 @@ class MainFlowTests(unittest.TestCase):
 
     conflicts = []
     role = ''  # the main runner, unless a test says otherwise
+    state_dir = None  # the lane state folder: the run's temporary folder unless a test names one
+    ops = mock.Mock()  # Repo(...): what main posts on #337
     attempt = '1'
 
     def retry_fault_report(self, released_t3=False, throws=False, exhausted=False):

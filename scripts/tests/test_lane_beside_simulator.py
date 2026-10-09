@@ -291,7 +291,7 @@ class BuildRunnerEnvironmentTests(unittest.TestCase):
 
 class BuildRunnerJobTests(unittest.TestCase):
     run_main = test_lane_runner.MainFlowTests.run_main
-    conflicts, role, attempt = [], 'build', '1'
+    conflicts, role, attempt, state_dir, ops = [], 'build', '1', None, mock.Mock()
 
     def run_job(self, tier, beside=None, problem=None, state=None):
         """An automerge job on the build runner for a diff of <tier>. It builds no app at any tier (owner,
@@ -303,6 +303,7 @@ class BuildRunnerJobTests(unittest.TestCase):
                 mock.patch.object(lane, 'wait_for_room_to_build', return_value=None) as builds, \
                 mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(problem, beside)) as host:
             github = FakeGitHub(labels=('automerge',))
+            self.state_dir = state or folder
             self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
             log = Path(state or folder) / lane.BESIDE_SIMULATOR_LOG
             lines = log.read_text().splitlines() if log.exists() else []
