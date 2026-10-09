@@ -23,12 +23,16 @@ so they run whether or not the external drive is plugged in; only step 6 needs t
 4. Ad-hoc test folders in /private/tmp (`spoken-margins-*`) that no process uses and that
    haven't changed in 12 hours.
 5. iOS DeviceSupport folders except the newest one.
-6. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, with a
-   second copy on the separate mirror disk (/Volumes/SlawArchiveMirror/Current/SlawBulk/...),
+6. Moves to /Volumes/SlawBulk/Codex-Offload/<date>-disk-relief/<path relative to home>, plus a
+   second copy on the separate mirror disk (/Volumes/SlawArchiveMirror/Current/SlawBulk/...) when
+   it happens to be mounted,
    each copied under a `.partial` name and checked by size and file count before the source is
    deleted: `artifacts/` folders in the main checkout untouched for 2 days, older phone builds in
    ~/SpokenMargins-phone (never `latest`, the installed one, or the newest two), and Claude and
-   Codex session logs untouched for 3 days. Without the mirror disk, moves are skipped.
+   Codex session logs untouched for 3 days. Without SlawBulk, moves are skipped.
+
+Once a night (02:00 to 05:00), when no backup is running, it also deletes Time Machine local
+snapshots, which otherwise hold on to everything it deletes. Backups on the Time Machine drive stay.
 
 It never touches the self-hosted runner folders, ~/.codex/worktrees, CoreSimulator, or app data.
 Stale worktrees it may not remove (outside `.claude/worktrees/`, or holding `artifacts/`) are
@@ -69,6 +73,7 @@ STALE_WORKTREE_IDLE_SECONDS = 24 * 3600
 # links scripts/setup-worktree.sh makes. Anything else ignored (artifacts/ above all) keeps it.
 REGENERABLE_IGNORED = {'.venv', '.venv/', 'node_modules', 'node_modules/', '.claude/settings.local.json'}
 REGENERABLE_IGNORED_NAMES = {'.build', '.swiftpm', '__pycache__', '.DS_Store'}  # at any depth
+SNAPSHOT_DATE = re.compile(r'^\d{4}-\d{2}-\d{2}-\d{6}$')
 SESSION_ID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
 BUSY_COMMAND_WORDS = ('xcodebuild', 'swift-build', 'verify-tests')
 PHONE_BUILD_NAME = re.compile(r'^\d{8}-\d{6}-[0-9a-f]{7}$')
@@ -88,7 +93,13 @@ class Config:
     # with Time Machine. slaw-sync mirrors SlawBulk into Current/SlawBulk there.
     mirror: Path = Path('/Volumes/SlawArchiveMirror')
     mirror_subdir: str = 'Current/SlawBulk'
-    require_mirror: bool = True
+    # Owner, 2026-10-09: the mirror holds redundant copies of highly sensitive data and is stored
+    # away from the desk. Lane evidence, phone builds and session logs don't need it.
+    require_mirror: bool = False
+    # Owner, 2026-10-09: "We can delete snapshots overnight." Local hours [start, end).
+    snapshot_volume: Path = Path('/')
+    night_start_hour: int = 2
+    night_end_hour: int = 5
     ops_dir: Path = HOME / 'SpokenMarginsOps/disk-relief'
     phone_dir: Path = HOME / 'SpokenMargins-phone'
     device_support: Path = HOME / 'Library/Developer/Xcode/iOS DeviceSupport'
@@ -114,6 +125,11 @@ class Config:
     @property
     def lock_file(self) -> Path:
         return self.ops_dir / '.lock'
+
+    @property
+    def snapshot_stamp(self) -> Path:
+        """The date of the night local snapshots were last cleared."""
+        return self.ops_dir / 'snapshots-cleared.txt'
 
     def protected(self) -> List[Path]:
         """Paths no action may touch, or contain."""
@@ -313,6 +329,30 @@ class Machine:
             shutil.rmtree(path, onerror=retry_writable)
         else:
             path.unlink()
+
+    def snapshot_dates(self, volume: Path) -> Optional[List[str]]:
+        """Dates (YYYY-MM-DD-HHMMSS) of the volume's Time Machine local snapshots; None on failure."""
+        try:
+            done = subprocess.run(['tmutil', 'listlocalsnapshotdates', str(volume)], capture_output=True,
+                                  text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if done.returncode != 0:
+            return None
+        return [line.strip() for line in done.stdout.splitlines() if SNAPSHOT_DATE.match(line.strip())]
+
+    def backup_running(self) -> Optional[bool]:
+        """Whether a Time Machine backup is running; None when tmutil status can't be read."""
+        match = re.search(r'\bRunning = (\d+);', run_quiet(['tmutil', 'status']))
+        return None if match is None else match.group(1) != '0'
+
+    def delete_snapshot(self, date: str) -> bool:
+        try:
+            done = subprocess.run(['tmutil', 'deletelocalsnapshots', date], capture_output=True, text=True,
+                                  timeout=600)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return done.returncode == 0
 
     def notify(self, title: str, message: str) -> None:
         command = os.environ.get('SM_DISK_NOTIFY', 'osascript')
@@ -1077,8 +1117,48 @@ def execute(cfg: Config, machine: Machine, plan: Plan, log: Log, start: int) -> 
     return result
 
 
+def clear_snapshots_overnight(cfg: Config, machine: Machine, log: Log) -> None:
+    """Once a night, delete Time Machine local snapshots: they hold on to everything this job
+    deletes (2026-10-04: 17 GiB cleared, free space unchanged). Not while a backup runs, which may
+    be reading one; then a later run in the window tries again. Backups on the drive stay."""
+    now = dt.datetime.fromtimestamp(machine.now())
+    if not cfg.night_start_hour <= now.hour < cfg.night_end_hour:
+        return
+    night = now.strftime('%Y-%m-%d')
+    try:
+        if cfg.snapshot_stamp.read_text().strip() == night:
+            return
+    except OSError:
+        pass
+    running = machine.backup_running()
+    if running:
+        return
+    if running is None:
+        log('local snapshots kept: could not read tmutil status')
+        return
+    dates = machine.snapshot_dates(cfg.snapshot_volume)
+    if dates is None:
+        log(f'local snapshots kept: could not list them on {cfg.snapshot_volume}')
+        return
+    before = machine.free_bytes(cfg.data_volume)
+    failed = []
+    for date in dates:
+        if machine.delete_snapshot(date):
+            log(f'snapshot: deleted local Time Machine snapshot {date}')
+        else:
+            failed.append(date)
+            log(f'FAILED snapshot: could not delete local Time Machine snapshot {date}')
+    if dates:
+        log(f'snapshots: {len(dates) - len(failed)} of {len(dates)} deleted; free {gib(before)} -> '
+            f'{gib(machine.free_bytes(cfg.data_volume))}')
+    if not failed:
+        cfg.snapshot_stamp.parent.mkdir(parents=True, exist_ok=True)
+        cfg.snapshot_stamp.write_text(night + '\n')
+
+
 def run(cfg: Config, machine: Machine, log: Log) -> Result:
     """One scheduled run. Assumes the caller holds the run lock."""
+    clear_snapshots_overnight(cfg, machine, log)
     free = machine.free_bytes(cfg.data_volume)
     if not should_run(free, cfg):
         return Result(reason=f'{gib(free)} free; acts below {gib(cfg.trigger_bytes)}')
@@ -1094,7 +1174,7 @@ def run(cfg: Config, machine: Machine, log: Log) -> Result:
     held = result.freed > 0 and end - free < result.freed // 2
     if held:
         log('free space rose by less than half of what was cleared: a Time Machine local snapshot may hold it '
-            '(tmutil listlocalsnapshots /). Deleting a snapshot is the owner\'s call.')
+            f'(tmutil listlocalsnapshots /); they are deleted overnight from {cfg.night_start_hour:02d}:00.')
     for tree, why in plan.stale_worktrees:
         log(f'stale worktree kept ({why}; yours to remove): {tree}')
     if result.acted or result.failures:
@@ -1119,8 +1199,11 @@ def dry_run(cfg: Config, machine: Machine, pretend_free: Optional[int]) -> List[
     out.append(f'Drive: {reason}; moves would be skipped' if reason else
                f'Drive: {cfg.drive} mounted, {gib(machine.free_bytes(cfg.drive))} free')
     mirror_problem = mirror_ready(cfg, machine, write_probe=False)
-    out.append(f'Mirror: {mirror_problem}; moves would be skipped' if mirror_problem and cfg.require_mirror else
-               f'Mirror: {cfg.mirror} mounted, {gib(machine.free_bytes(cfg.mirror))} free')
+    if mirror_problem:
+        out.append(f'Mirror: {mirror_problem}; ' + ('moves would be skipped' if cfg.require_mirror else
+                                                   'moves would make one copy, on the drive'))
+    else:
+        out.append(f'Mirror: {cfg.mirror} mounted, {gib(machine.free_bytes(cfg.mirror))} free')
     plan = make_plan(cfg, machine)
     start = free if triggered else cfg.trigger_bytes
     out.append('Would act now.' if triggered else

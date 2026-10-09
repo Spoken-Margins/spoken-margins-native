@@ -49,7 +49,8 @@ class FakeMachine(d.Machine):
     Free space on the data volume follows what is deleted under the fake home."""
 
     def __init__(self, cfg: d.Config, base_free: int, procs=None, mounted=None, drive_free=None,
-                 live_pids=(), copy=None, frozen_free=False):
+                 live_pids=(), copy=None, frozen_free=False, now=NOW, snapshots=(), backup=False,
+                 undeletable=()):
         self.cfg = cfg
         self.base_free = base_free
         self.initial_used = d.tree_stats(cfg.home).disk_bytes
@@ -60,9 +61,27 @@ class FakeMachine(d.Machine):
         self.copy_override = copy
         self.frozen_free = frozen_free
         self.notes = []
+        self.clock = now
+        self.snapshots = list(snapshots)
+        self.backup = backup
+        self.undeletable = set(undeletable)
+        self.deleted_snapshots = []
 
     def now(self):
-        return NOW
+        return self.clock
+
+    def snapshot_dates(self, volume):
+        return list(self.snapshots)
+
+    def backup_running(self):
+        return self.backup
+
+    def delete_snapshot(self, date):
+        if date in self.undeletable:
+            return False
+        self.snapshots.remove(date)
+        self.deleted_snapshots.append(date)
+        return True
 
     def free_bytes(self, path):
         if Path(path) == self.cfg.data_volume:
@@ -405,11 +424,26 @@ class Moves(Base):
         self.assertTrue(d.move_verified(self.cfg, m, log, '2026-10-01', mirror=False)[0])
         self.assertEqual(list(log.parent.iterdir()), [])
 
-    def test_run_moves_old_evidence_and_skips_moves_without_the_mirror(self):
+    def test_without_the_mirror_moves_make_one_copy_on_the_drive(self):
+        # Owner, 2026-10-09: the mirror is for highly sensitive data and is stored away from the desk.
+        self.assertFalse(d.Config().require_mirror)
         self.make_repo()
         m = FakeMachine(self.cfg, base_free=99 * MiB, mounted=[self.cfg.drive])
-        d.run(self.cfg, m, self.log)
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(self.src.exists())
+        day = time.strftime('%Y-%m-%d', time.localtime(m.now()))
+        self.assertTrue((self.cfg.drive / 'Codex-Offload' / f'{day}-disk-relief' / self.rel / 'report.md').exists())
+        self.assertFalse((self.cfg.mirror / 'Current').exists())
+
+    def test_require_mirror_still_holds_moves_back(self):
+        self.make_repo()
+        self.cfg.require_mirror = True
+        d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB, mounted=[self.cfg.drive]), self.log)
         self.assertTrue(self.src.exists(), 'moved with only one copy')
+
+    def test_run_moves_old_evidence_to_both_disks_when_the_mirror_is_there(self):
+        self.make_repo()
         m = FakeMachine(self.cfg, base_free=99 * MiB)
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
@@ -436,6 +470,51 @@ class Moves(Base):
             self.assertTrue(old.exists())
         d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB), self.log)
         self.assertFalse(old.exists())
+
+
+NIGHT = time.mktime((2026, 10, 1, 3, 0, 0, 0, 0, -1))
+
+
+class Snapshots(Base):
+    """Owner, 2026-10-09: "We can delete snapshots overnight." tmutil is faked; the stamp is real."""
+
+    SNAPS = ('2026-10-01-010203', '2026-10-01-020304')
+
+    def test_deletes_local_snapshots_once_a_night(self):
+        m = FakeMachine(self.cfg, base_free=500 * MiB, now=NIGHT, snapshots=self.SNAPS)
+        d.locked_run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, list(self.SNAPS))
+        self.assertEqual(self.cfg.snapshot_stamp.read_text().strip(), '2026-10-01')
+        m.snapshots = ['2026-10-01-033000']
+        d.locked_run(self.cfg, m, self.log)
+        self.assertEqual(m.snapshots, ['2026-10-01-033000'], 'deleted twice in one night')
+
+    def test_daytime_keeps_snapshots(self):
+        m = FakeMachine(self.cfg, base_free=10 * MiB, snapshots=self.SNAPS)
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, [])
+
+    def test_a_running_backup_keeps_them_until_a_later_run(self):
+        m = FakeMachine(self.cfg, base_free=500 * MiB, now=NIGHT, snapshots=self.SNAPS, backup=True)
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, [])
+        self.assertFalse(self.cfg.snapshot_stamp.exists())
+        m.backup = None
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, [], 'deleted without knowing whether a backup runs')
+        m.backup = False
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, list(self.SNAPS))
+
+    def test_a_failed_delete_is_logged_and_tried_again(self):
+        m = FakeMachine(self.cfg, base_free=500 * MiB, now=NIGHT, snapshots=self.SNAPS,
+                        undeletable={self.SNAPS[0]})
+        d.run(self.cfg, m, self.log)
+        self.assertTrue(any(line.startswith('FAILED snapshot') for line in self.log.lines), self.log.lines)
+        self.assertFalse(self.cfg.snapshot_stamp.exists())
+        m.undeletable = set()
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.snapshots, [])
 
 
 class SessionScratch(Base):
