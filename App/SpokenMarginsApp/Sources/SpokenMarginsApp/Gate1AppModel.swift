@@ -7232,8 +7232,10 @@ final class Gate1AppModel: ObservableObject {
                     itemId = matching
                 } else if review.contents.manifest.itemTransport.kind == .embeddedText {
                     itemId = try self.installEmbeddedItem(from: review.contents, store: store)
+                } else if review.contents.manifest.item.itemType == .podcast {
+                    itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.item)
                 } else {
-                    itemId = try await self.acquireMissingItemForImportedPackage(review.contents.manifest.item)
+                    itemId = try await self.acquireArticleForImportedPackage(review.contents.manifest.item)
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map { SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: self.localAudiobookDigest(for: $0)) }
@@ -7424,7 +7426,7 @@ final class Gate1AppModel: ObservableObject {
         return itemID
     }
 
-    func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
+    private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
         guard let canonicalURL = item.canonicalURL,
               SharedPodcastResolutionPolicy.hasReference(item) else {
             throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
