@@ -298,37 +298,6 @@ struct PiperVoiceOption: Identifiable, Hashable {
     }
 }
 
-struct QuickAccessFile: Identifiable, Hashable, Sendable {
-    let id: String
-    let name: String
-    let relativePath: String
-    let modifiedAt: Date
-    let modifiedAtDescription: String
-
-    var dismissalKey: String {
-        "\(id)|\(Int(modifiedAt.timeIntervalSince1970))"
-    }
-}
-
-enum QuickAddCandidate: Identifiable, Sendable {
-    case localFile(QuickAccessFile)
-    case followedSource(FeedEntry)
-
-    var id: String {
-        switch self {
-        case .localFile(let file): "local-file:\(file.id)"
-        case .followedSource(let entry): "followed-source:\(entry.id)"
-        }
-    }
-
-    fileprivate var sortDate: Date {
-        switch self {
-        case .localFile(let file): file.modifiedAt
-        case .followedSource(let entry): entry.publishedAt ?? .distantPast
-        }
-    }
-}
-
 private struct ObsidianImportRequest: Sendable {
     let url: URL
     let itemId: String
@@ -357,18 +326,6 @@ enum SourceFileImportError: LocalizedError {
             return "This PDF is larger than the 50 MB import limit."
         }
     }
-}
-
-struct QuickAccessFileCandidate: Sendable {
-    let id: String
-    let name: String
-    let relativePath: String
-    let modifiedAt: Date
-}
-
-struct QuickAccessFolderScan: Sendable {
-    let files: [QuickAccessFileCandidate]
-    let errorDescription: String?
 }
 
 struct ImportInboxEntry: Identifiable, Hashable {
@@ -2604,57 +2561,15 @@ final class Gate1AppModel: ObservableObject {
         libraryItems: [LibraryItemRow] = [],
         dismissedFileKeys: Set<String> = []
     ) -> [QuickAddCandidate] {
-        let importedURLs = Set(libraryItems.compactMap { normalizedQuickAddURL($0.sourceReference) })
-        let importedEpisodeKeys = Set(libraryItems.map {
-            quickAddEpisodeKey(title: $0.title, sourceTitle: $0.sourceTitle)
-        })
-        let sourceTitles = Dictionary(uniqueKeysWithValues: subscriptions.map {
-            ($0.id, $0.source.title ?? $0.source.host)
-        })
-        let eligibleFiles = folderFiles.filter { !dismissedFileKeys.contains($0.dismissalKey) }
-        let eligibleEntries = followedEntries.filter { entry in
-            if let normalizedURL = normalizedQuickAddURL(entry.canonicalURL), importedURLs.contains(normalizedURL) {
-                return false
-            }
-            let episodeKey = quickAddEpisodeKey(
-                title: entry.title,
-                sourceTitle: sourceTitles[entry.subscriptionId]
-            )
-            return !importedEpisodeKeys.contains(episodeKey)
-        }
-        return (eligibleFiles.map(QuickAddCandidate.localFile)
-            + eligibleEntries.map(QuickAddCandidate.followedSource))
-            .sorted {
-                if $0.sortDate != $1.sortDate {
-                    return $0.sortDate > $1.sortDate
-                }
-                return $0.id < $1.id
-            }
-    }
-
-    private nonisolated static func normalizedQuickAddURL(_ rawValue: String?) -> String? {
-        guard let rawValue,
-              var components = URLComponents(string: rawValue.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let scheme = components.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              components.host != nil else { return nil }
-        components.scheme = scheme
-        components.host = components.host?.lowercased()
-        components.fragment = nil
-        if components.path.count > 1, components.path.hasSuffix("/") {
-            components.path.removeLast()
-        }
-        return components.string
-    }
-
-    private nonisolated static func quickAddEpisodeKey(title: String, sourceTitle: String?) -> String {
-        [sourceTitle ?? "", title]
-            .map {
-                $0.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-                    .replacingOccurrences(of: #"[^a-z0-9]+"#, with: " ", options: .regularExpression)
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            .joined(separator: "|")
+        QuickAddFeed.candidates(
+            folderFiles: folderFiles,
+            followedEntries: followedEntries,
+            subscriptions: subscriptions,
+            libraryItems: libraryItems.map {
+                QuickAddImportedItem(sourceReference: $0.sourceReference, title: $0.title, sourceTitle: $0.sourceTitle)
+            },
+            dismissedFileKeys: dismissedFileKeys
+        )
     }
 
     func dismissQuickAccessFile(_ file: QuickAccessFile) {
@@ -3426,31 +3341,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     nonisolated static func scanQuickAccessFolder(_ folderURL: URL) -> QuickAccessFolderScan {
-        do {
-            let files = try FileManager.default.contentsOfDirectory(
-                at: folderURL,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            )
-            let supported = files.compactMap { url -> QuickAccessFileCandidate? in
-                let ext = url.pathExtension.lowercased()
-                guard ["md", "markdown", "txt", "pdf"].contains(ext) else { return nil }
-                let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .isRegularFileKey])
-                guard values?.isRegularFile == true else { return nil }
-                return QuickAccessFileCandidate(
-                    id: url.lastPathComponent,
-                    name: url.deletingPathExtension().lastPathComponent,
-                    relativePath: url.lastPathComponent,
-                    modifiedAt: values?.contentModificationDate ?? .distantPast
-                )
-            }
-            return QuickAccessFolderScan(
-                files: Array(supported.sorted { $0.modifiedAt > $1.modifiedAt }.prefix(8)),
-                errorDescription: nil
-            )
-        } catch {
-            return QuickAccessFolderScan(files: [], errorDescription: String(describing: error))
-        }
+        QuickAccessFolderScanner.scan(folderURL)
     }
 
     func importQuickAccessFile(_ file: QuickAccessFile, openWhenFinished: Bool = false) {
