@@ -56,7 +56,7 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
         let time = at ?? now()
         queue.async {
             if case .export(let packetId?, _) = event {
-                self.exportedPacketIds?.insert(packetId)
+                self.rememberExportedPacket(packetId)
             }
             // A re-followed feed lists entries the log already published (unfollowing deletes
             // its unimported entries, not the log); each entry is published once.
@@ -65,7 +65,15 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
         }
     }
 
-    /// Records an import; `from_other` is false when this device's own log shows it exported the packet.
+    /// Remembers that this device exported `packetId`, for an item whether or not it has a followed
+    /// source (#867). Such an export logs no row, so without this a later import of the same packet
+    /// would read as from someone else once the listener follows the source.
+    public func noteExportedPacket(_ packetId: String) {
+        queue.async { self.rememberExportedPacket(packetId) }
+    }
+
+    /// Records an import; `from_other` is false when this device exported the packet: its own log
+    /// shows the export, or the packet id was noted beside the log.
     public func recordPacketImport(packetId: String, marginCount: Int, source: ListeningSignalSource, item: ListeningSignalItem?, at: Date? = nil) {
         let time = at ?? now()
         queue.async {
@@ -215,7 +223,26 @@ public final class ListeningSignalRecorder: @unchecked Sendable {
         for signal in Self.read(fileURL) + pending {
             if case .export(let packetId?, _) = signal.event { ids.insert(packetId) }
         }
+        if let data = try? Data(contentsOf: exportedPacketsURL),
+           let noted = try? JSONDecoder().decode([String].self, from: data) {
+            ids.formUnion(noted)
+        }
         exportedPacketIds = ids
         return ids
+    }
+
+    /// Packet ids only, one small file beside the log. It is never exported.
+    private var exportedPacketsURL: URL {
+        fileURL.deletingLastPathComponent().appendingPathComponent("exported-packets.json")
+    }
+
+    private func rememberExportedPacket(_ packetId: String) {
+        var ids = loadExportedPacketIds()
+        guard ids.insert(packetId).inserted else { return }
+        exportedPacketIds = ids
+        // Best effort: if the write fails, this launch still knows the id.
+        guard let data = try? JSONEncoder().encode(ids.sorted()) else { return }
+        try? FileManager.default.createDirectory(at: exportedPacketsURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: exportedPacketsURL, options: .atomic)
     }
 }
