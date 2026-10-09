@@ -394,7 +394,12 @@ public final class SessionEngine {
         guard let session = currentSession, session.itemId == itemId,
               let pinned = pinnedMediaTransport,
               pinned.sessionId == session.id, pinned.targetId == session.currentTargetId else { return nil }
-        return pinned.playbackURL == playbackURL
+        guard let playing = pinned.playbackURL else { return false }
+        if playing == playbackURL { return true }
+        // The same file can be spelled two ways (a symlinked /private/var, a trailing slash).
+        guard let playingFile = URL(string: playing), playingFile.isFileURL,
+              let candidate = URL(string: playbackURL), candidate.isFileURL else { return false }
+        return playingFile.resolvingSymlinksInPath().standardizedFileURL == candidate.resolvingSymlinksInPath().standardizedFileURL
     }
 
     @discardableResult

@@ -13799,7 +13799,7 @@ final class Gate1AppModel: ObservableObject {
               let file = try? PodcastPlacementFile(url: localURL),
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { return }
+              !layers.isEmpty else { deferredPodcastPlacementURLs[itemId] = nil; return }
         // The Margins are placed against the file the listener hears. A session that started on the stream keeps it
         // when the download finishes, so placing against the file now would play Margins at the wrong moment (#914).
         if item.media?.sourceType == .remoteStream,

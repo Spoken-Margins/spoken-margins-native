@@ -7222,6 +7222,10 @@ final class SessionKitCoreTests: XCTestCase {
         _ = try engine.startSession(itemId: item.id)
         XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), true, "a new session starts on the download")
         XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: "file:///tmp/other.mp3"), false)
+        XCTAssertEqual(
+            engine.mediaSessionPlays(itemId: item.id, playbackURL: "file:///tmp/../tmp/episode-edition.mp3"), true,
+            "the same file spelled another way is the same edition"
+        )
     }
 }
 
