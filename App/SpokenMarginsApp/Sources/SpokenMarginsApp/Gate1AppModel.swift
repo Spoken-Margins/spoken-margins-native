@@ -10541,47 +10541,6 @@ final class Gate1AppModel: ObservableObject {
         return trimmed
     }
 
-    private func performProviderDataRequest(_ request: URLRequest, timeoutSeconds: TimeInterval = 30) async throws -> (Data, URLResponse) {
-        guard remoteProviderExperienceEnabled else {
-            throw ProviderCallError.remoteProviderDisabled
-        }
-        var timedRequest = request
-        timedRequest.timeoutInterval = timeoutSeconds
-        diagnostics["lastProviderRequestURL"] = timedRequest.url?.absoluteString ?? "none"
-        diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
-        return try await Self.performProviderDataRequestOffMain(timedRequest, timeoutSeconds: timeoutSeconds)
-    }
-
-    private nonisolated static func performProviderDataRequestOffMain(
-        _ request: URLRequest,
-        timeoutSeconds: TimeInterval
-    ) async throws -> (Data, URLResponse) {
-        return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-            group.addTask {
-                try await URLSession.shared.data(for: request)
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                throw URLError(.timedOut)
-            }
-            guard let result = try await group.next() else {
-                throw URLError(.unknown)
-            }
-            group.cancelAll()
-            return result
-        }
-    }
-
-    private func makeChatCompletionsRequest(messages: [String], model: String, systemPrompt: String) -> URLRequest? {
-        Gate1ProviderRequestFactory.makeChatCompletionsRequest(
-            baseURL: providerBaseURL,
-            apiKey: providerAPIKey,
-            messages: messages,
-            model: model,
-            systemPrompt: systemPrompt
-        )
-    }
-
     private func modelForAIJob(kind: String) -> String {
         Gate1ProviderRequestFactory.modelForAIJob(
             kind: kind,
@@ -10614,19 +10573,6 @@ final class Gate1AppModel: ObservableObject {
         job.model = model
         try? store.updateAIJob(job)
         diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
-    }
-
-    private func decodeProviderText(_ data: Data) throws -> String {
-        if let response = try? JSONDecoder().decode(ChatCompletionResponse.self, from: data),
-           let content = response.choices.first?.message.content,
-           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return content
-        }
-        if let raw = String(data: data, encoding: .utf8),
-           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return raw
-        }
-        throw ProviderCallError.emptyResponse
     }
 
     private func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil) {
@@ -14124,43 +14070,13 @@ final class Gate1AppModel: ObservableObject {
     #endif
 }
 
-private struct ChatCompletionRequest: Encodable {
-    let model: String
-    let messages: [ChatMessage]
-    let temperature: Double
-}
-
-private struct ChatMessage: Codable {
-    let role: String
-    let content: String
-}
-
-private struct ChatCompletionResponse: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable {
-            let content: String?
-        }
-        let message: Message
-    }
-    let choices: [Choice]
-}
-
 private enum ProviderCallError: Error, CustomStringConvertible {
-    case http(Int, String)
-    case emptyResponse
-    case invalidURL
     case missingAPIKey
     case dataSharingConsentRequired
     case remoteProviderDisabled
 
     var description: String {
         switch self {
-        case .http(let status, let body):
-            return "HTTP \(status): \(body.prefix(240))"
-        case .emptyResponse:
-            return "empty_response"
-        case .invalidURL:
-            return "provider_url_invalid"
         case .missingAPIKey:
             return "provider_api_key_missing"
         case .dataSharingConsentRequired:
@@ -14168,40 +14084,6 @@ private enum ProviderCallError: Error, CustomStringConvertible {
         case .remoteProviderDisabled:
             return "remote_provider_disabled"
         }
-    }
-}
-
-private final class UnavailableSpeechPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
-    private let reason: String
-    private var failedTargetId: String?
-
-    init(reason: String) {
-        self.reason = reason
-    }
-
-    func prepareSpeechText(_ text: String) throws -> String {
-        SpeechTextNormalizer.normalize(text)
-    }
-
-    func play(targetId: String) throws {
-        try fail(targetId: targetId)
-    }
-
-    func play(targetId: String, from charOffset: Int) throws {
-        try fail(targetId: targetId)
-    }
-
-    func pause() throws {}
-
-    func stop() throws {}
-
-    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
-        failedTargetId == targetId ? .failed(reason) : .confirmed
-    }
-
-    private func fail(targetId: String) throws {
-        failedTargetId = targetId
-        throw SessionKitError.invalidCommandForState(reason)
     }
 }
 
