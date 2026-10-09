@@ -788,7 +788,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 4))
         editor.tap()
         editor.typeText("Remember the amber doorway.")
-        XCTAssertTrue(element("writtenMargin.save.button").isHittable, "The keyboard hides Save")
+        // #1184: a button under the keyboard can still report isHittable, so compare frames.
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        let save = element("writtenMargin.save.button")
+        XCTAssertTrue(save.isHittable, "The keyboard hides Save")
+        XCTAssertLessThanOrEqual(save.frame.maxY, keyboard.frame.minY, "Save sits under the keyboard")
         captureScreen(named: "second-edition-written-capture-keyboard")
         element("writtenMargin.save.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))
