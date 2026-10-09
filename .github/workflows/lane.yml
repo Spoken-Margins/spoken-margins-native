@@ -3,7 +3,7 @@
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
 # lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
-# --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
+# --plan fast unless the diff is docs only (scripts/test-scope.py), with no app build (owner, 2026-10-09), again on
 # every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
 # the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
 # is an audio, persistence, packet or lane change with no clean Codex audit of its head yet
@@ -132,7 +132,7 @@ jobs:
       group: lane-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     # 150 minutes for the T3 itself (slot wait, boot and tests), plus room for the automerge run a T3
-    # PASS releases in this same job (#421): host tests and both builds, as in the automerge job.
+    # PASS releases in this same job (#421): host tests, as in the automerge job.
     timeout-minutes: 240
     env:
       GH_TOKEN: ${{ github.token }}
@@ -184,8 +184,8 @@ jobs:
 
   automerge:
     needs: route
-    # The automerge label: host tests and builds on the build queue or priority runner.
-    # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_build).
+    # The automerge label: host tests on the build queue or priority runner, no app build.
+    # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_test_on_host).
     if: >-
       !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
