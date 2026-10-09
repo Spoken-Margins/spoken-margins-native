@@ -467,6 +467,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Targets in the system voice because of heat or memory pressure (I14: these come back
     /// to Supertonic at the next play once the condition clears).
     private var resourceFallbackTargetIds: Set<String> = []
+    /// The generation whose render queue behind a kept chunk was held back when a hand-over ended, by a stop or
+    /// because the chosen voice could not render then. A memory warning's stop lifts by itself at a later play,
+    /// which starts that queue then (#540 audit).
+    private var heldRenderQueueGeneration: UUID?
     private let onRestore: RestoreHandler?
     private let onStall: StallHandler?
     private let onSystemPause: SystemPauseHandler?
@@ -746,12 +750,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard lock.withLock({ resourceFallbackTargetIds.contains(targetId) }),
               onDeviceRenderingAllowed() else { return }
         try? fallback.pause()
-        lock.withLock {
+        let restartsHeldQueue = lock.withLock { () -> Bool in
             resourceFallbackTargetIds.remove(targetId)
             generationDisabledReasons.removeValue(forKey: targetId)
             fallbackIsActive = false
+            defer { heldRenderQueueGeneration = nil }
+            return heldRenderQueueGeneration == generation
         }
         onRestore?(targetId)
+        // A memory warning during a hand-over held back the queue behind the kept chunk; the kept chunk plays
+        // from the cache now, so the chunk after it must start rendering with it, not after it (#540 audit).
+        if restartsHeldQueue { restartRenderQueueBehindKeptChunk() }
     }
 
     func currentCharOffset() -> Int? {
@@ -2314,11 +2323,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// The hand-over cancelled the render queue behind the chunk it kept. With the chunk back, the queue starts again
     /// from the chunk after it, so that one is ready when this one ends instead of rendering in the silence after it.
     /// Nothing starts while the chosen voice may not render, or after the listener or a memory warning stopped
-    /// generation during the wait; the next play finds its own way then (#540 audit).
+    /// generation during the wait; the next play finds its own way then (#540 audit). The queue is held for
+    /// `restoreOnDeviceRenderingIfConditionCleared`, which starts it when a memory warning's stop lifts.
     private func restartRenderQueueBehindKeptChunk() {
-        guard onDeviceRenderingAllowed() else { return }
+        let renderingAllowed = onDeviceRenderingAllowed()
         let next = lock.withLock { () -> RenderRequest? in
-            guard let next = generationRenderOrder.first, generationDisabledReasons[next.targetId] == nil else { return nil }
+            guard let next = generationRenderOrder.first else { return nil }
+            guard renderingAllowed, generationDisabledReasons[next.targetId] == nil else {
+                heldRenderQueueGeneration = generation
+                return nil
+            }
+            heldRenderQueueGeneration = nil
             return next
         }
         if let next { enqueueRender(next, shouldPlayWhenReady: false) }
