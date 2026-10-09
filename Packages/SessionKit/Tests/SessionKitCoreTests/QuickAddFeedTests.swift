@@ -123,6 +123,25 @@ final class QuickAddFeedTests: XCTestCase {
         XCTAssertEqual(candidates.map(\.id), ["followed-source:kept"])
     }
 
+    func testAnEntrysURLIsNormalizedBeforeItIsComparedWithTheLibrary() {
+        let imported = QuickAddImportedItem(
+            sourceReference: "https://example.com/posts/one",
+            title: "Something else entirely",
+            sourceTitle: nil
+        )
+        let candidates = QuickAddFeed.candidates(
+            folderFiles: [],
+            followedEntries: [
+                entry("fragment", title: "A", url: "https://example.com/posts/one#comments"),
+                entry("slash", title: "B", url: "https://example.com/posts/one/"),
+                entry("host-case", title: "C", url: "HTTPS://EXAMPLE.com/posts/one"),
+                entry("kept", title: "D", url: "https://example.com/posts/one-more")
+            ],
+            libraryItems: [imported]
+        )
+        XCTAssertEqual(candidates.map(\.id), ["followed-source:kept"])
+    }
+
     func testAnEntryWithTheSameShowAndEpisodeKeyAsALibraryItemIsHidden() {
         let imported = QuickAddImportedItem(
             sourceReference: "https://podcasts.apple.com/episode",
@@ -133,6 +152,7 @@ final class QuickAddFeedTests: XCTestCase {
             folderFiles: [],
             followedEntries: [
                 entry("hidden", title: "Already Heard", url: "https://example.com/feed-entry"),
+                entry("hidden-too", title: "  \u{C0}LREADY   Heard? ", url: "https://example.com/feed-entry-3"),
                 entry("kept", title: "Not Yet Heard", url: "https://example.com/feed-entry-2")
             ],
             subscriptions: [subscription()],
@@ -245,7 +265,7 @@ final class QuickAddFeedTests: XCTestCase {
             ("Ünïcödé", nil, "|unicode"),
             // Letters with no ASCII base become separators instead of being kept.
             ("日本語 News", nil, "|news"),
-            ("Episode №5", nil, "|episode 5"),
+            ("Episode — 5", nil, "|episode 5"),
             ("Привет", nil, "|"),
             // A missing show title and an empty one are the same.
             ("Already Heard", nil, "|already heard"),
