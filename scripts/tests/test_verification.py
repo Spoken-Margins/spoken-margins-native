@@ -294,7 +294,7 @@ class VerificationTests(unittest.TestCase):
         # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
         # or editing a plan must still reach them (found in review of #898).
         for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
-                     'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests'):
+                     'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
             self.assertIn(name, verification.RUNNER_TEST_READERS)
         for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
