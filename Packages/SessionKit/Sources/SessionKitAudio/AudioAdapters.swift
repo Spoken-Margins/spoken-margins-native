@@ -236,31 +236,34 @@ func transcribeLongFormSpeechFile(at url: URL) async throws -> [LongFormSpeechPa
         throw SessionKitError.persistenceFailed("long_form_audio_file_unreadable")
     }
 
-    async let passages = collectLongFormSpeechPassages(from: transcriber)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
-    do {
-        // A cancelled task must stop the analyzer too: the queue's timeout cancels this task, and the slot comes back
-        // only once this function returns (#1037). `downloadAndInstall()` above relies on Swift cancellation alone.
-        let analyzedThrough = try await withTaskCancellationHandler {
-            try await analyzer.analyzeSequence(from: audioFile)
-        } onCancel: {
-            Task { await analyzer.cancelAndFinishNow() }
-        }
-        try Task.checkCancellation()
-        if let lastSample = analyzedThrough {
-            try await analyzer.finalizeAndFinish(through: lastSample)
-        } else {
+    // A cancelled task must stop the analyzer however far it got: the queue's timeout cancels this task, and the slot
+    // comes back only once this function returns (#1037). `analyzeSequence` can return while recognition still runs,
+    // so the handler covers finalization and the wait for results too. `downloadAndInstall()` above relies on Swift
+    // cancellation alone.
+    return try await withTaskCancellationHandler {
+        async let passages = collectLongFormSpeechPassages(from: transcriber)
+        do {
+            let analyzedThrough = try await analyzer.analyzeSequence(from: audioFile)
+            try Task.checkCancellation()
+            if let lastSample = analyzedThrough {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            let completed = try await passages
+            try Task.checkCancellation()
+            guard !completed.isEmpty else {
+                throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
+            }
+            return completed
+        } catch {
             await analyzer.cancelAndFinishNow()
+            _ = try? await passages
+            throw error
         }
-        let completed = try await passages
-        guard !completed.isEmpty else {
-            throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
-        }
-        return completed
-    } catch {
-        await analyzer.cancelAndFinishNow()
-        _ = try? await passages
-        throw error
+    } onCancel: {
+        Task { await analyzer.cancelAndFinishNow() }
     }
 }
 
