@@ -16,21 +16,20 @@ final class ManualCompletionMessagesTests: XCTestCase {
     /// listener but several to the machine.
     func testTitlesAreShortenedToOneLineAtTheLimit() {
         let limit = ManualCompletionMessages.maxTitleCharacters
-        let table: [(name: String, title: String, shown: String)] = [
-            ("just under", String(repeating: "a", count: limit - 1), String(repeating: "a", count: limit - 1)),
-            ("at the limit", String(repeating: "a", count: limit), String(repeating: "a", count: limit)),
-            ("one over", String(repeating: "a", count: limit + 1), String(repeating: "a", count: limit) + "…"),
-            ("very long", String(repeating: "word ", count: 200), String(repeating: "word ", count: 7) + "w…"),
-            ("cut falls after a space", String(repeating: "a", count: limit - 1) + " bbbb", String(repeating: "a", count: limit - 1) + "…"),
-            ("line break", "Part one\nPart two", "Part one Part two"),
-            ("runs of blanks", "  Part   one \t two  ", "Part one two"),
-            ("empty", "", ""),
-            ("only blanks", " \n\t ", ""),
-            ("emoji family", String(repeating: "👨‍👩‍👧‍👦", count: limit + 2), String(repeating: "👨‍👩‍👧‍👦", count: limit) + "…"),
-            ("combining accent", String(repeating: "e\u{301}", count: limit + 2), String(repeating: "e\u{301}", count: limit) + "…"),
-            ("CJK", String(repeating: "日", count: limit + 1), String(repeating: "日", count: limit) + "…"),
-            ("quotes and punctuation", "\"Why?\" & other questions: a talk", "\"Why?\" & other questions: a talk"),
-        ]
+        var table: [(name: String, title: String, shown: String)] = []
+        table.append(("just under", String(repeating: "a", count: limit - 1), String(repeating: "a", count: limit - 1)))
+        table.append(("at the limit", String(repeating: "a", count: limit), String(repeating: "a", count: limit)))
+        table.append(("one over", String(repeating: "a", count: limit + 1), String(repeating: "a", count: limit) + "…"))
+        table.append(("very long", String(repeating: "word ", count: 200), String(repeating: "word ", count: 7) + "w…"))
+        table.append(("cut falls after a space", String(repeating: "a", count: limit - 1) + " bbbb", String(repeating: "a", count: limit - 1) + "…"))
+        table.append(("line break", "Part one\nPart two", "Part one Part two"))
+        table.append(("runs of blanks", "  Part   one \t two  ", "Part one two"))
+        table.append(("empty", "", ""))
+        table.append(("only blanks", " \n\t ", ""))
+        table.append(("emoji family", String(repeating: "👨‍👩‍👧‍👦", count: limit + 2), String(repeating: "👨‍👩‍👧‍👦", count: limit) + "…"))
+        table.append(("combining accent", String(repeating: "e\u{301}", count: limit + 2), String(repeating: "e\u{301}", count: limit) + "…"))
+        table.append(("CJK", String(repeating: "日", count: limit + 1), String(repeating: "日", count: limit) + "…"))
+        table.append(("quotes and punctuation", "\"Why?\" & other questions: a talk", "\"Why?\" & other questions: a talk"))
         for row in table {
             XCTAssertEqual(ManualCompletionMessages.shortened(row.title), row.shown, row.name)
         }
