@@ -13020,7 +13020,7 @@ final class Gate1AppModel: ObservableObject {
                 let resume = ownsLoop ? self.libraryAudioTurns.foregroundLoopEnded() : false
                 if !ownsLoop { self.libraryAudioTurns.stopped(.foreground) }
                 if ownsLoop { self.foregroundAudioPreparationTask = nil }
-                if ownsLoop, Task.isCancelled || resume, self.canPrepareLibraryAudio {
+                if ownsLoop, Task.isCancelled || resume, self.playbackAllowsLibraryAudioPreparation {
                     self.startForegroundAudioPreparationIfNeeded()
                 }
                 if let store = self.store {
@@ -13098,10 +13098,15 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private var canPrepareLibraryAudio: Bool {
-        !SupertonicResourcePolicy.memoryBackoff.isActive()
-            && (!snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
-                || snapshot.preparedTextAudioStatus == "ready"
-                || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true)
+        !preparationSeams.memoryBackoffActive() && playbackAllowsLibraryAudioPreparation
+    }
+
+    /// Live playback leaves the renderer free. Apart from `canPrepareLibraryAudio` so a loop that a
+    /// memory warning cancelled restarts and waits the backoff out (#1107).
+    private var playbackAllowsLibraryAudioPreparation: Bool {
+        !snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
+            || snapshot.preparedTextAudioStatus == "ready"
+            || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
     }
 
     /// The foreground loop and the background task take turns, so two Library items never render at once (#281).

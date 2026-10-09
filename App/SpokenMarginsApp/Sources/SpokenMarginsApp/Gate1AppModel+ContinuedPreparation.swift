@@ -3,7 +3,7 @@ import SessionKit
 import SessionKitPersistence
 
 /// What keeps a Make available offline run going when the listener puts the phone down (#905): a
-/// system progress task while the app is away, and a wait that ends a heat pause by itself.
+/// system progress task while the app is away, and a wait that ends a heat pause or a memory backoff by itself.
 extension Gate1AppModel {
     // Read and driven by the continued-processing task and the heat wait.
     var isForegroundAudioPreparationRunning: Bool { foregroundAudioPreparationTask != nil }
@@ -18,42 +18,55 @@ extension Gate1AppModel {
     func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
 
     /// The foreground preparation loop: runs passes while they have work, and after a pass that
-    /// rendered nothing waits out a heat pause and goes on. `pass` returns whether it has more work.
+    /// rendered nothing waits out a heat pause or a memory backoff and goes on. `pass` returns
+    /// whether it has more work.
     func runForegroundPreparationLoop(pass: () async -> Bool) async {
         while !Task.isCancelled {
             if await pass() {
                 await Task.yield()
-            } else if await waitOutPreparationHeat() {
-                continue // the phone cooled: a heat pause no longer ends the run (#905)
+            } else if await waitOutPreparationPause() {
+                continue // the phone cooled or the backoff ended: a pause no longer ends the run (#905, #1107)
             } else {
                 break
             }
         }
     }
 
-    /// After a pass rendered nothing, waits out a heat pause so the run carries on once the phone
-    /// cools. True: it cooled and queued work is waiting, so run the pass again. False: nothing is
-    /// waiting, the pass stopped for a reason other than heat, the wait ran out, or the loop was
-    /// cancelled. Before this a heat pause ended the loop and nothing started it again, so a run
-    /// stopped for heat stayed stopped while the phone read nominal.
-    func waitOutPreparationHeat() async -> Bool {
+    /// After a pass rendered nothing, waits out a heat pause or the backoff a memory warning
+    /// starts, so the run carries on once the phone cools or the backoff is over. True: the pause
+    /// ended and queued work is waiting, so run the pass again. False: nothing is waiting, the pass
+    /// stopped for another reason, the wait ran out, or the loop was cancelled. Before this a
+    /// pause ended the loop and nothing started it again, so a run stopped for heat or memory
+    /// stayed stopped while the phone read nominal.
+    func waitOutPreparationPause() async -> Bool {
         var waited = 0
+        var heldByHeat = false
+        var banner = false
         defer { isWaitingOutPreparationHeat = false }
         while !Task.isCancelled {
-            let step = OfflinePreparationRun.heatWaitStep(
-                thermal: preparationSeams.deviceConditions().thermal,
+            let thermal = preparationSeams.deviceConditions().thermal
+            heldByHeat = heldByHeat || PreparationChunkGate.isTooWarm(thermal)
+            let step = OfflinePreparationRun.pauseWaitStep(
+                thermal: thermal,
+                memoryBackoffActive: preparationSeams.memoryBackoffActive(),
                 waitedSeconds: waited,
                 foregroundWorkWaiting: foregroundPreparationWorkIsWaiting()
             )
+            let key = heldByHeat ? "preparationHeatWait" : "preparationMemoryWait"
             switch step {
             case .resume:
-                diagnostics["preparationHeatWait"] = "resumed_after_\(waited)s"
+                diagnostics[key] = "resumed_after_\(waited)s"
                 return true
             case .stop(let reason):
-                if waited > 0 { diagnostics["preparationHeatWait"] = "stopped_\(reason.rawValue)_after_\(waited)s" }
+                if waited > 0 { diagnostics[key] = "stopped_\(reason.rawValue)_after_\(waited)s" }
                 return false
             case .wait(let seconds):
-                if !isWaitingOutPreparationHeat { beginWaitingOutPreparationHeat() }
+                // The banner says the phone is cooling only while heat is what holds the run.
+                isWaitingOutPreparationHeat = PreparationChunkGate.isTooWarm(thermal)
+                if !banner {
+                    banner = true
+                    beginWaitingOutPreparationPause(key: key)
+                }
                 do {
                     try await preparationSeams.pause(seconds)
                 } catch {
@@ -65,11 +78,10 @@ extension Gate1AppModel {
         return false
     }
 
-    private func beginWaitingOutPreparationHeat() {
-        isWaitingOutPreparationHeat = true
+    private func beginWaitingOutPreparationPause(key: String) {
         idleForegroundPreparationTurn() // the item stops showing as rendering while it waits
         if let store { try? refreshLibraryRows(store: store) }
-        diagnostics["preparationHeatWait"] = "waiting"
+        diagnostics[key] = "waiting"
     }
 
     private func foregroundPreparationWorkIsWaiting() -> Bool {
