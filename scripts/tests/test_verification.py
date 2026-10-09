@@ -227,7 +227,7 @@ class VerificationTests(unittest.TestCase):
                 run.host_steps()
             return calls, run.manifest, verification.passed_status(), audio
 
-    def package_failing(self, usable, failed):
+    def package_failing(self, usable, failed, **step):
         """The manifest and error from the host steps when the package step fails these tests."""
         with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
             verification.os.environ.pop('CODEX_SANDBOX', None)
@@ -235,7 +235,9 @@ class VerificationTests(unittest.TestCase):
 
             def command(name, args, **kw):
                 if name == 'package':
-                    run.manifest['steps'].append({'name': name, 'tests': {t: {'status': 'failed'} for t in failed}})
+                    run.manifest['steps'].append({
+                        'name': name, 'tests': {t: {'status': 'failed'} for t in failed},
+                        'errors': ['Process exit 1', *(f'Failed: {t}' for t in failed)], **step})
                     raise RuntimeError('Failed: ' + ', '.join(failed))
 
             with patch.object(run, 'command', side_effect=command), patch.object(run, 'ops_steps'), \
@@ -259,6 +261,12 @@ class VerificationTests(unittest.TestCase):
 
     def test_other_failures_stay_the_prs_even_with_no_sound_output_or_with_it(self):
         player = 'SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays'
+        for name, step in (('a later test crashed, so tests are missing', {'errors': [
+                                'Process exit 1', f'Failed: {player}', 'Missing 40 tests; first ten: []']}),
+                           ('the step timed out', {'interrupted': True})):
+            with self.subTest(name):
+                manifest, message = self.package_failing(False, [player], **step)
+                self.assertNotIn('lane_fault', manifest)
         for name, usable, failed in (
                 ('a player test and a sharing test', False, [player, 'SessionKitTests/SharingTests/testPacket']),
                 ('a similarly named class', False, ['SessionKitTests/RealPlayerlessTests/testX']),

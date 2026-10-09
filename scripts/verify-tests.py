@@ -558,10 +558,14 @@ class Run:
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
-            failed = [test for test, record in self.manifest['steps'][-1].get('tests', {}).items()
-                      if record['status'] == 'failed']
+            step = self.manifest['steps'][-1]
+            failed = [test for test, record in step.get('tests', {}).items() if record['status'] == 'failed']
+            # Only test failures: a crash, a timeout or tests that never ran are not explained by the sound.
+            only_failures = (not step.get('interrupted')
+                             and all(e.startswith(('Failed: ', 'Process exit ')) for e in step.get('errors', [])))
             # #909: with no sound output only the real-player tests fail, for every PR. Say it is the Mac.
-            if not audio['usable'] and failed and all(REAL_PLAYER_TEST.search(test) for test in failed):
+            if (not audio['usable'] and only_failures and failed
+                    and all(REAL_PLAYER_TEST.search(test) for test in failed)):
                 self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
                 self.save()
                 raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}; {error}')
