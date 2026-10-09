@@ -271,6 +271,10 @@ public enum StructuredDocumentBuilder {
     /// Numeric `[12]`, `[3–5, 8]` and parenthetical author–year `(Smith et al., 2020; Lee, 2019)`
     /// citations in text that is read. A narrative citation ("Smith et al. (2020) showed")
     /// keeps its name in the sentence; only its bracketed year would match, and that is left alone.
+    ///
+    /// Round-bracket numbers, Vancouver style `(17)` or `(3–5, 8)`, are citations only when the
+    /// document's reference list is numbered and the number is one of its entries (#138).
+    /// "we tested (1) speed and (2) accuracy" and "(95% CI)" are prose and stay.
     static func printedCitationMarkers(
         in text: String,
         segments: [StructuredDocument.Segment],
@@ -278,15 +282,26 @@ public enum StructuredDocumentBuilder {
     ) -> [StructuredDocument.Marker] {
         let numeric = #"\[[0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\]"#
         let authorYear = #"\((?:(?:see|e\.g\.,?|cf\.)\s+)?\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+(?:19|20)[0-9]{2}[a-z]?(?:\s*[;,]\s*(?:\p{Lu}[\p{L}'’\-]+(?:,?\s+(?:et\s+al\.|and|&)\s*(?:\p{Lu}[\p{L}'’\-]+)?)?,?\s+)?(?:19|20)[0-9]{2}[a-z]?)*\)"#
-        guard let regex = try? NSRegularExpression(pattern: "\(numeric)|\(authorYear)") else { return [] }
-        let taken = existing.map { $0.range.start..<$0.range.end }
+        let round = #"\([0-9]{1,4}(?:\s*[,–-]\s*[0-9]{1,4})*\)"#
         let characters = Array(text)
+        let references = numberedReferenceCount(characters: characters, segments: segments)
+        let pattern = references > 0 ? "\(numeric)|\(authorYear)|\(round)" : "\(numeric)|\(authorYear)"
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let enumerator = try? NSRegularExpression(pattern: #"\(([1-9])\)(?=\s*[\p{L}\p{N}“"'(]|,\s*\()"#) else { return [] }
+        let taken = existing.map { $0.range.start..<$0.range.end }
         var result: [StructuredDocument.Marker] = []
         for segment in segments where StructuredDocumentSpeech.treatment(for: segment.role) == .read {
             let slice = String(characters[segment.range.start..<segment.range.end])
             let nsRange = NSRange(slice.startIndex..<slice.endIndex, in: slice)
+            let enumerators = enumeratorRanges(enumerator, in: slice, range: nsRange)
             for match in regex.matches(in: slice, range: nsRange) {
                 guard let range = Range(match.range, in: slice) else { continue }
+                if slice[range].hasPrefix("(") && slice[range].dropFirst().first?.isNumber == true {
+                    guard roundNumbersAreReferences(slice[range], upTo: references),
+                          slice.startIndex < range.lowerBound,
+                          !enumerators.contains(match.range),
+                          !isReferenceToSomethingElse(before: slice[..<range.lowerBound]) else { continue }
+                }
                 let lower = segment.range.start + slice.distance(from: slice.startIndex, to: range.lowerBound)
                 let upper = lower + slice[range].count
                 guard !taken.contains(where: { $0.overlaps(lower..<upper) }) else { continue }
@@ -299,6 +314,71 @@ public enum StructuredDocumentBuilder {
             }
         }
         return result
+    }
+
+    /// The highest entry number of a numbered reference list ("17. Smith J, …", "[17] Smith …"),
+    /// or 0 when the reference lines are not numbered. Reference lines of one run share a segment, so each
+    /// line is read on its own. The list must start at 1 and rise by one, allowing a gap of up to two for an
+    /// entry the extractor lost; a wrapped continuation line such as "45 (2):100–5" or "10 mg doses" breaks
+    /// no sequence because its number is not next. Three entries make a list.
+    private static func numberedReferenceCount(
+        characters: [Character],
+        segments: [StructuredDocument.Segment]
+    ) -> Int {
+        var entries = 0
+        var last = 0
+        for segment in segments where segment.role == .reference {
+            let text = String(characters[segment.range.start..<segment.range.end])
+            for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+                let trimmed = line.drop { $0.isWhitespace || $0 == "[" }
+                let digits = trimmed.prefix { $0.isASCII && $0.isNumber }
+                guard (1...3).contains(digits.count), let number = Int(digits),
+                      number == 1 && last == 0 || (last > 0 && (last + 1)...(last + 3) ~= number),
+                      let next = trimmed.dropFirst(digits.count).first,
+                      next == "." || next == "]" || next == ")" || next.isWhitespace
+                else { continue }
+                entries += 1
+                last = number
+            }
+        }
+        return entries >= 3 ? last : 0
+    }
+
+    /// `(1)`, `(2)`, … that list things in the prose ("we tested (1) speed and (2) accuracy", "(1), (2) and (3)"):
+    /// a single digit followed by a word, number, quote or another bracket, with the next or previous digit
+    /// within 150 characters. A lone "(1) speed" is left to the citation rule.
+    private static func enumeratorRanges(_ regex: NSRegularExpression, in slice: String, range: NSRange) -> [NSRange] {
+        let found = regex.matches(in: slice, range: range).compactMap { match -> (range: NSRange, number: Int)? in
+            guard let digit = Range(match.range(at: 1), in: slice), let number = Int(slice[digit]) else { return nil }
+            return (match.range, number)
+        }
+        return found.filter { item in
+            found.contains { other in
+                abs(other.number - item.number) == 1 && abs(other.range.location - item.range.location) <= 150
+            }
+        }.map(\.range)
+    }
+
+    /// "Eq. (2)", "Figure (3)", "a scale (1–5)", "ages (10–15)": the number belongs to the thing named just before it.
+    private static func isReferenceToSomethingElse(before text: Substring) -> Bool {
+        let trimmed = text.reversed().drop { $0.isWhitespace }
+        guard let previous = trimmed.first else { return true }
+        if "=+−-*/<>^≤≥±×⁰¹²³⁴⁵⁶⁷⁸⁹".contains(previous) || previous.isMathSymbol { return true }
+        let word = String(trimmed.prefix { $0.isLetter || $0 == "." }.reversed()).lowercased()
+        return nonCitationWords.contains(word.trimmingCharacters(in: CharacterSet(charactersIn: ".")))
+    }
+
+    private static let nonCitationWords: Set<String> = [
+        "eq", "eqs", "equation", "equations", "fig", "figs", "figure", "figures", "table", "tables", "section",
+        "sections", "sec", "step", "steps", "panel", "panels", "chapter", "appendix", "scale", "scales", "range",
+        "ranging", "ages", "age", "aged", "score", "scores", "scored", "rated", "rating", "ratings", "between", "from",
+        "item", "items", "point", "points", "grade", "grades", "stage", "stages", "phase", "group", "groups", "type",
+    ]
+
+    /// Every number in `(3–5, 8)` is an entry of the list (a range counts its ends).
+    private static func roundNumbersAreReferences(_ printed: Substring, upTo count: Int) -> Bool {
+        let numbers = printed.split { !$0.isNumber }.compactMap { Int($0) }
+        return !numbers.isEmpty && numbers.allSatisfy { 1...count ~= $0 }
     }
 }
 
