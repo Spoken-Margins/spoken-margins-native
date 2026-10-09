@@ -159,6 +159,14 @@ def decide(api, pr, head, run_id, wants, queues=None):
     return result
 
 
+def still_active(api, run):
+    """Whether the run is positively seen queued or running; False when it ended or can't be read."""
+    try:
+        return api.get(f'actions/runs/{run}')['status'] in ACTIVE
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return False
+
+
 def route(api, pr, head, run_id, wants, queues=None):
     try:
         result = decide(api, pr, head, run_id, wants, queues)
@@ -191,8 +199,10 @@ def route(api, pr, head, run_id, wants, queues=None):
                       else 'the PR has a newer commit')
             print(f'Cancelled run {run}: its Mac job had not started and {reason}.', file=sys.stderr)
         except (OSError, subprocess.SubprocessError) as error:
-            if run in result['replace']:
-                # A same-head run does not end itself: keep one run per PR and head by stopping this one.
+            if run in result['replace'] and still_active(api, run):
+                # Seen still waiting: it did not cancel, and a same-head run does not end itself. Keep one run per
+                # PR and head by stopping this one. If it did cancel (the client timed out after GitHub acted) or
+                # its state can't be read, going ahead beats leaving the PR with no run.
                 for kind in result['replace'][run]:
                     result['skip'][kind] = True
                     result['why'].append(f'could not cancel run {run}, which still holds a {kind} job for {head[:7]}')
