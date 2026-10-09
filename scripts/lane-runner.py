@@ -1499,7 +1499,8 @@ TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
-                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
+                   ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 

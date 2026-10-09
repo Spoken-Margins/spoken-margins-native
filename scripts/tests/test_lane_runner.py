@@ -2480,6 +2480,10 @@ class AutoRevertTests(unittest.TestCase):
                                          'report yet.'], '2026-10-01T13:30:00Z', n=2),
             self.report('FAIL', ['host tests (--plan fast) — expected: verified. observed: exit 1.'],
                         '2026-10-01T13:30:00Z', n=2),
+            # #909: the Mac's lid was closed, which no lane change causes; reverting one for it would be wrong.
+            self.report('INCONCLUSIVE', ['host tests (--plan fast) — lane fault: no audio output: lid closed with no '
+                                         'external display. Ask the owner to open the lid or connect an audio '
+                                         'output, then re-run.'], '2026-10-01T13:30:00Z', n=2),
         ]
         for second in not_faults:
             with self.subTest(second=second['body'].splitlines()[3][:30]):
