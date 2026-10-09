@@ -99,6 +99,12 @@ final class ListeningSignalsCoordinator {
         collector.importedEntries.note(handoff, for: entry)
     }
 
+    /// The Library item a followed article was imported as, so its rows keep this entry even if a
+    /// later edition of the same article is imported from another feed (#865).
+    func followedArticleImported(itemId: String, for entry: FeedEntry) {
+        collector.importedEntries.note(itemId: itemId, for: entry)
+    }
+
     /// A copy of the log for the share sheet, or nil when nothing has been logged yet.
     func exportFileURL() async -> URL? {
         // Capture the work already present at invocation. Later actions do not keep this
