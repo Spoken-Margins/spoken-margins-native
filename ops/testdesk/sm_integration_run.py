@@ -4,8 +4,9 @@
 Stdlib only, Python 3.9+. launchd ticks every 10 minutes. A tip is tested once, by whoever
 reports first on #184, when the Mac has room and no lane app tests are waiting for the simulator. Failing tests are re-run twice on the same build
 to rule out a flake. Only a confirmed failure calls Claude (`claude -p`, read-only tools,
-structured output) to group the failures and name a likely culprit; the script files the
-issues itself. No job is installed by this script; see README.md.
+structured output) to group the failures; the script finds the culprit merge by re-running the failing
+tests at the commits since the last PASS (integration_revert.py), opens the revert PR and files the issues
+itself. No job is installed by this script; see README.md.
 """
 from __future__ import annotations
 
@@ -46,7 +47,9 @@ CLAUDE_TIMEOUT_S = 30 * 60
 NOT_VERIFIED = "not verified (owner's phone): audible content, Bluetooth, Lock Screen, background behaviour"
 NOT_RUN = 'not run: agent-driven journeys (they need an attended session)'
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
+import integration_revert as revert  # noqa: E402
 import lane_slots  # noqa: E402
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
@@ -501,6 +504,99 @@ class Ops:
             return fallback_groups(failed), cost
         return diagnoses(answer.get('structured_output'), failed), cost
 
+    # Culprit search and revert (#1180)
+
+    def commits_since(self, green: str, sha: str) -> list[dict]:
+        """First-parent commits after the last PASS up to the tip, oldest first."""
+        res = self.run(['git', 'log', '--first-parent', '--reverse', '--format=%H%x1f%P%x1f%s%x1f%b%x1e',
+                        f'{green}..{sha}'], cwd=self.repo_root, timeout=60)
+        if res.returncode:
+            raise RuntimeError('git log failed: ' + (res.stderr or '')[-200:])
+        commits = []
+        for record in res.stdout.split('\x1e'):
+            if record.strip():
+                full, parents, subject, body = (record.strip('\n').split('\x1f') + ['', '', '', ''])[:4]
+                commits.append({'sha': full, 'parents': parents.split(), 'subject': subject, 'body': body})
+        return commits
+
+    def check_commit(self, wt: Path, evidence: Path, commit: dict, failed: list[str], fds: tuple) -> str:
+        self.must(['git', 'checkout', '--quiet', '--force', '--detach', commit['sha']], cwd=wt)
+        summary = summarize(self.test_plan(wt, evidence / f"culprit-{commit['sha'][:7]}", 'app', fds, tuple(failed)))
+        return revert.check_verdict(failed, summary)
+
+    def changed_paths(self, commit: dict) -> list[str]:
+        out = self.must(['git', 'diff', '--name-only', '--no-renames', f"{commit['sha']}^1", commit['sha']], timeout=60).stdout
+        return [line for line in out.splitlines() if line.strip()]
+
+    def open_revert_prs(self) -> list[str]:
+        prs = self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH, '--limit', '100',
+                            '--json', 'number,title'])
+        return [f"#{pr['number']}" for pr in prs or [] if re.match(r'\s*Revert\b', pr.get('title') or '', re.I)]
+
+    def reverted_on_base(self, merge_sha: str) -> Optional[str]:
+        res = self.run(['git', 'log', '--format=%H', '-n1', '--fixed-strings',
+                        f'--grep=This reverts commit {merge_sha}', f'origin/{BASE_BRANCH}'], cwd=self.repo_root, timeout=60)
+        return res.stdout.strip() or None if res.returncode == 0 else None
+
+    def comment(self, number: int, text: str, evidence: Path, name: str) -> None:
+        path = evidence / name
+        path.write_text(text)
+        self.must(['gh', 'api', '--method', 'POST', f'repos/{REPO}/issues/{number}/comments', '-F', f'body=@{path}'])
+
+    def open_revert(self, wt: Path, evidence: Path, commit: dict, sha: str, report: str, failed: list[str],
+                    checks: list, prose: list[str]) -> tuple[Optional[str], str]:
+        """Revert the culprit merge on the newest next in `wt`, push revert/pr<N>, open the PR with automerge and
+        file the re-land issue. Returns (the PR url, '') or (None, why not); nothing is pushed on a failure."""
+        number = revert.pr_number(commit['subject'])
+        title = revert.pr_title(commit['subject'], commit['body'])
+        branch = revert.revert_branch(number)
+        git = lambda *args, **kw: self.run(['git', *args], cwd=wt, timeout=kw.get('timeout', 300))  # noqa: E731
+        try:
+            self.must(['git', 'fetch', '--quiet', 'origin', BASE_BRANCH], timeout=600)
+            self.must(['git', 'checkout', '--quiet', '--force', '-B', branch, f'origin/{BASE_BRANCH}'], cwd=wt)
+            undone = git('revert', '--no-commit', '-m', '1', commit['sha'])
+            if undone.returncode:
+                conflicts = git('diff', '--name-only', '--diff-filter=U').stdout.split()
+                git('revert', '--abort')
+                return None, ('git revert -m 1 does not apply cleanly on the newest next ('
+                              + (', '.join(conflicts[:10]) or (undone.stderr or '').strip()[:200]) + ')')
+            staged = git('diff', '--cached', '--numstat')
+            if git('diff', '--cached', '--quiet').returncode == 0:
+                git('revert', '--abort')
+                return None, 'reverting it changes nothing: next already undoes it'
+            grown = revert.grows_hot_file(staged.stdout)
+            reland_url = '(the re-land issue is filed right after this PR opens)'
+            message = revert.revert_message(number, title, sha, commit['sha'], report, failed)
+            self.must(['git', '-c', 'user.name=SM integration script', '-c', 'user.email=noreply@spokenmargins.invalid',
+                       'commit', '--quiet', '-m', message], cwd=wt)
+            self.must(['git', 'push', '--quiet', '--force', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt, timeout=600)
+            body = evidence / 'revert-pr.md'
+            body.write_text(revert.pr_body(number, title, sha, report, failed, checks, reland_url,
+                                           revert.hot_note(grown) if grown else ''))
+            labels = ['automerge'] + (['hot-file-ok'] if grown else [])
+            created = self.must(['gh', 'pr', 'create', '-R', REPO, '--base', BASE_BRANCH, '--head', branch,
+                                 '--title', revert.revert_title(number, title, sha), '--body-file', str(body),
+                                 '--label', ','.join(labels)])
+            pr_url = (created.stdout or '').strip().splitlines()[-1]
+            try:
+                issue = evidence / 'reland-issue.md'
+                issue.write_text(revert.reland_body(number, title, sha, report, pr_url, failed, prose))
+                filed = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', revert.reland_title(number, title),
+                                   '--body-file', str(issue), '--label', 'ready,regression'])
+                reland = (filed.stdout or '').strip().splitlines()[-1]
+                body.write_text(revert.pr_body(number, title, sha, report, failed, checks, reland,
+                                               revert.hot_note(grown) if grown else ''))
+                self.must(['gh', 'pr', 'edit', pr_url, '-R', REPO, '--body-file', str(body)])
+            except (RuntimeError, OSError, IndexError) as error:
+                # The revert PR exists and will merge: say so, and leave the re-land issue to the report.
+                self.log(f'revert PR {pr_url} is open but the re-land issue or PR text failed: {str(error)[:200]}')
+            return pr_url, ''
+        except (RuntimeError, OSError, IndexError) as error:
+            return None, str(error)[:300]
+        finally:
+            git('checkout', '--quiet', '--force', '--detach', sha)
+            git('branch', '-D', branch)
+
     def issue_comments(self, number: int) -> str:
         return self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
                           '--jq', '.[].body']).stdout or ''
@@ -569,6 +665,54 @@ def run_tests(ops: Ops, wt: Path, evidence: Path, fds: tuple) -> dict:
     return result
 
 
+def search_culprit(ops: Ops, wt: Path, evidence: Path, green: Optional[str], sha: str, failed: list[str],
+                   fds: tuple) -> dict:
+    """Re-run only the failing tests at the commits since the last PASS while the simulator slot is held.
+
+    Never raises: any trouble is an 'unknown' answer, and the worktree is put back on the tip."""
+    if not green:
+        return {'status': 'unknown', 'why': 'there is no earlier integration PASS to search from', 'checks': []}
+    try:
+        commits = ops.commits_since(green, sha)
+        return revert.find_culprit(commits, lambda commit: ops.check_commit(wt, evidence, commit, failed, fds))
+    except Exception as error:  # noqa: BLE001
+        return {'status': 'unknown', 'why': f'the search stopped: {str(error)[:200]}', 'checks': []}
+    finally:
+        ops.run(['git', 'checkout', '--quiet', '--force', '--detach', sha], cwd=wt, timeout=300)
+
+
+def act_on_culprit(ops: Ops, wt: Path, evidence: Path, sha: str, report: str, result: dict, groups: list[dict],
+                   cost: Optional[float], suspects: list[str]) -> Optional[str]:
+    """Open the revert PR for a found culprit, else tell the owner on #184 why not. Returns the PR url or None."""
+    culprit = result.get('culprit') or {'status': 'unknown', 'why': 'no search ran', 'checks': []}
+    checks = culprit.get('checks', [])
+    reasons = []
+    commit = culprit.get('commit')
+    if culprit['status'] != 'found':
+        reasons.append('no single culprit merge: ' + culprit.get('why', 'unknown'))
+    else:
+        try:
+            scope = revert.load_test_scope(ops.repo_root)
+            reasons = revert.revert_blockers(commit, ops.changed_paths(commit), scope, ops.repo_root,
+                                             ops.open_revert_prs(), ops.reverted_on_base(commit['sha']))
+        except Exception as error:  # noqa: BLE001
+            reasons.append(f'could not check whether the revert is safe: {str(error)[:200]}')
+        if not reasons:
+            prose = [issue_text(g, sha, report, evidence, cost if i == 0 else None) for i, g in enumerate(groups)]
+            url, why = ops.open_revert(wt, evidence, commit, sha, report, result['failed'], checks, prose)
+            if url:
+                return url
+            reasons.append(why)
+    suspect = (f"#{revert.pr_number(commit['subject'])}" if commit and revert.pr_number(commit['subject'])
+               else ', '.join(suspects[:5]) or 'unknown')
+    try:
+        ops.comment(REPORT_ISSUE, revert.not_reverted_comment(sha, report, result['failed'], reasons, suspect, checks),
+                    evidence, 'not-reverted.md')
+    except RuntimeError as error:
+        ops.log('could not tell the owner why nothing was reverted: ' + str(error)[:200])
+    return None
+
+
 def tick(ops: Ops, dry_run: bool = False) -> str:
     say = print if dry_run else ops.log
     now = ops.now()
@@ -600,8 +744,9 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
     if dry_run:
         say(f'Would test {sha[:7]} (last report {previous}, last PASS {green}): detached worktree, '
             f'setup-worktree.sh, --plan app, {RERUNS} re-runs of any failing tests, scripted journeys, '
-            f'one report on #{REPORT_ISSUE}; on a confirmed FAIL, a read-only Claude diagnosis and issues '
-            f'labelled {FAIL_LABELS}. No tests or writes in dry-run.')
+            f'one report on #{REPORT_ISSUE}; on a confirmed FAIL, the culprit merge, a revert PR with '
+            f'automerge and a re-land issue (or a note on #{REPORT_ISSUE} when it is not safe to revert), a read-only '
+            f'Claude diagnosis and, otherwise, issues labelled {FAIL_LABELS}. No tests or writes in dry-run.')
         return 'dry-run'
     with contextlib.ExitStack() as stack:
         try:
@@ -628,6 +773,8 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             added = True
             ops.must(['scripts/setup-worktree.sh'], cwd=wt)
             result = run_tests(ops, wt, evidence, fds)
+            if result['verdict'] == 'FAIL':
+                result['culprit'] = search_culprit(ops, wt, evidence, green, sha, result['failed'], fds)
         except Exception as error:
             result = dict(summarize({'error': str(error)}), flaky=[])
         finally:
@@ -645,7 +792,15 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             say(f"{result['verdict']} {sha[:7]}: {report}")
             if result['verdict'] == 'FAIL':
                 groups, cost = ops.diagnose(wt, evidence, sha, result['failed'], suspects)
-                filed = ops.file_failures(groups, sha, report, evidence, cost)
+                try:
+                    reverted = act_on_culprit(ops, wt, evidence, sha, report, result, groups, cost, suspects)
+                except Exception as error:  # noqa: BLE001 - the failure issue below must still be filed
+                    ops.log('revert step failed: ' + str(error)[:300])
+                    reverted = None
+                if reverted:
+                    say(f'reverted: {reverted}')
+                    state['results'][sha]['revert'] = reverted
+                filed = ops.file_failures(groups, sha, report, evidence, cost) if not reverted else []
                 state['results'][sha]['issues'] = filed
                 save_state(path, state)
                 say(f'filed or updated: {filed}')

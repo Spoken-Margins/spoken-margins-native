@@ -711,7 +711,7 @@ class FinishChildTests(unittest.TestCase):
         self.assertLess(push, arm)
         self.assertFalse(any(c.startswith('/lane') for c in run.comments()))
         commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
-        self.assertTrue(Path(commit[-1]).read_text().startswith('Address Codex audit findings on #73'))
+        self.assertTrue(Path(commit[-1]).read_text().startswith('Address audit findings on #73'))
 
     def test_finisher_tests_matching_and_sanitizing_findings_by_class(self):
         _, _, _, codex = self.run_finish(audit_only=True)

@@ -220,12 +220,62 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'fast', changed)
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
                     patch.object(run, 'ops_steps', side_effect=lambda: setattr(self, 'ops_ran', True)), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'swift_tests',
                                  side_effect=lambda folder: {audio.split('/', 1)[1], 'OtherTests/testX'}
                                  if folder.name == 'SessionKitTests' else set()), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
             return calls, run.manifest, verification.passed_status(), audio
+
+    def package_failing(self, usable, failed, **step):
+        """The manifest and error from the host steps when the package step fails these tests."""
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+
+            def command(name, args, **kw):
+                if name == 'package':
+                    run.manifest['steps'].append({
+                        'name': name, 'tests': {t: {'status': 'failed'} for t in failed},
+                        'errors': ['Process exit 1', *(f'Failed: {t}' for t in failed)], **step})
+                    raise RuntimeError('Failed: ' + ', '.join(failed))
+
+            with patch.object(run, 'command', side_effect=command), patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output',
+                                 return_value={'usable': usable, 'why': 'lid closed'}), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                with self.assertRaises(RuntimeError) as raised:
+                    run.host_steps()
+            return run.manifest, str(raised.exception)
+
+    def test_real_player_failures_with_no_sound_output_are_a_lane_fault(self):
+        # #909: the same real-player tests failed for every PR while the lane Mac's lid was closed.
+        player = ['SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays',
+                  'SessionKitTests/RealPlayerPodcastEvidenceTests/testTap',
+                  'SessionKitTests/StreamSeekLifecycleTests/testSeek']
+        manifest, message = self.package_failing(usable=False, failed=player)
+        self.assertEqual(manifest['lane_fault'], 'no audio output: lid closed')
+        self.assertTrue(message.startswith('lane fault, not the PR: no audio output'), message)
+        self.assertEqual(manifest['audio_output'], {'usable': False, 'why': 'lid closed'})
+
+    def test_other_failures_stay_the_prs_even_with_no_sound_output_or_with_it(self):
+        player = 'SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays'
+        for name, step in (('a later test crashed, so tests are missing', {'errors': [
+                                'Process exit 1', f'Failed: {player}', 'Missing 40 tests; first ten: []']}),
+                           ('the step timed out', {'interrupted': True})):
+            with self.subTest(name):
+                manifest, message = self.package_failing(False, [player], **step)
+                self.assertNotIn('lane_fault', manifest)
+        for name, usable, failed in (
+                ('a player test and a sharing test', False, [player, 'SessionKitTests/SharingTests/testPacket']),
+                ('a similarly named class', False, ['SessionKitTests/RealPlayerlessTests/testX']),
+                ('sound works, so the player tests failing is the code', True, [player])):
+            with self.subTest(name):
+                manifest, message = self.package_failing(usable, failed)
+                self.assertNotIn('lane_fault', manifest)
+                self.assertNotIn('lane fault', message)
 
     def test_inside_codex_s_sandbox_the_fast_plan_skips_runner_tests_and_is_never_verified(self):
         # #64's Codex run (2026-10-01): its sandbox refuses `ps`, runner-tests failed (2 failures, 12 errors),
@@ -359,6 +409,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'fast')
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args, kw))), \
                     patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'swift_tests', return_value=set()), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()

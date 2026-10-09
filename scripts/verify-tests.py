@@ -18,6 +18,7 @@ import time
 from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
+import host_audio
 import lane_sim
 import lane_sim_pool
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
@@ -418,6 +419,10 @@ PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
 RUNNER_TESTS_TIMEOUT = 600
 
 
+# The SessionKit tests that need a running audio output (#909).
+REAL_PLAYER_TEST = re.compile(r'/(?:RealPlayer[A-Z]\w*Tests|StreamSeekLifecycleTests)/')
+
+
 class Run:
     def __init__(self, output, plan, changed=None):
         self.output = output
@@ -613,11 +618,26 @@ class Run:
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
         self.command('package-build', ['bash', 'scripts/run-sessionkit-tests.sh', '--build-only'],
                      timeout=PACKAGE_BUILD_TIMEOUT)
-        self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh', '--skip-build'],
-                     timeout=PACKAGE_TEST_TIMEOUT,
-                     expected=expected, tests=True,
-                     allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
-                     probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
+        audio = self.manifest['audio_output'] = host_audio.audio_output()
+        try:
+            self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh', '--skip-build'],
+                         timeout=PACKAGE_TEST_TIMEOUT,
+                         expected=expected, tests=True,
+                         allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
+                         probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
+        except RuntimeError as error:
+            step = self.manifest['steps'][-1]
+            failed = [test for test, record in step.get('tests', {}).items() if record['status'] == 'failed']
+            # Only test failures: a crash, a timeout or tests that never ran are not explained by the sound.
+            only_failures = (not step.get('interrupted')
+                             and all(e.startswith(('Failed: ', 'Process exit ')) for e in step.get('errors', [])))
+            # #909: with no sound output only the real-player tests fail, for every PR. Say it is the Mac.
+            if (not audio['usable'] and only_failures and failed
+                    and all(REAL_PLAYER_TEST.search(test) for test in failed)):
+                self.manifest['lane_fault'] = f'no audio output: {audio["why"]}'
+                self.save()
+                raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}; {error}')
+            raise
 
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed during fast verification')

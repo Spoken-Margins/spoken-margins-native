@@ -285,7 +285,7 @@ final class PKMWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("library.sqlite")
         let firstLaunch = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
-        firstLaunch.resetAndSeed()
+        firstLaunch.resetAndSeed(); firstLaunch.declineCurrentTerms()
         firstLaunch.startItem(id: "item-pill")
         firstLaunch.pause()
         let restoredSessionID = try XCTUnwrap(firstLaunch.snapshot.sessionId)

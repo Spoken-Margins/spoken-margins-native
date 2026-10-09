@@ -5,7 +5,7 @@ launchd runs this every 10 minutes with no arguments (a "tick"). A tick never wa
 it reads the Dial, Codex usage, free disk and the live slots, and when a slot is free and
 pacing allows it spawns ONE detached child (`--slot N --pr M` or `--issue M`) and exits.
 
-PR finishing goes first: needs-mac, a code lane FAIL, or Codex audit findings on the head.
+PR finishing goes first: needs-mac, a code lane FAIL, or audit findings on the head.
 Drafts and forks are excluded; lane changes qualify only for audit findings. At most two
 finishing rounds per PR per 24 h. The child disarms
 automerge, merges next without rewriting history, runs Codex and the host fast plan, and
@@ -560,7 +560,7 @@ _scope = importlib.util.module_from_spec(_scope_spec)
 _scope_spec.loader.exec_module(_scope)
 LANE_REPORT_RE = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)\b')
 FINISH_MARK_RE = re.compile(r'Thread "Codex worker \d+" finishing #\d+')
-AUDIT_REPORT_RE = re.compile(r'^\*\*Codex audit \(Astra\) on `([0-9a-f]{7,40})`\*\*\s*$')
+AUDIT_REPORT_RE = re.compile(r'^\*\*(?:Codex audit \(Astra\)|Claude audit) on `([0-9a-f]{7,40})`\*\*\s*$')
 MAX_FINISH_ROUNDS = 2
 FINISH_LIMIT_REASON = 'two finishing rounds in the last 24 h; leaving this PR for a human'
 FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
@@ -604,7 +604,7 @@ def failing_head_report(pr: dict) -> Optional[dict]:
 
 
 def audit_findings_on_head(pr: dict) -> Optional[dict]:
-    """Newest Astra audit only: its header must name the head and its verdict must not be clean."""
+    """Newest headless Codex or Claude audit only: its header must name the head and its verdict must not be clean."""
     reports = [c for c in pr.get('comments') or []
                if AUDIT_REPORT_RE.match((c.get('body') or '').strip().split('\n', 1)[0])]
     report = max(reports, key=comment_time, default=None)
@@ -667,9 +667,9 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
             return False, FINISH_LIMIT_REASON
         if claimed_by_other_finisher(pr.get('comments') or [], now):
             return False, OTHER_FINISHER_REASON
-        return True, ('Codex audit findings on head' if audit else
+        return True, ('audit findings on head' if audit else
                       'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head')
-    return False, 'no needs-mac, code failure or Codex audit findings on head'
+    return False, 'no needs-mac, code failure or audit findings on head'
 
 
 def choose_finish(prs: list, details_for: Callable[[int], dict], now: dt.datetime,
@@ -1486,13 +1486,13 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         report = failing_head_report(pr) or newest_lane_report(pr.get('comments') or [])
         report_text = report['body'] if report else '(no lane report)'
         audit = audit_findings_on_head(pr)
-        audit_text = audit['body'] if audit else '(no Codex audit findings on head)'
+        audit_text = audit['body'] if audit else '(no audit findings on head)'
         summary = '\n'.join(line for line in report_text.splitlines()
                             if 'evidence:' in line or 'observed:' in line or line.startswith('ran:'))
         summary += f'\nMerge next output:\n{merge.stdout}\n{merge.stderr}\nConflicts:\n{conflicts or "none"}'
         context = (f"Finish PR #{number}: {pr['title']}\n\n{pr.get('body') or ''}\n\n"
                    f'Lane report:\n{report_text}\n\nEvidence summary:\n{summary}\n\n'
-                   f'Codex audit findings:\n{audit_text}\n\n'
+                   f'audit findings:\n{audit_text}\n\n'
                    'For each audit finding, fix it with a regression test that you run first to show '
                    'it fails without the fix, or explain with evidence why the finding is wrong in '
                    '.codex-out/pr-body.md. The wrapper posts that explanation as a PR comment, even '
@@ -1557,7 +1557,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
         if not raw_msg.strip() or not (out / 'pr-body.md').exists():
             raise RuntimeError('Codex did not leave a cause/fix and change summary; no push')
-        subject = (f'Address Codex audit findings on #{number}' if audit else
+        subject = (f'Address audit findings on #{number}' if audit else
                    f'Fix lane FAIL on #{number}' if failing_head_report(pr) else 'Merge next and resolve conflicts')
         msg = run_dir / 'commit-msg.txt'
         msg.write_text(commit_message(f'{subject}\n\n{raw_msg.strip()}', number, pr['title']))
