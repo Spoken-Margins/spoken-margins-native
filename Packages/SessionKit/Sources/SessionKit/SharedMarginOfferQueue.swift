@@ -37,6 +37,29 @@ public struct SharedMarginOfferQueue: Equatable {
         return next(from: announced.filter { $0.layer.revealMode != .fresh })
     }
 
+    /// A Margin that was offered or played some other way (jumped to, listened to from the list)
+    /// no longer waits.
+    public mutating func remove(id: String) {
+        waitingIDs.removeAll { $0 == id }
+    }
+
+    /// Whether the playhead moved by more than normal listening does between two ticks (a seek, a
+    /// skip, a rewind). Margins waiting from before such a move belong to the old position.
+    public static func isPlayheadJump(
+        previous: SessionSnapshot,
+        current: SessionSnapshot,
+        maxMediaStepMs: Int = 10_000,
+        maxTextStepChars: Int = 2_000
+    ) -> Bool {
+        if let before = previous.currentMediaTimeMs, let after = current.currentMediaTimeMs {
+            return after < before || after - before > maxMediaStepMs
+        }
+        if let before = previous.currentTextStart, let after = current.currentTextStart {
+            return after < before || after - before > maxTextStepChars
+        }
+        return false
+    }
+
     public mutating func removeAll() {
         waitingIDs.removeAll()
     }

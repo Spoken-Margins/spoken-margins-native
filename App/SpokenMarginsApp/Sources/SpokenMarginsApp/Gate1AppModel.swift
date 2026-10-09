@@ -6552,6 +6552,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
+        sharedMarginOfferQueue.remove(id: prompt.id)
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
               let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
@@ -6672,6 +6673,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
+        // Margins waiting from before a seek, or from another item, belong to the old position (#918).
+        if current.itemId != selectedItem.id
+            || SharedMarginOfferQueue.isPlayheadJump(previous: previous, current: current) {
+            sharedMarginOfferQueue.removeAll()
+        }
         guard pendingImportedCommentary == nil,
               playingImportedCommentary == nil,
               current.itemId == selectedItem.id else { return }
@@ -6700,6 +6706,7 @@ final class Gate1AppModel: ObservableObject {
         _ prompt: ImportedCommentaryPrompt,
         sourceWasPlaying: Bool
     ) {
+        sharedMarginOfferQueue.remove(id: prompt.id)
         sourcePausedForImportedCommentaryPrompt = sourceWasPlaying
         if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }

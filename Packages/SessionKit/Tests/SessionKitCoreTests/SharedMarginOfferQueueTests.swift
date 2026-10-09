@@ -64,6 +64,39 @@ final class SharedMarginOfferQueueTests: XCTestCase {
         XCTAssertNil(queue.next(from: all))
     }
 
+    func testAMarginOfferedSomeOtherWayNoLongerWaits() {
+        let all = prompts(["a": 1, "b": 2, "c": 3])
+        var queue = SharedMarginOfferQueue()
+        queue.append(all)
+        queue.remove(id: "b")
+        XCTAssertEqual(queue.waitingIDs, ["a", "c"])
+        queue.remove(id: "missing")
+        XCTAssertEqual(queue.waitingIDs, ["a", "c"])
+    }
+
+    func testOnlyASeekOrRewindCountsAsAPlayheadJump() {
+        func jump(_ before: Int?, _ after: Int?, text: (Int, Int)? = nil) -> Bool {
+            var previous = snapshot(before ?? 0), current = snapshot(after ?? 0)
+            previous.currentMediaTimeMs = before
+            current.currentMediaTimeMs = after
+            previous.currentTextStart = text?.0
+            current.currentTextStart = text?.1
+            return SharedMarginOfferQueue.isPlayheadJump(previous: previous, current: current)
+        }
+        XCTAssertFalse(jump(100_000, 100_500), "an ordinary tick")
+        XCTAssertFalse(jump(100_000, 101_500), "a tick at 3x")
+        XCTAssertFalse(jump(100_000, 100_000), "paused")
+        XCTAssertFalse(jump(100_000, 110_000), "exactly the limit")
+        XCTAssertTrue(jump(100_000, 110_001), "a skip forward")
+        XCTAssertTrue(jump(100_000, 99_999), "a rewind")
+        XCTAssertTrue(jump(100_000, 40_000), "a seek back")
+        XCTAssertFalse(jump(nil, nil), "no position at all")
+        XCTAssertFalse(jump(nil, 5_000), "no earlier position to compare")
+        XCTAssertFalse(jump(nil, nil, text: (500, 620)), "text moving a sentence")
+        XCTAssertTrue(jump(nil, nil, text: (500, 4_000)), "text seek forward")
+        XCTAssertTrue(jump(nil, nil, text: (500, 100)), "text seek back")
+    }
+
     private func prompts(_ media: KeyValuePairs<String, Int>) -> [ImportedCommentaryPrompt] {
         media.map { prompt($0.key, media: $0.value) }
     }
