@@ -8,6 +8,8 @@ struct ExperienceLibraryScreen: View {
 
     @Binding var addSourceRoute: AddSourceRoute?
     @State private var isAudioPreparationQueuePresented = false
+    /// The item whose Continue is waiting on the "hear new Margins first?" question (#474).
+    @State private var newMarginsOfferItemId: String?
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -65,7 +67,7 @@ struct ExperienceLibraryScreen: View {
                         row: continueItem,
                         isCurrentItem: true,
                         onOpen: { model.openItem(id: continueItem.id) },
-                        onPlay: { model.startItem(id: continueItem.id) },
+                        onPlay: { model.continueListening(itemId: continueItem.id) { newMarginsOfferItemId = $0 } },
                         onComplete: { model.markItemCompleted(id: continueItem.id) },
                         onMarkUnfinished: { model.markItemUnfinished(id: continueItem.id) },
                         onPrepareOffline: { model.prioritizeOfflinePreparation(id: continueItem.id) },
@@ -100,6 +102,7 @@ struct ExperienceLibraryScreen: View {
             ExperienceAudioPreparationQueueScreen()
                 .environmentObject(model)
         }
+        .newMarginsOffer(itemId: $newMarginsOfferItemId)
     }
 
     @ToolbarContentBuilder
@@ -372,7 +375,7 @@ struct ExperienceLibraryScreen: View {
                 ExperienceLibraryCompactRow(
                     row: row,
                     onOpen: { model.openItem(id: row.id) },
-                    onPlay: { model.startItem(id: row.id) },
+                    onPlay: { model.continueListening(itemId: row.id) { newMarginsOfferItemId = $0 } },
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },

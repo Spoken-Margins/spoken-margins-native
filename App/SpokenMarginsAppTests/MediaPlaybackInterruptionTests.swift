@@ -342,6 +342,67 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
+    /// #474: "Review new Margins" plays each new shared Margin in turn, marks each heard, and then leaves the
+    /// source paused where the listener left off.
+    func testReviewingNewMarginsPlaysEachInOrderAndLeavesTheSourcePaused() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 2_500)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        XCTAssertEqual(model.newSharedMargins(itemId: "real-source").map(\.interjection.id), ["note", "note2"])
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: false)
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertEqual(model.marginMoment?.isReview, true)
+        XCTAssertEqual(model.screen, .playback)
+        try waitUntil("the first Margin's voice plays", timeout: 10) { try fixture.storedRecord("note")?.firstHeardAt != nil }
+        XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the second waits its turn")
+        try waitUntil("the second Margin's voice plays", timeout: 15) { try fixture.storedRecord("note2")?.firstHeardAt != nil }
+        let first = try XCTUnwrap(try fixture.storedRecord("note")?.firstHeardAt)
+        let second = try XCTUnwrap(try fixture.storedRecord("note2")?.firstHeardAt)
+        XCTAssertLessThan(first, second, "heard in the order they sit in the episode")
+        try waitUntil("the review ends after the last Margin", timeout: 10) { model.marginMoment == nil }
+        XCTAssertEqual(model.snapshot.status, .paused, "it stops after the last one")
+        XCTAssertTrue(model.newSharedMargins(itemId: "real-source").isEmpty, "both are heard now")
+    }
+
+    /// #474: Stop on the review card stops the voice and leaves the source paused; nothing else plays.
+    func testStoppingAReviewLeavesTheSourcePausedAndPlaysNothingElse() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 2_500)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        defer { model.endMarginMoment(); model.pause() }
+        try waitUntil("the first Margin's voice plays", timeout: 10) { model.marginMoment?.isPlayingMargin == true }
+        model.stopReviewingNewMargins()
+        XCTAssertNil(model.marginMoment)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the second Margin never plays after Stop")
+        XCTAssertEqual(model.snapshot.status, .paused)
+    }
+
+    /// #474 (owner's co-op test): Continue on an item with new shared Margins asks first, and starts the item at once
+    /// when there is nothing new to hear.
+    func testContinueOffersNewMarginsBeforeStartingTheItem() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+
+        var offered: String?
+        model.continueListening(itemId: "real-source") { offered = $0 }
+        XCTAssertEqual(offered, "real-source", "the question comes before anything plays")
+        XCTAssertNotEqual(model.snapshot.itemId, "real-source")
+        XCTAssertNil(model.marginMoment)
+
+        _ = try fixture.store.markImportedCommentaryInterjectionHeard(id: fixture.record.id, at: Date())
+        offered = nil
+        model.continueListening(itemId: "real-source") { offered = $0 }
+        XCTAssertNil(offered, "nothing is new, so Continue just continues")
+        XCTAssertEqual(model.snapshot.itemId, "real-source")
+    }
+
     /// #932 (found on the phone): tapping a friend's Margin in the Timeline started their voice with no chime.
     /// The moment now plays the chime the automatic prompt has always played, and their voice follows it.
     func testPlayingASharedMarginsMomentChimesBeforeTheirVoice() throws {
@@ -530,6 +591,8 @@ private struct SharedMarginHearingFixture {
     let store: SQLiteSessionStore
     let layer: ImportedCommentaryLayer
     let record: ImportedCommentaryInterjection
+    /// A second Margin from the same friend ("note2"), when `secondMarginAtMs` is given (#474).
+    let secondRecord: ImportedCommentaryInterjection?
     private let root: URL
     private let files: [URL]
 
@@ -537,13 +600,15 @@ private struct SharedMarginHearingFixture {
         itemID: String,
         makeWAV: (TimeInterval) throws -> URL,
         recordingClient: RecordingClient? = nil,
-        layerIsMuted: Bool = true
+        layerIsMuted: Bool = true,
+        secondMarginAtMs: Int? = nil
     ) throws {
         root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let sourceURL = try makeWAV(30)
         let voiceURL = try makeWAV(2)
-        files = [sourceURL, voiceURL]
+        let secondVoiceURL = try secondMarginAtMs.map { _ in try makeWAV(2) }
+        files = [sourceURL, voiceURL] + [secondVoiceURL].compactMap { $0 }
         let db = root.appending(path: "library.sqlite")
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: AVPlayerStreamPlaybackClient())
         model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, databaseURLOverride: db)
@@ -562,13 +627,20 @@ private struct SharedMarginHearingFixture {
             anchorEvidence: PortableAnchorEvidence(anchorType: .media),
             approvedTranscript: "Reviewed words", audioPath: voiceURL.path, audioDurationMs: 2_000,
             resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
-        _ = try store.importCommentaryLayer(layer, interjections: [record])
+        secondRecord = secondMarginAtMs.map { atMs in
+            ImportedCommentaryInterjection(id: "note2", layerId: "received", packageScopedId: "note2", createdAt: Date(),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media),
+                approvedTranscript: "More reviewed words", audioPath: secondVoiceURL?.path, audioDurationMs: 2_000,
+                resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: atMs, confidence: 1))
+        }
+        let records = [record] + [secondRecord].compactMap { $0 }
+        _ = try store.importCommentaryLayer(layer, interjections: records)
         model.selectedItem.importedCommentaryLayers = [layer]
-        model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+        model.selectedItem.importedCommentaryInterjections = [layer.id: records]
     }
 
-    func storedRecord() throws -> ImportedCommentaryInterjection? {
-        try store.loadImportedCommentaryInterjections(layerId: layer.id).first { $0.id == record.id }
+    func storedRecord(_ id: String? = nil) throws -> ImportedCommentaryInterjection? {
+        try store.loadImportedCommentaryInterjections(layerId: layer.id).first { $0.id == (id ?? record.id) }
     }
 
     func cleanUp() {

@@ -749,7 +749,7 @@ final class Gate1AppModel: ObservableObject {
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
-    private var marginMomentConductor: MarginMomentConductor?
+    var marginMomentConductor: MarginMomentConductor?
     /// Heard audio around streamed Margins, written to temporary files until transcribed (#156). Keyed by margin identity.
     private var heardSourceWindows: [String: [(url: URL, startMediaTimeMs: Int, durationMs: Int)]] = [:]
 
@@ -1003,7 +1003,7 @@ final class Gate1AppModel: ObservableObject {
     private var preparingLocalAudioMapItems = Set<String>()
     private var commentaryCuePlayer: AVAudioPlayer?
     #endif
-    private var announcedImportedInterjectionIDs: Set<String> = []
+    var announcedImportedInterjectionIDs: Set<String> = []
     private var sourceShouldResumeAfterImportedCommentary = false
     private var sourcePausedForImportedCommentaryPrompt = false
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
@@ -2144,11 +2144,13 @@ final class Gate1AppModel: ObservableObject {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
         }
         startMarginMoment(
-            itemId: interjection.itemId,
-            target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
-            otherMargins: spoken.map {
-                MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
-            },
+            sequence: MarginMomentSequence(
+                itemId: interjection.itemId,
+                target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
+                otherMargins: spoken.map {
+                    MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
+                }
+            ),
             voiceURLs: voiceURLs,
             title: "Your Margin",
             isApproximate: false
@@ -2178,9 +2180,7 @@ final class Gate1AppModel: ObservableObject {
         announcedImportedInterjectionIDs.insert(row.interjection.id)
         let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
         startMarginMoment(
-            itemId: itemID,
-            target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs),
-            otherMargins: [],
+            sequence: MarginMomentSequence(itemId: itemID, target: MarginMomentAnchor(marginId: targetID, mediaTimeMs: position.mediaTimeMs), otherMargins: []),
             voiceURLs: [targetID: voiceURL],
             title: "\(row.collectionLabel)'s Margin",
             isApproximate: position.isApproximate
@@ -2193,15 +2193,13 @@ final class Gate1AppModel: ObservableObject {
         screen = .playback
     }
 
-    private func startMarginMoment(
-        itemId: String,
-        target: MarginMomentAnchor,
-        otherMargins: [MarginMomentAnchor],
+    /// Runs `sequence` through the conductor: a Margin moment (#159) or a review of new Margins (#474).
+    func startMarginMoment(
+        sequence: MarginMomentSequence,
         voiceURLs: [String: URL],
         title: String,
         isApproximate: Bool
     ) {
-        let sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins)
         let conductor = MarginMomentConductor(
             sequence: sequence,
             source: .init(
@@ -2234,7 +2232,7 @@ final class Gate1AppModel: ObservableObject {
         marginMomentPositionIsApproximate = isApproximate
         conductor.start()
         diagnostics["marginMoment.chime"] = nil
-        diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
+        diagnostics["marginMoment"] = "started:lead_in_ms=\(sequence.target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
     }
 
     /// "Play it now" on the coming-up cue.
@@ -4851,7 +4849,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func rejectNavigationOrSessionMutationWhileRecording(_ operation: String) -> Bool {
+    func rejectNavigationOrSessionMutationWhileRecording(_ operation: String) -> Bool {
         guard recordingNavigationIsLocked else { return false }
         diagnostics["recordingNavigationGuard"] = "blocked_\(operation)"
         statusMessage = "Finish or cancel this Margin before leaving its listening position."
@@ -6784,7 +6782,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// Its voice started playing, so the shared Margin is no longer new to this listener (#469).
-    private func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
+    func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
         guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
         selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
         sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle, placement: $0.placement) : $0 }
@@ -12444,7 +12442,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
+    func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
         Self.resolvedApplicationSupportAssetURL(
             for: path,
             applicationSupportDirectory: try? applicationSupportDirectory()
