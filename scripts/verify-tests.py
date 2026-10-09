@@ -458,6 +458,7 @@ class Run:
             start = attempt_start = time.monotonic()
             attempt = 1
             watching = startup is not None
+            scan_from = 0  # each launch is judged by its own part of the shared log
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -475,7 +476,7 @@ class Run:
                         pass
                     if not watching:
                         continue
-                    text = (self.output / f'{name}.log').read_text(errors='replace')
+                    text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
                     if TESTS_STARTED.search(text):
                         watching = False
                     elif time.monotonic() - attempt_start >= startup['seconds']:
@@ -483,6 +484,11 @@ class Run:
                         stall = {'attempt': attempt, 'after_seconds': round(time.monotonic() - attempt_start, 1),
                                  'last_log_line': lines[-1][:200] if lines else None}
                         stall.update(startup['diagnose'](self.output / f'{name}-stall-{attempt}'))
+                        # The diagnosis takes seconds; a launch that began its tests meanwhile is slow, not stalled.
+                        if TESTS_STARTED.search((self.output / f'{name}.log').read_text(errors='replace')[scan_from:]):
+                            entry.setdefault('slow_starts', []).append(stall)
+                            watching = False
+                            continue
                         entry.setdefault('startup_stalls', []).append(stall)
                         print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
                               f'(last log line: {stall["last_log_line"]}); attempt {attempt}', flush=True)
@@ -493,6 +499,7 @@ class Run:
                         attempt += 1
                         log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
                         log.flush()
+                        scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
                         attempt_start = time.monotonic()
                         process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                                    start_new_session=True)
@@ -520,6 +527,13 @@ class Run:
             if result and last['attempt'] == attempt:  # the final launch itself stalled
                 errors.append(f'Test runner printed no test output in {attempt} launch(es) of {startup["seconds"]}s '
                               f'(last log line: {last["last_log_line"]}); host-app samples under {name}-stall-*/')
+            elif not result:
+                # #705: the tests ran on the second launch, so their results are kept above. But the stall's
+                # cause is unknown, and a PR must not go from INCONCLUSIVE to PASS on a retry that hides it
+                # (Codex audit of debe880). The step stays INCONCLUSIVE until the samples explain the stall.
+                errors.append(f'Recovered after {len(entry["startup_stalls"])} startup stall(s) of {startup["seconds"]}s; '
+                              f'the tests passed on launch {attempt} but the stall is undiagnosed, so this is not a PASS '
+                              f'(samples under {name}-stall-*/)')
         if tests:
             records = test_records(text)
             payload = None

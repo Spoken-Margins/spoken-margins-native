@@ -856,21 +856,25 @@ class VerificationTests(unittest.TestCase):
 
     def test_run_that_never_starts_its_tests_is_diagnosed_and_launched_again(self):
         # #705: the adapters step sat 300 s with no Test Suite line, 0 tests, exit 124. One stalled launch is
-        # recorded and the same command runs again; the second launch's real test result is the evidence.
+        # recorded and the same command runs again; the second launch's real test result is kept as evidence.
+        # The stall's cause is unknown, so the step stays INCONCLUSIVE rather than turning into a PASS
+        # (Codex audit of debe880, P1).
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'adapters')
             calls, startup = self.watch()
-            run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
-                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
-                        startup=startup)
+            with self.assertRaisesRegex(RuntimeError, r'Recovered after 1 startup stall\(s\) of 1s.*not a PASS'):
+                run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                            timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                            startup=startup)
             step = run.manifest['steps'][-1]
             self.assertEqual(step['exit_code'], 0)
-            self.assertEqual(step['counts']['passed'], 1)
+            self.assertEqual(step['counts']['passed'], 1)  # the retry's real result is evidence
             self.assertEqual(step['startup_attempts'], 2)
             self.assertEqual([(s['attempt'], s['last_log_line'], s['processes']) for s in step['startup_stalls']],
                              [(1, 'Writing result bundle at path:', 2)])
             self.assertEqual((calls['diagnose'], calls['reset']), (['xcode-tests-stall-1'], [1]))
             self.assertLess(step['seconds'], 30)  # not the 60 s the stalled launch would have slept
+            self.assertEqual(len(step['errors']), 1)
 
     def test_run_that_stalls_on_every_launch_reports_why_within_its_budget(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -885,6 +889,38 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual([s['attempt'] for s in step['startup_stalls']], [1, 2])
             self.assertEqual(calls['reset'], [1])  # no third launch
             self.assertLess(step['seconds'], 30)
+
+    def test_launch_that_starts_its_tests_while_the_stall_is_being_diagnosed_is_left_running(self):
+        # Codex audit of debe880, P2: the diagnosis takes seconds; killing a launch that began meanwhile
+        # throws away a working run.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            slow_diagnosis = startup['diagnose']
+            startup['diagnose'] = lambda folder: (time.sleep(1.5), slow_diagnosis(folder))[1]
+            script = ('import time; time.sleep(1.4); print("Test Suite \'Selected tests\' started at now.", flush=True); '
+                      'time.sleep(1)')
+            run.command('xcode-tests', [sys.executable, '-c', script], timeout=60, startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual((step['exit_code'], calls['reset']), (0, []))
+            self.assertNotIn('startup_stalls', step)
+            self.assertEqual(len(step['slow_starts']), 1)
+
+    def test_a_first_launchs_late_output_does_not_switch_off_the_second_launchs_watch(self):
+        # Codex audit of debe880, P2: the accumulated log held the first launch's Test Suite line (printed
+        # while it was being stopped), so the second launch was never judged and could hang to the budget.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            script = ('import signal, sys, time\n'
+                      'def stop(*_):\n'
+                      '    print("Test Suite \'Selected tests\' started at now.", flush=True); sys.exit(0)\n'
+                      'signal.signal(signal.SIGTERM, stop)\n'
+                      'time.sleep(60)\n')
+            with self.assertRaisesRegex(RuntimeError, r'printed no test output in 2 launch\(es\)'):
+                run.command('xcode-tests', [sys.executable, '-c', script], timeout=60, startup=startup)
+            self.assertEqual([s['attempt'] for s in run.manifest['steps'][-1]['startup_stalls']], [1, 2])
+            self.assertLess(run.manifest['steps'][-1]['seconds'], 30)
 
     def test_slow_run_that_has_started_its_tests_is_not_relaunched(self):
         with tempfile.TemporaryDirectory() as temporary:
