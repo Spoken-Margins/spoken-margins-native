@@ -164,13 +164,118 @@ final class SaveMarginRetryTests: XCTestCase {
         XCTAssertEqual(try margins(engine).map(\.audioPath), [recorder.recordings[1]], "the new Margin has its own file")
     }
 
+    /// Takes the Library's write lock the moment the Margin's transcription is scheduled, which is after the Margin is
+    /// stored and before the session is saved (#1121). The test releases it later.
+    private final class LockingTranscriber: TranscriptionClient {
+        let path: String
+        private(set) var lock: WriteLock?
+        private(set) var scheduled: [String] = []
+        var locksOnSchedule = true
+        init(path: String) { self.path = path }
+        func scheduleTranscription(interjection: Interjection) throws {
+            scheduled.append(interjection.id)
+            if locksOnSchedule, lock == nil { lock = try WriteLock(path: path) }
+        }
+        func release() { lock?.release(); lock = nil; locksOnSchedule = false }
+    }
+
+    /// #1121: the Margin is stored, then a later step (here the session save) fails. Save used to throw on every
+    /// retry because the recorder had nothing left to finish, so the recording screen stayed until Cancel.
+    func testSavingAgainAfterAStepFailsFollowingTheStoredMarginFinishesTheSameMargin() throws {
+        let transcriber = LockingTranscriber(path: databasePath)
+        let (engine, recorder) = try recordingEngine(transcriber: transcriber)
+        _ = try engine.beginInterjection()
+
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "the session save waits out the write lock and fails")
+        XCTAssertEqual(try margins(engine).count, 1, "the Margin was already stored")
+        XCTAssertEqual(engine.snapshot.status, .recording, "the failed Save left the screen on recording")
+        transcriber.release()
+
+        XCTAssertNoThrow(try engine.finishInterjection(audioRef: nil), "Save again finishes the rest")
+        let saved = try margins(engine)
+        XCTAssertEqual(saved.count, 1, "still exactly one Margin")
+        XCTAssertEqual(saved.first?.audioPath, recorder.recordings.first)
+        XCTAssertNotEqual(engine.snapshot.status, .recording, "the recording screen is gone")
+        XCTAssertEqual(engine.snapshot.phase, .itemPlayback, "the source is back")
+        XCTAssertEqual(transcriber.scheduled, saved.map(\.id), "transcription was scheduled once, for that Margin")
+        XCTAssertEqual(recorder.recordings.count, 1, "no second recording was started")
+
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "a finished Margin is not saved again")
+        XCTAssertEqual(try margins(engine).count, 1)
+    }
+
+    /// The next Margin after one that needed a retry starts clean.
+    func testAMarginRecordedAfterARetriedSaveIsFinishedOnItsOwn() throws {
+        let transcriber = LockingTranscriber(path: databasePath)
+        let (engine, recorder) = try recordingEngine(transcriber: transcriber)
+        _ = try engine.beginInterjection()
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil))
+        transcriber.release()
+        _ = try engine.finishInterjection(audioRef: nil)
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: nil)
+
+        XCTAssertEqual(try margins(engine).map(\.audioPath), recorder.recordings, "two Margins, each with its own file")
+        XCTAssertEqual(transcriber.scheduled.count, 2)
+    }
+
+    /// Plays a podcast from the position it is told, the way a real player does after a seek.
+    private final class PodcastAudio: AudioPlaybackClient {
+        var mediaTimeMs: Int? = 60_000
+        var plays: [Int] = []
+        func prepareSpeechText(_ text: String) throws -> String { text }
+        func play(targetId: String) throws { try play(targetId: targetId, fromMediaTimeMs: 0) }
+        func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
+            self.mediaTimeMs = mediaTimeMs
+            plays.append(mediaTimeMs)
+        }
+        func currentPlaybackPosition() -> PlaybackPosition? {
+            mediaTimeMs.map { PlaybackPosition(mediaTimeMs: $0, durationMs: 3_600_000, anchorConfidence: .mediaTime) }
+        }
+        func currentMediaTimeMs() -> Int? { mediaTimeMs }
+        func pause() throws {}
+    }
+
+    /// A podcast rejoins 3 s before where the Margin was made. A retry must not step back again.
+    func testARetriedSaveStepsAPodcastBackOnlyOnce() throws {
+        let episode = Item(
+            id: "item-episode", title: "Episode", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: "https://example.com/episode", status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://cdn.example.com/episode.mp3", durationMs: 3_600_000)
+        )
+        try store.saveItem(episode)
+        let audio = PodcastAudio()
+        let transcriber = LockingTranscriber(path: databasePath)
+        let mediaProfile = RuntimeCapabilityProfile(
+            id: profile.id, displayName: profile.displayName,
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["realtime_tts", "native_media"],
+                           "interjection": ["record_audio", "capture_media_anchor", "capture_text_anchor"]]
+        )
+        let engine = SessionEngine(
+            profile: mediaProfile, repository: store, audio: audio,
+            recorder: ClosingRecorder(directory: directory), transcriber: transcriber
+        )
+        _ = try engine.startSession(itemId: episode.id)
+        audio.mediaTimeMs = 60_000
+        _ = try engine.beginInterjection()
+
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil))
+        transcriber.release()
+        XCTAssertNoThrow(try engine.finishInterjection(audioRef: nil))
+
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 57_000, "3 s back from where the Margin was made, once")
+        XCTAssertEqual(audio.plays.last, 57_000)
+        XCTAssertEqual(try margins(engine).count, 1)
+    }
+
     func testASaveThatFailsAfterTheMarginIsStoredIsNotSavedTwice() throws {
         let (engine, _) = try recordingEngine(transcriber: FailingTranscriber())
         _ = try engine.beginInterjection()
 
         XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "the transcriber fails after the Margin is stored")
         XCTAssertEqual(try margins(engine).count, 1)
-        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "the recording is already owned by a Margin")
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "the transcriber still fails, and the recording is already owned by a Margin")
 
         XCTAssertEqual(try margins(engine).count, 1, "retrying must not store the same recording as a second Margin")
     }
