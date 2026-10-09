@@ -525,7 +525,7 @@ class Ops:
         return revert.check_verdict(failed, summary)
 
     def changed_paths(self, commit: dict) -> list[str]:
-        out = self.must(['git', 'diff', '--name-only', f"{commit['sha']}^1", commit['sha']], timeout=60).stdout
+        out = self.must(['git', 'diff', '--name-only', '--no-renames', f"{commit['sha']}^1", commit['sha']], timeout=60).stdout
         return [line for line in out.splitlines() if line.strip()]
 
     def open_revert_prs(self) -> list[str]:
@@ -569,7 +569,7 @@ class Ops:
             message = revert.revert_message(number, title, sha, commit['sha'], report, failed)
             self.must(['git', '-c', 'user.name=SM integration script', '-c', 'user.email=noreply@spokenmargins.invalid',
                        'commit', '--quiet', '-m', message], cwd=wt)
-            self.must(['git', 'push', '--quiet', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt, timeout=600)
+            self.must(['git', 'push', '--quiet', '--force', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt, timeout=600)
             body = evidence / 'revert-pr.md'
             body.write_text(revert.pr_body(number, title, sha, report, failed, checks, reland_url,
                                            revert.hot_note(grown) if grown else ''))
@@ -578,16 +578,20 @@ class Ops:
                                  '--title', revert.revert_title(number, title, sha), '--body-file', str(body),
                                  '--label', ','.join(labels)])
             pr_url = (created.stdout or '').strip().splitlines()[-1]
-            issue = evidence / 'reland-issue.md'
-            issue.write_text(revert.reland_body(number, title, sha, report, pr_url, failed, prose))
-            filed = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', revert.reland_title(number, title),
-                               '--body-file', str(issue), '--label', 'ready,regression'])
-            reland = (filed.stdout or '').strip().splitlines()[-1]
-            body.write_text(revert.pr_body(number, title, sha, report, failed, checks, reland,
-                                           revert.hot_note(grown) if grown else ''))
-            self.must(['gh', 'pr', 'edit', pr_url, '-R', REPO, '--body-file', str(body)])
+            try:
+                issue = evidence / 'reland-issue.md'
+                issue.write_text(revert.reland_body(number, title, sha, report, pr_url, failed, prose))
+                filed = self.must(['gh', 'issue', 'create', '-R', REPO, '--title', revert.reland_title(number, title),
+                                   '--body-file', str(issue), '--label', 'ready,regression'])
+                reland = (filed.stdout or '').strip().splitlines()[-1]
+                body.write_text(revert.pr_body(number, title, sha, report, failed, checks, reland,
+                                               revert.hot_note(grown) if grown else ''))
+                self.must(['gh', 'pr', 'edit', pr_url, '-R', REPO, '--body-file', str(body)])
+            except (RuntimeError, OSError, IndexError) as error:
+                # The revert PR exists and will merge: say so, and leave the re-land issue to the report.
+                self.log(f'revert PR {pr_url} is open but the re-land issue or PR text failed: {str(error)[:200]}')
             return pr_url, ''
-        except RuntimeError as error:
+        except (RuntimeError, OSError, IndexError) as error:
             return None, str(error)[:300]
         finally:
             git('checkout', '--quiet', '--force', '--detach', sha)
@@ -788,7 +792,11 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
             say(f"{result['verdict']} {sha[:7]}: {report}")
             if result['verdict'] == 'FAIL':
                 groups, cost = ops.diagnose(wt, evidence, sha, result['failed'], suspects)
-                reverted = act_on_culprit(ops, wt, evidence, sha, report, result, groups, cost, suspects)
+                try:
+                    reverted = act_on_culprit(ops, wt, evidence, sha, report, result, groups, cost, suspects)
+                except Exception as error:  # noqa: BLE001 - the failure issue below must still be filed
+                    ops.log('revert step failed: ' + str(error)[:300])
+                    reverted = None
                 if reverted:
                     say(f'reverted: {reverted}')
                     state['results'][sha]['revert'] = reverted

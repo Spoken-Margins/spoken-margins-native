@@ -30,7 +30,9 @@ def summary(tests, verdict='FAIL'):
 class CheckVerdictTests(unittest.TestCase):
     def test_a_failing_test_that_still_fails_is_a_fail(self):
         self.assertEqual(revert.check_verdict([TEST], summary({TEST: 'failed'})), 'fail')
-        self.assertEqual(revert.check_verdict([TEST, OTHER], summary({TEST: 'passed', OTHER: 'failed'})), 'fail')
+        self.assertEqual(revert.check_verdict([TEST, OTHER], summary({TEST: 'failed', OTHER: 'failed'})), 'fail')
+        # One still fails and one passes: different merges broke them, so this commit is not a single culprit.
+        self.assertEqual(revert.check_verdict([TEST, OTHER], summary({TEST: 'passed', OTHER: 'failed'})), 'unknown')
 
     def test_only_passing_every_failing_test_is_a_pass(self):
         self.assertEqual(revert.check_verdict([TEST, OTHER], summary({TEST: 'passed', OTHER: 'passed'}, 'PASS')), 'pass')
@@ -135,6 +137,7 @@ class TextTests(unittest.TestCase):
         self.assertIsNone(revert.pr_number('Fix typo'))
         self.assertEqual(revert.pr_title(c['subject'], 'Packet export: store an entry\n\nmore'), 'Packet export: store an entry')
         self.assertEqual(revert.pr_title('Merge pull request #5: Title here'), 'Title here')
+        self.assertEqual(revert.pr_title('Merge pull request #5 from uncomposed/ws/5-x', ''), 'uncomposed/ws/5-x')
 
     def test_hot_files_only_count_when_they_grow(self):
         a, b = revert.HOT_FILES
@@ -234,6 +237,31 @@ class OpenRevertTests(unittest.TestCase):
             self.assertEqual(head, repos.tip)
             branches = subprocess.check_output(['git', 'branch', '--list', 'revert/*'], cwd=repos.clone, text=True)
             self.assertEqual(branches.strip(), '')
+
+    def test_a_failed_reland_issue_still_reports_the_open_revert_pr(self):
+        # The automerge revert PR exists and will merge, so the caller must not say "not reverted".
+        with tempfile.TemporaryDirectory() as tmp:
+            repos = Repos(tmp)
+            ops = self.ops(tmp, repos)
+            plain = ops.run
+
+            def fake(cmd, **kw):
+                if [str(c) for c in cmd][1:3] == ['issue', 'create']:
+                    return run.Result(1, '', 'HTTP 502')
+                return plain(cmd, **kw)
+            ops.run = fake
+            evidence = Path(tmp) / 'evidence'
+            evidence.mkdir()
+            url, why = ops.open_revert(repos.clone, evidence, self.merge_commit(repos), repos.tip, 'r', [TEST], [], [])
+            self.assertEqual((url, why), ('https://github.com/x/y/pull/9001', ''))
+
+    def test_a_stale_remote_branch_does_not_block_a_new_attempt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repos = Repos(tmp)
+            git(repos.clone, 'push', '-q', 'origin', f'{repos.green}:refs/heads/revert/pr7')   # left by an earlier try
+            (url, why), _ = self.open(repos, tmp)
+            self.assertEqual(why, '')
+            self.assertTrue(url)
 
     def test_a_revert_that_does_not_apply_cleanly_pushes_nothing(self):
         with tempfile.TemporaryDirectory() as tmp:

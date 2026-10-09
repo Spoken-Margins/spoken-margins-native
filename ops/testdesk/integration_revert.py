@@ -38,12 +38,14 @@ def load_test_scope(root: Path):
 # The search
 
 def check_verdict(failed: list[str], summary: dict) -> str:
-    """'fail' when a failing test fails again, 'pass' when every one passes, else 'unknown'.
+    """'fail' when every failing test fails again, 'pass' when every one passes, else 'unknown'.
+
+    A split answer (one test fails, another passes) means different merges broke them: no single culprit.
 
     A test that is missing at that commit (it did not exist yet) or a run that stopped (the target did not
     build) says nothing about the culprit, so it is 'unknown', never 'pass'."""
     statuses = [summary['tests'].get(test) for test in failed]
-    if any(status == 'failed' for status in statuses):
+    if statuses and all(status == 'failed' for status in statuses):
         return 'fail'
     if summary['verdict'] != 'INCONCLUSIVE' and statuses and all(status == 'passed' for status in statuses):
         return 'pass'
@@ -90,7 +92,9 @@ def pr_title(subject: str, body: str = '') -> str:
     if lines:
         return lines[0]
     match = re.match(r'Merge pull request #\d+[: ]\s*(?:from \S+\s*)?(.*)', subject or '')
-    return (match.group(1) if match else subject or '').strip()
+    title = (match.group(1) if match else subject or '').strip()
+    return title or (re.sub(r'^Merge pull request #\d+ from \S+\s*', '', subject or '').strip()
+                     or (subject or '').split(' from ')[-1].strip())
 
 
 def revert_blockers(commit: dict, paths: list[str], scope, root: Path, open_reverts: list[str],
