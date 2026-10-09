@@ -12,8 +12,9 @@ Rules, all of them failing toward quiet:
 - Free means an online runner labelled sm-lane, sm-lane-build or sm-lane-priority that is not busy.
   It says a runner is idle, not that RAM, disk or the Mac's one simulator slot are free.
 - It pings only when an idle runner has no waiting Mac job that could take it (a queued job is
-  about to). Waiting Mac jobs are the `lane` and `automerge` jobs of lane.yml runs that are queued
-  for a runner; each is matched to one idle runner that has all of its labels.
+  about to). Waiting Mac jobs are any jobs of any workflow's runs that are queued for a runner and ask
+  for a lane label (so lane.yml's `lane` and `automerge` and shipped-build-compat's `compat` all count);
+  each is matched to one idle runner that has all of its labels.
 - At most one ping per 10 minutes (state file), so a burst of finishes is one message.
 - No relay URL or token (`SM_LANE_OPEN_URL`, `SM_LANE_OPEN_TOKEN`), an unreadable runner list or
   queue, or a failed POST sends nothing and exits 0: this must never turn a lane run red.
@@ -36,7 +37,6 @@ from pathlib import Path
 
 DEFAULT_REPO = 'uncomposed/spoken-margins-native'
 LANE_LABELS = ('sm-lane', 'sm-lane-build', 'sm-lane-priority')
-MAC_JOBS = ('lane', 'automerge')
 WAITING = ('queued',)     # `pending` waits on its PR's concurrency group, not on a runner
 ACTIVE_RUNS = ('queued', 'in_progress', 'pending', 'waiting')
 MIN_GAP = dt.timedelta(minutes=10)
@@ -57,9 +57,10 @@ def idle_runners(runners: list[dict]) -> list[set[str]]:
 
 
 def waiting_jobs(jobs: list[dict]) -> list[set[str]]:
-    """The label sets of Mac jobs queued for a runner."""
-    return [{str(label).lower() for label in job.get('labels', [])} for job in jobs
-            if job.get('name') in MAC_JOBS and job.get('status') in WAITING]
+    """The label sets of jobs queued for a lane runner, whichever workflow they belong to."""
+    labelled = [{str(label).lower() for label in job.get('labels', [])} for job in jobs
+                if job.get('status') in WAITING]
+    return [labels for labels in labelled if labels & set(LANE_LABELS)]
 
 
 def spare_runners(idle: list[set[str]], waiting: list[set[str]]) -> int:
@@ -118,10 +119,10 @@ def read_runners(api) -> list[dict]:
 
 
 def read_waiting(api) -> list[set[str]]:
-    """Mac jobs waiting for a runner, across the runs of lane.yml that are not finished."""
+    """Jobs waiting for a lane runner, across the repository's runs that are not finished."""
     run_ids = set()
     for status in ACTIVE_RUNS:
-        page = api.get(f'actions/workflows/lane.yml/runs?status={status}&per_page={PAGE}')
+        page = api.get(f'actions/runs?status={status}&per_page={PAGE}')
         if page.get('total_count', 0) > len(page.get('workflow_runs', [])):
             raise Unreadable(f'more than one page of {status} runs')
         run_ids.update(run['id'] for run in page.get('workflow_runs', []))

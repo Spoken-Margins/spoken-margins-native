@@ -43,7 +43,7 @@ class FakeApi:
             runners = self.runners[min(self.runner_reads, len(self.runners)) - 1] \
                 if self.runners and isinstance(self.runners[0], list) else self.runners
             return {'total_count': len(runners), 'runners': runners}
-        if path.startswith('actions/workflows/lane.yml/runs?status='):
+        if path.startswith('actions/runs?status='):
             status = path.split('status=')[1].split('&')[0]
             ids = [i for i, (state, _) in self.runs.items() if state == status]
             return {'total_count': len(ids), 'workflow_runs': [{'id': i} for i in ids]}
@@ -76,12 +76,19 @@ class Matching(unittest.TestCase):
                                   job('automerge', 'queued', ['self-hosted', 'macOS', 'sm-lane-build'])])
         self.assertEqual(o.spare_runners(idle, waiting), 0)
 
-    def test_only_jobs_queued_for_a_runner_count(self):
+    def test_only_jobs_queued_for_a_lane_runner_count(self):
         labels = ['self-hosted', 'macOS', 'sm-lane']
         waiting = o.waiting_jobs([job('lane', 'in_progress', labels), job('lane', 'completed', labels),
-                                  job('lane', 'pending', labels), job('route', 'queued', ['sm-vps']),
+                                  job('lane', 'pending', labels), job('route', 'queued', ['self-hosted', 'Linux', 'sm-vps']),
+                                  job('sessionkit-core', 'queued', ['sm-vps-t1']),
                                   job('automerge', 'queued', labels)])
         self.assertEqual(len(waiting), 1)
+
+    def test_the_compat_check_waiting_for_the_main_runner_counts(self):
+        # shipped-build-compat.yml's job asks for [self-hosted, macOS, sm-lane], the same runner as `lane`.
+        idle = o.idle_runners([runner('a', MAIN)])
+        waiting = o.waiting_jobs([job('compat', 'queued', ['self-hosted', 'macOS', 'sm-lane'])])
+        self.assertEqual(o.spare_runners(idle, waiting), 0)
 
     def test_label_case_does_not_matter(self):
         idle = o.idle_runners([runner('a', ['Self-Hosted', 'macOS', 'sm-lane'])])
@@ -150,6 +157,11 @@ class Run(unittest.TestCase):
         labels = ['self-hosted', 'macOS', 'sm-lane']
         api = FakeApi([runner('a', MAIN)], runs={7: ('in_progress', [job('route', 'completed', ['sm-vps']),
                                                                        job('lane', 'queued', labels)])})
+        self.go(api)
+        self.assertEqual(self.sent, [])
+
+    def test_a_queued_compat_job_in_another_workflow_will_take_the_slot(self):
+        api = FakeApi([runner('a', MAIN)], runs={9: ('queued', [job('compat', 'queued', ['self-hosted', 'macOS', 'sm-lane'])])})
         self.go(api)
         self.assertEqual(self.sent, [])
 

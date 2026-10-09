@@ -2,10 +2,10 @@
 
 `sm_lane_open.py` wakes the coordinator when a Mac lane runner is left idle (#1215). The coordinator acts only when something wakes it, and nothing told it when a lane slot freed up, so armed PRs, stale "waiting on you" items and idle threads sat until some other wake.
 
-The last job of `.github/workflows/lane.yml`, `lane-open`, runs after the lane and automerge jobs of a run, on the VPS runner (never a Mac runner). It takes `sm_lane_open.py` from the base branch's tip and reads two facts from GitHub:
+Two last jobs of `.github/workflows/lane.yml`, `lane-open-lane` and `lane-open-automerge`, each run after its Mac job (so the notice comes when either one frees its runner), on the VPS runner (never a Mac runner). It takes `sm_lane_open.py` from the base branch's tip and reads two facts from GitHub:
 
 1. Which online runners labelled `sm-lane`, `sm-lane-build` or `sm-lane-priority` are idle.
-2. Which `lane` and `automerge` jobs of `lane.yml` runs are queued for a runner. Each takes one idle runner that has all its labels. A job that waits on its PR's own concurrency group (`pending`) is not counted.
+2. Which jobs of any workflow's active runs are queued for a runner and ask for a lane label. That includes `compat` in `shipped-build-compat.yml`, which uses the main runner. Each takes one idle runner that has all its labels. A job that waits on its PR's own concurrency group (`pending`) is not counted.
 
 If an idle runner is left over, it POSTs `Lane open-<UTC time>: <free> free, <queued> queued` to the Dial relay routine, which posts it into the project chat like a Dial fire. At most one ping goes out per 10 minutes (`~/.sm-lane-open/state.json` on the VPS runner's user), so a burst of finishes is one message. If the runner still reads busy for a moment after its job ended, it re-reads up to three times, 5 seconds apart.
 
@@ -25,7 +25,7 @@ ssh <vps> 'cat /etc/sm-dial/relay-url' | gh secret set SM_LANE_OPEN_URL -R uncom
 ssh <vps> 'cat /etc/sm-dial/relay-token' | gh secret set SM_LANE_OPEN_TOKEN -R uncomposed/spoken-margins-native
 ```
 
-Turn it off by deleting either secret; remove it by deleting the `lane-open` job. Any lane job on a PR can read these secrets (as it can `SM_LANE_RUNNERS_TOKEN`); the token can only post text into the project chat.
+Turn it off by deleting either secret; remove it by deleting the two `lane-open-*` jobs. Any lane job on a PR can read these secrets (as it can `SM_LANE_RUNNERS_TOKEN`); the token can only post text into the project chat.
 
 ## Check what it would do
 
