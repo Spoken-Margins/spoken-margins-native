@@ -3,7 +3,7 @@ import Foundation
 /// Decides whether a link may leave the device in a shared packet, share link, Markdown export or log.
 ///
 /// Paid podcast feeds (Patreon, Supercast, Substack and similar) are ordinary links with a
-/// per-subscriber secret in the query, the path or the userinfo. Anyone holding such a link can
+/// per-subscriber secret in the query, the path, the fragment or the userinfo. Anyone holding such a link can
 /// listen as that subscriber. The policy drops the whole link rather than trimming it, because a
 /// trimmed private link rarely still identifies the item and a missed secret is worse than a
 /// missed match. The recipient then finds the item by title, show, GUID and duration.
@@ -56,20 +56,83 @@ public enum ShareableLinkPolicy {
         if privateHostSuffixes.contains(where: { host == $0 || host.hasSuffix("." + $0) }) {
             return false
         }
-        let segments = components.percentEncodedPath.split(separator: "/").map(String.init)
         let allowsHexIdentifiers = publicHexIdentifierFeedHosts.contains(host)
-        for segment in segments {
-            let stem = segment.split(separator: ".", maxSplits: 1).first.map(String.init) ?? segment
-            if privatePathMarkers.contains(stem.lowercased()) { return false }
-            if allowsHexIdentifiers, isHyphenlessUUID(stem) { continue }
-            if looksLikeSecret(stem) { return false }
+        for segment in components.percentEncodedPath.split(separator: "/") {
+            if pathSegmentHoldsCredential(String(segment), allowsHexIdentifiers: allowsHexIdentifiers) { return false }
         }
         for item in components.queryItems ?? [] {
             let name = item.name.lowercased()
             if credentialQueryNameFragments.contains(where: name.contains) { return false }
             if let itemValue = item.value, looksLikeSecret(itemValue) { return false }
         }
+        if let fragment = components.percentEncodedFragment, fragmentHoldsCredential(fragment) { return false }
         return true
+    }
+
+    /// One path segment, read after percent-decoding so `%70remium` is `premium` (#1050).
+    private static func pathSegmentHoldsCredential(_ segment: String, allowsHexIdentifiers: Bool) -> Bool {
+        let decoded = fullyDecoded(segment)
+        // An encoded slash (`%2F`) keeps several segments inside one; a marker behind it still counts.
+        // The secret shape is judged on the whole segment, so an encoded URL inside a segment
+        // (anchor.fm) is not mistaken for a long token.
+        for part in decoded.split(separator: "/") where privatePathMarkers.contains(stem(of: part).lowercased()) {
+            return true
+        }
+        let wholeStem = stem(of: decoded[...])
+        if allowsHexIdentifiers, isHyphenlessUUID(wholeStem) { return false }
+        return looksLikeSecret(wholeStem)
+    }
+
+    /// The `#fragment` never reaches a server, but the link is copied into packets, notes, OPML,
+    /// Readwise and the community map, so a secret kept there travels with it (#1050). Only a
+    /// credential-looking fragment is refused: an ordinary anchor such as `#section-2` is on every
+    /// public article. A fragment is read every way it is usually used, and any one reading is enough:
+    /// - as a route when it holds `/` (`#/private/abc`, `#!/members/abc`), with the path's marker rules;
+    /// - as path segments or a bare anchor, refused when one is a long opaque token (the path's length rule);
+    /// - as a query string: every `name=value` pair, and every item after a `?`, with the query's
+    ///   name and length rules (`#token=abc`, `#/access_token=abc&x=1`, `#/list?auth=abc`).
+    private static func fragmentHoldsCredential(_ percentEncodedFragment: String) -> Bool {
+        var fragment = fullyDecoded(percentEncodedFragment)
+        // A browser consumes everything from ":~:" on as a text-fragment directive that quotes the
+        // page (`#:~:text=Q%26A%20on%20passwords`). It holds no credential, and its quoted words
+        // must not be read as names.
+        if let directive = fragment.range(of: ":~:") { fragment = String(fragment[..<directive.lowerBound]) }
+        if fragment.hasPrefix("!") { fragment.removeFirst() }
+        let halves = fragment.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
+        let head = halves[0]
+        let tail = halves.count > 1 ? halves[1] : ""
+        let segments = head.split(separator: "/")
+        if head.contains("/"), segments.contains(where: { privatePathMarkers.contains(stem(of: $0).lowercased()) }) {
+            return true
+        }
+        if segments.contains(where: { looksLikeSecret(stem(of: $0)) }) { return true }
+        for item in head.split(separator: "&") where item.contains("=") && queryItemHoldsCredential(item) { return true }
+        for item in tail.split(separator: "&") where queryItemHoldsCredential(item) { return true }
+        return false
+    }
+
+    /// One `name=value` item, with the query's rules: a credential-like name, or a value that is a long opaque token.
+    private static func queryItemHoldsCredential(_ item: Substring) -> Bool {
+        let pair = item.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        let name = pair[0].lowercased()
+        if credentialQueryNameFragments.contains(where: name.contains) { return true }
+        return pair.count > 1 && looksLikeSecret(String(pair[1]))
+    }
+
+    /// The segment up to its first dot: `premium.rss` is the marker `premium`.
+    private static func stem(of segment: Substring) -> String {
+        segment.split(separator: ".", maxSplits: 1).first.map(String.init) ?? String(segment)
+    }
+
+    /// Percent-decodes `value` until it stops changing, at most three rounds. Some servers and
+    /// proxies decode twice, so `%2570remium` can reach the origin as `premium`.
+    private static func fullyDecoded(_ value: String) -> String {
+        var current = value
+        for _ in 0..<3 {
+            guard let decoded = current.removingPercentEncoding, decoded != current else { break }
+            current = decoded
+        }
+        return current
     }
 
     /// A long opaque run of letters and digits, as used for tokens, signatures and API keys.

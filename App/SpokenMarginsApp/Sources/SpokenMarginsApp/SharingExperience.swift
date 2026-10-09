@@ -5,14 +5,6 @@ import SessionKitSharing
 import SwiftUI
 import UIKit
 
-enum ShareMarginRepresentationChoice: String, CaseIterable, Identifiable {
-    case original
-    case cleaned
-    case textOnly
-
-    var id: String { rawValue }
-}
-
 enum ShareMarginDraftFilter: String, CaseIterable, Identifiable {
     case all
     case starred
@@ -36,42 +28,6 @@ enum ShareAutoCleanPreference {
         UserDefaults.standard.set(true, forKey: decisionRecordedKey)
         UserDefaults.standard.set(enabled, forKey: enabledKey)
     }
-}
-
-struct ShareMarginEditState: Equatable {
-    var automaticCleanupEnabled = false
-    var restoredAutomaticDecisionIds: Set<String> = []
-    var manuallyDeletedSegmentIds: Set<String> = []
-
-    static let original = ShareMarginEditState()
-}
-
-struct ShareInterjectionDraft: Identifiable {
-    var id: String { interjection.id }
-    var interjection: Interjection
-    var isIncluded = true
-    var approvedTranscript: String
-    var cleanup: InterjectionCleanupResult?
-    var cleanedAudioURL: URL?
-    var cleanedAudioDurationMs: Int?
-    var representationChoice: ShareMarginRepresentationChoice
-    var warning: String?
-    var anchorBefore: String
-    var anchorAfter: String
-    var acousticPauseDecisions: [InterjectionCleanupDecision] = []
-    var editHistory: [ShareMarginEditState] = [.original]
-    var editHistoryIndex = 0
-    var isAnalyzingPauses = false
-    var isPreparingCleanup = false
-    var preparationMessage: String?
-    var renderGeneration = 0
-
-    var currentEditState: ShareMarginEditState {
-        editHistory[min(max(0, editHistoryIndex), editHistory.count - 1)]
-    }
-
-    var canUndoEdit: Bool { editHistoryIndex > 0 }
-    var canRedoEdit: Bool { editHistoryIndex + 1 < editHistory.count }
 }
 
 struct InterjectionSharingState {
@@ -117,16 +73,6 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     var requiresRecipientItem: Bool {
         contents.manifest.itemTransport.kind == .recipientSupplied && matchingItemId == nil
     }
-}
-
-struct ImportedCommentaryPrompt: Identifiable {
-    var id: String { interjection.id }
-    let layer: ImportedCommentaryLayer
-    let interjection: ImportedCommentaryInterjection
-    let index: Int
-    let count: Int
-
-    var senderLabel: String { layer.displayLabel?.nilIfEmpty ?? "Unsigned sender" }
 }
 
 private enum MarginReviewToken: Identifiable {

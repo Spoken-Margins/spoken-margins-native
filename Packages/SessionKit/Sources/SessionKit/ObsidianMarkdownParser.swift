@@ -33,6 +33,9 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     /// Where a closing run of footnote definitions or a trailing "References"-style section starts,
     /// or nil when the text doesn't end in one (#124).
     public var notesStartChar: Int? = nil
+    /// True when no front matter, heading or override gave the title and `parse`'s `fallbackTitle`
+    /// was used as given.
+    public var titleIsFallback = false
 
     public func deterministicListeningMap(
         itemId: String,
@@ -254,30 +257,37 @@ public struct ParsedMarkdownHeading: Equatable, Sendable {
 }
 
 public enum ObsidianMarkdownParser {
+    /// - Parameter fallbackTitle: the title to use, exactly as given, when neither the override, the
+    ///   front matter nor a heading has one. Pass it when the name isn't a file name, such as a web
+    ///   page's title: `fileName` is read as a path, so `v1.5 release` would lose `.5 release`.
     public static func parse(
         fileName: String,
         contents: String,
-        titleOverride: String? = nil
+        titleOverride: String? = nil,
+        fallbackTitle: String? = nil
     ) throws -> ParsedObsidianMarkdown {
         let parsed = splitFrontmatter(contents)
-        let title = firstNonEmpty([
-            titleOverride,
-            parsed.metadata["title"],
-            firstMarkdownHeading(in: parsed.body),
-            (fileName as NSString).deletingPathExtension
-        ]) ?? "Imported Markdown"
+        let explicitTitle = firstNonEmpty([titleOverride, parsed.metadata["title"], firstMarkdownHeading(in: parsed.body)])
+        let givenTitle = explicitTitle == nil ? firstNonEmpty([fallbackTitle]) : nil
+        let title = explicitTitle.map(unquote) ?? givenTitle ?? fileNameTitle(fileName)
         let cleaned = cleanBody(parsed.body)
         guard !cleaned.text.isEmpty else {
             throw SessionKitError.persistenceFailed("obsidian_import_empty_text")
         }
         return ParsedObsidianMarkdown(
-            title: unquote(title),
+            title: title,
             text: cleaned.text,
             source: parsed.metadata["source"].map(unquote),
             metadata: parsed.metadata,
             headings: cleaned.headings,
-            notesStartChar: cleaned.notesStartChar
+            notesStartChar: cleaned.notesStartChar,
+            titleIsFallback: givenTitle != nil
         )
+    }
+
+    /// The title a file name gives: its name without the extension, quotes trimmed.
+    public static func fileNameTitle(_ fileName: String) -> String {
+        unquote(firstNonEmpty([(fileName as NSString).deletingPathExtension]) ?? "Imported Markdown")
     }
 
     private static func splitFrontmatter(_ contents: String) -> (metadata: [String: String], body: String) {

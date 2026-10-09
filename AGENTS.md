@@ -6,12 +6,14 @@ Spoken Margins is a native iPhone/iPad listening app (iOS/iPadOS 26+). Listeners
 
 Replace this section when the focus changes; do not append to it.
 
-- **Baseline:** Build 29, tag `testflight/0.1-build-29` (`fcc4974`), is the last shipped build (internal TestFlight, 2026-09-25). `main` stays there; only the owner moves it.
-- **Integration:** `next` carries the Build 30 work, including the new PDF reader and the voice fixes. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
-- **Build 30 freeze (owner, 2026-10-06), until Build 30 is tagged.** The target: the owner can use Build 30 for a week of their own listening, and do one co-op round on a two-hour podcast, without hitting a bug that makes them stop. The scope is exactly the open issues in the `Build 30` milestone: co-op works, listening basics, and fixes waiting on the owner's phone check.
-  - Only two kinds of PR get `automerge`: one that fixes or advances a `Build 30` issue, and one that changes nothing under `App/`, `Packages/` or `Contracts/` (pipeline, ops, docs, server). Other app PRs stay open without the label and are re-armed after the tag.
-  - Threads, dispatch and the Codex worker take `Build 30` issues first. Outside the milestone, take only work that touches no app code.
-  - Don't add issues to the `Build 30` milestone yourself. A new bug that would stop the owner using the build goes to them as a one-line question; everything else goes to `Build 31`.
+- **Baseline:** Build 30, tag `testflight/0.1-build-30` (`07c6699`), is the last shipped build (internal TestFlight, 2026-10-08). Listening Baseline was repackaged without app-code changes as Apple build 32, tag `testflight/0.1-build-32` (`ec940321`), and is Approved for external TestFlight; automatic tester notifications are off. Build 31 was uploaded but superseded before review to correct privacy declarations. The next upload must use a number above 32. `main` stays at Build 30; only the owner moves it.
+- **Planning identifiers (owner, 2026-10-08):** milestones use our own names, independent of Apple's upload numbers: `Listening Baseline` (milestone 2, formerly Build 30), `Solid Ground` (milestone 6, formerly Build 31), and `Co-op Experience` (milestone 7, formerly Build 32). An extra upload consumes an Apple build number without completing or advancing a milestone. Build numbers remain in tags, compatibility checks and bug reports to identify actual binaries.
+- **Integration:** `next` carries `Solid Ground` work on top of Build 30. It goes to testers only after it passes the owner's own use: "working means not being riddled with bugs."
+- **Solid Ground target (owner, 2026-10-08), until the owner accepts and ships that milestone.** The target: the owner can use the candidate the way they used Build 30, while the groundwork under it gets stronger. `Gate1AppModel` is split into focused types, the tests that passed without proving their claim now prove it, and the pipeline's known faults are fixed. What the owner notices: later builds arrive faster, and the Test Desk catches bugs before they reach their phone. The scope is exactly the open issues in the `Solid Ground` milestone: model split slices, test honesty, lane and pipeline fixes, and bugs found on the owner's phone.
+  - Threads and dispatch take `Solid Ground` issues first. Work outside the milestone waits in `Later` or has no milestone.
+  - What joins `Solid Ground` after today: a model split slice, a test-honesty finding, a lane or pipeline fault, or a `found-on-phone` bug. Any other new bug that would stop the owner using the build goes to them as a one-line question; co-op and sharing work goes to `Co-op Experience`; everything else goes to `Later`.
+  - The `Listening Baseline` freeze ended with the Build 30 tag. Claude threads' `automerge` is no longer limited to milestone work: re-arm the app PRs that only the freeze was holding back. The Codex worker's freeze is a separate setting, the Dial's **Codex focus** group (#589), which the owner sets. Its selected `Solid Ground` scope is preserved by the milestone rename.
+- **Co-op Experience target (owner, 2026-10-08): a fantastic co-op experience.** It starts after the owner accepts and ships `Solid Ground`. Co-op and sharing work (the F1 co-op items, share links and their encryption, co-op follow-ups) waits in the `Co-op Experience` milestone. A build-number bump alone does not start this work.
 - **Parallel workstreams:** streams and briefs are in [docs/workstreams/](docs/workstreams/README.md). Streams branch `ws/<id>-…` from `next`, one branch per PR, and open PRs into `next`. The owner's Claude Code project hands out work, one thread per `ready` issue, dispatches lane results every hour, and triages new issues in its daily routine (21:30 Eastern). On the Mac, the lane runner merges the `automerge` PRs it passes, the Mac tick reports the machine and runner on #337 every two hours, a scheduled Codex audit reviews sharing, persistence, audio and lane PRs, and the standing Test Desk tests each new tip of `next`. There is no standing triage desk ("The lead session" in [kickoff.md](docs/workstreams/kickoff.md) says who does what).
 - **Codex runs the project while Claude is paused (2026-10-02, until Claude's reset Sat 07:00 EDT and the owner restarts the Claude project).** Hand-off: the newest "Codex hand-off" comment on #337.
   - **Codex worker** (`ops/codex/sm_codex_worker.py`, launchd, `gpt-6.1-sol` high, up to 3 slots from the Dial #589). It first finishes stalled PRs (newest lane report on the head is FAIL, or `needs-mac`), then takes `ready` issues, `priority` first. It opens `automerge` PRs into `next`. It skips issues labelled `in-progress`, `where:mac`, `regression` or `blocked`, so file work for it as `ready` (plus `priority`, plus `bug` for failures).
@@ -117,16 +119,19 @@ Only the owner sets `human_validated`.
 
 ## Releasing a build
 
-The owner decides when a build goes to testers. Once they say to upload, the agent may archive and upload to internal TestFlight testing:
+The owner decides when a build goes to testers. Once they say to upload, the agent may archive and upload a normal App Store Connect build, then assign it only to the authorized tester groups. Normal uploads remain eligible for external TestFlight and App Store review; that eligibility does not authorize external distribution, review submission or public release. Never select TestFlight Internal Only unless the owner explicitly requests that restriction.
+
+Apple build numbers identify uploads, not product milestones. Each replacement upload needs a new, unused build number even when its functionality stays at the same milestone. Preserve historical tags and uploaded build identities.
 
 1. Bump `CURRENT_PROJECT_VERSION` in `project.yml` (every target), run `xcodegen generate`, and commit.
 2. Verify through layer 3 and list anything not verified.
 3. Archive (`artifacts/` is git-ignored):
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Release -destination generic/platform=iOS -archivePath artifacts/SpokenMargins-<build>.xcarchive -allowProvisioningUpdates archive`
    Check the archive's `CFBundleVersion` is the new build number.
-4. Upload to internal testing only:
+4. Upload with external-review eligibility retained (`testFlightInternalTestingOnly` is false in the default plist), then assign only the authorized tester groups:
    `PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH" xcodebuild -exportArchive -archivePath artifacts/SpokenMargins-<build>.xcarchive -exportOptionsPlist scripts/TestFlightUploadOptions.plist -exportPath artifacts/export-<build> -allowProvisioningUpdates`
    The PATH prefix matters: Homebrew's rsync breaks Xcode's packaging step. A warning that onnxruntime.framework has no dSYM is expected and harmless.
+   Check App Store Connect does not mark the uploaded build `Internal`. Confirm its version, build number and group assignment before calling the upload complete. External review and tester notification remain separate owner decisions.
 5. Tag the archived commit `testflight/0.1-build-N`, push the tag, and fast-forward `main` to the release (ask before merging if it isn't a fast-forward).
 6. Delete the archive and export folders unless the owner wants them kept.
 

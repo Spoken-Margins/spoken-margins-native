@@ -129,11 +129,12 @@ public enum SpokenMarginsPackageBuilder {
                 throw InterjectionPackagePreparationError.emptyApprovedTranscript(revision.id)
             }
 
+            let provenance = MarginShareProvenance.token(sessionId: revision.sessionId, interjectionId: revision.interjectionId)
             let representation: SharedInterjectionRepresentation
             switch selection.representation {
             case .textOnly:
                 representation = SharedInterjectionRepresentation(
-                    id: String(format: "representation-%04d-text", index + 1),
+                    id: MarginShareProvenance.representationID(token: provenance, kind: "text", fallback: String(format: "representation-%04d-text", index + 1)),
                     kind: .textOnly,
                     approvedTranscript: approvedTranscript,
                     provenance: .senderApprovedTextOnly
@@ -154,7 +155,7 @@ public enum SpokenMarginsPackageBuilder {
                     provenance: SharedInterjectionProvenance.senderApprovedOriginal.rawValue
                 ))
                 representation = SharedInterjectionRepresentation(
-                    id: String(format: "representation-%04d-original", index + 1),
+                    id: MarginShareProvenance.representationID(token: provenance, kind: "original", fallback: String(format: "representation-%04d-original", index + 1)),
                     kind: .originalAudioAndText,
                     approvedTranscript: approvedTranscript,
                     assetId: assetID,
@@ -181,7 +182,7 @@ public enum SpokenMarginsPackageBuilder {
                     provenance: SharedInterjectionProvenance.deterministicCleanupV1SenderApproved.rawValue
                 ))
                 representation = SharedInterjectionRepresentation(
-                    id: String(format: "representation-%04d-cleaned", index + 1),
+                    id: MarginShareProvenance.representationID(token: provenance, kind: "cleaned", fallback: String(format: "representation-%04d-cleaned", index + 1)),
                     kind: .cleanedAudioAndText,
                     approvedTranscript: approvedTranscript,
                     assetId: assetID,
@@ -468,7 +469,8 @@ public enum SpokenMarginsPackageImporter {
                 podcastAnchorEvidence: podcastEvidence,
                 resolution: itemResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved),
-                replyLinks: replyLinks[record.packageScopedId]
+                replyLinks: replyLinks[record.packageScopedId],
+                shareProvenance: MarginShareProvenance.token(representationID: representation.id)
             ))
         }
         let layer = ImportedCommentaryLayer(
@@ -498,7 +500,41 @@ public enum SpokenMarginsPackageImporter {
                 uniquingKeysWith: { first, _ in first }
             )
         )
-        return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
+        // A sender who shares again sends their earlier Margins too; the listener keeps one copy of each (#858).
+        return try ImportedMarginResends.importLayer(layer, interjections: importedInterjections, repository: repository)
+    }
+
+    public static func repairAssociation(
+        existing: ImportedCommentaryLayer,
+        contents: VerifiedSpokenMarginsPackage,
+        itemId: String?,
+        localItem: SharedItemIdentity?,
+        itemText: String?,
+        repository: SessionRepository
+    ) throws {
+        guard let itemId,
+              let localItem,
+              let commentary = contents.commentaryLayers.first else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
+        }
+        let resolution = ImportedItemResolver.resolve(
+            item: contents.manifest.item,
+            interjections: commentary.interjections,
+            against: localItem,
+            itemText: itemText
+        )
+        guard resolution.status != .wrongSource else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_source_did_not_match")
+        }
+        var layer = existing
+        layer.itemId = itemId
+        layer.sourceResolutionStatus = resolution.status
+        try repository.saveImportedCommentaryLayer(layer)
+        for var interjection in try repository.loadImportedCommentaryInterjections(layerId: layer.id) {
+            interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
+                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+            try repository.saveImportedCommentaryInterjection(interjection)
+        }
     }
 
     public static func defaultLocalID(kind: String, packageScopedID: String) -> String {

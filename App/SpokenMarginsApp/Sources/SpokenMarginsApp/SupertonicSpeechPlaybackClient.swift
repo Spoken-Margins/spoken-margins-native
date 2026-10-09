@@ -1751,6 +1751,21 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         lock.withLock { AudioSessionDiagnostics.fields(for: fallbackIsActive ? nil : player) }
     }
 
+    /// True while the iOS voice reads in place of the on-device one (#1109).
+    var isSystemVoiceActive: Bool { lock.withLock { fallbackIsActive } }
+
+    /// The client's own intent and voice, for every `playback.state` record, so a pause no request explains
+    /// shows which part of the client set it (#1109).
+    func narrationDiagnostics() -> [String: String] {
+        lock.withLock {
+            PlaybackDiagnosticFields.narration(
+                intent: String(describing: transportIntent),
+                systemVoiceActive: fallbackIsActive,
+                standInPassage: standInOffsets.contains(currentStartOffset)
+            )
+        }
+    }
+
     /// The guard's replacement that is playing now (#306), not a render prepared ahead.
     /// Full-item fallbacks have their own reason; this notice is only for a temporary passage.
     var replacementVoiceTargetId: String? {

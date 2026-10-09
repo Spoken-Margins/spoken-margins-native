@@ -13,7 +13,7 @@ struct Gate2LiveActivityWidget: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Text(context.state.offersResume(isStale: context.isStale) ? "Paused" : context.state.status.capitalized)
+                    Text(context.state.offersResume(isStale: context.isStale) ? "Paused" : context.state.statusLabel)
                         .font(.caption)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
@@ -80,8 +80,38 @@ extension Gate2LiveActivityAttributes.ContentState {
         offersResume(isStale: isStale) ? Gate2CompactCommandURL.url(command: "play") : nil
     }
 
+    /// The card says REC only while the microphone is really taking in sound (#937). The words and the
+    /// symbol change with it, not only the colour.
+    var recordingWord: String {
+        switch microphone {
+        case .capturing: "REC"
+        case .starting: "MIC…"
+        case .stopped: "NOT REC"
+        }
+    }
+
+    var recordingSymbol: String {
+        switch microphone {
+        case .capturing: "record.circle.fill"
+        case .starting: "mic.badge.plus"
+        case .stopped: "exclamationmark.triangle.fill"
+        }
+    }
+
+    var recordingTint: Color { microphone == .capturing ? .red : .orange }
+
+    /// The status in words. A Margin whose microphone is not capturing never reads "Recording".
+    var statusLabel: String {
+        guard isRecording else { return status.capitalized }
+        switch microphone {
+        case .capturing: return status.capitalized
+        case .starting: return "Starting mic"
+        case .stopped: return "Mic stopped"
+        }
+    }
+
     func surfaceSymbol(isStale: Bool) -> String {
-        if isRecording { return "record.circle.fill" }
+        if isRecording { return recordingSymbol }
         return offersResume(isStale: isStale) ? "pause.fill" : "waveform"
     }
 }
@@ -113,14 +143,14 @@ private struct Gate2LiveActivitySmallView: View {
     }
 
     private var stateText: String {
-        if state.isRecording { return "REC" }
+        if state.isRecording { return state.recordingWord }
         if state.offersResume(isStale: isStale) { return "TAP TO RESUME" }
         if isPlaying { return "PLAY" }
         return state.status.uppercased()
     }
 
     private var stateImage: String {
-        if state.isRecording { return "record.circle.fill" }
+        if state.isRecording { return state.recordingSymbol }
         return isPlaying ? "waveform" : "pause.fill"
     }
 
@@ -129,7 +159,7 @@ private struct Gate2LiveActivitySmallView: View {
             HStack(alignment: .center, spacing: 8) {
                 Image(systemName: stateImage)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(state.isRecording ? .red : .green)
+                    .foregroundStyle(state.isRecording ? state.recordingTint : .green)
                     .frame(width: 22, height: 22)
 
                 VStack(alignment: .leading, spacing: 1) {
@@ -153,7 +183,7 @@ private struct Gate2LiveActivitySmallView: View {
                 HStack(alignment: .lastTextBaseline, spacing: 6) {
                     Text(stateText)
                         .font(.caption2.weight(.bold).monospaced())
-                        .foregroundStyle(state.isRecording ? .red : .white.opacity(0.84))
+                        .foregroundStyle(state.isRecording ? state.recordingTint : .white.opacity(0.84))
                     Spacer(minLength: 4)
                     Text("\(max(0, min(100, state.progressPercent)))%")
                         .font(.caption.weight(.bold).monospacedDigit())
@@ -189,9 +219,9 @@ private struct Gate2LiveActivityView: View {
                         .minimumScaleFactor(0.82)
                 }
                 Spacer()
-                Text(state.isRecording ? "REC" : state.status.uppercased())
+                Text(state.isRecording ? state.recordingWord : state.status.uppercased())
                     .font(.caption.weight(.bold).monospaced())
-                    .foregroundStyle(state.isRecording ? .red : .white)
+                    .foregroundStyle(state.isRecording ? state.recordingTint : .white)
             }
 
             ProgressView(value: Double(max(0, min(100, state.progressPercent))), total: 100)

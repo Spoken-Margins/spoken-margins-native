@@ -8,12 +8,25 @@ import SessionKitAudio
 /// recorded responses (PasteAndGoURLProtocol); WebKit can't be stubbed, so the article extractor is.
 @MainActor
 final class PasteAndGoTests: XCTestCase {
+    /// Gate1AppModel's `guidedOnboardingTombstoneKey`, which is private. While it is unset, every model fetches the
+    /// guided tour in the background and adds its row to the library mid-test. A test that started the tour earlier
+    /// in the same run clears it, so "creates nothing" saw `[guided-onboarding, item-pill]` (#878).
+    private static let guidedTourTombstoneKey = "guidedOnboardingTombstone"
+    private var priorGuidedTourTombstone: Any?
+
     override func setUp() {
         super.setUp()
         URLProtocol.registerClass(PasteAndGoURLProtocol.self)
+        priorGuidedTourTombstone = UserDefaults.standard.object(forKey: Self.guidedTourTombstoneKey)
+        UserDefaults.standard.set(true, forKey: Self.guidedTourTombstoneKey)
     }
 
     override func tearDown() {
+        if let priorGuidedTourTombstone {
+            UserDefaults.standard.set(priorGuidedTourTombstone, forKey: Self.guidedTourTombstoneKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.guidedTourTombstoneKey)
+        }
         URLProtocol.unregisterClass(PasteAndGoURLProtocol.self)
         super.tearDown()
     }

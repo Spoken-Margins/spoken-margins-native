@@ -10,8 +10,8 @@ Pick the **lowest tier that exercises what the diff could break**, and run it on
 
 | Tier | What runs | Where | Typical cost | Use it for |
 | --- | --- | --- | --- | --- |
-| **T0** | Nothing, or a doc/link check | anywhere | 0 | Docs, research notes, charters, server code with its own tests |
-| **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host; or Linux for `SessionKitCoreTests` (Core, Persistence, AI, EPUB, Feeds): `scripts/run-sessionkit-linux-tests.sh`, also run on every PR into `next` by `linux-t1.yml` | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers |
+| **T0** | Nothing, or a doc/link check | anywhere | 0 | Docs, research notes, charters |
+| **T1** | The tests for the touched module only: `swift test --filter <Suite>` for SessionKit, or the stream's own Python/Node/server suite | Mac host; or Linux for `SessionKitCoreTests` (Core, Persistence, AI, EPUB, Feeds): `scripts/run-sessionkit-linux-tests.sh`, also run on every PR into `next` by `linux-t1.yml` | 1–3 min | Pure logic: parsers, ranking, packet merge, text cleanup, resolvers; the share-link and map-upload server and the research code with tests (`research/B4`, `B2`, `D3`, `C1/tools`) |
 | **T2** | Compile the app for simulator **and** device (the two `xcodebuild` commands in `AGENTS.md`), no simulator boot | Mac, build semaphore | 4–10 min | Any change to `App/`, `project.yml`, or a SessionKit public API |
 | **T3** | Targeted app-hosted XCTest (`-only-testing:` the touched test classes) in the Test Runner simulator | Mac, via the lane | 5–15 min | App orchestration: model/coordinator wiring, persistence through the app |
 | **T4** | Named journeys from `docs/journeys.md`, or a one-off scenario the request spells out, driven with real taps and screenshots | Mac, via the lane (Test Desk) | 10–40 min each | A one-off scenario a PR asks for; the named journeys run in the integration run |
@@ -73,8 +73,8 @@ Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane curre
 Post as a PR comment. Keep it short; the Test Desk needs intent, not narrative.
 
 **A finished PR needs no request comment.** Label it `automerge` when its "Done when" is met. The runner then runs what the diff needs, by the base branch's `scripts/test-scope.py`, and runs again on every push while the label stays:
-- T0 (docs, research, the server): nothing.
-- T1: `--plan fast`. Besides `scripts/tests`, it runs the tests in each `ops/` folder (`ops/dial`, and `ops/codex` once it has tests), so a diff that only touches `ops/` stops here, with no app build.
+- T0 (docs and research notes): nothing.
+- T1: `--plan fast`. Besides `scripts/tests`, it runs the tests in each `ops/` folder (`ops/dial`, and `ops/codex` once it has tests), so a diff that only touches `ops/` stops here, with no app build. It also runs `scripts/research_tests.py` (`go test` for `research/B4/server`, the research Python tests that run without heavy packages, and the Caddy privacy-filter script), so a diff that only touches that code stops here too. A suite the machine can't run (no `go` on PATH, a bash without `mapfile`, a missing Python package) is listed as skipped with its reason in the PASS report, not passed (#1033).
 - T2 or higher: `--plan fast` and both builds.
 Simulator tests (T3) still need a request. The lane check is red only on FAIL, so a project thread wakes for a failure in its own code. INCONCLUSIVE leaves the check green with a warning: read the report, not the check mark. A job that stops before it reports is red too.
 
@@ -138,7 +138,7 @@ touches yours. Build through scripts/xcodebuild-lane.
 What wakes you: next's tip moving. Check #184 and next about every 45 minutes (waits of 20 s
 or less at a time, or a background wait: a foreground sleep of 30 s or more is blocked).
 When next's tip has no integration report on #184, run one job on that tip, in this order:
-1. The app tests: erase and boot the standing device (below), then
+1. The app tests: take a pool device (below), then
    scripts/verify-tests.py --plan app --device <udid>. Post "Lane report
    integration-<sha7> — PASS | FAIL | INCONCLUSIVE" on #184, with the line
    "run by: Test Desk".
@@ -149,8 +149,8 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    after two passes, and back to probation after two flakes, in a PR into next. Run them
    with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
    probation maps give each script's result.
-3. Then the journeys in docs/journeys.md. Erase the standing device again first, because the
-   app tests wrote to its app data, and build a library shaped like the owner's and upgraded
+3. Then the journeys in docs/journeys.md. Finish the app tests' device with --done and take one
+   again first (it comes back erased, because the app tests wrote to its app data), and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
    "Lane report journeys-<sha7> — …" on #184.
 A tip that lands mid-job waits for the next job. If the understudy has already posted the
@@ -158,7 +158,14 @@ integration report for a tip, start that tip at step 2.
 
 Taking turns: the scheduled "SM integration run" is the understudy. It runs only when this
 desk has posted nothing on #184 for three hours, works in its own intrun-<sha7> worktree,
-and stays off the simulator while the standing device is booted.
+and stays off the simulator while a desk pool device is booted.
+
+The integration script (ops/testdesk/README.md, launchd every 10 minutes) replaces the
+scheduled understudy once installed. It runs --plan app on any tip with no integration
+report on #184 when the Mac has room, letting waiting /lane T3+ requests go first unless
+next has gone three hours untested. It re-runs failing tests twice to rule out a flake,
+and calls Claude read-only only on a confirmed FAIL. Its reports say "run by: integration
+script". Like the understudy, it skips a tip this desk has already reported.
 
 Before the understudy starts inference, its `UserPromptSubmit` hook runs
 `/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/integration-precheck.py --claude-hook`.
@@ -210,26 +217,36 @@ or packet-format changes, or lane changes: report those on #184 for the owner.
 
 Per-PR /lane requests are not your queue: the runner answers T2 and T3, and journeys run
 on next's tip. Run a one-off scenario for a PR only when the owner or the coordinator asks
-this session for it directly, on the standing device between jobs, and post its report on
+this session for it directly, on a pool device between jobs, and post its report on
 that PR.
 
 Simulators:
-- The standing device is "SM Lane Desk erase-approval"
-  (1330F268-5467-4421-9D55-1FCC3FF5CF8A), iOS 26.5. The owner approved it once in the
-  simulator panel, and the approval survives an erase. Erase it before the app tests and
-  again before the journeys, in this order, so the watcher doesn't read the shutdown as a
-  SpringBoard crash:
-    echo released > ~/Library/Caches/SpokenMarginsLane/watch-<udid>.stop
-    xcrun simctl shutdown <udid>, then wait until the watcher (watch-<udid>.pid) exits
-    xcrun simctl erase <udid>
-    scripts/lane-sim-boot <udid>
-  When the job ends, shut it down the same way (stop flag, then shutdown) and leave it. Don't
-  use --done on it: --done deletes the device.
-- A fresh device only when the standing one is marked unsafe or gone:
-  UDID=$(scripts/lane-sim-boot --fresh "SM Lane Desk <name>"), while the owner is awake to
-  approve it in the simulator panel. Name the new standing UDID in a hand-off on #184. Never
-  a fresh device per job. Stay on iOS 26.5: iOS 27's Apple Intelligence services crash-flood
-  on this Mac (#184).
+- The desk uses a pool of up to three devices named "SM Lane Desk pool 1" to "pool 3" (iOS 26.5).
+  The owner approves each one once in the simulator panel, and the approval survives an erase, so
+  the desk reuses a device instead of creating one per run (#688).
+    UDID=$(scripts/lane-sim-boot --pool)
+  takes the least recently used free device, erases it, boots it under the lane's boot rules and
+  prints its UDID. It creates a device only when none is free and the pool has room: the owner
+  approves that new device the first time the desk drives it, so say so on #184 and take the
+  first run when they are awake. When the job ends:
+    scripts/lane-sim-boot --done "$UDID"
+  (once) stops the watcher first, so the shutdown isn't read as a SpringBoard crash, then shuts the
+  device down, erases it and keeps it in the pool. A device no run holds is left alone, but a
+  device another run has taken since is not: don't repeat --done. The pool is recorded in
+  desk-simulator-pool.json in the lane state folder.
+- A device is retired only by the lane's stop rules: one that failed a boot ("Invalid argument"
+  and any other failed boot), crashed, or showed a SpringBoard crash is marked unsafe. The next
+  --pool deletes it, drops it from the pool and, if no other device is free, creates a
+  replacement (the guard blocks --done on a device marked unsafe). Never retry a failed boot, and
+  never boot a device marked unsafe. If the watcher marks a device unsafe after the boot (a late
+  crash report), it keeps running and holds its simulator slot: `xcrun simctl shutdown <udid>`,
+  wait until the watcher has exited (`ps -p $(cat ~/Library/Caches/SpokenMarginsLane/watch-<udid>.pid)` lists no
+  process; the file stays behind, so don't wait for it to go), and the next --pool deletes it. A device that only fails
+  to erase stays in the pool and is passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
+- The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
+  stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
+  services crash-flood on this Mac (#184). `--fresh` still makes a one-off device, for work that
+  isn't a desk run (it costs an approval each time).
 - If scripts/lane-sim-boot prints STOP, stop and report. Never retry a failed boot or boot a
   device another way; the guard blocks devices marked unsafe.
 - On 26.5, unlocking after a lock sometimes freezes the display. Mark lock-and-unlock
@@ -243,8 +260,10 @@ Simulators:
   their Library, or main.
 
 Crashes: after every journey step, check ~/Library/Logs/DiagnosticReports for new .ips
-files. Three crashes of one process within a minute is a flood: stop, shut that
-simulator down, report on #184, and wait for the owner.
+files. Three crashes of one process within a minute is a flood: stop, retire that
+simulator with `scripts/lane-sim-boot --retire <udid> "crash flood: <process>"` (it marks
+the device unsafe, so the pool never reuses it, then shuts it down and deletes it),
+report on #184, and wait for the owner.
 
 Disk: check df -h / before each build or journey. Below 10 GB free, report
 INCONCLUSIVE ("disk below 10 GB") on #184 and stop. After posting each report, delete
@@ -255,7 +274,8 @@ the queue is empty.
 Reports: post in the report format above, on #184 (a one-off scenario's on its PR). There
 is no lead session to message; the project reads reports on GitHub. Before you step down, or
 when a fresh desk may have to take over, post a "Test Desk hand-off" on #184: the state of
-the standing device and your worktrees, what's half-done, and lessons for this section.
+the desk pool (which devices are approved, any retired since the last hand-off), your worktrees,
+what's half-done, and lessons for this section.
 
 Decisions: for reversible lane choices, post them on #184 under "Default taken" and keep
 going. Stop only for owner data, the phone, money, anything public, main or releases.
@@ -292,7 +312,7 @@ Three self-hosted GitHub Actions runners on the owner's Mac (the third after the
   - Each runner has its own caches. DerivedData and SwiftPM's state record absolute paths, and a cache shared by the two original runners lost Xcode's VFS overlay and the onnxruntime binary (#405).
   - A cache whose SwiftPM state lists a binary artifact that isn't on disk is emptied, and the job builds cold. Its report says which artifact was missing.
   - The T2 simulator and device builds each have their own DerivedData (`.build/dd-simulator`, `.build/dd-device`). When they shared one, the warm simulator build after a device build failed on a missing `all-product-headers.yaml` (#405).
-  - At most two caches are kept per runner. Below 15 GB of free disk the job builds cold, and its report says so.
+  - At most four caches are kept per runner (#863), with idle caches evicted first. Below 15 GB of free disk idle caches are cleared; if that cannot restore the floor, the job builds cold and its report says so. Caches in use stay locked and are never evicted, even when that leaves more than four.
   - If a build error disappears on a cold rebuild, delete `warm-build/` while no job runs.
 - **Merging.** An `automerge` PASS is merged by the runner itself (`scripts/lane-runner.py`, `run_auto`):
   - It tests the exact merge commit (next first), posts "**Merge check (triage desk)", then does a plain push. A push refused because next moved leads to a re-test, up to 3 times, unless next's commits since the tested one touch none of the PR's files and no build inputs (`project.yml`, any `.xcodeproj` or `.xcconfig`, `Config/`, `Package.swift` and `Package.resolved`, `package.json` and its lock, `.github/`, `scripts/`, `Contracts/schemas/`). Then it merges onto the new next and pushes without testing again, the owner's standing call being that the Test Desk tests next's merged tip end to end. The report says which way it went and lists the commits it didn't re-test against, and that merge check doesn't say "Pushing `<sha7>`", so `scripts/phone-build` runs its own checks on that tip.
@@ -305,7 +325,7 @@ Three self-hosted GitHub Actions runners on the owner's Mac (the third after the
   - A report counts only if its "(tested merged with next at `<sha7>`)" names `next`, not a `lane-check/**` base, at a commit containing the lane change. A stopped-job note carries the same words when the job had fetched its base before it stopped; one without them doesn't count.
   - Only once per lane change, and never a merge that didn't touch lane paths or that is itself a revert of a lane change. A revert is recognized by git's "This reverts commit `<sha>`" line in the merge's own commits, naming a lane change already on `next`, not by the PR title. A revert that doesn't apply cleanly is posted on #337 ("Lane auto-revert failed:") and left for a person.
   - It can't catch a lane change that stops the runner before the check runs (a broken `lane.yml`, or a `lane-runner.py` that doesn't start): no job reports, so nothing triggers it. The Mac tick on #337 is the watch for that.
-- **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, and the lane guard's `guard.log`. The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
+- **Mac-wide state** is in `~/Library/Caches/SpokenMarginsLane/`: the slot locks, `boot-events.log`, `unsafe-simulators.json`, `desk-simulator-pool.json` (the Test Desk's pool, #688), and the lane guard's `guard.log`. The guard hook is `~/.claude/hooks/spoken-margins-lane-guard.py`; reinstall it with `scripts/install-lane-guard.py`, and use `--check` to see drift.
 
 ## What the owner sees
 

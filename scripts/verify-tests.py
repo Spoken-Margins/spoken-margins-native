@@ -19,6 +19,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import lane_sim
+import lane_sim_pool
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
 
@@ -358,6 +359,11 @@ def stop_process_group(process, grace=10):
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+# The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
+# detached checkout of it, so the 180 s command default left no room: built beside a simulator job, the step
+# was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
+# head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
+RUNNER_TESTS_TIMEOUT = 600
 
 
 class Run:
@@ -434,6 +440,8 @@ class Run:
                 stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
+                    # A pool device that flooded is retired, not erased and reused (#688): mark it first.
+                    lane_sim_pool.retire_after_flood(device, f'crash flood during {name}: {entry["simulator_crash_report"]}')
                     shutdown = subprocess.run(['xcrun', 'simctl', 'shutdown', device],
                                               stdout=log, stderr=subprocess.STDOUT, timeout=20)
                     entry['simulator_shutdown_exit'] = shutdown.returncode
@@ -479,6 +487,16 @@ class Run:
             if not entry['executed_count']:
                 errors.append('Browser runner executed zero tests' if name == 'browser'
                               else f'{name} executed zero tests')
+        if name == 'research':
+            match = re.search(r'^research-tests: (\d+) tests in \d+ suites; \d+ skipped', text, re.M)
+            entry['executed_count'] = int(match[1]) if match else 0
+            entry['skipped'] = re.findall(r'^skipped: (.+)$', text, re.M)
+            for reason in entry['skipped']:
+                print(f'warning: research skipped: {reason}', flush=True)
+            # Name the failing suites and tests in the error, which the lane's report carries.
+            errors.extend(re.findall(r'^(?:FAILED|failed test|failed package): .+$', text, re.M)[:5])
+            if not entry['executed_count']:
+                errors.append('research executed zero tests')
         # A failing probation test makes xcodebuild exit non-zero; that alone doesn't fail the step.
         probation_only = (tests and not errors and not entry.get('interrupted')
                           and any(status != 'passed' for status in entry.get('probation', {}).values()))
@@ -506,7 +524,8 @@ class Run:
         if in_codex_sandbox():
             self.skip('runner-tests')
         else:
-            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'])
+            self.command('runner-tests', [sys.executable, '-m', 'unittest', 'discover', '-s', 'scripts/tests'],
+                         timeout=RUNNER_TESTS_TIMEOUT)
         self.ops_steps()
         self.command('contracts', [sys.executable, 'scripts/validate-contracts.py'])
         self.command('surfaces', [sys.executable, 'scripts/validate-surface-contracts.py'])
@@ -515,6 +534,9 @@ class Run:
             raise RuntimeError('node_modules is missing in this worktree; run scripts/setup-worktree.sh')
         self.command('browser', ['npm', 'run', 'test:browser-extraction'])
         self.command('share-link', ['npm', 'run', 'test:share-link'])
+        # The Go server, the research Python tests and the Caddy script (#1033); a suite that can't run
+        # here is reported as skipped with its reason, not passed.
+        self.command('research', [sys.executable, 'scripts/research_tests.py'], timeout=300)
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))

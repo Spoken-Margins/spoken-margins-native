@@ -25,40 +25,11 @@ struct ExperienceLibraryScreen: View {
         return continueItem
     }
 
-    private var completionUndoActions: some View {
-        HStack {
-            Button("Undo Mark Complete", action: model.undoMarkedCompletion)
-                .accessibilityIdentifier("completion.undo.button")
-            Button { model.completionUndo = nil } label: { Image(systemName: "xmark") }
-                .accessibilityLabel("Dismiss completion notification")
-        }
-        .buttonStyle(.borderless)
-    }
-
     var body: some View {
         NavigationStack {
             List {
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-
-                if let undo = model.completionUndo {
-                        ViewThatFits(in: .horizontal) {
-                            HStack {
-                                Text("Marked \(undo.title) complete.").lineLimit(2)
-                                completionUndoActions
-                            }
-                            VStack(alignment: .leading) {
-                                Text("Marked \(undo.title) complete.")
-                                completionUndoActions
-                            }
-                        }
-                        .font(.subheadline)
-                        .padding(12)
-                        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("completion.undo.banner")
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                    }
 
                 if let continueItem = visibleContinueItem {
                     ExperienceLibraryCompactRow(
@@ -159,7 +130,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     private var preparationSummaryDetail: String {
-        let queued = model.audioPreparationQueue.count
+        let queued = Set(model.audioPreparationQueue.map(\.itemId)).count // items, not jobs (#883)
         let recent = model.recentlyPreparedAudio.count
         if queued > 0, recent > 0 {
             return "\(queued) queued · \(recent) recently ready"

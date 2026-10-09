@@ -26,3 +26,17 @@ func TestSetUnderStrictUmaskIsWorldReadable(t *testing.T) {
 		}
 	}
 }
+
+func TestLinkServiceIsOffAndCanBeSwitched(t *testing.T) {
+	d := Default()
+	if _, ok := d.Services[ServiceLinks]; !ok || d.Enabled(ServiceLinks) {
+		t.Fatal("links must be present and off")
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	for _, on := range []bool{true, false} {
+		d, err := Set(path, ServiceLinks, on)
+		if err != nil || d.Enabled(ServiceLinks) != on || !d.Enabled(ServiceAttest) || !d.Enabled(ServiceBridge) {
+			t.Fatalf("switch: %v %v", d, err)
+		}
+	}
+}

@@ -119,6 +119,7 @@ let package = Package(
                 "SessionKitFeeds",
                 "ShippedPacketReader",
                 "ShippedSessionKit",
+                "CoopPacket",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],
             // Test fixtures read by path (#filePath), not bundled resources.

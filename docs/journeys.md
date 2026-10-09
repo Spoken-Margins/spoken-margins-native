@@ -62,14 +62,16 @@ Steps are written in terms of what the listener wants, not exact button labels, 
 
 This journey needs two installs: the sender's phone and a second device or simulator as the recipient.
 
+The owner's one-phone version, with prepared packets and an episode that shares its intro with another, is the [sharing test kit](sharing-test-kit/README.md).
+
 1. The sender shares an item that has several podcast Margins.
    - Pass: the packet is created without an error. A Margin with incomplete positioning evidence is flagged, not silently dropped.
 2. The recipient opens the packet. They have not added the podcast beforehand.
    - Pass: the episode appears in their Library automatically, and the shared Margins are listed with a placement status (placed, or needs confirming).
 3. The recipient plays a placed Margin.
-   - Pass: the sender's voice plays, labeled with the sender's name, and the recipient's episode is at the Margin's moment. The owner checks by ear that the podcast audio matches what the Margin is about.
+   - Pass: a short two-note chime, then the sender's voice plays, labeled with the sender's name, and the recipient's episode is at the Margin's moment. The owner checks by ear that the podcast audio matches what the Margin is about.
 4. The recipient plays an unplaced Margin.
-   - Pass: the voice still plays, and the app does not pretend to know the position.
+   - Pass: the same chime, then the voice, and the app does not pretend to know the position. This holds when the Margin is tapped in the Timeline too (#932). A muted layer has no chime.
 5. Import the same packet again.
    - Pass: no duplicate Margins and no duplicate episode.
 
