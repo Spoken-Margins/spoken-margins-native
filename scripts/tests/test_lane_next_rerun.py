@@ -262,11 +262,11 @@ class LaneRunnerTests(unittest.TestCase):
             with self.subTest(fast=fast[0]):
                 asked.clear()
                 verdict, _, _, details = lane.run_automerge({'tier': 'T1', 'why': ['x']}, Path('/e'),
-                                                            fast=lambda evidence: fast, recheck=recheck)
+                                                            fast=lambda evidence, changed=None: fast, recheck=recheck)
                 self.assertEqual(verdict, wanted)
                 self.assertEqual(bool(asked), rechecked)
         verdict, _, _, _ = lane.run_automerge({'tier': 'T1', 'why': ['x']}, Path('/e'),
-                                              fast=lambda evidence: ('FAIL', ['x']))
+                                              fast=lambda evidence, changed=None: ('FAIL', ['x']))
         self.assertEqual(verdict, 'FAIL')  # without a recheck, as in any caller that doesn't pass one
 
     def test_the_automerge_run_rechecks_on_the_next_commit_it_tested(self):
