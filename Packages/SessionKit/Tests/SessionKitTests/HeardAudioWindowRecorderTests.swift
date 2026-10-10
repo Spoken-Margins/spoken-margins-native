@@ -97,6 +97,21 @@ final class HeardAudioWindowRecorderTests: XCTestCase {
         XCTAssertEqual(window.durationMs(of: run), 120_000, "each moment is held once")
     }
 
+    /// The player's tap decodes about half a second ahead of its clock, so when playback pauses for a Margin the
+    /// rolling minute already holds audio past the anchor, and one more decoded buffer can arrive before the
+    /// rejoin's seek. Leaving that read-ahead out of the window, then keeping the late buffer as "after", left a
+    /// gap right after the Margin that the rejoin's replay never filled (#1133, found by the real-player test).
+    func testAudioDecodedAheadOfTheClockAtTheMarginLeavesNoGap() throws {
+        var recorder = HeardAudioWindowRecorder(sampleRate: rate)
+        _ = play(&recorder, fromMs: 0, durationMs: 7_500) // the clock paused at 7 000; the tap reached 7 500
+        recorder.begin(request(anchorMs: 7_000))
+        _ = play(&recorder, fromMs: 7_500, durationMs: 500) // one more read-ahead buffer before the seek lands
+        _ = play(&recorder, fromMs: 4_000, durationMs: 8_000) // the rejoin replays from 3 s before the Margin
+        let window = try XCTUnwrap(recorder.finishAll(reason: "stopped").first)
+        XCTAssertEqual(window.segments.map(\.startMediaTimeMs), [0], "one run, no hole after the Margin")
+        XCTAssertEqual(window.durationMs(of: try XCTUnwrap(window.segments.first)), 12_000)
+    }
+
     /// The rolling minute drops its first copy of the replayed seconds, so the next Margin's minute before is
     /// one run without a repeat.
     func testTheRollingMinuteKeepsOneCopyAfterAStepBack() throws {
