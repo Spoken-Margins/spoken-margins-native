@@ -1,6 +1,7 @@
 import Combine
 import XCTest
 @testable import SessionKit
+import SessionKitAudio
 import SessionKitPersistence
 @testable import SpokenMarginsApp
 import SQLite3
@@ -1446,10 +1447,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.cancelInterjection)
     }
 
-    func testFinishAndCancelAreTheOnlyRecordingExits() {
+    func testFinishAndCancelAreTheOnlyRecordingExits() throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            recordingClient: NoopRecordingClient()
+            recordingClient: recorder
         )
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -1459,7 +1462,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.recordingNavigationIsLocked)
+        XCTAssertEqual(recorder.beginCount, 1, "the microphone was asked to start once")
         model.dispatchGate2CompactCommand(.finishInterjection)
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(model.selectedItem.interjections.first?.audioPath, recorder.savedPaths.first)
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
         XCTAssertNil(model.recordingPresentationContext)
@@ -1471,7 +1478,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.recordingNavigationIsLocked)
+        XCTAssertEqual(recorder.beginCount, 2)
         model.dispatchGate2CompactCommand(.cancelInterjection)
+        XCTAssertEqual(recorder.cancelCount, 1, "cancel discards the recording")
+        XCTAssertEqual(recorder.finishCount, 1, "cancel never saves")
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
         XCTAssertNil(model.recordingPresentationContext)
@@ -1481,6 +1491,43 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.count, savedCount)
         model.openHome()
         XCTAssertEqual(model.screen, .home)
+    }
+
+    /// #1043 APM-01 (and #937's shape): with a recorder that never fails, nothing checked what the listener is
+    /// left with when the microphone won't start. The recording screen must close, the source play on, and
+    /// nothing be saved; the next tap, with a working microphone, records.
+    func testAMicrophoneThatWontStartClosesTheRecordingScreenAndPlaysOn() throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        recorder.refusesToStart = true
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
+        model.resetAndSeed()
+        model.importTitle = "Microphone Refuses"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        XCTAssertTrue(audio.isPlaying)
+        let playsBefore = audio.playedOffsets.count
+
+        model.beginInterjection()
+
+        XCTAssertEqual(recorder.beginCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 1, "the failed start lets go of the microphone")
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertNil(model.recordingPresentationContext, "no recording screen over a microphone that never started")
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertNotNil(model.lastError, "the listener is told the Margin did not start")
+        XCTAssertTrue(audio.isPlaying, "the source plays on")
+        XCTAssertGreaterThan(audio.playedOffsets.count, playsBefore)
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty)
+
+        recorder.refusesToStart = false
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(recorder.beginCount, 2)
+        model.cancelInterjection()
+        XCTAssertEqual(recorder.cancelCount, 2)
     }
 
     func testOpeningMarginFromAnotherSessionDoesNotReplaceNowPlaying() {
@@ -5054,6 +5101,50 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
         currentOffset = reportsZeroOffsetAfterCompletion ? 0 : preparedText.count
         completedTargetId = activeTargetId
         lock.unlock()
+    }
+}
+
+/// A recorder that counts every call and, like `SystemRecordingClient`, leaves a real AAC file in
+/// Application Support/SpokenMargins/interjections and returns its path from there. The tests that used
+/// `NoopRecordingClient` could not see whether the microphone was ever asked to start, or whether a saved
+/// Margin had any audio behind it (#1043 APM-01, APM-03).
+private final class CountingToneRecordingClient: RecordingClient {
+    let supportDirectory: URL
+    private let tone: UITestingToneRecordingClient
+    /// The next starts throw, as `AVAudioRecorder.record()` returning false or a call holding the session does.
+    var refusesToStart = false
+    private(set) var beginCount = 0
+    private(set) var finishCount = 0
+    private(set) var cancelCount = 0
+    private(set) var savedPaths: [String] = []
+
+    init() throws {
+        supportDirectory = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+        tone = UITestingToneRecordingClient(supportDirectory: supportDirectory)
+    }
+
+    func beginRecording() throws {
+        beginCount += 1
+        if refusesToStart { throw SessionKitError.persistenceFailed("recording_failed") }
+        try tone.beginRecording()
+    }
+
+    func finishRecording(audioRef: String?) throws -> String {
+        finishCount += 1
+        let path = try tone.finishRecording(audioRef: audioRef)
+        savedPaths.append(path)
+        return path
+    }
+
+    func cancelRecording() throws {
+        cancelCount += 1
+        try tone.cancelRecording()
+    }
+
+    func removeSavedFiles() {
+        for path in savedPaths { try? FileManager.default.removeItem(at: supportDirectory.appending(path: path)) }
     }
 }
 
