@@ -191,6 +191,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         guard request.targetDurationMs >= PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs else {
             return false
         }
+        // Buffers the tap handed over before this Margin must not count toward its window.
+        drainTapWork()
         let armed = lock.withLock {
             guard accumulators[request.interjectionId] == nil else { return false }
             accumulators[request.interjectionId] = Accumulator(request: request)

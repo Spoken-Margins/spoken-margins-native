@@ -136,6 +136,26 @@ final class PostResumeEvidenceTapThreadingTests: XCTestCase {
             return XCTFail("expected captured post-resume evidence, got \(results.all)")
         }
         XCTAssertEqual(capture.anchorOffsetMs, 4_000, "the buffers it kept, in order, from 296 s")
+
+        // Audio after the dropped buffers is a gap; a Margin armed now still gets a window from the new audio.
+        XCTAssertTrue(tap.arm(request("ij-after-gap")))
+        for index in 0..<4 {
+            let buffer = buffers[index]
+            tap.process(
+                bufferList: buffer.mutableAudioBufferList,
+                frameCount: CMItemCount(buffer.frameLength),
+                timeRange: CMTimeRange(
+                    start: CMTime(value: CMTimeValue(330 + index), timescale: 1),
+                    duration: CMTime(value: 1, timescale: 1)
+                )
+            )
+        }
+        XCTAssertTrue(spin(until: 5) { results.all.count == 2 })
+        guard case .captured(let afterGap) = results.all.last else {
+            return XCTFail("expected a capture after the gap, got \(results.all)")
+        }
+        XCTAssertEqual(afterGap.request.interjectionId, "ij-after-gap")
+        XCTAssertEqual(afterGap.anchorOffsetMs, -30_000, "the window starts at the first audio after the gap, 330 s")
     }
 
     private static func oneSecondOfNoise(
