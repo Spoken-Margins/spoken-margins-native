@@ -13913,8 +13913,7 @@ final class Gate1AppModel: ObservableObject {
                         let activation = SharedListeningMapPlacement.activation(
                             outcomes, listenerHasMap: try Self.listenerHasListeningMap(itemId: itemId, store: store),
                             activeProjectionId: current?.id)
-                        for (layer, records, outcome) in livingWork {
-                            var layer = layer
+                        for (var layer, records, outcome) in livingWork {
                             layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
                             guard try store.savePlacementResult(of: layer) else { continue }
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
