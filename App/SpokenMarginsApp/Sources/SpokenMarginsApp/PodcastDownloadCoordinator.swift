@@ -314,6 +314,8 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
 
     func redownload(itemId: String) {
         guard var record = recordsByItemId[itemId] else { return }
+        // A copy is already coming down. Another tap would cancel it and start again from 0 bytes (#936).
+        if record.state == .downloading, activeTaskItemIds.contains(itemId) { return }
         invalidateAttempt(itemId: itemId)
         record.retryCount += 1
         record.failureReason = nil

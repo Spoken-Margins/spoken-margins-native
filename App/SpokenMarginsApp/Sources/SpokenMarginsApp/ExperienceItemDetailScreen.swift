@@ -13,6 +13,7 @@ struct ExperienceItemDetailScreen: View {
     @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
     @State private var asksForEpisodeLink = false
     @State private var episodeLinkText = ""
+    @State private var showsReactions = false
     private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
@@ -26,6 +27,7 @@ struct ExperienceItemDetailScreen: View {
                     if !sharingCoordinator.importedLayers.isEmpty {
                         Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
                     }
+                    reactionsEntry
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
@@ -98,6 +100,9 @@ struct ExperienceItemDetailScreen: View {
                 }
             }
             .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .sheet(isPresented: $showsReactions) {
+                ExperienceReactionsScreen().environmentObject(model)
+            }
             .alert("Which episode is this?", isPresented: $asksForEpisodeLink) {
                 TextField("Episode link", text: $episodeLinkText)
                     .textInputAutocapitalization(.never)
@@ -215,6 +220,28 @@ struct ExperienceItemDetailScreen: View {
                 HStack(spacing: 10) { secondaryActionButtons }
                 VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
             }
+        }
+    }
+
+    /// "Where people reacted" (#476): offered once the item has Margins from two or more people.
+    @ViewBuilder
+    private var reactionsEntry: some View {
+        let item = model.selectedItem
+        if MarginLayerSynthesis.offersReactions(
+            itemId: item.id,
+            layers: item.importedCommentaryLayers,
+            interjections: item.importedCommentaryInterjections,
+            ownMargins: item.interjections
+        ) {
+            Button {
+                showsReactions = true
+            } label: {
+                Label("Where people reacted", systemImage: "person.2.fill")
+                    .frame(maxWidth: .infinity, minHeight: 40)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier("item.reactions.button")
         }
     }
 
@@ -483,16 +510,30 @@ struct ExperienceItemDetailScreen: View {
                         .buttonStyle(.bordered)
                         .tint(AppColors.evergreen)
                 case .downloading:
-                    ProgressView()
-                        .tint(readinessColor)
+                    if let progress = model.selectedPodcastDownloadProgress {
+                        ProgressView(value: progress)
+                            .tint(readinessColor)
+                            .frame(width: 72)
+                    } else {
+                        ProgressView()
+                            .tint(readinessColor)
+                    }
                 case .availableOffline, .none:
                     EmptyView()
                 }
             }
             .accessibilityIdentifier("item.podcastDownload.status")
         case .availableOffline:
-            Button("Download Again", action: model.redownloadSelectedPodcast)
-                .buttonStyle(.bordered)
+            HStack(spacing: 12) {
+                Label(readinessLabel, systemImage: readinessIcon)
+                    .font(.subheadline)
+                    .foregroundStyle(readinessColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("item.podcastDownload.saved")
+                Spacer(minLength: 8)
+                Button("Download Again", action: model.redownloadSelectedPodcast)
+                    .buttonStyle(.bordered)
+            }
         case .none:
             EmptyView()
         }
@@ -559,8 +600,8 @@ struct ExperienceItemDetailScreen: View {
         case .waitingForWiFi: "Waiting for Wi-Fi"
         case .streamingOnly: "Streaming available"
         case .failed, .evicted: "Download needs attention"
-        case .downloading: "Downloading"
-        case .availableOffline: "Available offline"
+        case .downloading: model.selectedPodcastDownloadStatusText ?? "Downloading"
+        case .availableOffline: model.selectedPodcastDownloadStatusText ?? "Available offline"
         case .none: ""
         }
     }

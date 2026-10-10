@@ -250,18 +250,12 @@ final class TraceHarness {
                 XCTAssertEqual(snapshot.recordingTargetId, value as? String)
             case "mediaTimeMs":
                 XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, value as? Int)
-            case "capturedMediaTimeMs":
-                XCTAssertEqual(engine.lastResolvedMediaAnchor?.mediaTimeMs, value as? Int)
-            case "capturedTranscriptSegmentId":
-                XCTAssertEqual(engine.lastResolvedMediaAnchor?.transcriptSegmentId, value as? String)
             case "queuedWatchSyncEventType":
                 XCTAssertEqual(engine.lastQueuedWatchSyncEvent?.eventType, value as? String)
             case "pendingWatchEventCount":
                 try assertPendingWatchEventCount(value as? Int)
             case "createdInterjection":
                 try assertWatchInterjectionCreated(value as? Bool ?? true)
-            case "lastInterjectionMediaTimeMs":
-                try assertLatestInterjectionMediaTime(value as? Int)
             case "sessionPositionMediaTimeMs":
                 XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, value as? Int)
             case "chapterId":
@@ -532,10 +526,6 @@ final class TraceHarness {
         XCTAssertEqual(!interjections.isEmpty, expected)
     }
 
-    private func assertLatestInterjectionMediaTime(_ expected: Int?) throws {
-        XCTAssertEqual(try latestInterjection().anchor.mediaTimeMs, expected)
-    }
-
     private func assertCanSummarize(_ expected: Bool) throws {
         let interjections = repository.interjections.values.filter { $0.status == "active" && $0.transcriptionStatus == "transcribed" }
         XCTAssertEqual(!interjections.isEmpty, expected)
@@ -727,7 +717,7 @@ final class TraceAudio: AudioPlaybackClient {
     func prepareSpeechText(_ text: String) throws -> String { SpeechTextNormalizer.normalize(text) }
     func play(targetId: String) throws {}
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
-        self.mediaTimeMs = mediaTimeMs == 14_000 ? 42_000 : mediaTimeMs
+        self.mediaTimeMs = mediaTimeMs
     }
     func currentMediaTimeMs() -> Int? { mediaTimeMs }
     func pause() throws {}

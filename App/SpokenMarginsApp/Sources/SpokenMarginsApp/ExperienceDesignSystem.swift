@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 struct ExperienceEditorialHeader: View {

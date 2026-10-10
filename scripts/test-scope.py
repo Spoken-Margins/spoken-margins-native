@@ -282,27 +282,39 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT):
 
     Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
     count: priority work queues there, but an absent/offline runner must not strand a job.
+    Overflow (#1327): an automerge job that isn't priority work goes to the priority runner when it
+    is idle and no build runner is, instead of queueing behind them while the Mac has a runner free.
     """
     normal = {'lane': ['self-hosted', 'macOS', 'sm-lane'],
               'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
     priority = ['self-hosted', 'sm-lane-priority']
     try:
-        online = any(r['status'] == 'online' and set(priority) <= {label['name'] for label in r['labels']}
-                     for page in runner_pages for r in page['runners'])
-        if not online:
+        runners = [r for page in runner_pages for r in page['runners']]
+
+        def names(runner):
+            return {label['name'] for label in runner['labels']}
+
+        # Only an explicit busy=false is idle: a runner whose state is missing or unreadable is not.
+        def idle(runner, wanted):
+            return runner['status'] == 'online' and runner.get('busy') is False and wanted <= names(runner)
+
+        if not any(r['status'] == 'online' and set(priority) <= names(r) for r in runners):
             return normal
+        overflow = dict(normal)
+        if any(idle(r, set(priority)) for r in runners) and not any(idle(r, {'sm-lane-build'}) for r in runners):
+            overflow['automerge'] = priority
         labelled = any(label['name'] == 'priority' for label in pr['labels'])
         if not labelled:
             files = [file for page in file_pages for file in page]
             if not files or len(files) != pr['changed_files']:
-                return normal
+                return overflow
             # Both sides of a rename belong to the diff: moving app code into ops isn't ops-only.
             paths = {file['filename'] for file in files}
             paths.update(file['previous_filename'] for file in files if 'previous_filename' in file)
             if not all(path.startswith(('ops/', 'docs/')) or is_lane_path(path) for path in paths):
-                return normal
+                return overflow
             if classify(paths, root=root)['tier'] != 'T1':
-                return normal
+                return overflow
         return {'lane': priority, 'automerge': priority}
     except (KeyError, TypeError, ValueError):
         return normal
