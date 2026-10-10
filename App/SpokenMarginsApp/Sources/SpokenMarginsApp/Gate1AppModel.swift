@@ -685,11 +685,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
     @Published private(set) var playingImportedCommentary: ImportedCommentaryPrompt?
-    @Published private(set) var importedCommentaryIsPaused = false
+    @Published var importedCommentaryIsPaused = false
     /// What the shared Margin's voice is really doing (#941), judged from the player, not from the request to play.
-    @Published private(set) var importedCommentaryPhase: SharedMarginPlaybackPhase = .loading
-    private var importedCommentaryHealth: SharedMarginPlaybackHealth?
-    private let importedMarginRemoteControls = ImportedMarginRemoteControls()
+    @Published var importedCommentaryPhase: SharedMarginPlaybackPhase = .loading
+    var importedCommentaryHealth: SharedMarginPlaybackHealth?
+    let importedMarginRemoteControls = ImportedMarginRemoteControls()
     /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.
     @Published private(set) var marginMoment: MarginMomentSequence?
     @Published private(set) var marginMomentVoiceIsPaused = false
@@ -943,8 +943,8 @@ final class Gate1AppModel: ObservableObject {
         outcomeChanged: { [weak self] in self?.diagnostics["textAudioBackgroundStartup"] = $0.rawValue }
     )
     #if canImport(AVFoundation)
-    private var interjectionAudioPlayer: AVPlayer?
-    private var interjectionAudioCompletionTask: Task<Void, Never>?
+    var interjectionAudioPlayer: AVPlayer?
+    var interjectionAudioCompletionTask: Task<Void, Never>?
     private var skimBridgePlayer: AVPlayer?
     private var skimBridgeTask: Task<Void, Never>?
     private var preparingLocalAudioMapItems = Set<String>()
@@ -6555,7 +6555,7 @@ final class Gate1AppModel: ObservableObject {
         stopImportedCommentaryPlayback(resumeSource: true)
     }
 
-    private func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
+    func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
               let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
@@ -6630,79 +6630,6 @@ final class Gate1AppModel: ObservableObject {
         }
         #else
         reportFailure("Shared Margin playback is unavailable on this device.")
-        #endif
-    }
-
-    private func setImportedCommentaryPaused(_ paused: Bool) {
-        #if canImport(AVFoundation)
-        guard playingImportedCommentary != nil else { return }
-        if importedCommentaryPhase.isFailed {
-            if !paused { retryImportedCommentary() }
-            return
-        }
-        guard let player = interjectionAudioPlayer else { return }
-        if paused {
-            player.pause()
-            #if os(iOS)
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            #endif
-        } else {
-            do {
-                #if os(iOS)
-                try AVAudioSession.sharedInstance().setActive(true)
-                #endif
-                player.playImmediately(atRate: Float(playingInterjectionAudioRate))
-            } catch {
-                reportFailure(error, context: "Shared Margin resume failed")
-                return
-            }
-        }
-        importedCommentaryIsPaused = paused
-        importedCommentaryHealth?.setUserPaused(paused, at: ProcessInfo.processInfo.systemUptime)
-        if let phase = importedCommentaryHealth?.phase { importedCommentaryPhase = phase }
-        publishImportedCommentaryNowPlaying()
-        #endif
-    }
-
-    /// Feeds the player's own report into the health rule and shows what it concludes (#941).
-    private func observeImportedCommentary(playerFailed: Bool, clockSeconds: Double) {
-        guard var health = importedCommentaryHealth else { return }
-        let phase = health.observe(playerFailed: playerFailed, clockSeconds: clockSeconds, at: ProcessInfo.processInfo.systemUptime)
-        importedCommentaryHealth = health
-        if phase != importedCommentaryPhase { importedCommentaryPhase = phase }
-        if phase.isFailed { failImportedCommentaryPlayback() }
-    }
-
-    /// The voice cannot play. Stops the player and the polling, keeps the Margin on screen with Retry and
-    /// Return to Source, and tells the system it is not playing. The Margin stays new; the source-resume
-    /// intent is untouched, so Return to Source or a Retry that then ends still resumes it once.
-    private func failImportedCommentaryPlayback() {
-        #if canImport(AVFoundation)
-        interjectionAudioCompletionTask?.cancel()
-        interjectionAudioCompletionTask = nil
-        interjectionAudioPlayer?.pause()
-        interjectionAudioPlayer?.replaceCurrentItem(with: nil)
-        interjectionAudioPlayer = nil
-        importedCommentaryIsPaused = false
-        publishImportedCommentaryNowPlaying()
-        #endif
-    }
-
-    /// Retry after a failure: a fresh player, item and health record for the same Margin.
-    func retryImportedCommentary() {
-        guard let prompt = playingImportedCommentary, importedCommentaryPhase.isFailed else { return }
-        listenToImportedCommentary(prompt)
-    }
-
-    private func publishImportedCommentaryNowPlaying() {
-        #if canImport(AVFoundation)
-        guard !mixesWithOtherAudio, let prompt = playingImportedCommentary else { return }
-        let player = interjectionAudioPlayer
-        importedMarginRemoteControls.publish(
-            sender: prompt.senderLabel, elapsed: player?.currentTime().seconds ?? 0,
-            duration: player?.currentItem?.duration.seconds ?? .nan,
-            rate: importedCommentaryHealth?.nowPlayingRate(playerRate: Double(player?.rate ?? 0)) ?? 0
-        )
         #endif
     }
 
@@ -12454,7 +12381,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["recentFailure"] = "none"
     }
 
-    private func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
+    func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
         let message: String
         if let urlError = error as? URLError {
             message = Self.userFacingMessage(for: urlError)
