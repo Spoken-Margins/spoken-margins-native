@@ -29,12 +29,14 @@
 		6868081D16F070053E862F47 /* browserTextCapture.js in Resources */ = {isa = PBXBuildFile; fileRef = 98C26CB68BDFFFA8A1B7578B /* browserTextCapture.js */; };
 		68EFC63296D10802FDE30831 /* substack-shared-text-post.html in Resources */ = {isa = PBXBuildFile; fileRef = AA3E54540069285190E19D1B /* substack-shared-text-post.html */; };
 		6C3AD65F618F4FBE42AB6A31 /* fixtures in Resources */ = {isa = PBXBuildFile; fileRef = F8F6B4F91AA36C9513801753 /* fixtures */; };
+		76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */; };
 		7F0A333F40F542B3E4C42E1A /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		81B60CCA76A6F0E91712933E /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */; };
 		8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */ = {isa = PBXBuildFile; productRef = DAEA68EE26E46DA752778D6D /* SessionKitEPUB */; };
 		8D06E1D632D0ED8160FED0A4 /* icon-128.png in Resources */ = {isa = PBXBuildFile; fileRef = 56AD3FBAE5A4EBD7B16F6BFC /* icon-128.png */; };
 		907083EA86D05BC58D2D3A79 /* SessionKitAI in Frameworks */ = {isa = PBXBuildFile; productRef = E7C7184F382A54BFB372015B /* SessionKitAI */; };
 		93BDBE3759E50512647FCCB2 /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */; };
+		A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 45170E0354730F22BB2E258A /* SharedTextIntake.swift */; };
 		A978B4713391C8A80029DD08 /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = 857D6087011D0775305B56B7 /* SessionKit */; };
 		AAB68653F4DD558C2D9EC643 /* traces in Resources */ = {isa = PBXBuildFile; fileRef = DA64F144F04CC7A9F436B28E /* traces */; };
 		AB149D16A2A0482B581B0847 /* SessionKitSharing in Frameworks */ = {isa = PBXBuildFile; productRef = 03B12E07A60683D31E17A8FC /* SessionKitSharing */; };
@@ -116,6 +118,7 @@
 		1213A7465ECB99E1E9FCE12A /* popup.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = popup.css; sourceTree = "<group>"; };
 		1EF39AB56D81B9CC450B08A2 /* emoji-article-crash-regression.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "emoji-article-crash-regression.txt"; sourceTree = "<group>"; };
 		3D2052181FEAFB56EB0856FA /* Defuddle-LICENSE.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "Defuddle-LICENSE.txt"; sourceTree = "<group>"; };
+		45170E0354730F22BB2E258A /* SharedTextIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedTextIntake.swift; sourceTree = "<group>"; };
 		454A82B2CAACCCAED5C33E03 /* catalog.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = catalog.json; sourceTree = "<group>"; };
 		466DDA96AB529FEFB23D4BEE /* BundledJavaScript-NOTICES.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "BundledJavaScript-NOTICES.txt"; sourceTree = "<group>"; };
 		50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = "substack-shared-text-feed.xml"; sourceTree = "<group>"; };
@@ -140,6 +143,7 @@
 		C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = SourceLinkPreprocessor.js; sourceTree = "<group>"; };
 		D8F75089EB72A10C4E2E79E1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		DA64F144F04CC7A9F436B28E /* traces */ = {isa = PBXFileReference; lastKnownFileType = folder; name = traces; path = Contracts/traces; sourceTree = SOURCE_ROOT; };
+		DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardIntakeClassifier.swift; sourceTree = "<group>"; };
 		E253416A15B5108380F819E8 /* Legal */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Legal; path = App/SpokenMarginsApp/Resources/Legal; sourceTree = SOURCE_ROOT; };
 		E3D5265FADF5995640D6FB31 /* SpokenMarginsGate2Widget.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = SpokenMarginsGate2Widget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE29274792FFFC88EA74C157 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -317,6 +321,7 @@
 				8B9C00DF1535B22C10054D68 /* Packages */,
 				460250240FDC5A068A5D5EA9 /* Resources */,
 				F509B33704F18191A362D38D /* Resources */,
+				61E0A1E977F3456236F0C7D9 /* SessionKit */,
 				EE2767B5F5BD53E79758E8D4 /* SharedResources */,
 				5B74E9616092FD1489F4F709 /* Sources */,
 				CA56E872559E3D6C366F3C1B /* TestFixtures */,
@@ -354,6 +359,16 @@
 			);
 			name = Sources;
 			path = App/Gate2Shared/Sources;
+			sourceTree = "<group>";
+		};
+		61E0A1E977F3456236F0C7D9 /* SessionKit */ = {
+			isa = PBXGroup;
+			children = (
+				DCF082C6D01456C6743B188A /* ClipboardIntakeClassifier.swift */,
+				45170E0354730F22BB2E258A /* SharedTextIntake.swift */,
+			);
+			name = SessionKit;
+			path = Packages/SessionKit/Sources/SessionKit;
 			sourceTree = "<group>";
 		};
 		70D66176CB60056EAB2E7E56 /* Scripts */ = {
@@ -785,6 +800,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				76005D25F3CFA0070E96DA24 /* ClipboardIntakeClassifier.swift in Sources */,
+				A2D0366161FA302E7139746D /* SharedTextIntake.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
