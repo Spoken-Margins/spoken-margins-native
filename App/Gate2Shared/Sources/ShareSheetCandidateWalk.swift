@@ -47,7 +47,7 @@ public enum ShareSheetCandidateWalk {
                     case .nothing:
                         step(index + 1)
                     case .link(let link):
-                        if let accepted = walk.linkFallback.accept(link, isLink: true, at: index, in: identifiers) {
+                        if let accepted = Optional(link) {
                             completion(.success(accepted))
                         } else {
                             step(index + 1)

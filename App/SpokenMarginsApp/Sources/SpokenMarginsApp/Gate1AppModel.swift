@@ -7065,7 +7065,7 @@ final class Gate1AppModel: ObservableObject {
                         try importBrowserTextInBackground(handoff)
                         try? handoffStore.deletePayload(payloadID: payloadID)
                         diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement"
-                    } else if importBrowserText(handoff) {
+                    } else if !importBrowserText(handoff) {
                         try? handoffStore.deletePayload(payloadID: payloadID)
                     }
                 } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
