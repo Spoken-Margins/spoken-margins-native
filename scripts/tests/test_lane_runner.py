@@ -866,6 +866,30 @@ class AutomergeTests(unittest.TestCase):
                 verdict, details = lane.run_fast(Path(folder), runner=runner_writing(status, code))
                 self.assertEqual(verdict, expected)
 
+    def test_a_pass_carries_the_manifest_s_notes_and_a_superseded_parallel_run_is_not_a_failure(self):
+        # #1328: the PASS says when the SessionKit tests were skipped or the parallel core run was run again serially,
+        # and the failed parallel step doesn't count against the serial run that replaced it.
+        steps = [{'name': 'package-core', 'superseded': 'run again serially', 'exit_code': 1,
+                  'tests': {'SessionKitCoreTests/A/testX': {'status': 'failed'}}},
+                 {'name': 'package-core-serial', 'exit_code': 0,
+                  'tests': {'SessionKitCoreTests/A/testX': {'status': 'passed'}}}]
+
+        def run(command, log, timeout):
+            output = Path(command[command.index('--output') + 1])
+            output.mkdir(parents=True)
+            (output / 'manifest.json').write_text(json.dumps({
+                'status': 'verified', 'steps': steps, 'notes': ['SessionKitCoreTests: the parallel run failed']}))
+            return 0
+
+        with tempfile.TemporaryDirectory() as folder:
+            verdict, details = lane.run_fast(Path(folder), runner=run)
+            self.assertEqual((verdict, details), ('PASS', ['SessionKitCoreTests: the parallel run failed']))
+            self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'), ([], False))
+            steps[1]['tests']['SessionKitCoreTests/A/testX']['status'] = 'failed'
+            (Path(folder) / 'fast/manifest.json').write_text(json.dumps({'steps': steps}))
+            self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'),
+                             (['SessionKitCoreTests/A/testX'], False))
+
     def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
         # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
         def run(command, log, timeout):

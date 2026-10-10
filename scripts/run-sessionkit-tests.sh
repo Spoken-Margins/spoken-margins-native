@@ -15,13 +15,27 @@ cd "$PACKAGE"
 # --build-only builds the package and its tests; --skip-build then runs the tests without building.
 # verify-tests.py uses the pair so a slow build can't eat the tests' time limit (#844). With no
 # argument it builds and tests, as before.
+#
+# verify-tests.py splits the run (#1328): SessionKitCoreTests in parallel (--core-parallel <xunit file>; with
+# --parallel SwiftPM prints no line for a passing test, so the result file is the record), and the other two
+# targets serially (--rest), because they hold real-time AVFoundation tests that need the machine to themselves.
+# --core-serial is the fallback when the parallel run fails. --skip-build alone runs every test serially.
+# A filter is a regex on "Module.Class/test", so each group is anchored on its module names.
 SANDBOX=()
 if [[ -n "${CODEX_SANDBOX:-}" ]]; then
   SANDBOX=(--disable-sandbox)
 fi
+CORE='^SessionKitCoreTests\.'
+REST='^(SessionKitTests|SessionKitTraceTests)\.'
+WORKERS=4  # the Mac also runs builds and other jobs: leave it room
 case "${1:-}" in
+  --core-parallel)
+    [[ -n "${2:-}" ]] || { echo "usage: $0 --core-parallel <xunit file>" >&2; exit 2; }
+    exec "$ROOT/scripts/host-test-lane" swift test --skip-build --parallel --num-workers "$WORKERS" --filter "$CORE" --xunit-output "$2" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --core-serial) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$CORE" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
+  --rest) exec "$ROOT/scripts/host-test-lane" swift test --skip-build --filter "$REST" ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   --skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
   "") exec "$ROOT/scripts/host-test-lane" swift test ${SANDBOX[@]+"${SANDBOX[@]}"} ;;
-  *) echo "usage: $0 [--build-only | --skip-build]" >&2; exit 2 ;;
+  *) echo "usage: $0 [--build-only | --skip-build | --core-parallel <xunit file> | --core-serial | --rest]" >&2; exit 2 ;;
 esac
