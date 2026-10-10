@@ -119,6 +119,7 @@ It installs the harness, fetches the models, runs every benchmark (`results/darw
 - `passages.json`: the three test passages (narrative, scientific, essay with dialogue).
 - `harness.py`, `bench.py`, `run_all.sh`: the benchmark. `engines/*.py` has one wrapper per engine. `engines/supertonic.py` is a Python port of the app's `SupertonicRuntime.swift`, using the same INT8 files, sha256-matched to `asset-manifest.json`.
 - `intelligibility.py`: the Whisper word-error check.
+- `chunk_gap.py`: the silence between two rendered Supertonic chunks (#586): what the model leaves before and after the speech, and the seam a listener hears. Input is a chunk plan from `RenderedSpeechChunker`.
 - `build_page.py`, `listening_template.html`: build the blind page (seeded letters, loudness-matched 96 kbps MP3).
   - The clips aren't in git (`listening/audio/` is ignored), so no audio enters `next`'s history. They're still served by the published page.
   - To rebuild them: `./fetch_models.sh`, `./run_all.sh`, `mac/samantha.sh` (on a Mac, for F), then `.venv/bin/python build_page.py`. Fresh renders differ slightly from what the owner rated, because Pocket TTS and Kitten sample randomly.

@@ -1093,6 +1093,9 @@ public final class SessionEngine {
             chapters: chapters
         )
         try repository.saveListeningMap(map)
+        // A community map never outlives the publisher's chapters (#553): the episode may have
+        // asked for one while its audio, and so its embedded chapters, was not yet readable.
+        try repository.removeCommunityMap(itemId: itemId)
         if item.status == "needs_listening_map" {
             item.status = "ready"
             try saveItem(item)

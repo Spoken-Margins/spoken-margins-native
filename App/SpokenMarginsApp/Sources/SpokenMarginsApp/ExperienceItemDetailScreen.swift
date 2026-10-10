@@ -406,7 +406,11 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private var listeningMap: some View {
-        ExperienceListeningMapSection(scenes: model.selectedItem.listeningMapScenes, model: model)
+        ExperienceListeningMapSection(
+            scenes: model.selectedItem.listeningMapScenes,
+            isCommunityMap: model.selectedItem.listeningMapIsCommunity,
+            model: model
+        )
             .equatable()
     }
 
@@ -662,15 +666,22 @@ struct ExperienceItemDetailScreen: View {
 // its value inputs; keep those updates from rebuilding every summary row.
 private struct ExperienceListeningMapSection: View, Equatable {
     let scenes: [MediaTimelineChapter]
+    let isCommunityMap: Bool
     let model: Gate1AppModel
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.scenes == rhs.scenes && lhs.model === rhs.model
+        lhs.scenes == rhs.scenes && lhs.isCommunityMap == rhs.isCommunityMap && lhs.model === rhs.model
     }
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening Map", detail: "Scene navigation and Skim summaries")
+            sectionHeading(
+                isCommunityMap ? "Community map" : "Listening Map",
+                detail: isCommunityMap
+                    ? "Made from other listeners' transcripts. Scene navigation and Skim summaries."
+                    : "Scene navigation and Skim summaries"
+            )
+            .accessibilityIdentifier(isCommunityMap ? "listeningMap.heading.community" : "listeningMap.heading")
             ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(scenes.enumerated()), id: \.element.id) { index, scene in
