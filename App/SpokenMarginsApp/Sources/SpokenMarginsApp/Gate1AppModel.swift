@@ -1367,14 +1367,7 @@ final class Gate1AppModel: ObservableObject {
             // manifest from an obsolete voice or model identity.
             rows = try loadLibraryRows(store: store)
             try reconcileOnboardingEvidence(store: store)
-            try recoverInterruptedAIJobs(store: store, rows: rows)
-            // No transcription of this run exists yet, so a Margin still "pending" lost its worker with the last run (#942).
-            do {
-                let settled = try store.settleOrphanedTranscriptions()
-                if settled > 0 { diagnostics["orphanedTranscriptionsSettled"] = "\(settled)" }
-            } catch {
-                diagnostics["orphanedTranscriptionsSettled"] = "failed:\(error.localizedDescription)"
-            }
+            try recoverInterruptedAIJobs(store: store, rows: rows); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
@@ -10363,14 +10356,7 @@ final class Gate1AppModel: ObservableObject {
                     let failure = String(describing: error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
                     if wasRetry {
-                        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(failure)"
-                        diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
-                        // A Margin never transcribed would stay "pending" with the retry over (#942); one with words keeps them.
-                        run { engine in
-                            snapshot = try engine.transcriptionRetryFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
-                            refreshSelectedItem()
-                            refreshMarginRows()
-                        }
+                        recordFailedRetry(of: interjection, failure: failure)
                         TranscriptionFailureWording.notice(error: failure, isRetry: true).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
                     } else {
                         run { engine in
@@ -11716,7 +11702,7 @@ final class Gate1AppModel: ObservableObject {
         feedbackEvent = event
     }
 
-    private func refreshSelectedItem() {
+    func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
