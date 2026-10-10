@@ -1,4 +1,5 @@
 import XCTest
+import SessionKit
 @testable import SpokenMarginsApp
 
 final class AppNavigationStateTests: XCTestCase {
@@ -15,6 +16,19 @@ final class AppNavigationStateTests: XCTestCase {
         XCTAssertEqual(navigation.paths[.library], [.item("library-item")])
         XCTAssertEqual(navigation.paths[.sources], [.item("source-item")])
         XCTAssertEqual(navigation.paths[.margins], [.marginDetail("margin-1")])
+    }
+
+    /// #479: the root view holds Following's place across the screen switches that destroy its list.
+    func testFollowingKeepsItsPlaceWhileOtherRootsAreUsed() {
+        var navigation = AppNavigationState()
+        XCTAssertEqual(navigation.followingScroll, FollowingScrollMemory())
+
+        navigation.followingScroll = FollowingScrollMemory(topEntryId: "b", order: ["a", "b", "c"])
+        navigation.select(.sources, recordingIsLocked: false)
+        navigation.select(.library, recordingIsLocked: false)
+        navigation.push(.item("library-item"), recordingIsLocked: false)
+
+        XCTAssertEqual(navigation.followingScroll.restoreTarget(in: ["a", "c"]), "c")
     }
 
     func testExplicitRootPushDoesNotChangeTheSelectedRoot() {

@@ -23,59 +23,69 @@ struct ExperienceSourcesScreen: View {
     @State private var focusFeedURLOnManage = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
+    /// The place in the list, kept by the root view because opening an entry destroys this screen (#479).
+    @Binding var scrollMemory: FollowingScrollMemory
+    @State private var visibleEntryIDs = Set<String>()
+    /// The first entry seen at the top. Rows disappearing with the screen never clear it.
+    @State private var lastTopEntryID: String?
+    @State private var restoredScroll = false
 
     var body: some View {
         NavigationStack {
-            List {
-                // An item's Follow can find several feeds; the choice shows here too, not only on Manage Feeds.
-                if !model.followedSourceCandidates.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                }
-                manageFeedsRow
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                filterBar
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                inbox
-            }
-            .background(AppColors.bone)
-            .scrollContentBackground(.hidden)
-            .listStyle(.plain)
-            .animation(.smooth(duration: 0.24), value: filteredCandidates.map(\.id))
-            .accessibilityIdentifier("sources.screen")
-            .navigationTitle("Following")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openSettings) {
-                        Image(systemName: "gearshape").frame(width: 44, height: 44)
+            ScrollViewReader { proxy in
+                List {
+                    // An item's Follow can find several feeds; the choice shows here too, not only on Manage Feeds.
+                    if !model.followedSourceCandidates.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
+                            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                     }
-                    .accessibilityLabel("Settings")
+                    manageFeedsRow
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    filterBar
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    inbox
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(action: { model.refreshQuickAddFeed() }) {
-                        if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                .onChange(of: candidateIDs, initial: true) { _, ids in restoreScroll(in: ids, using: proxy) }
+                .onDisappear { rememberScroll() }
+                .background(AppColors.bone)
+                .scrollContentBackground(.hidden)
+                .listStyle(.plain)
+                .animation(.smooth(duration: 0.24), value: filteredCandidates.map(\.id))
+                .accessibilityIdentifier("sources.screen")
+                .navigationTitle("Following")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: model.openSettings) {
+                            Image(systemName: "gearshape").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Settings")
                     }
-                    .frame(minWidth: 44, minHeight: 44)
-                    .disabled(model.isRefreshingQuickAddFeed)
-                    .accessibilityLabel("Refresh Sources")
-                    .accessibilityIdentifier("quickAdd.refresh.button")
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button(action: { model.refreshQuickAddFeed() }) {
+                            if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                        }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .disabled(model.isRefreshingQuickAddFeed)
+                        .accessibilityLabel("Refresh Sources")
+                        .accessibilityIdentifier("quickAdd.refresh.button")
+                    }
                 }
-            }
-            .navigationDestination(isPresented: $isManagingFeeds) {
-                ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
-            }
-            .task { model.refreshQuickAddFeed(force: false) }
-            // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
-            .task { await catalogDrawer.loadSnapshot() }
-            // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
-            .task(id: ArtworkKey(
-                subscriptionIDs: model.feedSubscriptions.map(\.id),
-                hasCatalog: catalogDrawer.catalog != nil,
-                isRefreshing: model.isRefreshingFollowedSources
-            )) {
-                guard let coordinator = model.followedSourceCoordinator else { return }
-                artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
+                .navigationDestination(isPresented: $isManagingFeeds) {
+                    ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
+                }
+                .task { model.refreshQuickAddFeed(force: false) }
+                // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
+                .task { await catalogDrawer.loadSnapshot() }
+                // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
+                .task(id: ArtworkKey(
+                    subscriptionIDs: model.feedSubscriptions.map(\.id),
+                    hasCatalog: catalogDrawer.catalog != nil,
+                    isRefreshing: model.isRefreshingFollowedSources
+                )) {
+                    guard let coordinator = model.followedSourceCoordinator else { return }
+                    artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
+                }
             }
         }
     }
@@ -204,6 +214,8 @@ struct ExperienceSourcesScreen: View {
                         ))
                         .listRowSeparator(.hidden)
                         .listRowBackground(AppColors.bone)
+                        .onAppear { noteVisibility(of: candidate.id, isVisible: true) }
+                        .onDisappear { noteVisibility(of: candidate.id, isVisible: false) }
                 }
             }
         } header: {
@@ -233,6 +245,32 @@ struct ExperienceSourcesScreen: View {
     }
 
     private var isNarrowed: Bool { kind != nil || subject != nil }
+
+    private var candidateIDs: [String] { filteredCandidates.map(\.id) }
+
+    /// Tracks the entry at the top of the visible list (#479).
+    private func noteVisibility(of id: String, isVisible: Bool) {
+        if isVisible { visibleEntryIDs.insert(id) } else { visibleEntryIDs.remove(id) }
+        // Rows also disappear when this screen is torn down for the Item screen. That isn't scrolling,
+        // and must not move the saved place down the list.
+        guard model.screen == .home,
+              let top = FollowingScrollMemory.topEntry(visible: visibleEntryIDs, order: candidateIDs) else { return }
+        lastTopEntryID = top
+    }
+
+    /// Hands the place to the root view, which outlives this screen.
+    private func rememberScroll() {
+        guard let top = lastTopEntryID else { return }
+        scrollMemory = FollowingScrollMemory(topEntryId: top, order: candidateIDs)
+    }
+
+    /// Scrolls back to the remembered entry once, the first time the list has entries.
+    private func restoreScroll(in ids: [String], using proxy: ScrollViewProxy) {
+        guard !restoredScroll, !ids.isEmpty else { return }
+        restoredScroll = true
+        guard let target = scrollMemory.restoreTarget(in: ids), target != ids.first else { return }
+        Task { @MainActor in proxy.scrollTo(target, anchor: .top) }
+    }
 
     private struct ArtworkKey: Equatable {
         var subscriptionIDs: [String]
