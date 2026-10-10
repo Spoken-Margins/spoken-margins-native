@@ -92,4 +92,54 @@ final class PodcastAnchorCaptureDiagnosticsTests: XCTestCase {
             "marginCapture", sessionId: "session-b", interjectionId: "ij-001")])
         XCTAssertTrue(ready.contains("status=ready"))
     }
+
+    /// #1191: the export read every session's Margins (273 queries on the owner's phone). It reads only the
+    /// newest sessions, and still finds what they hold.
+    func testExportScansOnlyTheNewestSessions() {
+        let now = Date()
+        let sessions = (0..<300).map { index in
+            Session(
+                id: "session-\(index)",
+                itemId: "episode",
+                createdAt: now.addingTimeInterval(TimeInterval(-index)),
+                updatedAt: now.addingTimeInterval(TimeInterval(-index)),
+                status: "active",
+                phase: .itemPlayback,
+                currentTargetType: .transcriptBackedMedia,
+                currentTargetId: "episode",
+                position: Position(mediaTimeMs: 0),
+                completionPercent: 0,
+                playbackRate: 1
+            )
+        }
+        var queried: [String] = []
+        let entries = PodcastAnchorCaptureDiagnostics.exportEntries(
+            sessions: sessions.shuffled(),
+            interjections: { sessionId in
+                queried.append(sessionId)
+                return [Interjection(
+                    id: "ij-001",
+                    itemId: "episode",
+                    sessionId: sessionId,
+                    targetType: .item,
+                    targetId: "episode",
+                    createdAt: now,
+                    roughPercent: 10,
+                    anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 0),
+                    audioPath: "interjections/\(sessionId).m4a",
+                    audioStatus: "saved",
+                    transcriptionStatus: "complete",
+                    transcript: nil,
+                    cleanedTranscript: nil,
+                    displayText: nil,
+                    status: "active",
+                    podcastAnchorEvidenceCaptureStatus: nil
+                )]
+            }
+        )
+        XCTAssertEqual(queried.count, PodcastAnchorCaptureDiagnostics.maximumSessionsScanned)
+        XCTAssertEqual(Set(queried), Set((0..<PodcastAnchorCaptureDiagnostics.maximumSessionsScanned).map { "session-\($0)" }),
+                       "the newest sessions are the ones read")
+        XCTAssertTrue(entries.isEmpty, "Margins without a capture status add no entry")
+    }
 }
