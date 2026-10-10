@@ -975,7 +975,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             if !returned { try await Task.sleep(for: .milliseconds(10)) }
         }
         XCTAssertTrue(returned, "the stale render came back after Cancel")
-        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path), "it wrote its cleaned copy")
+        // Checked by the renderer as it returns: the model's cleanup runs on the main actor as soon as the render
+        // returns, which can be before this test's poll sees `hasReturned`, so the file may already be gone here.
+        let wroteCopy = await render.wroteCopy
+        XCTAssertTrue(wroteCopy, "it wrote its cleaned copy")
         // The cancelled preparation comes back to the main actor and, past its guard, deletes the stale copy.
         try await waitFor("the stale cleaned copy to be deleted", timeoutNanoseconds: 3_000_000_000) {
             !FileManager.default.fileExists(atPath: destination.path)
@@ -5174,6 +5177,8 @@ private actor HeldCleanupRender {
     private var release: CheckedContinuation<Void, Never>?
     private(set) var heldDestination: URL?
     private(set) var hasReturned = false
+    /// The copy was on disk when the render returned, before the model could react to it.
+    private(set) var wroteCopy = false
 
     func render(destinationURL: URL) async throws -> Int {
         await withCheckedContinuation { continuation in
@@ -5182,6 +5187,7 @@ private actor HeldCleanupRender {
         }
         try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try BulkSharePreparationProbe.cleanedBytes.write(to: destinationURL)
+        wroteCopy = FileManager.default.fileExists(atPath: destinationURL.path)
         hasReturned = true
         return 625
     }
