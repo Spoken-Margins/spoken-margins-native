@@ -100,7 +100,8 @@ struct SpokenMarginsApp: App {
                     },
                     didFollow: { model?.refreshFollowedSources(force: false) }
                 )
-            }
+            },
+            searcher: CatalogDrawerModel.makeSearcher()
         ))
     }
 
