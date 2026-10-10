@@ -25,11 +25,12 @@ public struct FollowingScrollMemory: Equatable, Sendable {
 
     /// The id to scroll to in `current`, or nil to leave the list where it opens.
     ///
-    /// The saved entry when it is still listed. When it has gone (added, dismissed, or its show
+    /// Nil too when the listener was at the top of the list: new entries that arrived meanwhile show
+    /// there, as they do on any visit. Otherwise the saved entry when it is still listed. When it has gone (added, dismissed, or its show
     /// muted), the nearest entry that was below it and is still listed, then the nearest above it. Nil
     /// when nothing was saved, the list is empty, or none of the saved list survives.
     public func restoreTarget(in current: [String]) -> String? {
-        guard let topEntryId, !current.isEmpty else { return nil }
+        guard let topEntryId, !current.isEmpty, order.first != topEntryId else { return nil }
         let present = Set(current)
         if present.contains(topEntryId) { return topEntryId }
         guard let index = order.firstIndex(of: topEntryId) else { return nil }

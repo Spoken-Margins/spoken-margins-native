@@ -15,7 +15,9 @@ final class FollowingScrollMemoryTests: XCTestCase {
     func testRestoreTargetTable() {
         let table: [(name: String, top: String?, current: [String], target: String?)] = [
             ("saved entry still listed", "c", ["a", "b", "c", "d", "e"], "c"),
-            ("saved entry is the first", "a", ["a", "b", "c"], "a"),
+            ("was at the top", "a", ["a", "b", "c"], nil),
+            ("was at the top and new entries arrived", "a", ["x", "a", "b"], nil),
+            ("was at the top and it was removed", "a", ["b", "c"], nil),
             ("new entries arrived above it", "c", ["x", "y", "a", "b", "c", "d", "e"], "c"),
             ("saved entry removed: the next one below", "c", ["a", "b", "d", "e"], "d"),
             ("saved and the next removed: the one after", "c", ["a", "b", "e"], "e"),

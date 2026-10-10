@@ -25,9 +25,8 @@ struct ExperienceSourcesScreen: View {
     @State private var artwork = FollowingArtworkCache()
     /// The place in the list, kept by the root view because opening an entry destroys this screen (#479).
     @Binding var scrollMemory: FollowingScrollMemory
-    @State private var visibleEntryIDs = Set<String>()
-    /// The first entry seen at the top. Rows disappearing with the screen never clear it.
-    @State private var lastTopEntryID: String?
+    /// Follows the top entry without redrawing the screen on every row that scrolls by (#479).
+    @State private var scrollTracker = FollowingScrollTracker()
     @State private var restoredScroll = false
 
     var body: some View {
@@ -45,7 +44,11 @@ struct ExperienceSourcesScreen: View {
                         .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
                     inbox
                 }
-                .onChange(of: candidateIDs, initial: true) { _, ids in restoreScroll(in: ids, using: proxy) }
+                .onChange(of: candidateIDs, initial: true) { _, ids in
+                    scrollTracker.order = ids
+                    restoreScroll(in: ids, using: proxy)
+                }
+                .onAppear { if restoredScroll { scrollTracker.thaw() } }
                 .onDisappear { rememberScroll() }
                 .background(AppColors.bone)
                 .scrollContentBackground(.hidden)
@@ -214,8 +217,8 @@ struct ExperienceSourcesScreen: View {
                         ))
                         .listRowSeparator(.hidden)
                         .listRowBackground(AppColors.bone)
-                        .onAppear { noteVisibility(of: candidate.id, isVisible: true) }
-                        .onDisappear { noteVisibility(of: candidate.id, isVisible: false) }
+                        .onAppear { scrollTracker.rowChanged(candidate.id, isVisible: true) }
+                        .onDisappear { scrollTracker.rowChanged(candidate.id, isVisible: false) }
                 }
             }
         } header: {
@@ -248,28 +251,30 @@ struct ExperienceSourcesScreen: View {
 
     private var candidateIDs: [String] { filteredCandidates.map(\.id) }
 
-    /// Tracks the entry at the top of the visible list (#479).
-    private func noteVisibility(of id: String, isVisible: Bool) {
-        if isVisible { visibleEntryIDs.insert(id) } else { visibleEntryIDs.remove(id) }
-        // Rows also disappear when this screen is torn down for the Item screen. That isn't scrolling,
-        // and must not move the saved place down the list.
-        guard model.screen == .home,
-              let top = FollowingScrollMemory.topEntry(visible: visibleEntryIDs, order: candidateIDs) else { return }
-        lastTopEntryID = top
-    }
-
     /// Hands the place to the root view, which outlives this screen.
     private func rememberScroll() {
-        guard let top = lastTopEntryID else { return }
+        scrollTracker.freeze()
+        guard let top = scrollTracker.topEntryID else { return }
         scrollMemory = FollowingScrollMemory(topEntryId: top, order: candidateIDs)
     }
 
-    /// Scrolls back to the remembered entry once, the first time the list has entries.
+    /// Scrolls back to the remembered entry once, the first time the list has entries. The tracker
+    /// stays frozen until then, so the rows that appear at the top first don't overwrite the place.
     private func restoreScroll(in ids: [String], using proxy: ScrollViewProxy) {
         guard !restoredScroll, !ids.isEmpty else { return }
         restoredScroll = true
-        guard let target = scrollMemory.restoreTarget(in: ids), target != ids.first else { return }
-        Task { @MainActor in proxy.scrollTo(target, anchor: .top) }
+        guard let target = scrollMemory.restoreTarget(in: ids) else {
+            scrollTracker.thaw()
+            return
+        }
+        Task { @MainActor in
+            // After the list's first layout, or the scroll finds nothing to move.
+            try? await Task.sleep(for: .milliseconds(150))
+            // Not at the very top: the pinned "New" header covers the first row there.
+            proxy.scrollTo(target, anchor: UnitPoint(x: 0.5, y: 0.06))
+            try? await Task.sleep(for: .milliseconds(150))
+            scrollTracker.thaw()
+        }
     }
 
     private struct ArtworkKey: Equatable {
@@ -686,4 +691,38 @@ private struct SourceInboxRow: View {
         case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
         }
     }
+}
+
+/// Follows the entry at the top of Following's list as rows scroll by (#479). It is a class that no
+/// view observes, so a row coming and going costs a set update, not a redraw.
+///
+/// A change settles for a moment before it counts. The rows also disappear all at once when the
+/// screen goes away (opening an entry, another tab, the feed manager), and those disappearances
+/// must not slide the saved place down the list: `freeze` runs when the list disappears and drops
+/// what hasn't settled. It starts frozen, until the saved place has been restored.
+@MainActor
+private final class FollowingScrollTracker {
+    var order: [String] = []
+    private(set) var topEntryID: String?
+    private var visible = Set<String>()
+    private var isFrozen = true
+    private var settling: Task<Void, Never>?
+
+    func rowChanged(_ id: String, isVisible: Bool) {
+        if isVisible { visible.insert(id) } else { visible.remove(id) }
+        settling?.cancel()
+        settling = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled, let self, !isFrozen,
+                  let top = FollowingScrollMemory.topEntry(visible: visible, order: order) else { return }
+            topEntryID = top
+        }
+    }
+
+    func freeze() {
+        isFrozen = true
+        settling?.cancel()
+    }
+
+    func thaw() { isFrozen = false }
 }
