@@ -125,7 +125,7 @@ final class SystemVoiceSessionTests: XCTestCase {
     /// APA-06 (#1042): this used to pass `usesApplicationAudioSession: false` itself, so flipping the default
     /// that `SupertonicOutputGuard` relies on left it green. It now builds the renderer the way the guard
     /// does; `SystemVoiceChunkRendererDefaultTests` pins that default on the host, because this probe may not
-    /// tell the two settings apart on the simulator.
+    /// tell the two settings apart on the simulator. The shared-session setting (#288's) is checked on a phone.
     func testWritingIOSVoiceChunksLeavesTheAppsPlayingAudioUndisturbed() async throws {
         let result = try await probe(SystemVoiceChunkRenderer())
         print("#288 probe, renderer as the output guard builds it: \(result)")
@@ -136,15 +136,5 @@ final class SystemVoiceSessionTests: XCTestCase {
         XCTAssertTrue(result.engineRunningAfter, "\(result)")
         XCTAssertGreaterThan(result.framesAfter, 22_050, "app audio still renders a second later: \(result)")
         XCTAssertEqual(result.categoryAfter, result.categoryBefore, "\(result)")
-    }
-
-    /// Build 30 candidate behavior, recorded for comparison (the synthesizer shares the app's
-    /// session). Not asserted: whether the simulator shows the device's disturbance is part of
-    /// what this measures. APA-06 (#1042): it asserted nothing and still reported a pass, so it now
-    /// records the probe and then reports itself skipped, which keeps the gap visible in every run.
-    func testRecordWhatSharingTheAppsSessionDoes() async throws {
-        let result = try await probe(SystemVoiceChunkRenderer(usesApplicationAudioSession: true))
-        print("#288 probe usesApplicationAudioSession=true: \(result)")
-        throw XCTSkip("Recorded only: the simulator can't show #288's silence, so sharing the app's session is checked on a phone. \(result)")
     }
 }
