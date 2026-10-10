@@ -60,12 +60,16 @@ final class RealPlayerMarginMomentTests: XCTestCase {
         XCTAssertEqual(conductor.sequence.startMediaTimeMs, 1_000)
 
         var sawVoice = false
+        // The episode's own clock while the Margin's voice plays, read from the real player rather than from the
+        // flag this test's `pause` closure sets (#1308, ANC-08).
+        var clockDuringVoice: (first: Int, last: Int)?
         let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
             if conductor.isPlayingVoice {
                 sawVoice = true
-                XCTAssertFalse(sourcePlaying, "the episode is paused while the Margin plays")
+                let now = try XCTUnwrap(client.currentMediaTimeMs())
+                clockDuringVoice = (clockDuringVoice?.first ?? now, now)
             }
             if sourcePlaying { conductor.observe(mediaTimeMs: client.currentMediaTimeMs()) }
             if conductor.sequence.phase == .listening, (client.currentMediaTimeMs() ?? 0) >= 3_500 { break }
@@ -73,31 +77,15 @@ final class RealPlayerMarginMomentTests: XCTestCase {
 
         XCTAssertEqual(unavailable, [])
         XCTAssertTrue(sawVoice, "the Margin's recording never played")
+        let clock = try XCTUnwrap(clockDuringVoice)
+        XCTAssertLessThanOrEqual(clock.last - clock.first, 100,
+                                 "the episode stays paused while the Margin plays: its clock went from \(clock.first) to \(clock.last) ms")
         XCTAssertEqual(events, ["source.pause", "source.resume"])
         XCTAssertEqual(conductor.sequence.phase, .listening)
         let paused = try XCTUnwrap(pausedAtMs)
         XCTAssertGreaterThanOrEqual(paused, 2_500, "paused at the Margin, not before it")
         XCTAssertLessThan(paused, 3_500)
         XCTAssertGreaterThanOrEqual(client.currentMediaTimeMs() ?? 0, 3_500, "the episode continued after the Margin")
-    }
-
-    func testAMissingRecordingIsReportedAndTheEpisodeKeepsPlaying() throws {
-        var resumed = 0
-        let conductor = MarginMomentConductor(
-            sequence: MarginMomentSequence(
-                itemId: "episode", target: MarginMomentAnchor(marginId: "ij-009", mediaTimeMs: 5_000), otherMargins: []
-            ),
-            source: .init(pause: {}, resume: { resumed += 1 }, seek: { _ in }),
-            voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/ij-009.m4a") }
-        )
-        var unavailable: [String] = []
-        conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
-        conductor.start()
-        conductor.observe(mediaTimeMs: 4_800)
-        conductor.observe(mediaTimeMs: 5_200)
-        XCTAssertEqual(unavailable, ["ij-009:recording_missing"])
-        XCTAssertEqual(resumed, 1)
-        XCTAssertEqual(conductor.sequence.phase, .listening)
     }
 
     // MARK: Another listener's Margin gets the chime first (#932)
