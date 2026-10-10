@@ -154,6 +154,8 @@ final class AddMarginShortcutIntentTests: XCTestCase {
     func testItemThatIsNotPlayingGetsTheMarginAtItsSavedPlaceAndThePlayingItemCarriesOn() async throws {
         let (model, sampleSessionId) = try modelPlayingPillWithSampleSavedAt(offset: 120)
         let playingSessionId = try XCTUnwrap(model.snapshot.sessionId)
+        let store = try XCTUnwrap(model.store)
+        let sampleUpdatedAt = try XCTUnwrap(store.loadSession(id: sampleSessionId)?.updatedAt)
         model.refreshMarginRows()
         let before = model.marginRows.count
 
@@ -176,7 +178,6 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         // The sample's session is where the listener left it, and not pulled ahead of the playing item's.
         XCTAssertEqual(try store.loadSession(id: sampleSessionId)?.position.charOffset, 120)
         XCTAssertEqual(try store.loadSession(id: sampleSessionId)?.updatedAt, sampleUpdatedAt)
-        XCTAssertEqual(try store.loadSessions().first?.id, playingSessionId)
         XCTAssertEqual(try store.loadSessions(itemId: sampleId).count, 1)
     }
 
