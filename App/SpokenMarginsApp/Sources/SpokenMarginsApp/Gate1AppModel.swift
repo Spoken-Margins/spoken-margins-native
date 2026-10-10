@@ -2767,34 +2767,6 @@ final class Gate1AppModel: ObservableObject {
 
     static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
-    @discardableResult
-    private func importLocalSharedPDFInBackground(url: URL) async throws -> String {
-        #if canImport(PDFKit)
-        let extracted = try await Task.detached(priority: .userInitiated) {
-            try NativePDFDocumentExtractor.extractStructured(from: url)
-        }.value
-        let fileTitle = url.deletingPathExtension().lastPathComponent
-        let title = extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
-        let encodedName = url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "shared.pdf"
-        let handoff = BrowserTextHandoff(
-            captureMode: .markdownFile,
-            source: BrowserTextSource(
-                url: "shared-file://share-sheet/\(encodedName)",
-                title: title
-            ),
-            text: extracted.document.text,
-            contentFormat: .plainText,
-            documentStructure: extracted.documentStructure
-        )
-        let itemId = try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
-        diagnostics["lastSharedPDFImport"] = url.lastPathComponent
-        markOnboardingSteps([.addedOwnSource, .addedFromSafari])
-        return itemId
-        #else
-        throw SourceFileImportError.pdfImportUnavailable
-        #endif
-    }
-
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
         let store = try requireStore()
         if engine == nil {
@@ -2926,8 +2898,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// `importBrowserText`, returning the new item's id, or nil when the import failed.
-    /// An article added without starting it (the Link field, Paste & go) passes `opensItem: false`: it is
-    /// added in the background and confirmed with "Added <title> to Library." and Play now, like other adds (#828).
+    /// `opensItem: false` (the Link field, Paste & go) adds an article in the background with the shared add confirmation (#828).
     private func importBrowserTextItem(_ handoff: BrowserTextHandoff, opensItem: Bool = true) -> String? {
         do {
             if hasActiveSession || (!opensItem && !handoff.requestedContinuation.startSession) {
@@ -6548,7 +6519,6 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
         }
-
         var addedItemIds: [String] = []
         defer { reportPendingHandoffsAdded(itemIds: addedItemIds) }
 
