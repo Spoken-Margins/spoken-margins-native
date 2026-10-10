@@ -3897,7 +3897,7 @@ final class Gate1AppModel: ObservableObject {
         isUpdatingSkimAvailability = false
     }
 
-    private func resolvedSkimPlaybackPlan(
+    func resolvedSkimPlaybackPlan(
         direction: SkimDirection,
         at recipientMediaTimeMs: Int
     ) -> ResolvedSkimPlaybackPlan? {
@@ -3969,7 +3969,7 @@ final class Gate1AppModel: ObservableObject {
         startSkimBridge(plan)
     }
 
-    private func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan, continueAfterSummary: Bool = false) {
+    func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan, continueAfterSummary: Bool = false) {
         #if canImport(AVFoundation)
         guard let engine else { return }
         let wasPlaying = snapshot.status.isPlaybackActive || continueAfterSummary
@@ -4022,7 +4022,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func completeSkimBridge() {
+    func completeSkimBridge() {
         guard var bridge = snapshot.skimBridgeState, let engine else { return }
         bridge.status = .completing
         snapshot.skimBridgeState = bridge
@@ -4185,46 +4185,6 @@ final class Gate1AppModel: ObservableObject {
               let position = snapshot.currentMediaTimeMs else { return nil }
         let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
         return chapters.sorted { $0.startMs < $1.startMs }.first { $0.startMs > position }
-    }
-
-    var canJumpToNextChapter: Bool {
-        let mediaChapter = nextPlaybackChapter == nil ? nextPlaybackMediaChapter : nil
-        return !recordingNavigationIsLocked && playingImportedCommentary == nil
-            && NextChapterSummaryRule.isAvailable(
-                playing: playingSummaryForNextChapter,
-                hasNextChapter: nextPlaybackChapter != nil || mediaChapter != nil,
-                nextChapterStartMs: mediaChapter?.startMs)
-    }
-
-    private var playingSummaryForNextChapter: NextChapterSummaryRule.PlayingSummary? {
-        snapshot.skimBridgeState.map { .init(direction: $0.direction, landsAtMs: $0.destinationMediaTimeMs) }
-    }
-
-    /// Reads the summary of the chapter being left, when it has one, then lands at the next
-    /// chapter; a second press during the summary skips it (#569, `NextChapterSummaryRule`).
-    func jumpToNextChapter() {
-        guard canJumpToNextChapter else { return }
-        let textChapter = nextPlaybackChapter
-        let mediaChapter = textChapter == nil ? nextPlaybackMediaChapter : nil
-        let summary = snapshot.skimBridgeState == nil && mediaChapter != nil
-            ? snapshot.currentMediaTimeMs.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } : nil
-        switch NextChapterSummaryRule.press(
-            playing: playingSummaryForNextChapter,
-            hasNextChapter: textChapter != nil || mediaChapter != nil,
-            nextChapterStartMs: mediaChapter?.startMs, summaryLandsAtMs: summary?.destinationMediaTimeMs
-        ) {
-        case .skipSummary: completeSkimBridge()
-        case .summaryThenJump(let landingMs):
-            // Like the plain jump, playback carries on at the chapter start even if it was paused.
-            if let summary { startSkimBridge(summary.landing(at: landingMs), continueAfterSummary: true) }
-        case .unavailable: return
-        case .jump:
-            if let chapter = textChapter { jumpToChapter(chapter) }
-            else if let chapter = mediaChapter {
-                if selectedItem.mediaChapters.isEmpty { jumpToListeningMapScene(chapter) }
-                else { jumpToMediaChapter(chapter) }
-            }
-        }
     }
 
     func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
@@ -7823,10 +7783,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["gate2LastCommand"] = command.rawValue
             return
         }
-        // The Live Activity's Next chapter behaves like the app's: summary first, second press skips it (#569).
-        if command == .jumpToChapter, isMediaPlaybackSnapshot, canJumpToNextChapter,
-           let chapterId, chapterId == nextPlaybackMediaChapter?.id {
-            jumpToNextChapter()
+        if handlesLiveActivityNextChapter(command, chapterId: chapterId) {
             diagnostics["gate2LastCommand"] = command.rawValue
             return
         }
