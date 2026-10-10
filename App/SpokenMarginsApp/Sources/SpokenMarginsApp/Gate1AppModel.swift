@@ -471,10 +471,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var piperVoiceOptions: [PiperVoiceOption] = []
     @Published var piperStatus = "Not checked"
     @Published var isRenderingSupertonicPreview = false
-    #if SPOKEN_MARGINS_WATCH
-    @Published var isRenderingWatchPackage = false
-    @Published var watchPackageRenderStatus = "Not prepared"
-    #endif
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
     @Published var aiDataSharingConsent = AIDataSharingConsent(
@@ -506,9 +502,6 @@ final class Gate1AppModel: ObservableObject {
     let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
     private let localFoundationModelClient: any LocalFoundationModelClient
-    #if SPOKEN_MARGINS_WATCH
-    private let gate3WatchConnectivity = Gate3WatchConnectivityController()
-    #endif
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private(set) var speechPlaybackClient: AudioPlaybackClient?
@@ -550,9 +543,6 @@ final class Gate1AppModel: ObservableObject {
     private let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
     private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     private let trashUndoDismissDelay: Duration
-    #if SPOKEN_MARGINS_WATCH
-    private var gate3WatchDispatcher: CompactControlDispatcher?
-    #endif
     private(set) var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
@@ -624,10 +614,6 @@ final class Gate1AppModel: ObservableObject {
     private var pendingMapGenerationAfterConsent = false
     private(set) var pendingTermsVoiceSelection: AppTTSVoiceSelection?
     var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
-    #if SPOKEN_MARGINS_WATCH
-    private var activeWatchPackageRenderItemIds: Set<String> = []
-    private var failedWatchPackageRenderItemIds: Set<String> = []
-    #endif
     private let preparedTextAudioStarterDurationMs = 30_000
     private static let startupAudioChunkCount = 2
     var preparationSeams = PreparationPassSeams()
@@ -5515,12 +5501,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    #if SPOKEN_MARGINS_WATCH
-    func renderSelectedItemForWatchPackage() {
-        renderWatchPackage(itemId: selectedItem.id, transferAfterRender: false)
-    }
-    #endif
-
     func summarize() {
         let itemId = snapshot.itemId ?? ""
         withdrawRetryOffer("summary")
@@ -7782,266 +7762,6 @@ final class Gate1AppModel: ObservableObject {
             )
         }
     }
-
-    #if SPOKEN_MARGINS_WATCH
-    private func configureGate3WatchControls(for engine: SessionEngine) {
-        do {
-            let surfaceProfile = try loadProfile(id: "watch-tethered")
-            gate3WatchDispatcher = CompactControlDispatcher(
-                surfaceProfile: surfaceProfile,
-                canonicalRuntime: engine,
-                defaultSkipUnit: skipUnit
-            )
-            updateGate3WatchState()
-        } catch {
-            diagnostics["gate3WatchSurface"] = "configuration_failed"
-            diagnostics["gate3WatchError"] = String(describing: error)
-        }
-    }
-
-    private func gate3WatchSnapshot() -> CompactControlSnapshot? {
-        gate3WatchDispatcher?.snapshot()
-    }
-
-    private func updateGate3WatchState() {
-        gate3WatchConnectivity.publish(snapshot: gate3WatchSnapshot())
-        diagnostics.merge(gate3WatchConnectivity.diagnostics(), uniquingKeysWith: { _, new in new })
-    }
-
-    private func gate4WatchPackageLibraryRows() -> [WatchPackageLibraryRow] {
-        do {
-            let store = try requireStore()
-            try seedGate4WatchPackageFixture(store: store)
-            let items = try store.listItems()
-            return try items.flatMap { item -> [WatchPackageLibraryRow] in
-                let packages = try store.loadWatchAudioPackages(itemId: item.id)
-                let requests = try store.loadWatchPackageRequests(itemId: item.id)
-                if let package = packages.sorted(by: { $0.createdAt > $1.createdAt }).first {
-                    let hasTransferRequest = requests.contains { $0.packageId == package.id && $0.requestType == .watchTransferRequested }
-                    return [
-                        WatchPackageLibraryRow(
-                            itemId: item.id,
-                            title: package.item.title.isEmpty ? item.title : package.item.title,
-                            status: hasTransferRequest ? .queuedForTransfer : .availableForTransfer,
-                            packageId: package.id,
-                            progressPercent: hasTransferRequest ? 0 : nil
-                        )
-                    ]
-                }
-                let hasPrerenderRequest = requests.contains { $0.requestType == .prerenderRequested }
-                let status: WatchPackageLibraryStatus
-                if activeWatchPackageRenderItemIds.contains(item.id) {
-                    status = .rendering
-                } else if failedWatchPackageRenderItemIds.contains(item.id) {
-                    status = .failed
-                } else if hasPrerenderRequest {
-                    status = .rendering
-                } else {
-                    status = .needsPrerender
-                }
-                return [
-                    WatchPackageLibraryRow(
-                        itemId: item.id,
-                        title: item.title,
-                        status: status,
-                        packageId: nil,
-                        progressPercent: status == .rendering ? 0 : nil
-                    )
-                ]
-            }
-        } catch {
-            diagnostics["gate4WatchPackageLibraryError"] = String(describing: error)
-            return []
-        }
-    }
-
-    private func gate4WatchPackage(packageId: String) throws -> WatchAudioPackage? {
-        let store = try requireStore()
-        try seedGate4WatchPackageFixture(store: store)
-        return try store.loadWatchAudioPackage(id: packageId)
-    }
-
-    private func handleGate4WatchPackageRequest(_ request: WatchPackageRequestEvent) {
-        do {
-            let store = try requireStore()
-            try store.saveWatchPackageRequest(request)
-            diagnostics["gate4WatchLastPackageRequest"] = "\(request.requestType.rawValue):\(request.itemId)"
-            if request.requestType == .prerenderRequested {
-                renderWatchPackage(itemId: request.itemId, transferAfterRender: true)
-            } else if request.requestType == .watchTransferRequested, let packageId = request.packageId {
-                gate3WatchConnectivity.transferWatchPackage(packageId: packageId)
-            }
-            gate3WatchConnectivity.publishPackageLibrary()
-        } catch {
-            diagnostics["gate4WatchPackageRequestError"] = String(describing: error)
-            reportFailure(error, context: "Watch package request failed")
-        }
-    }
-
-    private func handleGate4WatchSyncEvent(_ event: WatchSyncEvent) {
-        do {
-            let store = try requireStore()
-            try seedGate4WatchPackageFixture(store: store)
-            try store.saveWatchSyncEvent(event)
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            _ = try engine?.importWatchSyncEvent(eventId: event.id)
-            if let engine {
-                snapshot = engine.snapshot
-            }
-            libraryItems = try loadLibraryRows(store: store)
-            let importedItemId: String?
-            if let itemId = event.itemId {
-                importedItemId = itemId
-            } else {
-                importedItemId = try store.loadWatchAudioPackage(id: event.watchPackageId)?.itemId
-            }
-            if let itemId = importedItemId {
-                selectedItem = try loadItemDetail(id: itemId, store: store)
-            }
-            diagnostics["gate4WatchLastImportedEvent"] = event.id
-            reportSuccess("Imported Watch event \(event.id).")
-        } catch {
-            diagnostics["gate4WatchSyncEventError"] = String(describing: error)
-            reportFailure(error, context: "Watch sync import failed")
-        }
-    }
-
-    private func renderWatchPackage(itemId: String, transferAfterRender: Bool) {
-        guard !itemId.isEmpty else {
-            reportFailure("Choose an item before preparing Watch audio.")
-            return
-        }
-        guard !activeWatchPackageRenderItemIds.contains(itemId) else {
-            reportFailure("Watch audio is already being prepared for this item.")
-            return
-        }
-        activeWatchPackageRenderItemIds.insert(itemId)
-        failedWatchPackageRenderItemIds.remove(itemId)
-        isRenderingWatchPackage = true
-        watchPackageRenderStatus = "Preparing"
-        diagnostics["gate4WatchRenderItem"] = itemId
-        gate3WatchConnectivity.publishPackageLibrary()
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let store = try self.requireStore()
-                let item = try store.loadItem(id: itemId)
-                let map = try store.loadListeningMap(itemId: itemId)
-                let coordinator = WatchPackageRenderCoordinator(
-                    applicationSupportDirectory: try self.applicationSupportDirectory()
-                )
-                let output = try await coordinator.renderSystemSpeechPackage(
-                    item: item,
-                    map: map,
-                    voiceIdentifier: self.speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : self.speechVoiceIdentifier,
-                    rate: Float(self.speechRate)
-                )
-                try store.saveWatchAudioPackage(output.package)
-                self.activeWatchPackageRenderItemIds.remove(itemId)
-                self.failedWatchPackageRenderItemIds.remove(itemId)
-                self.isRenderingWatchPackage = !self.activeWatchPackageRenderItemIds.isEmpty
-                self.libraryItems = try self.loadLibraryRows(store: store)
-                if itemId == self.selectedItem.id || itemId == self.activeItemId {
-                    self.selectedItem = try self.loadItemDetail(id: itemId, store: store)
-                }
-                self.diagnostics["gate4WatchLastRenderedPackage"] = output.package.id
-                self.diagnostics["gate4WatchLastRenderedAudio"] = output.audioURL.lastPathComponent
-                self.watchPackageRenderStatus = "Available"
-                self.reportSuccess("Prepared the Watch package \(output.package.item.title).")
-                self.gate3WatchConnectivity.publishPackageLibrary()
-                if transferAfterRender {
-                    self.gate3WatchConnectivity.transferWatchPackage(packageId: output.package.id)
-                }
-            } catch {
-                self.activeWatchPackageRenderItemIds.remove(itemId)
-                self.failedWatchPackageRenderItemIds.insert(itemId)
-                self.isRenderingWatchPackage = !self.activeWatchPackageRenderItemIds.isEmpty
-                self.watchPackageRenderStatus = "Failed"
-                self.diagnostics["gate4WatchRenderError"] = String(describing: error)
-                self.reportFailure(error, context: "Preparing the Watch package failed")
-                self.gate3WatchConnectivity.publishPackageLibrary()
-            }
-        }
-    }
-
-    private func dispatchGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
-        diagnostics["gate2LastCommandOrigin"] = "watch_connectivity_legacy"
-        if request.command == .beginInterjection {
-            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
-            diagnostics["gate3WatchLastResult"] = "disabled_until_watch_recording"
-            updateGate3WatchState()
-            reportFailure("Recording a Margin from Watch is disabled until Watch-owned or background-safe recording is available.")
-            return
-        }
-        guard gate3WatchSnapshot()?.availableCommands.contains(request.command) == true else {
-            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
-            diagnostics["gate3WatchLastResult"] = "unavailable"
-            updateGate3WatchState()
-            reportFailure("Watch command \(request.command.rawValue) is unavailable for the current session state.")
-            return
-        }
-        if request.command == .generateInterjectionSummary {
-            summarize()
-            updateGate3WatchState()
-            return
-        }
-        if request.command == .submitFollowup {
-            discuss(followUp: request.followUpText ?? "Can you respond to my interjection?")
-            updateGate3WatchState()
-            return
-        }
-        if request.command == .beginInterjection {
-            Task {
-                let granted = await SystemRecordingClient.requestRecordPermission()
-                guard granted else {
-                    reportFailure("Microphone access is required to record Margins from Watch.")
-                    updateGate3WatchState()
-                    return
-                }
-                performGate3WatchCommand(request)
-            }
-            return
-        }
-        performGate3WatchCommand(request)
-    }
-
-    private func performGate3WatchCommand(_ request: Gate3WatchCommandRequest) {
-        do {
-            if engine == nil {
-                let store = try requireStore()
-                installEngine(try makeEngine(store: store))
-            }
-            guard let dispatcher = gate3WatchDispatcher else {
-                throw SessionKitError.invalidCommandForState("watch_tethered_unconfigured")
-            }
-            let result = try dispatcher.dispatch(
-                request.command,
-                chapterId: request.chapterId,
-                unit: request.unit,
-                followUpText: request.followUpText
-            )
-            if let engine {
-                snapshot = engine.snapshot
-            } else {
-                updateGate3WatchState()
-            }
-            refreshSelectedItem()
-            if request.command == .finishInterjection, result.delegatedToCanonicalRuntime { transcribeAndRecordSavedSpokenMargin() }
-            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
-            diagnostics["gate3WatchLastResult"] = result.delegatedToCanonicalRuntime ? "delegated" : (result.rejectedReason ?? "rejected")
-            updateGate3WatchState()
-            reportSuccess("Watch control \(request.command.rawValue) delegated.")
-        } catch {
-            diagnostics["gate3WatchLastCommand"] = request.command.rawValue
-            diagnostics["gate3WatchLastResult"] = "failed"
-            if request.command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
-            updateGate3WatchState()
-            reportFailure(error, context: "Watch control failed")
-        }
-    }
-    #endif
 
     private func performGate2CompactCommand(
         _ command: CompactControlCommand,
@@ -13519,16 +13239,6 @@ final class Gate1AppModel: ObservableObject {
         }
         return try ContractFixtureLoader.profile(at: url)
     }
-
-    #if SPOKEN_MARGINS_WATCH
-    private func seedGate4WatchPackageFixture(store: SQLiteSessionStore) throws {
-        guard let url = Bundle.main.url(forResource: "offline-package", withExtension: "json", subdirectory: "fixtures/watch") else {
-            return
-        }
-        let package = try ContractFixtureLoader.watchAudioPackage(at: url)
-        try store.saveWatchAudioPackage(package)
-    }
-    #endif
 }
 
 private enum ProviderCallError: Error, CustomStringConvertible {

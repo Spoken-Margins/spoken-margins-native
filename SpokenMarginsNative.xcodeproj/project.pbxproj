@@ -14,6 +14,7 @@
 		2822AE6642EE5669F2F33F4C /* Defuddle-LICENSE.txt in Resources */ = {isa = PBXBuildFile; fileRef = 8C1BFB86196C5C1BE2E52BEF /* Defuddle-LICENSE.txt */; };
 		28BF34C07DBB1E26551363BE /* substack-shared-text-post.html in Resources */ = {isa = PBXBuildFile; fileRef = AA3E54540069285190E19D1B /* substack-shared-text-post.html */; };
 		296D3E3B2A4A4E4370DB534A /* SourceLinkPreprocessor.js in Resources */ = {isa = PBXBuildFile; fileRef = C52D1CADC5773F67C398A2B2 /* SourceLinkPreprocessor.js */; };
+		309D59859027C681BDB1EFBA /* ShippedPacketReader in Frameworks */ = {isa = PBXBuildFile; productRef = 19206F23939FE21D139570B5 /* ShippedPacketReader */; };
 		33700D595D54E56882A7C502 /* substack-shared-text-feed.xml in Resources */ = {isa = PBXBuildFile; fileRef = 50026D96CAC3D753625277E0 /* substack-shared-text-feed.xml */; };
 		3A296D8977ECA7A0803C5ADC /* SessionKit in Frameworks */ = {isa = PBXBuildFile; productRef = FE54D8343C9F4C1377709595 /* SessionKit */; };
 		3EB7A4EE3350ECA1902F69A8 /* SessionKitSupertonic in Frameworks */ = {isa = PBXBuildFile; productRef = BE679FFC0BC2A00A74297525 /* SessionKitSupertonic */; };
@@ -267,6 +268,7 @@
 				5D420626A6A49CF830E8B408 /* SessionKitAudio in Frameworks */,
 				8B40FCEFB4AFABF3E3B52486 /* SessionKitEPUB in Frameworks */,
 				CE6654AD4A7C75198C2D1BB4 /* SessionKitFeeds in Frameworks */,
+				309D59859027C681BDB1EFBA /* ShippedPacketReader in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -454,6 +456,7 @@
 				9547A66336D57411F645B986 /* SessionKitAudio */,
 				DAEA68EE26E46DA752778D6D /* SessionKitEPUB */,
 				159EF73AA9CDF755A67A5EFA /* SessionKitFeeds */,
+				19206F23939FE21D139570B5 /* ShippedPacketReader */,
 			);
 			productName = SpokenMarginsAppTests;
 			productReference = 560C4E54442E123E42855A02 /* SpokenMarginsAppTests.xctest */;
@@ -1274,6 +1277,10 @@
 		16898C6F40FB4FDCA4DE8C38 /* SessionKitPersistence */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SessionKitPersistence;
+		};
+		19206F23939FE21D139570B5 /* ShippedPacketReader */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ShippedPacketReader;
 		};
 		34C621C37AF71E6ED22B1045 /* SessionKitAudio */ = {
 			isa = XCSwiftPackageProductDependency;

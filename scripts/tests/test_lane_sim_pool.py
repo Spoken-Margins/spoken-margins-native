@@ -211,7 +211,7 @@ class PoolDeviceTests(unittest.TestCase):
         self.record = folder / 'record.jsonl'
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'FAKE_WORLD': str(self.world), 'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_BUILD_NEEDS_ROOM': ''}
+                    'FAKE_WORLD': str(self.world), 'SM_LANE_MEMORY_PRESSURE': '1'}
         for patch in (mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                       mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)):
             patch.start()

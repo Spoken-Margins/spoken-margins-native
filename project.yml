@@ -275,6 +275,9 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      # Build 29's frozen packet reader, so a test can read the packet the app's exporter wrote (#1039).
+      - package: SessionKit
+        product: ShippedPacketReader
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
