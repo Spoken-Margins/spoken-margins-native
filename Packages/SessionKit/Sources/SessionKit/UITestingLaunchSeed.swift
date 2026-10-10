@@ -27,6 +27,9 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     public static let podcastFileName = "ui-test-episode.caf"
     public static let podcastRemoteURL = "https://cdn.example.invalid/ui-test-episode.caf"
 
+    // The parsing below names the launch argument and environment values. A Release build compiles
+    // none of it (#517); the app reads them only through `UITestingHooks`, in Debug.
+    #if DEBUG
     public init(arguments: [String], environment: [String: String]) {
         guard arguments.contains("--ui-testing") else {
             self = .none
@@ -50,6 +53,7 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
             self = .fixture
         }
     }
+    #endif
 
     /// The single Item this seed adds, when it adds one of its own.
     public var item: Item? {
@@ -99,6 +103,7 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
+    #if DEBUG
     /// Whether a UI-test launch swaps the microphone and speech recognition for
     /// stand-ins that need no permission prompt: `SPOKEN_MARGINS_UI_TEST_RECORDING=1`,
     /// or the podcast seed, whose Margins would otherwise ask to transcribe.
@@ -106,6 +111,7 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         arguments.contains("--ui-testing")
             && (environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" || environment["SPOKEN_MARGINS_UI_TEST_PODCAST"] == "1")
     }
+    #endif
 
     /// Whether the start of a session should add the generated timeline turns
     /// that older fixture-article UI tests expect.
