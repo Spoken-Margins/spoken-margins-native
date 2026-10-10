@@ -468,6 +468,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
             if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
             if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
@@ -982,6 +983,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
     private var importedPodcastResolutionURLs: [String: URL] = [:]
+    var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
     private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
@@ -4711,7 +4713,7 @@ final class Gate1AppModel: ObservableObject {
         }
         resetMixWithOtherAudioForNewSession()
         if engine.currentSession != nil {
-            snapshot = try engine.endSession()
+            snapshot = try endEngineSession(engine)
         }
         let started = try engine.startSession(itemId: activeItemId)
         snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
@@ -4998,7 +5000,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
-            _ = try? engine.endSession()
+            _ = try? endEngineSession(engine)
             snapshot = engine.snapshot
         }
         activeItemId = id
@@ -5915,7 +5917,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
-            snapshot = try engine.endSession(stoppingInlinePlayback: endMarginMoment)
+            snapshot = try endEngineSession(engine)
             activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {
@@ -10541,47 +10543,6 @@ final class Gate1AppModel: ObservableObject {
         return trimmed
     }
 
-    private func performProviderDataRequest(_ request: URLRequest, timeoutSeconds: TimeInterval = 30) async throws -> (Data, URLResponse) {
-        guard remoteProviderExperienceEnabled else {
-            throw ProviderCallError.remoteProviderDisabled
-        }
-        var timedRequest = request
-        timedRequest.timeoutInterval = timeoutSeconds
-        diagnostics["lastProviderRequestURL"] = timedRequest.url?.absoluteString ?? "none"
-        diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
-        return try await Self.performProviderDataRequestOffMain(timedRequest, timeoutSeconds: timeoutSeconds)
-    }
-
-    private nonisolated static func performProviderDataRequestOffMain(
-        _ request: URLRequest,
-        timeoutSeconds: TimeInterval
-    ) async throws -> (Data, URLResponse) {
-        return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-            group.addTask {
-                try await URLSession.shared.data(for: request)
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                throw URLError(.timedOut)
-            }
-            guard let result = try await group.next() else {
-                throw URLError(.unknown)
-            }
-            group.cancelAll()
-            return result
-        }
-    }
-
-    private func makeChatCompletionsRequest(messages: [String], model: String, systemPrompt: String) -> URLRequest? {
-        Gate1ProviderRequestFactory.makeChatCompletionsRequest(
-            baseURL: providerBaseURL,
-            apiKey: providerAPIKey,
-            messages: messages,
-            model: model,
-            systemPrompt: systemPrompt
-        )
-    }
-
     private func modelForAIJob(kind: String) -> String {
         Gate1ProviderRequestFactory.modelForAIJob(
             kind: kind,
@@ -10614,19 +10575,6 @@ final class Gate1AppModel: ObservableObject {
         job.model = model
         try? store.updateAIJob(job)
         diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
-    }
-
-    private func decodeProviderText(_ data: Data) throws -> String {
-        if let response = try? JSONDecoder().decode(ChatCompletionResponse.self, from: data),
-           let content = response.choices.first?.message.content,
-           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return content
-        }
-        if let raw = String(data: data, encoding: .utf8),
-           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return raw
-        }
-        throw ProviderCallError.emptyResponse
     }
 
     private func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil) {
@@ -12018,7 +11966,7 @@ final class Gate1AppModel: ObservableObject {
                     packageScopedId: String(format: "margin-%04d", index + 1),
                     revision: revision,
                     anchor: anchor,
-                    representation: representation
+                    representation: representation, replyTo: draft.interjection.replyTo
                 ))
             }
 
@@ -12061,7 +12009,7 @@ final class Gate1AppModel: ObservableObject {
                 .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
-            _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
+            let writtenManifest = try SpokenMarginsPackageArchive.write(prepared, to: destination); try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
@@ -13706,7 +13654,7 @@ final class Gate1AppModel: ObservableObject {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+        if deferredPodcastPlacementURLs[itemId] == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
            let item = try? store.loadItem(id: itemId) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
@@ -13754,15 +13702,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func podcastResolution(
-        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
-        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
-    ) -> ImportedAnchorResolution {
-        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
-            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
-    }
-
-    private func resolveImportedPodcastCommentary(
+    func resolveImportedPodcastCommentary(
         itemId: String,
         localURL: URL,
         recipientTranscriptOverride: TranscriptTimeline? = nil
@@ -13771,7 +13711,8 @@ final class Gate1AppModel: ObservableObject {
               let file = try? PodcastPlacementFile(url: localURL),
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { return }
+              !layers.isEmpty else { deferredPodcastPlacementURLs[itemId] = nil; return }
+        guard !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: localURL) else { return }
         importedPodcastResolutionURLs[itemId] = localURL
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
@@ -14124,43 +14065,13 @@ final class Gate1AppModel: ObservableObject {
     #endif
 }
 
-private struct ChatCompletionRequest: Encodable {
-    let model: String
-    let messages: [ChatMessage]
-    let temperature: Double
-}
-
-private struct ChatMessage: Codable {
-    let role: String
-    let content: String
-}
-
-private struct ChatCompletionResponse: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable {
-            let content: String?
-        }
-        let message: Message
-    }
-    let choices: [Choice]
-}
-
 private enum ProviderCallError: Error, CustomStringConvertible {
-    case http(Int, String)
-    case emptyResponse
-    case invalidURL
     case missingAPIKey
     case dataSharingConsentRequired
     case remoteProviderDisabled
 
     var description: String {
         switch self {
-        case .http(let status, let body):
-            return "HTTP \(status): \(body.prefix(240))"
-        case .emptyResponse:
-            return "empty_response"
-        case .invalidURL:
-            return "provider_url_invalid"
         case .missingAPIKey:
             return "provider_api_key_missing"
         case .dataSharingConsentRequired:
@@ -14168,40 +14079,6 @@ private enum ProviderCallError: Error, CustomStringConvertible {
         case .remoteProviderDisabled:
             return "remote_provider_disabled"
         }
-    }
-}
-
-private final class UnavailableSpeechPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
-    private let reason: String
-    private var failedTargetId: String?
-
-    init(reason: String) {
-        self.reason = reason
-    }
-
-    func prepareSpeechText(_ text: String) throws -> String {
-        SpeechTextNormalizer.normalize(text)
-    }
-
-    func play(targetId: String) throws {
-        try fail(targetId: targetId)
-    }
-
-    func play(targetId: String, from charOffset: Int) throws {
-        try fail(targetId: targetId)
-    }
-
-    func pause() throws {}
-
-    func stop() throws {}
-
-    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
-        failedTargetId == targetId ? .failed(reason) : .confirmed
-    }
-
-    private func fail(targetId: String) throws {
-        failedTargetId = targetId
-        throw SessionKitError.invalidCommandForState(reason)
     }
 }
 
