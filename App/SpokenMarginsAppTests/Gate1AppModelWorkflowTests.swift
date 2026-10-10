@@ -2036,6 +2036,38 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    /// #1043 APM-09: the trash tests ran on a player with no state, and the model resets its own snapshot, so
+    /// a trashed item that kept playing with no screen to stop it passed. Here the player says whether it plays.
+    func testTrashingThePlayingItemStopsItsAudioAndKeepsItsPlace() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "trash-playing-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.importTitle = "Trash While Playing"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        let itemID = try XCTUnwrap(model.snapshot.itemId)
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertTrue(audio.isPlaying)
+
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertTrue(audio.isPlaying, "trashing another item leaves this one playing")
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+
+        let stoppedAt = "One. ".count
+        audio.currentOffset = stoppedAt
+        model.moveItemToTrash(id: itemID)
+
+        XCTAssertFalse(audio.isPlaying, "a trashed item must not keep playing with no screen to stop it")
+        XCTAssertTrue(model.recentlyDeletedItems.contains { $0.id == itemID })
+        let saved = try XCTUnwrap(SQLiteSessionStore(path: databaseURL.path).loadSession(id: sessionID))
+        XCTAssertEqual(saved.status, "in_progress", "Undo brings the session back resumable")
+        XCTAssertEqual(saved.position.charOffset, stoppedAt, "the place it stopped at is saved")
+    }
+
     func testLibraryUnfinishedPreferenceTransitionRunsOnceAndPreservesSpecificChoices() throws {
         let suite = "library-preferences-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
