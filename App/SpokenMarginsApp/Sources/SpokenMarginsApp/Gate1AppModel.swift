@@ -350,7 +350,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var quickAccessRecentFiles: [QuickAccessFile] = [] { didSet { cachedQuickAddCandidates = nil } }
     @Published private(set) var dismissedQuickAccessFileKeys = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.dismissedQuickAccessFilesKey) ?? []
-    ) { didSet { cachedQuickAddCandidates = nil } }
+    ) {
+        didSet {
+            cachedQuickAddCandidates = nil
+            UserDefaults.standard.set(dismissedQuickAccessFileKeys.sorted(), forKey: Gate1AppModel.dismissedQuickAccessFilesKey)
+        }
+    }
     @Published private(set) var sourceImportProgressMessage: String?
     @Published private(set) var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
@@ -501,7 +506,7 @@ final class Gate1AppModel: ObservableObject {
     private var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
-    private let localFoundationModelClient: any LocalFoundationModelClient
+    let localFoundationModelClient: any LocalFoundationModelClient
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private(set) var speechPlaybackClient: AudioPlaybackClient?
@@ -2126,13 +2131,10 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    func dismissQuickAccessFile(_ file: QuickAccessFile) {
-        dismissedQuickAccessFileKeys.insert(file.dismissalKey)
-        UserDefaults.standard.set(
-            dismissedQuickAccessFileKeys.sorted(),
-            forKey: Self.dismissedQuickAccessFilesKey
-        )
-    }
+    func dismissQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.insert(file.dismissalKey) }
+
+    /// Brings a dismissed Quick Folder file back into Following (#477).
+    func restoreQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.remove(file.dismissalKey) }
 
     private func beginObsidianMarkdownImport(
         urls: [URL],
@@ -11553,7 +11555,7 @@ final class Gate1AppModel: ObservableObject {
         feedbackEvent = event
     }
 
-    private func refreshSelectedItem() {
+    func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
@@ -12672,13 +12674,9 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func dismissFollowedSourceEntry(id: String) {
-        guard let coordinator = followedSourceCoordinator else { return }
-        listeningSignals.dismiss(entryId: id)
-        Task { [weak self] in
-            try? await coordinator.setEntryState(id: id, state: .dismissed)
-            await self?.performFollowedSourceRefresh(force: false)
-        }
+    /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
+    func reloadFollowedSourceEntries() async {
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
     }
 
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false) {

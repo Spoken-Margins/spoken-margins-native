@@ -132,6 +132,13 @@ public enum PlaybackStartChime {
                 samples.append(Int16((value * Double(Int16.max)).rounded()))
             }
         }
+        return PlaybackCueWave.wavData(samples: samples, sampleRate: sampleRate)
+    }
+}
+
+/// 16-bit mono WAV bytes for the cues that are built in memory.
+enum PlaybackCueWave {
+    static func wavData(samples: [Int16], sampleRate: Int) -> Data {
         var data = Data()
         func append<T: FixedWidthInteger>(_ value: T) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
         let payload = samples.count * 2
