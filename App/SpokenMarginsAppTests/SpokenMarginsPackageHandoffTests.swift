@@ -656,6 +656,32 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
+    /// The link redirects to a consent wall that answers 200: the wall must not be saved as the article.
+    @MainActor
+    func testArticlePackageWhoseLinkLandsOnAnotherPageFailsInsteadOfSavingItAsTheArticle() async throws {
+        let (model, store, manifest, _) = try makeArticlePackageImport(named: "article-consent-wall", extraction: .success(
+            BrowserTextHandoff(
+                captureMode: .readablePage,
+                source: BrowserTextSource(url: "https://consent.example.com/collect?next=story", title: "Before you continue"),
+                text: "# Before you continue\n\nWe value your privacy.",
+                contentFormat: .markdown
+            )
+        ))
+        model.confirmSpokenMarginsPackageImport()
+        for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
+        XCTAssertEqual(
+            model.spokenMarginsPackageImportError,
+            SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_article_unreadable")),
+            "diagnostic: \(model.diagnostics["lastSharedArticleAcquisition"] ?? "none")"
+        )
+        XCTAssertNil(try store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)))
+        XCTAssertFalse(model.libraryItems.contains { $0.title == "Before you continue" }, "the wall was not added")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
     private static let articleTitle = "A shared essay on slow listening"
     private static let articleURL = "https://essays.example.com/slow-listening"
 

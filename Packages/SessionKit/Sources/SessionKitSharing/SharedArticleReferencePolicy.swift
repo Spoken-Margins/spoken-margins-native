@@ -12,4 +12,20 @@ public enum SharedArticleReferencePolicy {
               url.host?.isEmpty == false else { return nil }
         return url
     }
+
+    /// Whether the page the reader landed on is the packet's article. A redirect to a consent wall, a sign-in
+    /// page or another site returns text with no error, and Margins attached to it would never play (#916).
+    /// The address the reader ended on has to be the packet's, or the text has to be the packet's text.
+    public static func fetchedPageIsTheSharedArticle(
+        _ item: SharedItemIdentity,
+        fetchedURL: String,
+        fetchedText: String
+    ) -> Bool {
+        if let expected = SharedItemIdentityBuilder.normalizedSharingURL(item.canonicalURL),
+           SharedItemIdentityBuilder.normalizedSharingURL(fetchedURL) == expected {
+            return true
+        }
+        guard let expectedHash = item.normalizedContentSHA256 else { return false }
+        return PortableArticleAnchorResolver.normalizedContentSHA256(fetchedText) == expectedHash
+    }
 }

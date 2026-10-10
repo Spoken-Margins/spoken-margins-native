@@ -10,17 +10,24 @@ extension Gate1AppModel {
             // A layer saved with no item reports success but can't play. Say so instead.
             throw SessionKitError.persistenceFailed("shared_item_not_in_library")
         }
-        return try await fetchArticleForImportedPackage(url)
+        return try await fetchArticleForImportedPackage(url, expecting: item)
     }
 
     /// Reads the shared article from its link and adds it to the Library without touching Now Playing.
-    private func fetchArticleForImportedPackage(_ url: URL) async throws -> String {
+    private func fetchArticleForImportedPackage(_ url: URL, expecting item: SharedItemIdentity) async throws -> String {
         let handoff: BrowserTextHandoff
         do {
             handoff = try await readablePageExtractor.extract(url: url)
         } catch {
             if error is URLError { throw error } // offline and timeouts get the connection message
             diagnostics["lastSharedArticleAcquisition"] = "failed:\(error.localizedDescription)"
+            throw SessionKitError.persistenceFailed("shared_article_unreadable")
+        }
+        guard SharedArticleReferencePolicy.fetchedPageIsTheSharedArticle(
+            item, fetchedURL: handoff.source.url, fetchedText: handoff.text
+        ) else {
+            // A redirect to a consent or sign-in page would be saved as the article and the Margins wouldn't play.
+            diagnostics["lastSharedArticleAcquisition"] = "wrong_page:\(handoff.source.url)"
             throw SessionKitError.persistenceFailed("shared_article_unreadable")
         }
         diagnostics["lastSharedArticleAcquisition"] = "fetched:\(url.absoluteString)"
