@@ -179,7 +179,13 @@ public final class LeveledMarginCache: @unchecked Sendable {
             guard url.pathExtension == Self.copyExtension,
                   let values = try? url.resourceValues(forKeys: Set(keys)),
                   let bytes = values.fileSize, bytes > 0 else { return nil }
-            return Copy(url: url, bytes: Int64(bytes), modified: values.contentModificationDate ?? .distantPast)
+            // Built from `directory` rather than taken from the listing, which can spell the path differently
+            // (/private/var for /var), so every URL this cache hands out for a copy is the same one.
+            return Copy(
+                url: directory.appendingPathComponent(url.lastPathComponent),
+                bytes: Int64(bytes),
+                modified: values.contentModificationDate ?? .distantPast
+            )
         }
     }
 
