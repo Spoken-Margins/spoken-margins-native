@@ -19,6 +19,18 @@ extension Gate1AppModel {
         reportConfirmation(confirmation.message, action: playNow)
     }
 
+    /// #828: Safari shares imported at launch or foreground. One item gets the usual confirmation with Play now;
+    /// several share one message with no button. Nothing plays by itself.
+    func reportPendingHandoffsAdded(itemIds: [String]) {
+        guard let first = itemIds.first else { return }
+        if itemIds.count == 1 {
+            let title = libraryItems.first { $0.id == first }?.title ?? "Shared item"
+            reportAddedToLibrary(title: title, itemId: first)
+        } else {
+            reportConfirmation(AddedToLibraryConfirmation.message(addedCount: itemIds.count, nowPlayingIsEmpty: nowPlayingIsEmpty))
+        }
+    }
+
     /// Starts the added item through the normal start path, which opens the playback screen. If
     /// something started in the meantime, the tap does nothing: imports never replace what's playing.
     func playNowAfterAdding(itemId: String) {

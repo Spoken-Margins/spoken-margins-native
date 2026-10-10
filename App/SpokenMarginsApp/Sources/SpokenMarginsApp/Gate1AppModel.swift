@@ -2422,7 +2422,7 @@ final class Gate1AppModel: ObservableObject {
             let result = try await PublicPodcastLinkResolver().remembering(fetched).resolveAsync(request)
             if result.isPDFDocument { return try await importPDFFromLinkField(url) }
             if let article = await readLinkAsArticleOrOfferSafari(url, after: result, startSession: shouldStartSession) {
-                guard let itemId = importBrowserTextItem(article) else { return false }
+                guard let itemId = importBrowserTextItem(article, opensItem: false) else { return false }
                 rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
                 return true
             }
@@ -2679,9 +2679,9 @@ final class Gate1AppModel: ObservableObject {
             guard handoffStore.isManagedPDFURL(fileURL) else {
                 throw SessionKitError.persistenceFailed("The shared PDF is no longer available to import.")
             }
-            try await importLocalSharedPDFInBackground(url: fileURL)
+            let itemId = try await importLocalSharedPDFInBackground(url: fileURL)
             handoffStore.deleteManagedPDF(at: fileURL)
-            return nil
+            return itemId
         }
         guard let url = URL(string: trimmed),
               let scheme = url.scheme?.lowercased(),
@@ -2689,8 +2689,7 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("This share does not contain a valid podcast, RSS, or audio URL.")
         }
         if Self.isRemotePDFHandoff(handoff) {
-            try await importRemotePDFInBackground(url: url)
-            return nil
+            return try await importRemotePDFInBackground(url: url)
         }
         let request = LinkResolutionRequest(
             id: handoff.id,
@@ -2707,11 +2706,12 @@ final class Gate1AppModel: ObservableObject {
             if case .article(let article) = resolution {
                 let itemId = try importBrowserTextInBackground(article)
                 rememberSharedLinkVoiceover(sharedURL: url, article: article, itemId: itemId, fetched: fetched)
+                return itemId
             }
             return nil
         }
         guard result.status == .playable else {
-            if feedEntry == nil, result.isPDFDocument { try await importRemotePDFInBackground(url: url); return nil } // #758
+            if feedEntry == nil, result.isPDFDocument { return try await importRemotePDFInBackground(url: url) } // #758
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
@@ -2767,7 +2767,8 @@ final class Gate1AppModel: ObservableObject {
 
     static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
-    private func importLocalSharedPDFInBackground(url: URL) async throws {
+    @discardableResult
+    private func importLocalSharedPDFInBackground(url: URL) async throws -> String {
         #if canImport(PDFKit)
         let extracted = try await Task.detached(priority: .userInitiated) {
             try NativePDFDocumentExtractor.extractStructured(from: url)
@@ -2785,9 +2786,10 @@ final class Gate1AppModel: ObservableObject {
             contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
+        let itemId = try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastSharedPDFImport"] = url.lastPathComponent
         markOnboardingSteps([.addedOwnSource, .addedFromSafari])
+        return itemId
         #else
         throw SourceFileImportError.pdfImportUnavailable
         #endif
@@ -2924,9 +2926,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// `importBrowserText`, returning the new item's id, or nil when the import failed.
-    private func importBrowserTextItem(_ handoff: BrowserTextHandoff) -> String? {
+    /// An article added without starting it (the Link field, Paste & go) passes `opensItem: false`: it is
+    /// added in the background and confirmed with "Added <title> to Library." and Play now, like other adds (#828).
+    private func importBrowserTextItem(_ handoff: BrowserTextHandoff, opensItem: Bool = true) -> String? {
         do {
-            if hasActiveSession {
+            if hasActiveSession || (!opensItem && !handoff.requestedContinuation.startSession) {
                 let itemId = try importBrowserTextInBackground(handoff)
                 reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
                 return itemId
@@ -6545,6 +6549,9 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
         }
 
+        var addedItemIds: [String] = []
+        defer { reportPendingHandoffsAdded(itemIds: addedItemIds) }
+
         do {
             let handoffStore = try resolvedSourceLinkHandoffStore()
             let payloadIDs = try handoffStore.pendingPayloadIDs()
@@ -6552,7 +6559,7 @@ final class Gate1AppModel: ObservableObject {
             for payloadID in payloadIDs {
                 do {
                     let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    try await importSourceLinkInBackground(handoff)
+                    if let itemId = try await importSourceLinkInBackground(handoff) { addedItemIds.append(itemId) }
                     try handoffStore.deletePayload(payloadID: payloadID)
                     diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "imported"
                 } catch SourceLinkHandoffStoreError.invalidPayload {
@@ -6576,7 +6583,7 @@ final class Gate1AppModel: ObservableObject {
             for payloadID in payloadIDs {
                 do {
                     let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    try importBrowserTextInBackground(handoff)
+                    addedItemIds.append(try importBrowserTextInBackground(handoff))
                     try handoffStore.deletePayload(payloadID: payloadID)
                     diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
                 } catch Gate5BrowserTextHandoffStoreError.invalidPayload {

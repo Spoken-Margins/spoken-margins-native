@@ -11,10 +11,11 @@ extension Gate1AppModel {
         return true
     }
 
+    @discardableResult
     func importRemotePDFInBackground(
         url: URL,
         onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari]
-    ) async throws {
+    ) async throws -> String {
         #if canImport(PDFKit)
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
@@ -44,9 +45,10 @@ extension Gate1AppModel {
             contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
+        let itemId = try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps(onboardingSteps)
+        return itemId
         #else
         throw SourceFileImportError.pdfImportUnavailable
         #endif
