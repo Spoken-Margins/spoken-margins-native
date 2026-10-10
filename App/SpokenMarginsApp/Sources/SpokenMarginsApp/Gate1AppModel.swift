@@ -1342,7 +1342,7 @@ final class Gate1AppModel: ObservableObject {
             // manifest from an obsolete voice or model identity.
             rows = try loadLibraryRows(store: store)
             try reconcileOnboardingEvidence(store: store)
-            try recoverInterruptedAIJobs(store: store, rows: rows)
+            try recoverInterruptedAIJobs(store: store, rows: rows); settleOrphanedTranscriptions(store: store)
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
@@ -5913,7 +5913,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
-        scheduleTranscription(for: interjection)
+        scheduleRetriedTranscription(for: interjection)
         reportConfirmation("Retranscribing the saved Margin audio.")
     }
 
@@ -10021,8 +10021,7 @@ final class Gate1AppModel: ObservableObject {
                     let failure = String(describing: error)
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
                     if wasRetry {
-                        diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(failure)"
-                        diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+                        recordFailedRetry(of: interjection, failure: failure)
                         TranscriptionFailureWording.notice(error: failure, isRetry: true).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
                     } else {
                         run { engine in
