@@ -151,7 +151,11 @@ struct ReadLaterScreen: View {
                      ? "Reader requires a Readwise account. This view lists Later articles with available text. PDFs, books and highlights are not imported by this adapter."
                      : "Raindrop has a free bookmark account. For personal setup, create an integration and paste its test token. Articles are fetched from their original websites; saved paid/offline copies are not used.")
                     .font(.footnote).foregroundStyle(.secondary)
-                StatusMessageText(message: connection.status, isFailure: connection.statusIsFailure)
+                if let symbol = connection.statusSymbol {
+                    Label(connection.status, systemImage: symbol.rawValue).font(.footnote)
+                } else {
+                    StatusMessageText(message: connection.status, isFailure: connection.statusIsFailure)
+                }
             }
             if connection.service == .reader && connection.connected {
                 ReadwiseHighlightSection(sync: model.readwiseHighlightSync)
