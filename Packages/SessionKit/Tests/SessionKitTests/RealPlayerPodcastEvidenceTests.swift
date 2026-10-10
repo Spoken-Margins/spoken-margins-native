@@ -167,13 +167,18 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         XCTAssertTrue(spin(until: 5) { client.hasPodcastEvidenceTapOnCurrentItem })
         XCTAssertTrue(spin(until: 15) { (client.currentMediaTimeMs() ?? 0) >= 7_000 }, "playback did not advance")
 
+        // As the engine does for a Margin: pause at it, capture when it is saved, then rejoin 3 s earlier (#776)
+        // with a plain play, not a noted seek.
+        try client.pause()
         let anchor = try XCTUnwrap(client.currentMediaTimeMs())
         let request = PostResumeAudioSampleRequest(
             interjectionId: "ij-001", sessionId: "session", itemId: "episode",
             anchorMediaTimeMs: anchor, targetDurationMs: 3_000
         )
         _ = client.captureBufferedPreInterjectionAudioSample(request)
+        try client.play(targetId: "episode-target", fromMediaTimeMs: MarginRejoin.mediaResumeTimeMs(pausedAtMs: anchor))
         XCTAssertTrue(spin(until: 15) { (client.currentMediaTimeMs() ?? 0) >= anchor + 4_000 })
+        let stoppedAtMs = try XCTUnwrap(client.currentMediaTimeMs())
         try client.stop()
 
         XCTAssertTrue(spin(until: 5) { !heard.all.isEmpty }, "stopping must hand over what was heard")
@@ -187,6 +192,58 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         XCTAssertLessThanOrEqual(first.startMediaTimeMs, 1_000, "kept from near the start of playback")
         let rms = (first.samples.reduce(0) { $0 + $1 * $1 } / Float(max(1, first.samples.count))).squareRoot()
         XCTAssertGreaterThan(rms, 0.01, "real decoded audio, even with the player muted")
+        // One run of audio, as long as the media time that played (#1133, ANC-05). Samples labelled at the wrong
+        // rate would stretch every transcript time after the first second. The tap decodes up to about half a
+        // second ahead of the clock, so the run may end that much past where the player stopped.
+        XCTAssertEqual(window.segments.count, 1, "the rejoin replays the read-ahead, so one contiguous run")
+        let playedMs = stoppedAtMs - first.startMediaTimeMs
+        let keptMs = window.durationMs(of: first)
+        XCTAssertGreaterThanOrEqual(keptMs, playedMs - 250, "kept \(keptMs) ms of audio for \(playedMs) ms played")
+        XCTAssertLessThanOrEqual(keptMs, playedMs + 1_000, "kept \(keptMs) ms of audio for \(playedMs) ms played")
+        // The length alone can't show the samples are the right ones: the recorder trims overlapping chunks, which
+        // hides a mislabelled rate. So the kept audio must be the episode's own audio at the times it is labelled
+        // with, before the Margin and after the rejoin.
+        for atMs in [2_000, anchor + 1_500] {
+            let match = try Self.correlation(of: window, segment: first, atMs: atMs, withEpisode: fileURL)
+            print("Heard window at \(atMs) ms matches the episode with correlation \(match)")
+            XCTAssertGreaterThan(match, 0.8, "the window's audio at \(atMs) ms is not the episode's audio there")
+        }
+    }
+
+    /// The best normalized correlation, within ±30 ms, between 250 ms of the window from `atMs` and the episode
+    /// file mixed and decimated to the window's rate the same way.
+    private static func correlation(
+        of window: HeardAudioWindow, segment: HeardAudioWindow.Segment, atMs: Int, withEpisode url: URL
+    ) throws -> Float {
+        let file = try AVAudioFile(forReading: url)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
+        try file.read(into: buffer)
+        let factor = Int((file.processingFormat.sampleRate / window.sampleRate).rounded())
+        let channel = try XCTUnwrap(buffer.floatChannelData?[0])
+        let episode = HeardAudioDownsampler.mono(
+            channels: [UnsafePointer(channel)], interleavedStride: 1, frameCount: Int(buffer.frameLength), factor: factor
+        )
+        let rate = window.sampleRate
+        let length = Int(rate * 0.25)
+        let maxLag = Int(rate * 0.03)
+        let heardStart = Int((Double(atMs - segment.startMediaTimeMs) * rate / 1_000).rounded())
+        let episodeStart = Int((Double(atMs) * rate / 1_000).rounded())
+        guard heardStart >= 0, heardStart + length <= segment.samples.count,
+              episodeStart - maxLag >= 0, episodeStart + maxLag + length <= episode.count else {
+            XCTFail("\(atMs) ms is outside the window or the episode")
+            return 0
+        }
+        let heard = Array(segment.samples[heardStart..<(heardStart + length)])
+        var best: Float = -1
+        for lag in -maxLag...maxLag {
+            var dot: Float = 0, heardPower: Float = 0, episodePower: Float = 0
+            for index in 0..<length {
+                let a = heard[index], b = episode[episodeStart + lag + index]
+                dot += a * b; heardPower += a * a; episodePower += b * b
+            }
+            best = max(best, dot / max(.leastNonzeroMagnitude, (heardPower * episodePower).squareRoot()))
+        }
+        return best
     }
 
     /// Minimal HTTP/1.1 server with byte-range support, which AVPlayer needs to stream a file progressively.
