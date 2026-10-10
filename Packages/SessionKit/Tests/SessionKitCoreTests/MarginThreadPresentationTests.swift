@@ -86,6 +86,7 @@ final class MarginThreadPresentationTests: XCTestCase {
         )
         XCTAssertEqual(Set(rows.map(\.reference)), [.imported("a1"), .imported("b1")])
         XCTAssertEqual(rows.count, 2)
+        XCTAssertEqual(rows.map(\.note), [nil, nil], "each parent is here, so neither is a reply to a Margin you don't have")
     }
 
     func testDeletedMarginsAndLayersAndOtherItemsStayOut() {

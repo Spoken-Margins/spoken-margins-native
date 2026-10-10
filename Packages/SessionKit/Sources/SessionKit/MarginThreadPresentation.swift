@@ -56,6 +56,8 @@ public enum MarginThreadPresentation {
 
         var children: [MarginReference: [MarginReference]] = [:]
         var roots: [MarginReference] = []
+        // Replies whose parent isn't here. A cycle's head has its parent here, so it isn't one.
+        var orphans = Set<MarginReference>()
         for node in nodes.values {
             switch graph.states[node.reference] {
             case .linked(let parent):
@@ -63,14 +65,19 @@ public enum MarginThreadPresentation {
                     children[target, default: []].append(node.reference)
                 } else {
                     roots.append(node.reference)
+                    orphans.insert(node.reference)
                 }
             case .fork(let parents):
                 if let target = parents.compactMap(\.parent).first(where: { nodes[$0] != nil }) {
                     children[target, default: []].append(node.reference)
                 } else {
                     roots.append(node.reference)
+                    orphans.insert(node.reference)
                 }
-            case .parentMissing, nil:
+            case .parentMissing:
+                roots.append(node.reference)
+                orphans.insert(node.reference)
+            case nil:
                 roots.append(node.reference)
             }
         }
@@ -99,7 +106,7 @@ public enum MarginThreadPresentation {
             let state = graph.states[reference]
             var isFork = false
             if case .fork = state { isFork = true }
-            let note = depth == 0 && state != nil ? missingParentNote : nil
+            let note = orphans.contains(reference) ? missingParentNote : nil
             rows.append(Row(
                 reference: reference, depth: depth, senderLabel: node.senderLabel, text: node.text,
                 createdAt: node.createdAt, timeMs: node.timeMs, note: note, isFork: isFork
