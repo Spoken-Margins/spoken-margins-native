@@ -221,6 +221,8 @@ actor FollowedSourceCoordinator {
     func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
         var toAdd: [FeedEntry] = []
         for subscription in (try? repository.loadFeedSubscriptions()) ?? [] {
+            // A background refresh that iOS cuts short stops here, not by failing every feed left (#170).
+            if Task.isCancelled { break }
             guard force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true else { continue }
             toAdd += await refresh(subscription, now: now)
         }
@@ -362,6 +364,8 @@ actor FollowedSourceCoordinator {
                 errorCode: error.localizedDescription
             ))
         } catch {
+            // A refresh iOS cut short is not a failed feed; it stays stale and is tried again (#170).
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return toAdd }
             try? repository.saveFeedRefreshState(FeedRefreshState(
                 id: "refresh-\(subscription.id)", subscriptionId: subscription.id,
                 status: .failed, checkedAt: now, redactedHost: subscription.source.host,

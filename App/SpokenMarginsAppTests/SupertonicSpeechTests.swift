@@ -1530,6 +1530,33 @@ final class SupertonicSpeechTests: XCTestCase {
     /// must outlast that too, or after 15 s it hands the play to its fallback and drops the stand-in.
     private let standInRenderWaitLimit: Duration = .seconds(60)
 
+    /// #1230: on the lane, the first iOS-voice write in a fresh simulator waited on Apple's speech
+    /// service for 30 s to over 3 minutes. A spindump showed `AVSpeechSynthesizer.write` blocked on
+    /// a semaphore inside TextToSpeech while `axassetsd` loaded the synthesis provider. That is the
+    /// simulator starting its speech service, not what these tests check, and it always landed on
+    /// whichever stand-in test ran first. So each stand-in test first waits, once per run, for one
+    /// write to finish, with the longest allowance the plan permits (180 s). The 100 s budget
+    /// leaves room for that test's own renders, which queue behind a stuck write and time out at
+    /// 30 s each, so a service that never starts fails the test with this message, not the clock.
+    /// The later stand-in tests then fail on their own 30 s timeouts.
+    private func warmUpTheIOSVoice() async throws {
+        guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
+        executionTimeAllowance = 180
+        let root = FileManager.default.temporaryDirectory.appending(path: "warm-up-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let started = Date()
+        do {
+            _ = try await SystemVoiceChunkRenderer().render(
+                text: "The iOS voice is ready.", voiceIdentifier: nil,
+                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: 100
+            )
+            print("#1230 iOS voice warm-up took \(Date().timeIntervalSince(started)) s")
+        } catch {
+            XCTFail("the simulator's speech service did not finish a first iOS-voice write in 100 s: \(error)")
+        }
+    }
+
     private func awaitStandIn(_ reports: GuardReports) async throws {
         await fulfillment(of: [reports.reported], timeout: 45)
         let report = try XCTUnwrap(reports.values.first, "the guard never reported: the iOS voice took over 45 s")
@@ -1538,6 +1565,7 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #311: the guard's iOS-voice file is deleted when the player discards it.
     func testGuardDeletesItsStandInFileOnDiscard() async throws {
+        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1583,6 +1611,7 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #311: a stand-in isn't cached under the Supertonic key, so the next play re-checks Supertonic.
     func testStandInIsNotCachedAsSupertonic() async throws {
+        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1611,6 +1640,7 @@ final class SupertonicSpeechTests: XCTestCase {
     // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
     // failure.
     func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
+        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1657,6 +1687,7 @@ final class SupertonicSpeechTests: XCTestCase {
     // item's audio, so the stand-in played forever. It isn't assembled while a stand-in remains;
     // with Supertonic's own audio it still is.
     func testAnArticleWithAStandInIsNotAssembledButOneWithoutIs() async throws {
+        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "assemble-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3931,6 +3962,16 @@ private final class GuardReports: @unchecked Sendable {
     func add(_ report: String) {
         lock.withLock { entries.append(report) }
         reported.fulfill()
+    }
+}
+
+/// Makes the iOS-voice warm-up happen once per test run (#1230).
+private actor IOSVoiceWarmUp {
+    static let shared = IOSVoiceWarmUp()
+    private var attempted = false
+    func claimAttempt() -> Bool {
+        defer { attempted = true }
+        return !attempted
     }
 }
 

@@ -350,6 +350,59 @@ actor PreparedAudioCoordinator {
         return (manifest, true)
     }
 
+    /// Forgets committed chunks whose files are gone or the wrong size, so they're rendered again
+    /// rather than counted as done (#645). Without this, a chunk evicted or lost after it was
+    /// committed sent every retry back into an assembly that could only fail on the missing file.
+    /// Only an unassembled manifest is changed; a finished one's chunks are meant to be evicted.
+    /// Returns the manifest as saved now, nil if it's gone.
+    func droppingMissingChunks(manifestId: String) throws -> PreparedAudioManifest? {
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return nil }
+        guard manifest.artifact == nil, manifest.state == .preparing || manifest.state == .pausedForThermal else { return manifest }
+        let present = manifest.chunks.filter(hasFile)
+        guard present.count < manifest.chunks.count else { return manifest }
+        manifest.chunks = present
+        manifest.updatedAt = Date()
+        try repository.savePreparedAudioManifest(manifest)
+        if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
+            job.nextChunkIndex = manifest.chunks.count
+            try repository.saveAudioPreparationJob(job)
+        }
+        return manifest
+    }
+
+    /// The ledger paths of a manifest's committed chunks, which its next render and its assembly
+    /// pin so their own reservations can't evict them (#645). Chunk rows are committed to the
+    /// ledger under `PreparedAudio/`, the coordinator's root.
+    static func ledgerPaths(ofChunksIn manifest: PreparedAudioManifest) -> Set<String> {
+        Set(manifest.chunks.map(ledgerPath(of:)))
+    }
+
+    /// The ledger row for a committed chunk. It is built here, from the same path the pins use,
+    /// so a pin always names the row its reservation must not evict (#645).
+    static func ledgerAsset(for chunk: PreparedAudioChunk, itemId: String) -> OwnedOfflineAsset {
+        OwnedOfflineAsset(
+            id: chunk.id,
+            itemId: itemId,
+            category: .preparedChunk,
+            relativePath: ledgerPath(of: chunk),
+            byteCount: chunk.byteCount,
+            checksumSHA256: chunk.checksumSHA256,
+            isReproducible: true
+        )
+    }
+
+    private static func ledgerPath(of chunk: PreparedAudioChunk) -> String {
+        "PreparedAudio/\(chunk.relativePath)"
+    }
+
+    /// A size check, not a checksum: this runs on every preparation pass.
+    private func hasFile(_ chunk: PreparedAudioChunk) -> Bool {
+        let url = rootDirectory.appending(path: chunk.relativePath)
+        guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true else { return false }
+        return Int64(values.fileSize ?? -1) == chunk.byteCount
+    }
+
     private func isIntact(_ chunk: PreparedAudioChunk) -> Bool {
         let url = rootDirectory.appending(path: chunk.relativePath)
         guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { return false }
