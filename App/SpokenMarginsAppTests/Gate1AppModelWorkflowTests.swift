@@ -974,8 +974,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         }
         XCTAssertTrue(returned, "the stale render came back after Cancel")
         XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path), "it wrote its cleaned copy")
-        // Let the cancelled preparation come back to the main actor and unwind past its guard.
-        try await Task.sleep(for: .milliseconds(300))
+        // The cancelled preparation comes back to the main actor and, past its guard, deletes the stale copy.
+        try await waitFor("the stale cleaned copy to be deleted", timeoutNanoseconds: 3_000_000_000) {
+            !FileManager.default.fileExists(atPath: destination.path)
+        }
 
         let draft = try XCTUnwrap(model.sharingState.drafts.first)
         XCTAssertNil(draft.cleanedAudioURL, "a cancelled render must not attach its copy")
@@ -988,7 +990,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.sharingState.isBulkPreparing)
         XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 0)
         XCTAssertEqual(model.bulkSharePreparationEligibleCount, 1, "the Margin is still eligible for the next run")
-        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "the stale cleaned copy is deleted")
     }
 
     func testBulkSharePreparationFallsBackToOriginalVoiceWhenRenderingFails() async throws {
