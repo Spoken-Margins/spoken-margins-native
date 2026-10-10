@@ -918,6 +918,36 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         XCTAssertNotNil(coordinator.validatedLocalURL(for: "unrecorded"), "control: a record with no size recorded is accepted")
     }
 
+    /// APA-10 (redirect half): the BBC chain that failed App Transport Security is fixed in the delegate as well as
+    /// before the request. The delegate had never been called by a test.
+    func testRedirectToPlainHTTPIsRewrittenToHTTPSAndHTTPSIsLeftAlone() throws {
+        let fixture = try makeFixture()
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.dataTask(with: URL(string: "https://example.com/start")!)
+        defer { session.invalidateAndCancel(); coordinator.shutdown() }
+
+        func redirected(to target: String) throws -> URLRequest? {
+            let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: "https://example.com/start")!, statusCode: 302,
+                httpVersion: nil, headerFields: ["Location": target]))
+            var handedBack: URLRequest?
+            var called = false
+            coordinator.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                newRequest: URLRequest(url: URL(string: target)!)) { handedBack = $0; called = true }
+            XCTAssertTrue(called, "the delegate always answers the redirect")
+            return handedBack
+        }
+
+        XCTAssertEqual(try redirected(to: "http://cdn.example.com:80/episode.mp3")?.url?.absoluteString,
+                       "https://cdn.example.com/episode.mp3", "plain http becomes https and loses the port 80")
+        XCTAssertEqual(try redirected(to: "http://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/proto/http/x.mp3")?.url?.absoluteString,
+                       "https://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/proto/https/x.mp3",
+                       "the BBC media selector is asked for its https redirect chain")
+        XCTAssertEqual(try redirected(to: "https://cdn.example.com/episode.mp3")?.url?.absoluteString,
+                       "https://cdn.example.com/episode.mp3", "https is handed back as it came")
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
