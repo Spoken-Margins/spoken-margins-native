@@ -33,7 +33,18 @@ final class TranscriptionFailureTests: XCTestCase {
             includeListeningMap: false,
             includeInterjections: true
         ))
-        XCTAssertFalse(SessionExportMarkdownRenderer.render(export).contains("Transcript failed"))
+        // The Margin is still in the export, with no words, and the markdown says only that its transcript
+        // failed: a labelled status line, never the error and never in the Margin's own voice.
+        XCTAssertEqual(export.interjections.map(\.id), [margin.id])
+        XCTAssertNil(export.interjections.first?.transcript)
+        XCTAssertEqual(export.interjections.first?.transcriptionStatus, "failed")
+        let markdown = SessionExportMarkdownRenderer.render(export)
+        XCTAssertFalse(markdown.contains("Transcript failed"))
+        XCTAssertFalse(markdown.contains("speech_recognition_denied"))
+        let lines = markdown.components(separatedBy: "\n")
+        let marker = try XCTUnwrap(lines.firstIndex { $0.hasPrefix("#### 10%") }, "the Margin's marker is missing from the export:\n\(markdown)")
+        let body = lines.dropFirst(marker + 1).drop { $0.isEmpty }.prefix { !$0.isEmpty }
+        XCTAssertEqual(Array(body), ["Transcript: failed"], "a Margin with no words shows its status line and nothing else")
     }
 
     func testAMarginThatAlreadyHasWordsKeepsThemWhenARetryFails() throws {
