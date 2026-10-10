@@ -685,6 +685,9 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published private(set) var playingImportedCommentary: ImportedCommentaryPrompt?
     @Published private(set) var importedCommentaryIsPaused = false
+    /// What the shared Margin's voice is really doing (#941), judged from the player, not from the request to play.
+    @Published private(set) var importedCommentaryPhase: SharedMarginPlaybackPhase = .loading
+    private var importedCommentaryHealth: SharedMarginPlaybackHealth?
     private let importedMarginRemoteControls = ImportedMarginRemoteControls()
     /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.
     @Published private(set) var marginMoment: MarginMomentSequence?
@@ -697,7 +700,7 @@ final class Gate1AppModel: ObservableObject {
     private var heardSourceWindows: [String: [(url: URL, startMediaTimeMs: Int, durationMs: Int)]] = [:]
 
     var activePlaybackIsPlaying: Bool {
-        if playingImportedCommentary != nil { return !importedCommentaryIsPaused }
+        if playingImportedCommentary != nil { return importedCommentaryPhase.showsPause }
         if marginMomentConductor?.isPlayingVoice == true { return !marginMomentVoiceIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
@@ -3498,7 +3501,8 @@ final class Gate1AppModel: ObservableObject {
 
     func playPause() {
         if playingImportedCommentary != nil {
-            setImportedCommentaryPaused(!importedCommentaryIsPaused)
+            // A failed voice has nothing to pause: the transport's Play is a Retry (#941).
+            setImportedCommentaryPaused(importedCommentaryPhase.isFailed ? false : !importedCommentaryIsPaused)
             return
         }
         if let conductor = marginMomentConductor, conductor.isPlayingVoice {
@@ -6496,6 +6500,8 @@ final class Gate1AppModel: ObservableObject {
         let hadImportedMargin = playingImportedCommentary != nil
         playingImportedCommentary = nil
         importedCommentaryIsPaused = false
+        importedCommentaryHealth = nil
+        importedCommentaryPhase = .loading
         sourceShouldResumeAfterImportedCommentary = false
         if hadImportedMargin {
             importedMarginRemoteControls.end()
@@ -6581,6 +6587,10 @@ final class Gate1AppModel: ObservableObject {
             playingInterjectionAudioRate = rate
             playingImportedCommentary = prompt
             importedCommentaryIsPaused = false
+            let health = SharedMarginPlaybackHealth(startedAt: ProcessInfo.processInfo.systemUptime)
+            importedCommentaryHealth = health
+            importedCommentaryPhase = health.phase
+            let attempt = health.attemptID
             pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)
@@ -6591,20 +6601,24 @@ final class Gate1AppModel: ObservableObject {
                     self.dispatchGate2CompactCommand(command, origin: "imported_margin_remote")
                 }
             }
-            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
+            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item, weak player] in
                 var heard = false
                 while !Task.isCancelled, let item {
                     try? await Task.sleep(for: .milliseconds(200))
-                    guard !Task.isCancelled else { return }
+                    // A reading from a replaced or retried attempt must not touch the current one.
+                    guard !Task.isCancelled, let self, self.importedCommentaryHealth?.attemptID == attempt else { return }
                     let duration = item.duration.seconds
                     let current = item.currentTime().seconds
                     // Heard once the voice has played; a file that fails to decode stays new (#690).
-                    if !heard, current.isFinite, current > 0 { heard = true; self?.markSharedMarginHeard(prompt.interjection) }
+                    if !heard, current.isFinite, current > 0 { heard = true; self.markSharedMarginHeard(prompt.interjection) }
                     if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        self?.stopImportedCommentaryPlayback(resumeSource: true)
+                        self.stopImportedCommentaryPlayback(resumeSource: true)
                         return
                     }
-                    self?.publishImportedCommentaryNowPlaying()
+                    let failed = item.status == .failed || player?.status == .failed
+                    self.observeImportedCommentary(playerFailed: failed, clockSeconds: current)
+                    if self.importedCommentaryPhase.isFailed { return }
+                    self.publishImportedCommentaryNowPlaying()
                 }
             }
             player.playImmediately(atRate: Float(rate))
@@ -6619,7 +6633,12 @@ final class Gate1AppModel: ObservableObject {
 
     private func setImportedCommentaryPaused(_ paused: Bool) {
         #if canImport(AVFoundation)
-        guard playingImportedCommentary != nil, let player = interjectionAudioPlayer else { return }
+        guard playingImportedCommentary != nil else { return }
+        if importedCommentaryPhase.isFailed {
+            if !paused { retryImportedCommentary() }
+            return
+        }
+        guard let player = interjectionAudioPlayer else { return }
         if paused {
             player.pause()
             #if os(iOS)
@@ -6637,17 +6656,50 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         importedCommentaryIsPaused = paused
+        importedCommentaryHealth?.setUserPaused(paused, at: ProcessInfo.processInfo.systemUptime)
+        if let phase = importedCommentaryHealth?.phase { importedCommentaryPhase = phase }
         publishImportedCommentaryNowPlaying()
         #endif
     }
 
+    /// Feeds the player's own report into the health rule and shows what it concludes (#941).
+    private func observeImportedCommentary(playerFailed: Bool, clockSeconds: Double) {
+        guard var health = importedCommentaryHealth else { return }
+        let phase = health.observe(playerFailed: playerFailed, clockSeconds: clockSeconds, at: ProcessInfo.processInfo.systemUptime)
+        importedCommentaryHealth = health
+        if phase != importedCommentaryPhase { importedCommentaryPhase = phase }
+        if phase.isFailed { failImportedCommentaryPlayback() }
+    }
+
+    /// The voice cannot play. Stops the player and the polling, keeps the Margin on screen with Retry and
+    /// Return to Source, and tells the system it is not playing. The Margin stays new; the source-resume
+    /// intent is untouched, so Return to Source or a Retry that then ends still resumes it once.
+    private func failImportedCommentaryPlayback() {
+        #if canImport(AVFoundation)
+        interjectionAudioCompletionTask?.cancel()
+        interjectionAudioCompletionTask = nil
+        interjectionAudioPlayer?.pause()
+        interjectionAudioPlayer?.replaceCurrentItem(with: nil)
+        interjectionAudioPlayer = nil
+        importedCommentaryIsPaused = false
+        publishImportedCommentaryNowPlaying()
+        #endif
+    }
+
+    /// Retry after a failure: a fresh player, item and health record for the same Margin.
+    func retryImportedCommentary() {
+        guard let prompt = playingImportedCommentary, importedCommentaryPhase.isFailed else { return }
+        listenToImportedCommentary(prompt)
+    }
+
     private func publishImportedCommentaryNowPlaying() {
         #if canImport(AVFoundation)
-        guard !mixesWithOtherAudio, let prompt = playingImportedCommentary, let player = interjectionAudioPlayer else { return }
+        guard !mixesWithOtherAudio, let prompt = playingImportedCommentary else { return }
+        let player = interjectionAudioPlayer
         importedMarginRemoteControls.publish(
-            sender: prompt.senderLabel, elapsed: player.currentTime().seconds,
-            duration: player.currentItem?.duration.seconds ?? .nan,
-            rate: importedCommentaryIsPaused ? 0 : Double(player.rate)
+            sender: prompt.senderLabel, elapsed: player?.currentTime().seconds ?? 0,
+            duration: player?.currentItem?.duration.seconds ?? .nan,
+            rate: importedCommentaryHealth?.nowPlayingRate(playerRate: Double(player?.rate ?? 0)) ?? 0
         )
         #endif
     }

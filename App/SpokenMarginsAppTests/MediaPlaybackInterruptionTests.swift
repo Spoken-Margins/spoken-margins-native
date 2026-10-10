@@ -316,6 +316,63 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, true)
     }
 
+    /// #941: a voice that becomes unreadable after import accepts the request to play and then reports a failed
+    /// item with a clock stuck at zero. The card used to keep saying "Playing" with a Pause button, and the
+    /// polling loop never ended. Now the failure shows, polling stops, the Margin stays new, and Retry makes a
+    /// fresh attempt. The model is read through the real AVPlayer, not through a requested flag.
+    func testASharedMarginWhoseVoiceFailsShowsFailureAndRetriesFresh() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "item-pill", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        try Data("not audio".utf8).write(to: URL(fileURLWithPath: fixture.record.audioPath!))
+        let model = fixture.model
+        model.refreshMarginRows()
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        XCTAssertNotNil(model.playingImportedCommentary)
+        XCTAssertNotEqual(model.importedCommentaryPhase, .playing, "asking to play is not playing")
+        let firstPlayer = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+
+        try waitUntil("the failure shows") { model.importedCommentaryPhase.isFailed }
+        XCTAssertEqual(model.importedCommentaryPhase, .failed(.unreadable))
+        XCTAssertFalse(model.activePlaybackIsPlaying, "the transport offers Play (Retry), not Pause")
+        XCTAssertNotNil(model.playingImportedCommentary, "the card stays so Retry and Return to Source are offered")
+        XCTAssertNil(firstPlayer.currentItem, "the failed player is released")
+        XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "a voice that never played stays new")
+        XCTAssertNotEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 1, "Now Playing does not claim playback")
+        let task = Mirror(reflecting: model).children.first { $0.label == "interjectionAudioCompletionTask" }?.value
+        XCTAssertNil(Mirror(reflecting: try XCTUnwrap(task)).children.first, "the polling task is gone")
+
+        // Retry starts a fresh attempt on a new player; it fails afresh because the file is still unreadable.
+        model.retryImportedCommentary()
+        XCTAssertEqual(model.importedCommentaryPhase, .loading, "a retry starts over rather than inheriting the failure")
+        let secondPlayer = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        XCTAssertFalse(secondPlayer === firstPlayer)
+        try waitUntil("the retry fails too") { model.importedCommentaryPhase.isFailed }
+
+        // Return to Source leaves cleanly, and the Margin is still new.
+        model.returnToSourceFromImportedCommentary()
+        XCTAssertNil(model.playingImportedCommentary)
+        XCTAssertEqual(model.importedCommentaryPhase, .loading)
+        model.refreshMarginRows()
+        XCTAssertEqual(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id }?.isNew, true)
+    }
+
+    /// #941: a readable voice shows Playing only once its clock advances, and Paused when the listener pauses.
+    func testASharedMarginWithAReadableVoiceMovesFromLoadingToPlayingToPaused() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "item-pill", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        XCTAssertEqual(model.importedCommentaryPhase, .loading)
+        try waitUntil("its clock advances") { model.importedCommentaryPhase == .playing }
+        XCTAssertTrue(model.activePlaybackIsPlaying)
+        model.playPause()
+        XCTAssertEqual(model.importedCommentaryPhase, .paused)
+        XCTAssertFalse(model.activePlaybackIsPlaying)
+        model.playPause()
+        XCTAssertTrue(model.activePlaybackIsPlaying)
+        model.stopInterjectionAudioPlayback()
+    }
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () throws -> Bool) throws {
         let deadline = Date().addingTimeInterval(timeout)
         while try !condition() {
