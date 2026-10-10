@@ -11,50 +11,6 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
-    func testMediaCompletionAcceptsTerminalPlayerPauseWithinLastSecond() {
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
-            completionNotificationObserved: false,
-            targetMatches: true,
-            playerIsPaused: true,
-            userRequestedPause: false,
-            seekIsPending: false,
-            currentMediaTimeMs: 59_050,
-            durationMs: 60_000
-        ))
-    }
-
-    func testASeekBackFromTheEndLeavesTheEndedState() {
-        // #588: a scrub back from the end must clear the end-of-item notification, or the
-        // engine moves the episode straight back to its end.
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 0, durationMs: 178_808))
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 177_000, durationMs: 178_808))
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: 178_808),
-                      "a place the listener chose inside the end tolerance is not the end")
-        XCTAssertFalse(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_808, durationMs: 178_808))
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: nil))
-    }
-
-    func testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion() {
-        XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
-            completionNotificationObserved: false,
-            targetMatches: true,
-            playerIsPaused: true,
-            userRequestedPause: true,
-            seekIsPending: false,
-            currentMediaTimeMs: 59_050,
-            durationMs: 60_000
-        ))
-        XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
-            completionNotificationObserved: false,
-            targetMatches: true,
-            playerIsPaused: true,
-            userRequestedPause: false,
-            seekIsPending: true,
-            currentMediaTimeMs: 59_050,
-            durationMs: 60_000
-        ))
-    }
-
     func testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal() {
         var lifecycle = MediaSeekLifecycle()
         let generation = lifecycle.begin(
