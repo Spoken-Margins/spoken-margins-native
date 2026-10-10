@@ -1289,11 +1289,6 @@ final class Gate1AppModel: ObservableObject {
         if entersBackground { narrationStartupProtection.appEnteredBackground() }
         marginNotesDelivery.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
-        if snapshot.status == .starting,
-           let supertonic = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
-           supertonic.ensurePlaybackStartsBeforeBackgrounding() {
-            diagnostics["textAudioBackgroundStartup"] = "system_fallback_started"
-        }
         syncPlaybackProgressForLifecycle()
         refreshLockScreenSurfacesForLifecycle()
         scheduleAutomaticAudioPreparationIfNeeded()
