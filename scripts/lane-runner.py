@@ -52,7 +52,7 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   straight away, and the T3 PASS's lane job runs them before it merges.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
-- Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
+- Build folders stay warm between T2 and T3 jobs. The checkout wipes the workspace, so the tree's .build (the
   app's DerivedData and verify-tests' output) and Packages/SessionKit/.build (SwiftPM) link to a cache
   outside it, keyed by the SessionKit source tree under test: a DerivedData reused after SessionKit
   changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
@@ -60,13 +60,17 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   DerivedData and SwiftPM's state record absolute paths, and a cache whose SwiftPM state lists a
   binary artifact that isn't on disk starts again cold (#405). At most WARM_KEEP caches per checkout,
   never below WARM_FREE_FLOOR of free disk; otherwise the job runs cold. A warm rebuild measured 6 to
-  10 s against 90 s cold, per build.
+  10 s against 90 s cold, per build. Automerge runs build no app, so they keep no cache (#1207): their host
+  tests build SessionKit in the workspace, which the job empties when it ends, and each automerge job removes
+  the idle caches with no app build in them that its runner's earlier automerge runs left (host_build_folders).
 - Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
   one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
   keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
   Trial (2026-10-01): an automerge job, which runs no xcodebuild, may start there beside a simulator job
   while memory pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
+  The builds-beside-a-simulator trial ended with the per-PR app builds (#1207): T2 builds take lane_slots'
+  usual build slots wherever they run.
 - The step ledger (#1200, scripts/lane_ledger.py). Each step a job runs (the hot-file ratchet, host tests, app
   builds, app tests) is noted with its verdict and wall time, and when the job has reported, they go into
   step-ledger.json in the lane state folder: runs, time, PASS / FAIL / runner faults, and catches. A rule that
@@ -118,8 +122,6 @@ BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
-# Read by the tree's lane_slots.py (spelled here so this runner never needs a name from that copy, lane_slots_helper).
-BUILD_NEEDS_ROOM_ENV = 'SM_LANE_BUILD_NEEDS_ROOM'
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
@@ -347,19 +349,9 @@ WORKFLOW_FILES = ('GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_STATE', 
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
     PR changes can use the lane's write access, and without the workflow's command files, so it can't set
-    the job's verdict. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone (pr_build_env), and host
-    tests that take build slots or test lane_slots mustn't inherit it."""
+    the job's verdict."""
     return {name: value for name, value in os.environ.items()
-            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV, *WORKFLOW_FILES)}
-
-
-def pr_build_env() -> dict:
-    """pr_code_env for the T2 builds. On the build runner it sets BUILD_NEEDS_ROOM_ENV, so each xcodebuild-lane
-    checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
-    env = pr_code_env()
-    if os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
-        env[BUILD_NEEDS_ROOM_ENV] = '1'
-    return env
+            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', *WORKFLOW_FILES)}
 
 
 def git_with_token(tree: Path) -> list[str]:
@@ -419,7 +411,7 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
 @ledger_step('app builds', lambda args, result: (
     [part.rsplit(' (', 1)[0] for part in result[1].split(', ') if not part.endswith('(pass)')], False))
 def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
-    runner = runner or (lambda command, log, timeout: run_bounded(command, log, timeout, env=pr_build_env()))
+    runner = runner or run_bounded
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
@@ -481,8 +473,7 @@ def base_scripts_fallback(tree: Path, base: str, into: Path | None = None) -> Pa
     The workflow runs next's lane-runner.py, but its helpers (lane_slots and friends) are imported from the
     tree's scripts/. A PR branched before a helper existed has no copy, so `from lane_slots import ...`
     raised ModuleNotFoundError before the job could report (#904: #886, about 1,400 commits behind next, on
-    sm-lane-mac-2's wait for room). The tree's own copies still come first; lane_slots_helper covers a copy
-    that is there but older.
+    sm-lane-mac-2's wait for room). The tree's own copies still come first.
     """
     listed = subprocess.run(['git', '-C', str(tree), 'ls-tree', '--name-only', f'origin/{base}', 'scripts/'],
                             capture_output=True, text=True)
@@ -948,7 +939,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         if skipped is None:
             tried.mkdir(parents=True, exist_ok=True)
-            warm = warm_build_folders(ROOT)
+            warm = host_build_folders(ROOT)
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
             verdict, where, ran, checks = run_automerge(
@@ -1172,42 +1163,90 @@ def _cache_busy(cache: Path) -> bool:
         return False
 
 
+
+# ---- No cache for automerge runs (#1207) ---------------------------------------------------------
+
+def host_build_folders(tree: Path, root: Path | None = None) -> str:
+    """The build folders for an automerge run, which builds no app (NO_APP_BUILD_PER_PR); returns a line for the report.
+
+    It links no warm cache: the host tests build SessionKit in the workspace (Packages/SessionKit/.build),
+    and main() empties that when the job ends (drop_workspace_builds). A warm SwiftPM cache saved about 50 s of
+    a 5-minute run on the 48% of runs whose SessionKit key it had, and the build runners kept four of them
+    each, 1.3 GB apiece: about 9 GB, which held automerge runs at the 20 GB disk floor (#1207).
+
+    A T3 earlier in the same job linked the tree's folders to its cache: those links are undone (the cache
+    stays, still locked by this job), so the host tests don't add a SwiftPM build to a T3 cache. Then the
+    idle caches with no app build in them that this checkout's earlier automerge runs left are removed.
+    """
+    for link in (tree / '.build', tree / 'Packages/SessionKit/.build'):
+        if link.is_symlink():
+            link.unlink()
+    removed, freed = sweep_host_test_caches(tree, root)
+    line = 'build folders: in the workspace, no cache kept (automerge runs build no app)'
+    if removed:
+        line += (f'; removed {removed} idle host-test cache{"s" if removed != 1 else ""} ({freed / 10**9:.1f} GB) '
+                 'that earlier automerge runs on this runner kept')
+    return line
+
+
+def holds_app_build(cache: Path) -> bool:
+    """Whether a warm cache holds an app build: a T2's DerivedData (root/dd-simulator, root/dd-device) or a T3's
+    (root/verification/<plan>). A cache with neither was made by an automerge run, for its SwiftPM build."""
+    try:
+        for child in (cache / 'root').iterdir():
+            if child.is_dir() and (child.name.startswith('dd') or
+                                   (child.name == 'verification' and any(child.iterdir()))):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def folder_size(folder: Path) -> int:
+    """Bytes on disk under folder, links not followed."""
+    total = 0
+    for parent, _, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(parent, name)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def sweep_host_test_caches(tree: Path, root: Path | None = None) -> tuple[int, int]:
+    """Remove this checkout's idle warm caches that hold no app build; returns (how many, bytes freed).
+
+    Only this checkout's folder (one per runner, checkout_folder), never another runner's, and never a cache a
+    job holds (_cache_busy) or one with a T2 or T3 build in it (holds_app_build): those are the T3 runner's to
+    keep, under warm_build_folders' limits. Nothing is created: a checkout with no folder has nothing to sweep.
+    """
+    folder = (root or warm_root()) / checkout_folder(tree)
+    if not folder.is_dir():
+        return 0, 0
+    removed, freed = 0, 0
+    for cache in sorted(folder.glob('sk-*')):
+        if not cache.is_dir() or cache.is_symlink() or holds_app_build(cache) or _cache_busy(cache):
+            continue
+        size = folder_size(cache)
+        shutil.rmtree(cache, ignore_errors=True)
+        if not cache.exists():
+            removed, freed = removed + 1, freed + size
+    return removed, freed
+
+
+def drop_workspace_builds(tree: Path) -> None:
+    """At the end of a job, empty the build folders it kept in the workspace rather than in a warm cache: an
+    automerge run's SwiftPM build (1.3 GB), or a cold T2 or T3's DerivedData. Links to a warm cache stay."""
+    if not (tree / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
+        for derived in (tree / '.build').glob('dd*'):
+            shutil.rmtree(derived, ignore_errors=True)
+        shutil.rmtree(tree / '.build/verification', ignore_errors=True)
+    swiftpm = tree / 'Packages/SessionKit/.build'
+    if swiftpm.is_dir() and not swiftpm.is_symlink():
+        shutil.rmtree(swiftpm, ignore_errors=True)
+
 # ---- The build-only runner ----------------------------------------------------------------------
-
-def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
-                           clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
-                           free=lambda: shutil.disk_usage(Path.home()).free, builds=None, note=None) -> str | None:
-    """The second runner builds only while the Mac has room: normal memory pressure and BUILD_RUNNER_FREE_DISK
-    free. Returns None when there's room, or why it gave up waiting.
-
-    Trial, extended 2026-10-01: sm-lane-mac-2 spent 6.9 of its 12.7 busy hours in a day waiting here for a
-    simulator job (mostly the Test Desk's) while the Mac was ~60% idle, and the host-only trial covered few
-    jobs because most automerge jobs build. A build may now start beside one simulator job on the host-only
-    terms (pressure read as normal now, BESIDE_SIMULATOR_FREE_DISK free) while the one build slot lane_slots
-    leaves during a simulator job is free; note(text) is called when it does. Never beside two. This is the
-    check when the job starts; each build checks again as it takes its slot (BUILD_NEEDS_ROOM_ENV).
-    """
-    from lane_slots import memory_pressure_level, simulator_jobs_running
-    builds = builds or lane_slots_helper('build_jobs_running', lambda: None)
-    problem, beside = wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
-                                    pressure or memory_pressure_level, free, builds)
-    if beside and note:
-        note(beside)
-    return problem
-
-
-def lane_slots_helper(name: str, fallback):
-    """lane_slots.<name>, or fallback when the tree's copy of lane_slots.py predates it.
-
-    The workflow runs next's lane-runner.py, but lane_slots comes from the PR's checkout (main() puts the
-    tree's scripts/ first on sys.path, and the module stays loaded after the merge commit is checked out).
-    A branch that hasn't merged next since a helper landed lacks it, and a plain import raised ImportError
-    before the job could report (#656 audit). Every lane_slots name newer than #656 is looked up here, with
-    a fallback that keeps the older, more careful behaviour.
-    """
-    import lane_slots
-    return getattr(lane_slots, name, fallback)
-
 
 def pressure_is_normal(level) -> bool:
     """Only a level read as normal (1) counts: running beside a simulator needs to know, not guess."""
@@ -1223,17 +1262,15 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
     Trial (2026-10-01): the build runner sat idle whenever any simulator job ran, the Test Desk's included
     (394 minutes in a day). A host-only job may now start beside one while the kernel reads memory pressure
     as normal and more than BESIDE_SIMULATOR_FREE_DISK is free. With no simulator job, the build runner's
-    usual rules hold. Builds wait in wait_for_room_to_build.
+    usual rules hold.
     """
     from lane_slots import memory_pressure_level, simulator_jobs_running
     return wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
                          pressure or memory_pressure_level, free)
 
 
-def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free, builds=None) -> tuple:
-    """(None or why it gave up, a note when there's room beside a simulator job). builds, for a job that builds:
-    how many build slots are held (None: can't tell, so it doesn't build beside a simulator job); beside a
-    simulator job, it needs the one slot left then, and one simulator."""
+def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free) -> tuple:
+    """(None or why it gave up, a note when there's room beside a simulator job)."""
     started, last_note = clock(), None
     while True:
         jobs, level, room = simulator_jobs(), pressure(), free()
@@ -1245,21 +1282,13 @@ def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, f
             if room < BESIDE_SIMULATOR_FREE_DISK:
                 busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
                             'of disk is free')
-            held = builds() if builds and jobs == 1 else 0
-            if builds and jobs > 1:
-                busy.append('two simulator jobs are running')
-            elif held is None:
-                busy.append('a simulator job is running, and this checkout\'s lane_slots.py can\'t count build '
-                            'slots (merge next into the branch to build beside one)')
-            elif held:
-                busy.append('a simulator job is running and the one build slot it leaves is taken')
         else:
             if level not in (1, None):
                 busy.append('memory pressure is above normal')
             if room < BUILD_RUNNER_FREE_DISK:
                 busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
         if not busy:
-            return None, (f'{"built" if builds else "ran"} beside a simulator job (trial): memory pressure normal, '
+            return None, (f'ran beside a simulator job (trial): memory pressure normal, '
                           f'{room // 2**30} GiB free' if jobs else None)
         waited = clock() - started
         if waited >= max_wait:
@@ -2217,10 +2246,7 @@ def main(argv=None) -> int:
         # wakes on lane:done's. The lane and automerge jobs run side by side, so the other may have added it.
         github.relabel(DONE, DONE)
     flush_ledger(args.pr, head, lambda body: Repo(repo).comment(OPS_ISSUE, body))
-    if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
-        for derived in (ROOT / '.build').glob('dd*'):
-            shutil.rmtree(derived, ignore_errors=True)
-        shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
+    drop_workspace_builds(ROOT)
     return 0
 
 
