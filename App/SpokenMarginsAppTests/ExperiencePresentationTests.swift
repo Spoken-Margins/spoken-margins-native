@@ -194,6 +194,7 @@ final class ExperiencePresentationTests: XCTestCase {
             ("", 10, ""),
             ("short", 10, "short"),
             ("exactly ten", 11, "exactly ten"),
+            ("aaaa bbbb cccc", 9, "aaaa bbbb…"),
             ("aaaa bbbb cccc", 10, "aaaa bbbb…"),
             ("aaaa bbbb cccc", 11, "aaaa bbbb…"),
             ("supercalifragilistic", 8, "supercal…"),
