@@ -106,20 +106,34 @@ final class PrivateFeedRecoveryTests: XCTestCase {
         XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(blankLinks, local()))
     }
 
-    func testALinklessPacketWithAPlainGUIDMatchesDespiteAnotherShowTitleButOnlyWithTheSameTitle() {
+    func testALinklessPacketWithAPlainGUIDMatchesAnotherShowTitleOnlyWithTheSameTitleAndTheSameDay() {
+        // The owner's test feeds: each subscriber's feed titles the show for them, and both give the GUID and the day.
         let linkless = SharedItemIdentity(
-            itemType: .podcast, title: packet.title, showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1")
-        func friend(title: String, show: String) -> SharedItemIdentity {
-            SharedItemIdentity(itemType: .podcast, title: title, showTitle: show, episodeGUID: "smtf-ep1")
+            itemType: .podcast, title: packet.title, showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1",
+            publishedAt: "2026-09-02T00:00:00Z")
+        func friend(title: String? = nil, show: String = "Test Show (subscriber B)", published: String? = "2026-09-02T00:00:00Z") -> SharedItemIdentity {
+            SharedItemIdentity(itemType: .podcast, title: title ?? packet.title, showTitle: show, episodeGUID: "smtf-ep1", publishedAt: published)
         }
-        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(linkless, friend(title: packet.title, show: "Test Show (subscriber B)")))
-        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linkless, friend(title: "Episode 99: Another", show: "Test Show (subscriber B)")),
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(linkless, friend()))
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(linkless, friend(published: "2026-09-01T22:00:00-04:00")), "the same UTC day")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linkless, friend(title: "Episode 99: Another")),
                        "a short GUID from another show with another title is not this episode")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linkless, friend(published: nil)),
+                       "feeds reuse short GUIDs (#177): a GUID and a title alone don't overrule another show")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linkless, friend(published: "2026-09-03T00:00:00Z")), "another day")
+        let undated = SharedItemIdentity(
+            itemType: .podcast, title: packet.title, showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(undated, friend()), "the packet's day is missing")
+        // The audit's case: a plain GUID "1" and the title "Trailer" on two different shows.
+        let trailer = SharedItemIdentity(itemType: .podcast, title: "Trailer", showTitle: "Members Show", episodeGUID: "1")
+        let otherTrailer = SharedItemIdentity(itemType: .podcast, title: "Trailer", showTitle: "Other Show", episodeGUID: "1")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(trailer, otherTrailer))
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(trailer, SharedItemIdentity(
+            itemType: .podcast, title: "Trailer", showTitle: "members show", episodeGUID: "1")), "the same show still matches without a day")
         let linked = SharedItemIdentity(
             itemType: .podcast, canonicalURL: "https://example.com/12", title: packet.title,
-            showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1")
-        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linked, friend(title: packet.title, show: "Test Show (subscriber B)")),
-                       "a packet that has a link keeps the old show check")
+            showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1", publishedAt: "2026-09-02T00:00:00Z")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linked, friend()), "a packet that has a link keeps the old show check")
     }
 
     func testOnlyAPodcastIsMatchedByItsWords() {

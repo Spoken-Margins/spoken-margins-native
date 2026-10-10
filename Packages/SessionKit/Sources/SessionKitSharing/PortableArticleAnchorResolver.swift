@@ -276,9 +276,12 @@ public enum ImportedItemResolver {
            localItem.itemType == .podcast || (localItem.itemType == .other && localItem.episodeGUID != nil),
            let packageGUID = packageItem.episodeGUID,
            let localGUID = localItem.episodeGUID {
+            // Feeds reuse short GUIDs (#177), so another show's title rules the pair out unless the packet is
+            // linkless (a private feed, whose show each subscriber's feed can title for them) and the same title
+            // and the same publish day, both present, back the GUID.
             return packageGUID == localGUID
                 && (guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
-                    || privateFeedTitlesAgree(packageItem, localItem))
+                    || (privateFeedTitlesAgree(packageItem, localItem) && publishDaysMatch(packageItem, localItem)))
                 && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
         }
         // A page link names an episode's audio only for a podcast packet; an article, PDF or EPUB that shares
@@ -317,6 +320,12 @@ public enum ImportedItemResolver {
         guard packageItem.itemType == .podcast, localItem.itemType == .podcast, hasNoLinks(packageItem) else { return false }
         let title = comparableTitle(packageItem.title)
         return !title.isEmpty && title == comparableTitle(localItem.title)
+    }
+
+    /// Both sides name a publish day, and it is the same day.
+    private static func publishDaysMatch(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
+        guard let packageDay = publishDay(packageItem.publishedAt), let localDay = publishDay(localItem.publishedAt) else { return false }
+        return packageDay == localDay
     }
 
     private static func hasNoLinks(_ item: SharedItemIdentity) -> Bool {
