@@ -106,20 +106,41 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     #if canImport(AVFoundation)
+    /// A callback from a synthesizer the client has retired must not move the current playback,
+    /// even when it names an utterance the current playback has registered (#1129, BIG-08). Each
+    /// callback names a registered utterance, so only the `synthesizer === self.synthesizer`
+    /// guards can reject it; the current synthesizer then shows the same utterances are live.
     func testRetiredSpeechSynthesizerCannotConfirmOrCancelCurrentPlayback() throws {
         let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
+        var queued: [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)] = []
+        client.speakNarration = { queued.append(($0, $1)) } // nothing is spoken, so no real callback races the test
         _ = try client.prepareSpeechText(String(repeating: "Keep the current speech request intact. ", count: 30))
-        try client.play(targetId: "current", from: 0)
-        let status = client.playbackStartStatus(targetId: "current")
-        let position = client.currentCharOffset()
-        let retired = AVSpeechSynthesizer()
-        let obsolete = AVSpeechUtterance(string: "Earlier request")
-        client.speechSynthesizer(retired, didStart: obsolete)
-        client.speechSynthesizer(retired, didCancel: obsolete)
-        client.speechSynthesizer(retired, didFinish: obsolete)
-        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), status)
+        try client.play(targetId: "earlier", from: 0)
+        let retired = try XCTUnwrap(queued.first?.synthesizer)
+        queued.removeAll()
+        try client.play(targetId: "current", from: 40)
+        let current = try XCTUnwrap(queued.first?.synthesizer)
+        XCTAssertFalse(retired === current, "playing again retires the earlier synthesizer")
+        let first = try XCTUnwrap(queued.first?.utterance)
+        let last = try XCTUnwrap(queued.last?.utterance)
+        let position = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending)
+
+        client.speechSynthesizer(retired, didStart: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending, "a retired start doesn't confirm playback")
+        client.speechSynthesizer(retired, willSpeakRangeOfSpeechString: NSRange(location: 5, length: 4), utterance: first)
+        XCTAssertEqual(client.currentCharOffset(), position, "a retired word marker doesn't move the place")
+        client.speechSynthesizer(retired, didFinish: last)
+        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"), "a retired finish doesn't end playback")
         XCTAssertEqual(client.currentCharOffset(), position)
-        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"))
+        client.speechSynthesizer(retired, didCancel: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending, "a retired cancel doesn't fail the start")
+
+        // The same utterances, from the current synthesizer, start and finish playback.
+        client.speechSynthesizer(current, didStart: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .confirmed)
+        client.speechSynthesizer(current, didFinish: last)
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "current"))
         try client.stop()
     }
 
