@@ -6,6 +6,33 @@ import SessionKit
 /// and the empty file was saved as a Margin. The screen follows what the recorder has taken in.
 @MainActor
 final class MarginCaptureHealthTests: XCTestCase {
+    // A fresh simulator has never accepted the Terms, so the default voice holds text playback behind the
+    // Terms sheet, `startItem` plays nothing and `beginInterjection` is refused. Run alone on a fresh
+    // simulator, every test here failed that way (lane report pr1301-r38057340698). Accept them before the
+    // model is made (it reads them at init) and put the earlier answer back afterwards, so order doesn't matter.
+    private static let termsKeys = [SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
+    private var priorTermsDefaults: [String: Any] = [:]
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        priorTermsDefaults = [:]
+        for key in Self.termsKeys {
+            priorTermsDefaults[key] = UserDefaults.standard.object(forKey: key)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+    }
+
+    override func tearDownWithError() throws {
+        for key in Self.termsKeys {
+            if let value = priorTermsDefaults[key] {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        try super.tearDownWithError()
+    }
+
     /// A recorder that accepts its start, as the phone's did, and then takes in only what the test lets it.
     private final class ScriptedRecordingClient: RecordingClient {
         /// What the recorder reports as audio taken in. The phone's said 22 and stayed there.
