@@ -17,262 +17,6 @@ import AVFoundation
 import PDFKit
 #endif
 
-enum Gate1Screen: Hashable {
-    case home
-    case item
-    case playback
-    case timeline
-    case settings
-    case offlineStorage
-    case export
-    case batchExport
-}
-
-enum AIDataSharingConsent: String {
-    case unknown
-    case grantedV1
-    case declined
-}
-
-private struct ResolvedSkimPlaybackPlan {
-    let direction: SkimDirection
-    let itemId: String
-    let originMediaTimeMs: Int
-    let summarySceneId: String
-    let destinationSceneId: String?
-    let destinationMediaTimeMs: Int
-    let summaryAssetId: String
-    let summaryAudioURL: URL
-}
-
-private struct SkimResourceContext {
-    let itemId: String
-    let projection: ResolvedListeningMapProjection?
-    let proposal: PortableListeningMapProposalArtifact?
-    let assets: [OwnedOfflineAsset]
-}
-
-enum SummaryBridgeRatePolicy {
-    // Keep pronunciation independent of listening speed. Version generated assets
-    // so summaries synthesized with the former accelerated policy are not reused.
-    static let synthesisSpeed: Float = 1
-    static let systemSynthesisRate: Float = 0.5
-    static let cacheVersion = "natural-rate-v2"
-    static func transportRate(_ listeningRate: Double) -> Float { Float(listeningRate) }
-}
-
-enum NativeTextStartupAudioState: String, Hashable {
-    case notRequired = "not_required"
-    case waiting // queued behind the one Library item being prepared now (#281)
-    case preparing
-    case ready
-    case paused
-    case failed
-}
-
-struct LibraryItemRow: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let status: String
-    let canDelete: Bool
-    var hasContinuationSession: Bool
-    var continuationProgressPercent: Int?
-    let isCompleted: Bool
-    let mediaType: String
-    let hasNativeAudio: Bool
-    let sourceTitle: String?
-    let sourceURL: String?
-    let author: String?
-    let sourceReference: String?
-    let sourceReferenceType: String?
-    var offlineState: LibraryOfflineStateFilter
-    var startupAudioState: NativeTextStartupAudioState
-    var startupAudioCompletedChunkCount: Int
-    var startupAudioTargetChunkCount: Int
-    let addedAt: Date?
-    let lastListenedAt: Date?
-    let storageRecencyRank: Int
-    /// A PDF read through the structured-document reader (#359).
-    var usesNewReader = false
-    /// Marked complete by hand, not finished by listening, so Mark Unfinished can clear it (#273).
-    var canMarkUnfinished = false
-    var textCharacterCount: Int?  // a text item's length for its time estimate (#305); nil for recorded audio
-
-    init(
-        id: String,
-        title: String,
-        status: String,
-        canDelete: Bool,
-        hasContinuationSession: Bool = false,
-        continuationProgressPercent: Int? = nil,
-        isCompleted: Bool = false,
-        mediaType: String = "text",
-        hasNativeAudio: Bool = false,
-        sourceTitle: String? = nil,
-        sourceURL: String? = nil,
-        author: String? = nil,
-        sourceReference: String? = nil,
-        sourceReferenceType: String? = nil,
-        offlineState: LibraryOfflineStateFilter = .onlineOnly,
-        startupAudioState: NativeTextStartupAudioState = .notRequired,
-        startupAudioCompletedChunkCount: Int = 0,
-        startupAudioTargetChunkCount: Int = 0,
-        addedAt: Date? = nil,
-        lastListenedAt: Date? = nil,
-        storageRecencyRank: Int = .max
-    ) {
-        self.id = id
-        self.title = title
-        self.status = status
-        self.canDelete = canDelete
-        self.hasContinuationSession = hasContinuationSession
-        self.continuationProgressPercent = continuationProgressPercent
-        self.isCompleted = isCompleted
-        self.hasNativeAudio = hasNativeAudio
-        self.mediaType = mediaType
-        self.sourceTitle = sourceTitle
-        self.sourceURL = sourceURL
-        self.author = author
-        self.sourceReference = sourceReference
-        self.sourceReferenceType = sourceReferenceType
-        self.offlineState = offlineState
-        self.startupAudioState = startupAudioState
-        self.startupAudioCompletedChunkCount = max(0, startupAudioCompletedChunkCount)
-        self.startupAudioTargetChunkCount = max(0, startupAudioTargetChunkCount)
-        self.addedAt = addedAt
-        self.lastListenedAt = lastListenedAt
-        self.storageRecencyRank = storageRecencyRank
-    }
-}
-
-struct AudioPreparationQueueRow: Identifiable, Hashable {
-    let id: String
-    let itemId: String
-    let title: String
-    let policy: PreparationJobPolicy
-    let state: PreparedAudioState
-    let completedChunkCount: Int
-    let plannedChunkCount: Int
-    let requestedAt: Date
-    let updatedAt: Date
-    let failureCode: String?
-    let isActivePlaybackItem: Bool
-    let canMoveEarlier: Bool
-    let canMoveLater: Bool
-
-    var progress: Double {
-        guard plannedChunkCount > 0 else { return 0 }
-        return min(1, Double(completedChunkCount) / Double(plannedChunkCount))
-    }
-}
-
-struct RecentlyPreparedAudioRow: Identifiable, Hashable {
-    let id: String
-    let itemId: String
-    let title: String
-    let completedAt: Date
-    let durationMs: Int
-}
-
-struct TrashUndoState: Identifiable, Equatable {
-    let id = UUID()
-    let itemId: String
-    let title: String
-}
-
-struct SourceLinkCandidateReviewState: Identifiable, Equatable {
-    let request: LinkResolutionRequest
-    let result: LinkResolutionResult
-    let startSession: Bool
-
-    var id: String { request.id }
-}
-
-struct ItemDetailState {
-    var id = ""
-    var title = ""
-    var status = ""
-    var text = ""
-    var externalReference = ""
-    var overview = ""
-    var navigation: [CanonicalNavigationNode] = []
-    var chapters: [Chapter] = []
-    var mediaChapters: [MediaTimelineChapter] = []
-    var listeningMapScenes: [MediaTimelineChapter] = []
-    var mediaDurationMs: Int?
-    var isNativeAudio = false
-    var documentStructure: PDFDocumentStructure?
-    var sessions: [Session] = []
-    var sessionRows: [SessionPresentation] = []
-    var interjections: [Interjection] = []
-    var importedCommentaryLayers: [ImportedCommentaryLayer] = []
-    var importedCommentaryInterjections: [String: [ImportedCommentaryInterjection]] = [:]
-    var sharedMarginPlacement: SharedMarginPlacementPasses.Pass?
-    var turns: [ConversationTurn] = []
-}
-
-struct SessionPresentation: Identifiable {
-    let session: Session
-    let interjectionCount: Int
-    let interjectionPreview: String?
-
-    var id: String { session.id }
-}
-
-enum BatchSessionExportFilter: String, CaseIterable, Identifiable {
-    case withInterjections = "with_interjections"
-    case all = "all"
-
-    var id: String { rawValue }
-}
-
-struct BatchSessionExportRow: Identifiable {
-    let session: Session
-    let itemTitle: String
-    let interjectionCount: Int
-
-    var id: String { session.id }
-}
-
-struct SpeechVoiceChoice: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let language: String
-    let quality: String
-}
-
-enum AppTTSVoiceSelection: String, CaseIterable, Identifiable {
-    case james = "supertonic:M2"
-    case lily = "supertonic:F2"
-    case system = "system"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .james: "James"
-        case .lily: "Lily"
-        case .system: "iOS System Voice"
-        }
-    }
-
-    var detail: String {
-        switch self {
-        case .james: "Deep, calm · M2"
-        case .lily: "Bright, cheerful · F2"
-        case .system: "Uses the selected voice installed in iOS"
-        }
-    }
-
-    var supertonicVoice: SupertonicVoiceID? {
-        switch self {
-        case .james: .m2
-        case .lily: .f2
-        case .system: nil
-        }
-    }
-}
-
 struct PiperVoiceOption: Identifiable, Hashable {
     let id: String
     let name: String
@@ -293,126 +37,6 @@ private struct ObsidianImportRequest: Sendable {
 private struct ObsidianImportBatch: Sendable {
     let prepared: [PreparedObsidianImport]
     let failures: [String]
-}
-
-enum SourceFileImportError: LocalizedError {
-    case pdfHasNoExtractableText
-    case pdfImportUnavailable
-    case remotePDFInvalidResponse
-    case remotePDFTooLarge
-
-    var errorDescription: String? {
-        switch self {
-        case .pdfHasNoExtractableText:
-            return "This PDF has no extractable text. Scanned PDFs need OCR before they can be imported."
-        case .pdfImportUnavailable:
-            return "PDF text extraction is unavailable in this build."
-        case .remotePDFInvalidResponse:
-            return "The shared link did not return a readable PDF."
-        case .remotePDFTooLarge:
-            return "This PDF is larger than the 50 MB import limit."
-        }
-    }
-}
-
-struct ImportInboxEntry: Identifiable, Hashable {
-    enum Kind: String, Hashable {
-        case sourceLink
-        case browserText
-    }
-
-    let id: String
-    let payloadID: String
-    let kind: Kind
-    let title: String
-    let source: String
-    let reason: String
-}
-
-private enum AppSpeechPreviewMode {
-    case spokenContent
-    case appVoice(voiceIdentifier: String?, rate: Float)
-    case assistiveTechnology
-}
-
-typealias PreparedTextAudioPrewarmHandler = @Sendable (
-    _ itemId: String,
-    _ title: String,
-    _ text: String,
-    _ outputDirectory: URL,
-    _ voiceIdentifier: String?,
-    _ speechRate: Float
-) async -> Result<PreparedTextAudio?, Error>
-
-typealias InterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> String
-typealias AlignedInterjectionTranscriptionHandler = @Sendable (_ audioPath: String) async throws -> AlignedInterjectionTranscript
-typealias ShareMarginSilenceAnalysisHandler = @Sendable (
-    _ sourceURL: URL,
-    _ alignedTranscript: AlignedInterjectionTranscript
-) throws -> [InterjectionCleanupDecision]
-typealias ShareMarginAudioCleanupHandler = @Sendable (
-    _ sourceURL: URL,
-    _ destinationURL: URL,
-    _ decisions: [InterjectionCleanupDecision]
-) async throws -> Int
-
-private struct UITestingAmbiguousSourceLinkResolver: LinkResolutionClient {
-    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
-        LinkResolutionResult(
-            requestId: request.id,
-            status: .needsReview,
-            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
-            candidates: [
-                LinkResolutionCandidate(
-                    sourceLink: SourceLink(
-                        url: "https://podcasts.apple.com/ui-test/episode-one",
-                        provider: "apple_podcasts",
-                        role: "canonical_source"
-                    ),
-                    title: "Ambiguous Episode One",
-                    showTitle: "UI Test Show",
-                    durationMs: 1_800_000,
-                    publishedAt: "2026-08-01T00:00:00Z",
-                    audioURL: "https://cdn.example.com/ui-test-episode-one.mp3",
-                    confidence: 0.71
-                ),
-                LinkResolutionCandidate(
-                    sourceLink: SourceLink(
-                        url: "https://podcasts.apple.com/ui-test/episode-two",
-                        provider: "apple_podcasts",
-                        role: "canonical_source"
-                    ),
-                    title: "Ambiguous Episode Two",
-                    showTitle: "UI Test Show",
-                    durationMs: 2_400_000,
-                    publishedAt: "2026-08-02T00:00:00Z",
-                    audioURL: "https://cdn.example.com/ui-test-episode-two.mp3",
-                    confidence: 0.70
-                )
-            ],
-            failureReason: "spotify_episode_match_ambiguous"
-        )
-    }
-}
-
-@MainActor
-final class RuntimeDiagnostics: ObservableObject {
-    @Published var values: [String: String] = [:]
-}
-
-struct LibraryReadSnapshot: Sendable {
-    let items: [Item]
-    let sessions: [Session]
-    let manifests: [PreparedAudioManifest]
-    let jobs: [AudioPreparationJob]
-    let downloads: [PodcastDownloadRecord]
-    var structuredDocumentItemIds: Set<String> = []
-
-    static func read(store: SQLiteSessionStore) throws -> Self {
-        try Self(items: store.listItems(includeDeleted: true), sessions: store.loadSessions(),
-                 manifests: store.loadPreparedAudioManifests(), jobs: store.loadAudioPreparationJobs(),
-                 downloads: store.loadPodcastDownloads(), structuredDocumentItemIds: store.loadStructuredDocumentItemIds())
-    }
 }
 
 @MainActor
@@ -468,6 +92,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
             if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
             if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
@@ -938,6 +563,11 @@ final class Gate1AppModel: ObservableObject {
         record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
         outcomeChanged: { [weak self] in self?.diagnostics["textAudioBackgroundStartup"] = $0.rawValue }
     )
+    /// Background time over each seam between two chunks of on-device narration (#540).
+    private lazy var handOverBackgroundHold = HandOverBackgroundHold(
+        begin: NarrationStartupBackgroundTime.begin,
+        record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+    )
     #if canImport(AVFoundation)
     private var interjectionAudioPlayer: AVPlayer?
     private var interjectionAudioCompletionTask: Task<Void, Never>?
@@ -982,6 +612,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
     private var importedPodcastResolutionURLs: [String: URL] = [:]
+    var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
     private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
@@ -1832,40 +1463,6 @@ final class Gate1AppModel: ObservableObject {
         isUITesting: Bool
     ) -> Bool {
         libraryIsEmpty && storedVersion < welcomeSampleSeedVersion && !isUITesting
-    }
-
-    private static func makeBundledGuidedOnboardingItem() -> Item {
-        Item(
-            id: guidedOnboardingItemId,
-            title: "Guided Tour: Add and Prepare Sources",
-            mediaType: "guided_tour",
-            text: """
-            Welcome to Spoken Margins. Add text, PDF, a readable webpage, or a podcast from Add Source. You can also import a DRM-free EPUB or an MP3, M4A, M4B, or audio-bearing MP4 audiobook. Native text and EPUB chapters can be prepared for offline listening. Preparation progress, storage use, retry, and cancellation stay visible; changing playback speed does not regenerate prepared audio. Followed sources appear in New from Sources and never import until you choose an entry. Use the sleep timer for a timed pause or the end of the current chapter.
-            """,
-            externalReference: "bundled://guided-onboarding.v1",
-            status: "ready",
-            externalReferenceType: "guided_onboarding",
-            sourceTitle: "Spoken Margins",
-            createdAt: Date()
-        )
-    }
-
-    private static func makeBundledGuidedOnboardingMap() -> ListeningMap {
-        let textLength = makeBundledGuidedOnboardingItem().text?.count ?? 0
-        return ListeningMap(
-            id: "map-guided-onboarding",
-            itemId: guidedOnboardingItemId,
-            overview: "Practice listening, interjecting, reviewing the timeline, and exporting a session.",
-            chapters: [
-                Chapter(
-                    id: "guided-onboarding-core-loop",
-                    title: "The Core Loop",
-                    startChar: 0,
-                    endChar: textLength,
-                    percent: 0
-                )
-            ]
-        )
     }
 
     func handleAppBecameActive() {
@@ -4711,7 +4308,7 @@ final class Gate1AppModel: ObservableObject {
         }
         resetMixWithOtherAudioForNewSession()
         if engine.currentSession != nil {
-            snapshot = try engine.endSession()
+            snapshot = try endEngineSession(engine)
         }
         let started = try engine.startSession(itemId: activeItemId)
         snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
@@ -4998,7 +4595,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
-            _ = try? engine.endSession()
+            _ = try? endEngineSession(engine)
             snapshot = engine.snapshot
         }
         activeItemId = id
@@ -5915,7 +5512,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
-            snapshot = try engine.endSession(stoppingInlinePlayback: endMarginMoment)
+            snapshot = try endEngineSession(engine)
             activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {
@@ -9645,7 +9242,9 @@ final class Gate1AppModel: ObservableObject {
                 },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
-                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } }
+                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
+                onRenderPace: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["onDeviceRenderPace"] = summary } },
+                handOverHold: handOverBackgroundHold
             )
         }
         diagnostics["sessionTTS"] = "System speech"
@@ -10540,47 +10139,6 @@ final class Gate1AppModel: ObservableObject {
         return trimmed
     }
 
-    private func performProviderDataRequest(_ request: URLRequest, timeoutSeconds: TimeInterval = 30) async throws -> (Data, URLResponse) {
-        guard remoteProviderExperienceEnabled else {
-            throw ProviderCallError.remoteProviderDisabled
-        }
-        var timedRequest = request
-        timedRequest.timeoutInterval = timeoutSeconds
-        diagnostics["lastProviderRequestURL"] = timedRequest.url?.absoluteString ?? "none"
-        diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
-        return try await Self.performProviderDataRequestOffMain(timedRequest, timeoutSeconds: timeoutSeconds)
-    }
-
-    private nonisolated static func performProviderDataRequestOffMain(
-        _ request: URLRequest,
-        timeoutSeconds: TimeInterval
-    ) async throws -> (Data, URLResponse) {
-        return try await withThrowingTaskGroup(of: (Data, URLResponse).self) { group in
-            group.addTask {
-                try await URLSession.shared.data(for: request)
-            }
-            group.addTask {
-                try await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                throw URLError(.timedOut)
-            }
-            guard let result = try await group.next() else {
-                throw URLError(.unknown)
-            }
-            group.cancelAll()
-            return result
-        }
-    }
-
-    private func makeChatCompletionsRequest(messages: [String], model: String, systemPrompt: String) -> URLRequest? {
-        Gate1ProviderRequestFactory.makeChatCompletionsRequest(
-            baseURL: providerBaseURL,
-            apiKey: providerAPIKey,
-            messages: messages,
-            model: model,
-            systemPrompt: systemPrompt
-        )
-    }
-
     private func modelForAIJob(kind: String) -> String {
         Gate1ProviderRequestFactory.modelForAIJob(
             kind: kind,
@@ -10613,19 +10171,6 @@ final class Gate1AppModel: ObservableObject {
         job.model = model
         try? store.updateAIJob(job)
         diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
-    }
-
-    private func decodeProviderText(_ data: Data) throws -> String {
-        if let response = try? JSONDecoder().decode(ChatCompletionResponse.self, from: data),
-           let content = response.choices.first?.message.content,
-           !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return content
-        }
-        if let raw = String(data: data, encoding: .utf8),
-           !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return raw
-        }
-        throw ProviderCallError.emptyResponse
     }
 
     private func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil) {
@@ -12017,7 +11562,7 @@ final class Gate1AppModel: ObservableObject {
                     packageScopedId: String(format: "margin-%04d", index + 1),
                     revision: revision,
                     anchor: anchor,
-                    representation: representation
+                    representation: representation, replyTo: draft.interjection.replyTo
                 ))
             }
 
@@ -12060,7 +11605,7 @@ final class Gate1AppModel: ObservableObject {
                 .appending(path: "SpokenMargins/SharedPackages", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let destination = directory.appending(path: "\(SharedMarginExport.fileName(item.title))-\(packageID.suffix(8)).spokenmargins")
-            _ = try SpokenMarginsPackageArchive.write(prepared, to: destination)
+            let writtenManifest = try SpokenMarginsPackageArchive.write(prepared, to: destination); try? SpokenMarginsPackageExportRecord.recordExport(manifest: writtenManifest, selections: selections, repository: store) // replies link back through the recorded identity; the share still succeeds without it (#473)
             listeningSignals.export(itemId: item.id, packetId: packageID, marginCount: drafts.count, packetURL: destination)
             UserDefaults.standard.set(sharingState.senderDisplayLabel, forKey: "sharingSenderDisplayLabel")
             sharedSpokenMarginsPackageURL = destination
@@ -13705,7 +13250,7 @@ final class Gate1AppModel: ObservableObject {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+        if deferredPodcastPlacementURLs[itemId] == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
            let item = try? store.loadItem(id: itemId) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
@@ -13753,15 +13298,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func podcastResolution(
-        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
-        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
-    ) -> ImportedAnchorResolution {
-        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
-            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
-    }
-
-    private func resolveImportedPodcastCommentary(
+    func resolveImportedPodcastCommentary(
         itemId: String,
         localURL: URL,
         recipientTranscriptOverride: TranscriptTimeline? = nil
@@ -13770,7 +13307,8 @@ final class Gate1AppModel: ObservableObject {
               let file = try? PodcastPlacementFile(url: localURL),
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { return }
+              !layers.isEmpty else { deferredPodcastPlacementURLs[itemId] = nil; return }
+        guard !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: localURL) else { return }
         importedPodcastResolutionURLs[itemId] = localURL
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
@@ -14123,43 +13661,13 @@ final class Gate1AppModel: ObservableObject {
     #endif
 }
 
-private struct ChatCompletionRequest: Encodable {
-    let model: String
-    let messages: [ChatMessage]
-    let temperature: Double
-}
-
-private struct ChatMessage: Codable {
-    let role: String
-    let content: String
-}
-
-private struct ChatCompletionResponse: Decodable {
-    struct Choice: Decodable {
-        struct Message: Decodable {
-            let content: String?
-        }
-        let message: Message
-    }
-    let choices: [Choice]
-}
-
 private enum ProviderCallError: Error, CustomStringConvertible {
-    case http(Int, String)
-    case emptyResponse
-    case invalidURL
     case missingAPIKey
     case dataSharingConsentRequired
     case remoteProviderDisabled
 
     var description: String {
         switch self {
-        case .http(let status, let body):
-            return "HTTP \(status): \(body.prefix(240))"
-        case .emptyResponse:
-            return "empty_response"
-        case .invalidURL:
-            return "provider_url_invalid"
         case .missingAPIKey:
             return "provider_api_key_missing"
         case .dataSharingConsentRequired:
@@ -14167,40 +13675,6 @@ private enum ProviderCallError: Error, CustomStringConvertible {
         case .remoteProviderDisabled:
             return "remote_provider_disabled"
         }
-    }
-}
-
-private final class UnavailableSpeechPlaybackClient: AudioPlaybackClient, @unchecked Sendable {
-    private let reason: String
-    private var failedTargetId: String?
-
-    init(reason: String) {
-        self.reason = reason
-    }
-
-    func prepareSpeechText(_ text: String) throws -> String {
-        SpeechTextNormalizer.normalize(text)
-    }
-
-    func play(targetId: String) throws {
-        try fail(targetId: targetId)
-    }
-
-    func play(targetId: String, from charOffset: Int) throws {
-        try fail(targetId: targetId)
-    }
-
-    func pause() throws {}
-
-    func stop() throws {}
-
-    func playbackStartStatus(targetId: String) -> PlaybackStartStatus {
-        failedTargetId == targetId ? .failed(reason) : .confirmed
-    }
-
-    private func fail(targetId: String) throws {
-        failedTargetId = targetId
-        throw SessionKitError.invalidCommandForState(reason)
     }
 }
 

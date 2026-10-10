@@ -29,6 +29,46 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
         ), "map-model")
     }
 
+    /// The fallback is used when a configured model is blank (APM-14). The test above gives every activity a
+    /// model and a fallback that equals the Listening Map model, so neither the fallback nor a wrong fallback
+    /// source could show.
+    func testABlankModelForAnActivityFallsBackToTheProviderModel() {
+        for kind in ["listening_map", "interjection_summary", "assistant_response"] {
+            for blank in ["", "   ", "\n\t "] {
+                XCTAssertEqual(
+                    modelForAIJob(
+                        kind: kind,
+                        listeningMapModel: kind == "listening_map" ? blank : "map-model",
+                        summaryModel: kind == "interjection_summary" ? blank : "summary-model",
+                        conversationModel: kind == "assistant_response" ? blank : "conversation-model"
+                    ),
+                    "legacy-model",
+                    "\(kind) with a model of \(blank.debugDescription)"
+                )
+            }
+        }
+        XCTAssertEqual(
+            modelForAIJob(kind: "unknown", listeningMapModel: " ", summaryModel: "summary-model", conversationModel: "conversation-model"),
+            "legacy-model",
+            "an unknown activity uses the Listening Map model, and a blank one falls back"
+        )
+    }
+
+    func testConfiguredModelsAreTrimmedForEveryActivity() {
+        XCTAssertEqual(
+            modelForAIJob(kind: "listening_map", listeningMapModel: " map-model\n", summaryModel: "", conversationModel: ""),
+            "map-model"
+        )
+        XCTAssertEqual(
+            modelForAIJob(kind: "interjection_summary", listeningMapModel: "", summaryModel: "\tsummary-model ", conversationModel: ""),
+            "summary-model"
+        )
+        XCTAssertEqual(
+            modelForAIJob(kind: "assistant_response", listeningMapModel: "", summaryModel: "", conversationModel: "  conversation-model"),
+            "conversation-model"
+        )
+    }
+
     func testConversationPromptMakesCurrentFollowupPrimary() {
         let followUp = "Please consolidate my point in two sentences."
         let prompt = Gate1ProviderRequestFactory.conversationPrompt(
@@ -50,6 +90,16 @@ final class Gate1ProviderRequestFactoryTests: XCTestCase {
             XCTAssertFalse(prompt.contains("<sm_"))
             XCTAssertTrue(prompt.contains("text-to-speech") || prompt.contains("spoken answer"))
         }
+    }
+
+    private func modelForAIJob(kind: String, listeningMapModel: String, summaryModel: String, conversationModel: String) -> String {
+        Gate1ProviderRequestFactory.modelForAIJob(
+            kind: kind,
+            listeningMapModel: listeningMapModel,
+            summaryModel: summaryModel,
+            conversationModel: conversationModel,
+            fallbackProviderModel: "legacy-model"
+        )
     }
 
     private func model(kind: String) -> String {
