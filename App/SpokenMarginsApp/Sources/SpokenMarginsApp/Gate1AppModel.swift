@@ -493,7 +493,6 @@ final class Gate1AppModel: ObservableObject {
         storedStage: UserDefaults.standard.string(forKey: Gate1AppModel.guidedOnboardingStageKey),
         isCardDismissed: UserDefaults.standard.bool(forKey: Gate1AppModel.onboardingCardDismissedKey)
     )
-    @Published private(set) var legacyLibraryResetNotice: String?
     @Published var knownIssues = [
         "Physical-device product validation remains pending.",
         "Now Playing lock-screen controls require signed real-device validation.",
@@ -4816,10 +4815,6 @@ final class Gate1AppModel: ObservableObject {
 
     /// Trying an action again answers its Retry banner, so a stale one can't linger over the result.
     private func withdrawRetryOffer(_ key: String) { if feedbackEvent?.retry?.key == key { feedbackEvent = nil } }
-
-    func dismissLegacyLibraryResetNotice() {
-        legacyLibraryResetNotice = nil
-    }
 
     func restoreItem(id: String) {
         do {
@@ -12160,10 +12155,6 @@ final class Gate1AppModel: ObservableObject {
     private func requireStore() throws -> SQLiteSessionStore {
         if let store { return store }
         let url = try databaseURL()
-        if let backupURL = try archiveLegacyLibraryIfNeeded(at: url) {
-            legacyLibraryResetNotice = "This beta starts with a fresh library. Your earlier test database was archived at \(backupURL.lastPathComponent)."
-            diagnostics["legacyLibraryArchive"] = backupURL.path
-        }
         let store = try SQLiteSessionStore(path: url.path)
         self.store = store
         try configurePodcastDownloads(store: store)
@@ -13361,18 +13352,17 @@ final class Gate1AppModel: ObservableObject {
                     defer { self.sharedMarginPlacementPasses.end(.matching, itemId: itemId) }
                     guard let store = self.store else { return }
                     do {
-                        let outcomes = resolvedWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
+                        let livingWork = try resolvedWork.filter { try store.isLiveImportedCommentaryLayer(id: $0.0.id) } // #915
+                        let outcomes = livingWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
                         let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
                         let activation = SharedListeningMapPlacement.activation(
                             outcomes, listenerHasMap: try Self.listenerHasListeningMap(itemId: itemId, store: store),
                             activeProjectionId: current?.id)
-                        for (layer, records, outcome) in resolvedWork {
-                            var layer = layer
+                        for (var layer, records, outcome) in livingWork {
                             layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
-                            try store.saveImportedCommentaryLayer(layer)
-                            for record in records { try store.saveImportedCommentaryInterjection(record) }
+                            try store.savePlacementResult(of: layer, records: records)
                         }
-                        let sharedProposals = Dictionary(resolvedWork.compactMap { work in
+                        let sharedProposals = Dictionary(livingWork.compactMap { work in
                             work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
                         }, uniquingKeysWith: { first, _ in first })
                         if activation.refusal != nil, let stale = current, sharedProposals[stale.id] != nil {
@@ -13399,8 +13389,8 @@ final class Gate1AppModel: ObservableObject {
                             }
                         }
                         if self.selectedItem.id == itemId { self.refreshSelectedItem() }
-                        let resolvedCount = resolvedWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
-                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(resolvedWork.count) \(SharedMarginPlacementSummary(resolvedWork.map { ($0.0, $0.1) }).diagnosticValue)"
+                        let resolvedCount = livingWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
+                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(livingWork.count) \(SharedMarginPlacementSummary(livingWork.map { ($0.0, $0.1) }).diagnosticValue)"
                         if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
                             self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
                         }
@@ -13494,31 +13484,6 @@ final class Gate1AppModel: ObservableObject {
         }
         _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString, replaceActivePlayback: false)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
-    }
-
-    private func archiveLegacyLibraryIfNeeded(at databaseURL: URL) throws -> URL? {
-        let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: databaseURL.path),
-              SQLiteSessionStore.schemaVersion(atPath: databaseURL.path) == 1 else { return nil }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        let archiveDirectory = databaseURL
-            .deletingLastPathComponent()
-            .appending(path: "LegacyLibraryBackup")
-            .appending(path: formatter.string(from: Date()))
-        try fileManager.createDirectory(at: archiveDirectory, withIntermediateDirectories: true)
-
-        for suffix in ["", "-wal", "-shm"] {
-            let source = URL(fileURLWithPath: databaseURL.path + suffix)
-            guard fileManager.fileExists(atPath: source.path) else { continue }
-            try fileManager.moveItem(
-                at: source,
-                to: archiveDirectory.appending(path: source.lastPathComponent)
-            )
-        }
-        return archiveDirectory
     }
 
     private func databaseURL() throws -> URL {
