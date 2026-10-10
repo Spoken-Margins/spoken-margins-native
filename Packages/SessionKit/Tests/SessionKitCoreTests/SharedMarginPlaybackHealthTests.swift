@@ -152,6 +152,17 @@ final class SharedMarginPlaybackHealthTests: XCTestCase {
         XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1.2, playerAtRest: false, at: 500.3), .playing)
     }
 
+    func testPlayingAfterASystemPauseShowsPlayingAtOnce() {
+        // The listener taps Play on a card the system paused: the card must follow the tap, not the next poll.
+        var health = health()
+        health.observe(playerFailed: false, clockSeconds: 1, at: 101)
+        health.observe(playerFailed: false, clockSeconds: 1, playerAtRest: true, at: 102)
+        health.setUserPaused(false, at: 200)
+        XCTAssertEqual(health.phase, .playing)
+        XCTAssertTrue(health.showsPause)
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1.2, playerAtRest: false, at: 200.2), .playing)
+    }
+
     func testAPlayerAtRestBeforeItEverSoundedStillTimesOut() {
         // Before the first sound a resting player is indistinguishable from one that never started.
         var health = health()

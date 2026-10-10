@@ -79,11 +79,13 @@ public struct SharedMarginPlaybackHealth: Equatable, Sendable {
     /// The listener paused or resumed. Time spent paused never counts against the voice, and a
     /// resume starts the stall clock afresh. A failed attempt stays failed: resuming it is a Retry.
     public mutating func setUserPaused(_ paused: Bool, at now: TimeInterval) {
-        guard !phase.isFailed, paused != isUserPaused else { return }
-        isUserPaused = paused
+        guard !phase.isFailed else { return }
         if paused {
+            isUserPaused = true
             phase = .paused
-        } else {
+        } else if isUserPaused || phase == .paused {
+            // Also resumes a pause the system made (`playerAtRest`): the card must not lag the Play tap.
+            isUserPaused = false
             lastProgressAt = now
             phase = hasPlayed ? .playing : .loading
         }
