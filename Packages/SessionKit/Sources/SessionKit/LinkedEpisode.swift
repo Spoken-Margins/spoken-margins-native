@@ -66,6 +66,10 @@ public enum ImportedFileEpisodeLink {
     public static func link(_ item: Item, resolution result: LinkResolutionResult, pageURL: String) throws -> Item {
         guard result.status == .playable, let candidate = result.selectedCandidate else { throw Refusal.couldNotReadLink }
         guard candidate.confidence >= minimumConfidence else { throw Refusal.notOneEpisode }
+        // An episode found inside a feed whose own link was pasted is the resolver picking from the show,
+        // however sure it sounds (a short GUID can "match" the feed's address).
+        if candidate.sourceLink.role == "canonical_feed",
+           trimmedURL(candidate.sourceLink.url) == trimmedURL(pageURL) { throw Refusal.notOneEpisode }
         return try link(item, to: candidate, pageURL: pageURL)
     }
 
@@ -103,6 +107,12 @@ public enum ImportedFileEpisodeLink {
         var unlinked = item
         unlinked.linkedEpisode = nil
         return unlinked
+    }
+
+    private static func trimmedURL(_ value: String?) -> String? {
+        guard var trimmed = nonEmpty(value)?.lowercased() else { return nil }
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        return trimmed
     }
 
     private static func nonEmpty(_ value: String?) -> String? {

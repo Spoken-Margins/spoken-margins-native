@@ -104,7 +104,7 @@ final class LinkedFileEpisodeMatchTests: XCTestCase {
             ("same title and show, no identity", linkShared(guid: nil, canonicalURL: nil, enclosureURL: nil)),
             ("same title, another page", linkShared(guid: nil, canonicalURL: "https://podcasts.example.com/episodes/other", enclosureURL: nil)),
             ("an article on the same page", SharedItemIdentity(itemType: .text, canonicalURL: Self.page, title: "Harbour Lights")),
-            ("a PDF with the same GUID", SharedItemIdentity(itemType: .pdf, title: "Harbour Lights", episodeGUID: "harbour-lights")),
+            ("a PDF with the same GUID", SharedItemIdentity(itemType: .pdf, canonicalURL: Self.page, title: "Harbour Lights", episodeGUID: "harbour-lights")),
         ]
         for (name, packet) in table {
             let expected: String? = name == "same GUID, show title in other case and markup" ? file.id : nil

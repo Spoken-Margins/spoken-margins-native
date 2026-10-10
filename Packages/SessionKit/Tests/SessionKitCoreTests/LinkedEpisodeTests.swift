@@ -110,6 +110,7 @@ final class LinkedEpisodeTests: XCTestCase {
             var chosen = candidate()
             chosen.confidence = confidence
             chosen.sourceLink.role = role
+            chosen.sourceLink.url = "https://feeds.example.com/show.xml"
             return LinkResolutionResult(
                 requestId: "r", status: status, originalLink: SourceLink(url: "https://example.com/x"),
                 selectedCandidate: status == .playable ? chosen : nil, candidates: [chosen]
@@ -129,6 +130,14 @@ final class LinkedEpisodeTests: XCTestCase {
                 XCTAssertEqual($0 as? ImportedFileEpisodeLink.Refusal, .couldNotReadLink, "\(status)")
             }
         }
+        // The episode a feed link resolved to, with the feed's own address pasted, is the show, however sure the resolver is.
+        var feedPick = result(.playable)
+        feedPick.selectedCandidate?.sourceLink.url = "https://feeds.example.com/show.xml/"
+        XCTAssertThrowsError(try ImportedFileEpisodeLink.link(importedFile(), resolution: feedPick, pageURL: " https://FEEDS.example.com/show.xml ")) {
+            XCTAssertEqual($0 as? ImportedFileEpisodeLink.Refusal, .notOneEpisode)
+        }
+        // An episode page that the resolver found in that feed is fine: the pasted link is the page, not the feed.
+        XCTAssertNoThrow(try ImportedFileEpisodeLink.link(importedFile(), resolution: feedPick, pageURL: page))
         // Every refusal says what to do in words a listener reads.
         for refusal in [ImportedFileEpisodeLink.Refusal.notAnImportedAudioFile, .noEpisodeIdentity, .lengthsDisagree, .couldNotReadLink, .notOneEpisode] {
             XCTAssertFalse((refusal.errorDescription ?? "").isEmpty, "\(refusal)")
