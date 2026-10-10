@@ -4,28 +4,47 @@ import SessionKit
 final class SharedMarginOfferQueueTests: XCTestCase {
     func testSeveralMarginsCrossedTogetherAreOfferedOneAfterAnotherInListeningOrder() {
         let all = prompts(["first": 100, "second": 100, "third": 300])
-        let crossed = SharedMarginPrompts.crossed(prompts: all, previous: snapshot(90), current: snapshot(400))
         var queue = SharedMarginOfferQueue()
 
-        XCTAssertEqual(queue.nextOffer(crossed: crossed, announced: all)?.id, "first")
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 400)?.id, "first")
         // Nothing new crosses on the following ticks; the others are still owed.
-        XCTAssertEqual(queue.nextOffer(crossed: [], announced: all)?.id, "second")
-        XCTAssertEqual(queue.nextOffer(crossed: [], announced: all)?.id, "third")
-        XCTAssertNil(queue.nextOffer(crossed: [], announced: all))
+        XCTAssertEqual(tick(&queue, all, from: 400, to: 400)?.id, "second")
+        XCTAssertEqual(tick(&queue, all, from: 400, to: 400)?.id, "third")
+        XCTAssertNil(tick(&queue, all, from: 400, to: 400))
         XCTAssertTrue(queue.isEmpty)
     }
 
-    func testAnEmptyQueueOffersNothingWhenNothingCrossed() {
+    func testNothingIsOfferedWhenNothingCrossedAndNothingWaits() {
         var queue = SharedMarginOfferQueue()
-        XCTAssertNil(queue.nextOffer(crossed: [], announced: prompts(["a": 1])))
+        XCTAssertNil(tick(&queue, prompts(["a": 1_000]), from: 0, to: 500))
+        XCTAssertTrue(queue.announcedIDs.isEmpty)
     }
 
     func testMarginsWaitingKeepTheirPlaceAheadOfALaterCrossing() {
         let all = prompts(["a": 100, "b": 110, "c": 500])
         var queue = SharedMarginOfferQueue()
-        XCTAssertEqual(queue.nextOffer(crossed: Array(all[0...1]), announced: all)?.id, "a")
-        XCTAssertEqual(queue.nextOffer(crossed: [all[2]], announced: all)?.id, "b")
-        XCTAssertEqual(queue.nextOffer(crossed: [], announced: all)?.id, "c")
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
+        XCTAssertEqual(tick(&queue, all, from: 200, to: 600)?.id, "b")
+        XCTAssertEqual(tick(&queue, all, from: 600, to: 600)?.id, "c")
+    }
+
+    func testNothingIsOfferedWhileAnotherMarginIsPendingOrPlayingAndNothingIsLostFromTheQueue() {
+        let all = prompts(["a": 100, "b": 110])
+        var queue = SharedMarginOfferQueue()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
+        XCTAssertNil(tick(&queue, all, from: 200, to: 200, canOffer: false))
+        XCTAssertEqual(queue.waitingIDs, ["b"])
+        XCTAssertEqual(tick(&queue, all, from: 200, to: 200)?.id, "b")
+    }
+
+    func testACrossedMarginIsAnnouncedOnceAndNotCrossedAgain() {
+        let all = prompts(["a": 100])
+        var queue = SharedMarginOfferQueue()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 110)?.id, "a")
+        XCTAssertEqual(queue.announcedIDs, ["a"])
+        // Playing back over the same spot within the jump limit does not offer it again.
+        XCTAssertNil(tick(&queue, all, from: 95, to: 110))
+        XCTAssertNil(tick(&queue, all, from: 90, to: 110))
     }
 
     func testAMarginAlreadyWaitingIsNotQueuedTwice() {
@@ -39,39 +58,63 @@ final class SharedMarginOfferQueueTests: XCTestCase {
     func testAMarginThatWentAwayWhileWaitingIsSkippedNotOffered() {
         let all = prompts(["a": 100, "b": 110, "c": 120])
         var queue = SharedMarginOfferQueue()
-        queue.append(all)
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
         // b's layer was turned off or deleted while a played.
         let stillOfferable = all.filter { $0.id != "b" }
-        XCTAssertEqual(queue.next(from: stillOfferable)?.id, "a")
-        XCTAssertEqual(queue.next(from: stillOfferable)?.id, "c")
-        XCTAssertNil(queue.next(from: stillOfferable))
+        XCTAssertEqual(tick(&queue, stillOfferable, from: 200, to: 200)?.id, "c")
+        XCTAssertNil(tick(&queue, stillOfferable, from: 200, to: 200))
     }
 
-    func testFreshRevealMarginsAreNeverQueuedOrOffered() {
-        let fresh = prompt("fresh", media: 100, reveal: .fresh)
-        let companion = prompt("companion", media: 110, reveal: .companion)
+    func testFreshRevealMarginsAreAnnouncedButNeverQueuedOrOffered() {
+        let all = [prompt("fresh", media: 100, reveal: .fresh), prompt("companion", media: 110, reveal: .companion)]
         var queue = SharedMarginOfferQueue()
-        XCTAssertEqual(queue.nextOffer(crossed: [fresh, companion], announced: [fresh, companion])?.id, "companion")
-        XCTAssertNil(queue.nextOffer(crossed: [], announced: [fresh, companion]))
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "companion")
+        XCTAssertNil(tick(&queue, all, from: 200, to: 200))
+        XCTAssertEqual(queue.announcedIDs, ["fresh", "companion"])
     }
 
-    func testClearingDropsEveryWaitingMargin() {
-        let all = prompts(["a": 1, "b": 2])
+    func testASeekDropsTheMarginsWaitingFromBeforeIt() {
+        let all = prompts(["a": 100, "b": 110, "c": 150_000])
         var queue = SharedMarginOfferQueue()
-        queue.append(all)
-        queue.removeAll()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
+        XCTAssertEqual(queue.waitingIDs, ["b"])
+        // The listener seeks far away; b belongs to the old position.
+        XCTAssertNil(tick(&queue, all, from: 200, to: 80_000))
         XCTAssertTrue(queue.isEmpty)
-        XCTAssertNil(queue.next(from: all))
+        // c is still offered when the source reaches it.
+        XCTAssertEqual(tick(&queue, all, from: 149_800, to: 150_200)?.id, "c")
+    }
+
+    func testAChangeOfItemDropsEveryWaitingMargin() {
+        let all = prompts(["a": 100, "b": 110])
+        var queue = SharedMarginOfferQueue()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
+        XCTAssertNil(queue.nextOffer(previous: snapshot(200), current: snapshot(200, item: "other"),
+                                     selectedItemID: "item", canOffer: true, prompts: all))
+        XCTAssertTrue(queue.isEmpty)
     }
 
     func testAMarginOfferedSomeOtherWayNoLongerWaits() {
-        let all = prompts(["a": 1, "b": 2, "c": 3])
+        let all = prompts(["a": 100, "b": 110, "c": 120])
         var queue = SharedMarginOfferQueue()
         queue.append(all)
-        queue.remove(id: "b")
+        queue.markAnnounced("b")
         XCTAssertEqual(queue.waitingIDs, ["a", "c"])
+        XCTAssertEqual(queue.announcedIDs, ["b"])
+        queue.remove(id: "c")
         queue.remove(id: "missing")
-        XCTAssertEqual(queue.waitingIDs, ["a", "c"])
+        XCTAssertEqual(queue.waitingIDs, ["a"])
+        XCTAssertEqual(queue.announcedIDs, ["b"], "playing it from the list does not announce it")
+    }
+
+    func testStartingASessionClearsAnnouncedAndWaiting() {
+        let all = prompts(["a": 100, "b": 110])
+        var queue = SharedMarginOfferQueue()
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
+        queue.removeAll()
+        XCTAssertTrue(queue.isEmpty)
+        XCTAssertTrue(queue.announcedIDs.isEmpty)
+        XCTAssertEqual(tick(&queue, all, from: 90, to: 200)?.id, "a")
     }
 
     func testOnlyASeekOrRewindCountsAsAPlayheadJump() {
@@ -97,6 +140,14 @@ final class SharedMarginOfferQueueTests: XCTestCase {
         XCTAssertTrue(jump(nil, nil, text: (500, 100)), "text seek back")
     }
 
+    /// One tick of playback from `from` to `to` ms on the selected item. The step is not limited
+    /// here, so a long step stands for several ticks of one crossing; use a seek test for jumps.
+    private func tick(_ queue: inout SharedMarginOfferQueue, _ all: [ImportedCommentaryPrompt],
+                      from: Int, to: Int, canOffer: Bool = true) -> ImportedCommentaryPrompt? {
+        queue.nextOffer(previous: snapshot(from), current: snapshot(to), selectedItemID: "item",
+                        canOffer: canOffer, prompts: all)
+    }
+
     private func prompts(_ media: KeyValuePairs<String, Int>) -> [ImportedCommentaryPrompt] {
         media.map { prompt($0.key, media: $0.value) }
     }
@@ -114,8 +165,9 @@ final class SharedMarginOfferQueueTests: XCTestCase {
         return ImportedCommentaryPrompt(layer: layer, interjection: record, index: 1, count: 1)
     }
 
-    private func snapshot(_ media: Int) -> SessionSnapshot {
+    private func snapshot(_ media: Int, item: String = "item") -> SessionSnapshot {
         var value = SessionSnapshot()
+        value.itemId = item
         value.currentMediaTimeMs = media
         return value
     }

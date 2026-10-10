@@ -946,8 +946,7 @@ final class Gate1AppModel: ObservableObject {
     private var preparingLocalAudioMapItems = Set<String>()
     private var commentaryCuePlayer: AVAudioPlayer?
     #endif
-    private var announcedImportedInterjectionIDs: Set<String> = []
-    private var sharedMarginOfferQueue = SharedMarginOfferQueue()
+    private var sharedMarginOffers = SharedMarginOfferQueue()
     private var sourceShouldResumeAfterImportedCommentary = false
     private var sourcePausedForImportedCommentaryPrompt = false
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
@@ -2118,7 +2117,7 @@ final class Gate1AppModel: ObservableObject {
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
         guard snapshot.itemId == itemID else { return }
         // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.
-        announcedImportedInterjectionIDs.insert(row.interjection.id)
+        sharedMarginOffers.markAnnounced(row.interjection.id)
         let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
         startMarginMoment(
             itemId: itemID,
@@ -4994,8 +4993,7 @@ final class Gate1AppModel: ObservableObject {
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
-        announcedImportedInterjectionIDs.removeAll()
-        sharedMarginOfferQueue.removeAll()
+        sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
@@ -5020,8 +5018,7 @@ final class Gate1AppModel: ObservableObject {
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
         resetMixWithOtherAudioForNewSession()
-        announcedImportedInterjectionIDs.removeAll()
-        sharedMarginOfferQueue.removeAll()
+        sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         do {
@@ -5051,8 +5048,7 @@ final class Gate1AppModel: ObservableObject {
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
-        announcedImportedInterjectionIDs.removeAll()
-        sharedMarginOfferQueue.removeAll()
+        sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
         guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
@@ -5687,7 +5683,7 @@ final class Gate1AppModel: ObservableObject {
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
             handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
-            announcedImportedInterjectionIDs.insert(prompt.id) // the rejoin mustn't offer it again
+            sharedMarginOffers.markAnnounced(prompt.id) // the rejoin mustn't offer it again
             stopImportedCommentaryPlayback(resumeSource: false)
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)
@@ -6552,7 +6548,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
-        sharedMarginOfferQueue.remove(id: prompt.id)
+        sharedMarginOffers.remove(id: prompt.id)
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
               let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
@@ -6673,22 +6669,11 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
-        // Margins waiting from before a seek, or from another item, belong to the old position (#918).
-        if current.itemId != selectedItem.id
-            || SharedMarginOfferQueue.isPlayheadJump(previous: previous, current: current) {
-            sharedMarginOfferQueue.removeAll()
-        }
-        guard pendingImportedCommentary == nil,
-              playingImportedCommentary == nil,
-              current.itemId == selectedItem.id else { return }
-        let prompts = importedCommentaryPrompts(includeAnnounced: false)
-        let crossed = SharedMarginPrompts.crossed(prompts: prompts, previous: previous, current: current)
-        guard !crossed.isEmpty || !sharedMarginOfferQueue.isEmpty else { return }
-        crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
-        // One Margin is offered at a time; the others crossed with it wait their turn (#918).
-        guard let prompt = sharedMarginOfferQueue.nextOffer(
-            crossed: crossed,
-            announced: importedCommentaryPrompts(includeAnnounced: true)
+        // Margins crossed together are offered one after another (#918).
+        guard let prompt = sharedMarginOffers.nextOffer(
+            previous: previous, current: current, selectedItemID: selectedItem.id,
+            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil,
+            prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
@@ -6697,7 +6682,7 @@ final class Gate1AppModel: ObservableObject {
         SharedMarginPrompts.prompts(
             layers: selectedItem.importedCommentaryLayers,
             recordsByLayerID: selectedItem.importedCommentaryInterjections,
-            announcedIDs: announcedImportedInterjectionIDs,
+            announcedIDs: sharedMarginOffers.announcedIDs,
             includeAnnounced: includeAnnounced
         )
     }
@@ -6706,7 +6691,6 @@ final class Gate1AppModel: ObservableObject {
         _ prompt: ImportedCommentaryPrompt,
         sourceWasPlaying: Bool
     ) {
-        sharedMarginOfferQueue.remove(id: prompt.id)
         sourcePausedForImportedCommentaryPrompt = sourceWasPlaying
         if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
@@ -6729,7 +6713,7 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         let sourceWasPlaying = snapshot.status.isPlaybackActive
-        announcedImportedInterjectionIDs.insert(prompt.id)
+        sharedMarginOffers.markAnnounced(prompt.id)
         if sourceWasPlaying { pause() }
         if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs {
             seekMedia(toMediaTimeMs: mediaTimeMs)
