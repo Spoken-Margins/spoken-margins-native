@@ -3000,18 +3000,60 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             databaseURLOverride: databaseURL
         )
         firstModel.resetAndSeed()
-        firstModel.startItem(id: "item-pill")
-        firstModel.pause()
-        let sessionID = try XCTUnwrap(firstModel.snapshot.sessionId)
+        // #1043 APM-07: with one session in the database any selection rule passed. Four sessions here, each one
+        // the answer of a different wrong rule: the oldest (first/last flipped), a newer finished one (resumable
+        // filter dropped) and the newest on a trashed item (Library filter dropped).
+        func listen(title: String?) throws -> (session: String, item: String) {
+            if let title {
+                firstModel.importTitle = title
+                firstModel.importText = "One. Two. Three."
+                firstModel.importTextItem()
+            } else {
+                firstModel.startItem(id: "item-pill")
+            }
+            firstModel.pause()
+            return (try XCTUnwrap(firstModel.snapshot.sessionId), try XCTUnwrap(firstModel.snapshot.itemId))
+        }
+        let oldest = try listen(title: nil)
+        let expected = try listen(title: "Newer unfinished")
+        let finished = try listen(title: "Finished since")
+        let trashed = try listen(title: "Trashed since")
+        firstModel.moveItemToTrash(id: trashed.item)
+        XCTAssertEqual(Set([oldest.item, expected.item, finished.item, trashed.item]).count, 4)
 
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        func stamp(_ sessionID: String, at seconds: TimeInterval, finished: Bool = false) throws {
+            var session = try XCTUnwrap(store.loadSession(id: sessionID))
+            session.updatedAt = Date(timeIntervalSince1970: seconds)
+            if finished {
+                session.status = "finished"
+                session.phase = .finished
+                session.completionPercent = 100
+            } else {
+                session.status = "in_progress"
+                if session.phase == .abandoned || session.phase == .finished { session.phase = .itemPlayback }
+            }
+            try store.saveSession(session)
+        }
+        try stamp(oldest.session, at: 1_000)
+        try stamp(expected.session, at: 3_000)
+        try stamp(finished.session, at: 4_000, finished: true)
+        try stamp(trashed.session, at: 5_000)
+
+        let relaunchedAudio = WorkflowRecordingAudioClient()
         let relaunchedModel = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
+            audioPlaybackClient: relaunchedAudio,
             databaseURLOverride: databaseURL
         )
         relaunchedModel.bootstrapLibraryIfNeeded()
 
-        XCTAssertEqual(relaunchedModel.snapshot.sessionId, sessionID)
+        XCTAssertEqual(relaunchedModel.snapshot.sessionId, expected.session,
+                       "the newest unfinished session on an item still in the Library")
+        XCTAssertEqual(relaunchedModel.diagnostics["restoredSession"], expected.session)
+        XCTAssertEqual(relaunchedModel.selectedItem.id, expected.item)
         XCTAssertEqual(relaunchedModel.snapshot.status, .paused)
+        XCTAssertTrue(relaunchedAudio.playedOffsets.isEmpty, "relaunch never starts the player")
+        XCTAssertFalse(relaunchedAudio.isPlaying)
         XCTAssertTrue(relaunchedModel.shouldShowMiniPlayer)
         XCTAssertEqual(relaunchedModel.diagnostics["restoredSessionMode"], "paused_without_autoplay")
     }
