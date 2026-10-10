@@ -58,9 +58,17 @@ public enum PostResumePodcastEvidenceCaptureResult: Sendable {
 /// after a Margin is recorded and releases each signature generator as soon as
 /// its bounded post-resume sample is complete. Multiple closely spaced Margins
 /// share this tap and receive the same decoded playback buffers independently.
+///
+/// The tap's `process` callback runs on the real-time audio thread (#457). It only copies the decoded buffer and
+/// hands the copy to a serial worker queue; the ring, the heard-audio recorder and every signature append run on
+/// that queue. The audio thread never takes `lock`, which the worker holds while it appends, so slow signature
+/// work can't stall playback. The worker takes buffers in order, and the methods that read or change capture
+/// state from outside (`captureBufferedPreInterjection`, `noteSeek`, `cancelAll`) wait for the buffers already
+/// handed over first, so they see them.
 final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     typealias ResultHandler = @Sendable (PostResumePodcastEvidenceCaptureResult) -> Void
     typealias HeardWindowHandler = @Sendable (HeardAudioWindow) -> Void
+    typealias SignatureAppend = @Sendable (SHSignatureGenerator, AVAudioPCMBuffer) throws -> Void
 
     private final class Accumulator: @unchecked Sendable {
         let request: PostResumeAudioSampleRequest
@@ -91,10 +99,35 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         let endMediaTimeMs: Int
     }
 
+    /// One decoded buffer the tap copied for the worker, with what the worker needs to place it.
+    private struct TapWork: @unchecked Sendable {
+        let buffer: AVAudioPCMBuffer
+        let mediaTimeMs: Int?
+        let endOfStream: Bool
+        /// Buffers were dropped just before this one (the worker fell too far behind), so the audio isn't contiguous.
+        let gapBefore: Bool
+    }
+
+    /// What the audio thread learned from `tapLock` about one buffer it may copy.
+    private struct Admission: @unchecked Sendable {
+        let format: AVAudioFormat
+        let gapBefore: Bool
+    }
+
     /// Rounding slack when deciding whether a buffer starts before the audio already seen ends.
     static let rewindToleranceMs = 10
+    /// The most decoded audio the tap keeps waiting for the worker. Beyond it the tap drops buffers, and the
+    /// windows start again after the gap, rather than letting memory grow behind a stuck worker.
+    static let maxPendingSeconds = 20.0
 
     private let lock = NSLock()
+    /// Guards only what the audio thread touches (`tapFormat`, `pendingFrames`, `droppedWhilePending`), and is
+    /// never held for more than a few instructions.
+    private let tapLock = NSLock()
+    private let workQueue = DispatchQueue(
+        label: "com.spokenmargins.podcast-evidence-work",
+        qos: .userInitiated
+    )
     private let completionQueue = DispatchQueue(
         label: "com.spokenmargins.podcast-post-resume-evidence",
         qos: .utility
@@ -113,21 +146,40 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     private var heardRecorder: HeardAudioWindowRecorder?
     private var heardDownsampleFactor = 1
     private let heardWindowHandler: HeardWindowHandler?
+    private let appendToSignature: SignatureAppend
+    private var tapFormat: AVAudioFormat?
+    private var pendingFrames = 0
+    private var droppedWhilePending = false
 
     var retainsContinuousCollection: Bool { continuousCollection }
+
+    /// Decoded frames the tap has handed over that the worker hasn't finished with.
+    var pendingTapFrames: Int { tapLock.withLock { pendingFrames } }
 
     init(
         resultHandler: @escaping ResultHandler,
         becameIdle: @escaping @Sendable () -> Void,
         continuousCollection: Bool = false,
         itemId: String? = nil,
-        heardWindowHandler: HeardWindowHandler? = nil
+        heardWindowHandler: HeardWindowHandler? = nil,
+        appendToSignature: @escaping SignatureAppend = { try $0.append($1, at: nil) }
     ) {
         self.resultHandler = resultHandler
         self.becameIdle = becameIdle
         self.continuousCollection = continuousCollection
         self.itemId = itemId
         self.heardWindowHandler = heardWindowHandler
+        self.appendToSignature = appendToSignature
+    }
+
+    /// Waits for the buffers the tap has already handed to the worker.
+    private func drainTapWork() {
+        workQueue.sync {}
+    }
+
+    /// Reports a failure from the worker's side: results go out on the completion queue, like the others.
+    private func report(_ result: PostResumePodcastEvidenceCaptureResult) {
+        completionQueue.async { [resultHandler] in resultHandler(result) }
     }
 
     private func deliver(_ windows: [HeardAudioWindow]) {
@@ -157,6 +209,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
 
     func captureBufferedPreInterjection(_ request: PostResumeAudioSampleRequest) -> Bool {
         // Called when a Margin finishes and before playback resumes, so the rolling minute ends at the anchor.
+        drainTapWork()
         lock.withLock { heardRecorder?.begin(request) }
         let endMs = request.anchorMediaTimeMs - 5_000
         let startMs = endMs - request.targetDurationMs
@@ -184,6 +237,12 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     func noteSeek(at date: Date = Date()) {
+        drainTapWork()
+        applySeek(at: date)
+    }
+
+    /// Forgets everything before a discontinuity: a seek, or buffers the tap had to drop.
+    private func applySeek(at date: Date) {
         let heard = lock.withLock { heardRecorder?.noteSeek() ?? [] }
         deliver(heard)
         lock.withLock {
@@ -199,6 +258,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     func prepare(processingFormat: UnsafePointer<AudioStreamBasicDescription>) {
         lock.withLock {
             format = AVAudioFormat(streamDescription: processingFormat)
+            tapLock.withLock { tapFormat = format }
             if continuousCollection, let format, heardRecorder == nil,
                format.commonFormat == .pcmFormatFloat32 {
                 heardDownsampleFactor = HeardAudioDownsampler.factor(for: format.sampleRate)
@@ -208,11 +268,13 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     func unprepare() {
+        tapLock.withLock { tapFormat = nil }
         lock.withLock {
             format = nil
         }
     }
 
+    /// Runs on the audio thread. It copies the decoded buffer and hands it to the worker; nothing else.
     func process(
         bufferList: UnsafeMutablePointer<AudioBufferList>,
         frameCount: CMItemCount,
@@ -220,25 +282,80 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         endOfStream: Bool = false
     ) {
         guard frameCount > 0 else { return }
+        let frames = Int(frameCount)
+        let admitted = tapLock.withLock { () -> Admission? in
+            guard let tapFormat else { return nil }
+            if Double(pendingFrames + frames) > tapFormat.sampleRate * Self.maxPendingSeconds {
+                droppedWhilePending = true
+                return nil
+            }
+            pendingFrames += frames
+            let gap = droppedWhilePending
+            droppedWhilePending = false
+            return Admission(format: tapFormat, gapBefore: gap)
+        }
+        guard let admitted else {
+            // No format, or the worker is too far behind to take more. Without a format the windows can't be
+            // fed at all, so they fail; behind, the dropped buffer is a gap the worker restarts them after.
+            if tapLock.withLock({ tapFormat == nil }) {
+                workQueue.async { [self] in failEverythingAsInvalidBuffer() }
+            }
+            return
+        }
+        guard let wrapper = AVAudioPCMBuffer(
+                pcmFormat: admitted.format,
+                bufferListNoCopy: bufferList,
+                deallocator: nil
+              ) else {
+            tapLock.withLock { pendingFrames -= frames }
+            workQueue.async { [self] in failEverythingAsInvalidBuffer() }
+            return
+        }
+        wrapper.frameLength = AVAudioFrameCount(frameCount)
+        guard let copy = Self.copy(wrapper) else {
+            tapLock.withLock {
+                pendingFrames -= frames
+                droppedWhilePending = true
+            }
+            return
+        }
+        let work = TapWork(
+            buffer: copy,
+            mediaTimeMs: Self.mediaTimeMs(timeRange.start),
+            endOfStream: endOfStream,
+            gapBefore: admitted.gapBefore
+        )
+        workQueue.async { [self] in
+            processOnWorker(work)
+            tapLock.withLock { pendingFrames -= frames }
+        }
+    }
+
+    private func failEverythingAsInvalidBuffer() {
+        let failed = lock.withLock { () -> [Accumulator] in
+            let values = Array(accumulators.values)
+            accumulators.removeAll()
+            return values
+        }
+        for accumulator in failed {
+            report(.failed(request: accumulator.request, reason: "decoded_playback_buffer_invalid"))
+        }
+        if !failed.isEmpty, !continuousCollection { becameIdle() }
+    }
+
+    /// Runs on the worker queue: the ring, the heard-audio recorder and the signature appends for one buffer.
+    private func processOnWorker(_ work: TapWork) {
+        if work.gapBefore { applySeek(at: Date()) }
+        let buffer = work.buffer
+        let format = buffer.format
+        let frameCount = CMItemCount(buffer.frameLength)
+        let mediaTimeMs = work.mediaTimeMs
+        let endOfStream = work.endOfStream
         var completed: [Accumulator] = []
         var failed: [(Accumulator, String)] = []
         var heardFinished: [HeardAudioWindow] = []
         let becameEmpty = lock.withLock { () -> Bool in
-            guard let format,
-                  let buffer = AVAudioPCMBuffer(
-                    pcmFormat: format,
-                    bufferListNoCopy: bufferList,
-                    deallocator: nil
-                  ) else {
-                failed = accumulators.values.map { ($0, "decoded_playback_buffer_invalid") }
-                accumulators.removeAll()
-                return !failed.isEmpty
-            }
-            buffer.frameLength = AVAudioFrameCount(frameCount)
-            let mediaTimeMs = Self.mediaTimeMs(timeRange.start)
-            if continuousCollection,
-               let mediaTimeMs,
-               let copy = Self.copy(buffer) {
+            if continuousCollection, let mediaTimeMs {
                 let durationMs = Int((Double(frameCount) / format.sampleRate * 1_000).rounded())
                 // Playback moved back without a noted seek (a Margin's rejoin step-back, #776): drop the first
                 // copy of the audio that is about to replay, cutting a buffer the rewind lands inside, so
@@ -246,8 +363,9 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                 if let last = ring.last, mediaTimeMs + Self.rewindToleranceMs < last.endMediaTimeMs {
                     ring = ring.compactMap { Self.trimmed($0, before: mediaTimeMs) }
                 }
+                // The worker owns this copy and nothing writes to it again, so the ring can keep it as it is.
                 ring.append(RingChunk(
-                    buffer: copy,
+                    buffer: buffer,
                     startMediaTimeMs: mediaTimeMs,
                     endMediaTimeMs: mediaTimeMs + max(1, durationMs)
                 ))
@@ -288,7 +406,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
                     if accumulator.firstMediaTimeMs == nil {
                         accumulator.firstMediaTimeMs = mediaTimeMs
                     }
-                    try accumulator.generator.append(buffer, at: nil)
+                    try appendToSignature(accumulator.generator, buffer)
                     accumulator.appendedFrames += Int64(frameCount)
                     let targetFrames = Int64(
                         (Double(accumulator.request.targetDurationMs) * format.sampleRate / 1_000).rounded(.up)
@@ -318,7 +436,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
             finish(accumulator)
         }
         for (accumulator, reason) in failed {
-            resultHandler(.failed(request: accumulator.request, reason: reason))
+            report(.failed(request: accumulator.request, reason: reason))
         }
         if becameEmpty {
             if !continuousCollection { becameIdle() }
@@ -327,6 +445,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     func cancelAll(reason: String) {
+        drainTapWork()
         let cancelled = lock.withLock { () -> [Accumulator] in
             let values = Array(accumulators.values)
             accumulators.removeAll()
