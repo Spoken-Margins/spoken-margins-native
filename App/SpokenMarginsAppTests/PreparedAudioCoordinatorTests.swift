@@ -471,11 +471,14 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
     @MainActor
     func testThePreparationPassNeverEvictsItsOwnChunksAndRendersALostOneAgain() async throws {
         let defaults = UserDefaults.standard
+        // The guided-tour tombstone stops the startup tour download, whose reservation and evictable
+        // file would change the ledger under the test's narrow budget (as in PasteAndGoTests).
         let keys = ["supertonicTTSMigrationV1", "supertonicVoicePendingTermsV1", "ttsMode", "ttsVoiceSelection",
-                    SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
+                    SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey, "guidedOnboardingTombstone"]
         let prior = keys.reduce(into: [String: Any]()) { $0[$1] = defaults.object(forKey: $1) }
         defer { for key in keys { if let value = prior[key] { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
         SpokenMarginsTerms.recordAcceptance()
+        defaults.set(true, forKey: "guidedOnboardingTombstone")
 
         let root = FileManager.default.temporaryDirectory.appending(path: "self-evict-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
