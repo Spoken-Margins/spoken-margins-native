@@ -2003,7 +2003,7 @@ struct LocalListeningMapPlanner {
             let previousScore = boundary > 1 ? boundaryScores[boundary - 1] : 0
             let nextScore = boundary + 1 < boundaryScores.count ? boundaryScores[boundary + 1] : 0
             let isLocalPeak = topicShift >= previousScore && topicShift >= nextScore
-            if reachedHardLimit || (reachedMinimum && isLocalPeak && topicShift >= 0.42) {
+            if reachedHardLimit || (reachedMinimum && isLocalPeak) { // MUTATION #1044 APO-12
                 starts.append(boundary)
                 chapterStart = boundary
             }

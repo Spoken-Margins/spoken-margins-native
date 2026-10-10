@@ -509,7 +509,7 @@ final class Gate2CompactControlController {
         guard nowPlayingEnabled != enabled else { return }
         nowPlayingEnabled = enabled
         if enabled {
-            publishCurrentSnapshot(force: true)
+            // MUTATION #1044 APO-07: publishCurrentSnapshot(force: true) removed
         } else {
             liveSpeechNowPlaying.end()
         }
@@ -557,7 +557,7 @@ final class Gate2CompactControlController {
             $0 == .skimForward || $0 == .skimBackward
                 || ($0 == .beginInterjection && app.skimBridgeState != nil)
         }
-        if !app.isRecording, app.canSkimBackward, compact.exposedCommands.contains(.skimBackward) {
+        if compact.exposedCommands.contains(.skimBackward) { // MUTATION #1044 APO-13
             compact.availableCommands.append(.skimBackward)
         }
         if !app.isRecording, app.canSkimForward, compact.exposedCommands.contains(.skimForward) {

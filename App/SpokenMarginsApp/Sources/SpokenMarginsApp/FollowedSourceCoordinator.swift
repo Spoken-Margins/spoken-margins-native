@@ -193,6 +193,10 @@ actor FollowedSourceCoordinator {
         )
         try repository.saveFeedSubscription(subscription)
         try save(entries: parsed.items, subscription: subscription)
+        // MUTATION #1044 APO-08: fetch the first episode on follow.
+        if let audio = parsed.items.first(where: { $0.audioURL != nil })?.audioURL.flatMap({ URL(string: $0) }) {
+            _ = try? await session.data(from: audio)
+        }
         artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
         return subscription
     }
