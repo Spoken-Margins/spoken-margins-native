@@ -402,6 +402,8 @@ public struct CommunityMapFetcher: Sendable {
         // Reading the audio file and the store can take a while; the setting may be off by now.
         guard await optedIn() else { return .skipped(.optedOut) }
         if case .off(let reason) = await mapsState() { return .mapsOff(reason) }
+        // The config read is a network round trip; the setting may have been turned off during it.
+        guard await optedIn() else { return .skipped(.optedOut) }
 
         let body: Data
         do {

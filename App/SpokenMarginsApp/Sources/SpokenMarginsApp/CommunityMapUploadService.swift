@@ -91,6 +91,8 @@ final class CommunityMapUploadService {
         localAudio: @escaping @MainActor (String) -> URL?,
         report: @escaping @MainActor (String) -> Void
     ) {
+        // Also reached from a queued transcript after an upload: the setting may be off by then.
+        guard Self.optedIn else { return }
         guard let item = try? store.loadItem(id: itemId),
               let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return }
         // The map job deletes its transcript once the map is made, so the phone's transcript is

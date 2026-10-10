@@ -202,6 +202,19 @@ final class CommunityMapFetchTests: XCTestCase {
         XCTAssertTrue(stored.maps.isEmpty)
     }
 
+    func testTurningTheSettingOffWhileTheServerConfigLoadsStopsTheMapRequest() async throws {
+        let calls = FetchCalls()
+        let setting = Setting(true)
+        let outcome = try await fetch(
+            optedIn: { setting.value },
+            mapsState: { setting.value = false; return .on },
+            calls: calls
+        )
+        XCTAssertEqual(outcome, .skipped(.optedOut))
+        let requests = await calls.urls.count
+        XCTAssertEqual(requests, 0)
+    }
+
     func testOptedInAsksOnceAndStores() async throws {
         let calls = FetchCalls()
         let outcome = try await fetch(optedIn: { true }, calls: calls)

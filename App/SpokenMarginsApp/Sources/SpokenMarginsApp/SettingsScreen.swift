@@ -357,7 +357,7 @@ struct SettingsScreen: View {
                     Toggle(isOn: $looksUpCommunityMaps) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Look up community maps")
-                            Text("When you open a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. The request names the episode, not you, but the server can see your IP address.")
+                            Text("When you open or play a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. This tells the server which episode you opened, and it can see your IP address.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
