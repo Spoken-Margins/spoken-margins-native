@@ -5,6 +5,7 @@ import XCTest
 @testable import SpokenMarginsApp
 
 /// #905: a Make available offline run stopped for heat carries on by itself once the phone cools.
+/// #1107: the same after a memory warning, once the backoff it starts is over.
 /// The owner's 2026-10-08 export showed a run stopped for heat while the phone read nominal,
 /// because the loop ended on the pause and nothing started it again.
 final class PreparationHeatWaitTests: XCTestCase {
@@ -50,7 +51,7 @@ final class PreparationHeatWaitTests: XCTestCase {
             pause: { seconds in await waits.add(seconds) }
         )
 
-        let resumed = await model.waitOutPreparationHeat()
+        let resumed = await model.waitOutPreparationPause()
 
         XCTAssertTrue(resumed, "the run goes on once the phone reads cool")
         let seconds = await waits.seconds
@@ -68,7 +69,7 @@ final class PreparationHeatWaitTests: XCTestCase {
             pause: { seconds in await waits.add(seconds) }
         )
 
-        let resumed = await model.waitOutPreparationHeat()
+        let resumed = await model.waitOutPreparationPause()
 
         XCTAssertFalse(resumed)
         let seconds = await waits.seconds
@@ -84,7 +85,7 @@ final class PreparationHeatWaitTests: XCTestCase {
             pause: { seconds in await waits.add(seconds) }
         )
 
-        let resumed = await model.waitOutPreparationHeat()
+        let resumed = await model.waitOutPreparationPause()
 
         XCTAssertFalse(resumed, "another reason stopped the pass: running it again would spin")
         let seconds = await waits.seconds
@@ -100,7 +101,7 @@ final class PreparationHeatWaitTests: XCTestCase {
             pause: { seconds in await waits.add(seconds) }
         )
 
-        let resumed = await model.waitOutPreparationHeat()
+        let resumed = await model.waitOutPreparationPause()
 
         XCTAssertFalse(resumed)
         let total = await waits.seconds.reduce(0, +)
@@ -163,10 +164,104 @@ final class PreparationHeatWaitTests: XCTestCase {
             pause: { _ in throw CancellationError() }
         )
 
-        let resumed = await model.waitOutPreparationHeat()
+        let resumed = await model.waitOutPreparationPause()
 
         XCTAssertFalse(resumed)
         XCTAssertFalse(model.isWaitingOutPreparationHeat, "the cooling flag is cleared when the wait ends")
+    }
+
+    // MARK: Memory warning (#1107)
+
+    /// The loop after a memory warning: the first pass renders nothing because the backoff is on,
+    /// and before #1107 the loop ended there and nothing started it again once the backoff was over.
+    @MainActor
+    func testTheLoopRunsThePassAgainOnceAMemoryBackoffEnds() async throws {
+        let model = try makeModel()
+        let backoff = BackoffSequence(activeReads: 2)
+        let waits = WaitLog()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .nominal) },
+            memoryBackoffActive: { backoff.read() },
+            pause: { seconds in await waits.add(seconds) }
+        )
+        var answers = [false, true, false] // blocked by the backoff, chunk, nothing left
+        var passes = 0
+
+        await model.runForegroundPreparationLoop {
+            passes += 1
+            return answers.removeFirst()
+        }
+
+        XCTAssertEqual(passes, 3, "the pass ran again after the backoff ended")
+        let seconds = await waits.seconds
+        XCTAssertEqual(seconds, [15, 15], "an active backoff is rechecked every 15 seconds")
+        XCTAssertEqual(model.diagnostics["preparationMemoryWait"], "resumed_after_30s")
+        XCTAssertNil(model.diagnostics["preparationHeatWait"])
+        XCTAssertFalse(model.isWaitingOutPreparationHeat, "a memory pause is not shown as the phone cooling")
+    }
+
+    @MainActor
+    func testABackoffThatKeepsBeingRenewedEndsTheWaitAfterTenMinutes() async throws {
+        let model = try makeModel()
+        let waits = WaitLog()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .nominal) },
+            memoryBackoffActive: { true },
+            pause: { seconds in await waits.add(seconds) }
+        )
+
+        let resumed = await model.waitOutPreparationPause()
+
+        XCTAssertFalse(resumed)
+        let total = await waits.seconds.reduce(0, +)
+        XCTAssertGreaterThanOrEqual(total, OfflinePreparationRun.maximumMemoryWaitSeconds)
+        XCTAssertLessThan(total, OfflinePreparationRun.maximumMemoryWaitSeconds + 60)
+        XCTAssertEqual(model.diagnostics["preparationMemoryWait"], "stopped_waited_too_long_after_\(total)s")
+        XCTAssertFalse(model.isWaitingOutPreparationHeat)
+    }
+
+    @MainActor
+    func testNothingQueuedMeansNoWaitDuringABackoff() async throws {
+        let model = try makeModel(queuingAnExplicitJob: false)
+        let waits = WaitLog()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .nominal) },
+            memoryBackoffActive: { true },
+            pause: { seconds in await waits.add(seconds) }
+        )
+
+        let resumed = await model.waitOutPreparationPause()
+
+        XCTAssertFalse(resumed)
+        let seconds = await waits.seconds
+        XCTAssertEqual(seconds, [], "a finished or cancelled queue has nothing to wait for")
+    }
+
+    @MainActor
+    func testCancellingTheLoopEndsTheMemoryWaitAtOnce() async throws {
+        let model = try makeModel()
+        model.preparationSeams = PreparationPassSeams(
+            deviceConditions: { SpeechEngineConditions(thermal: .nominal) },
+            memoryBackoffActive: { true },
+            pause: { _ in throw CancellationError() }
+        )
+
+        let resumed = await model.waitOutPreparationPause()
+
+        XCTAssertFalse(resumed)
+        XCTAssertFalse(model.isWaitingOutPreparationHeat)
+    }
+}
+
+/// A memory backoff that is on for the first reads, then over.
+@MainActor private final class BackoffSequence {
+    private var activeReads: Int
+    init(activeReads: Int) { self.activeReads = activeReads }
+
+    func read() -> Bool {
+        guard activeReads > 0 else { return false }
+        activeReads -= 1
+        return true
     }
 }
 

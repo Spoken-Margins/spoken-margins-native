@@ -191,6 +191,54 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first?.hasPrefix("Pittas et al."), true)
     }
 
+    private func citationLabels(_ body: [String], references: [String]?) -> [String] {
+        var lines = body.map { StructuredDocumentLine(text: $0, role: .body, pageIndex: 0) }
+        if let references {
+            lines.append(StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2))
+            lines += references.map { StructuredDocumentLine(text: $0, role: .reference, pageIndex: 1) }
+        }
+        let doc = document(lines)
+        let characters = Array(doc.text)
+        return doc.markers.map { String(characters[$0.range.start..<$0.range.end]) }
+    }
+
+    private let numberedReferences = (1...20).map { "\($0). Author \($0). Title. Journal. 2019." }
+
+    func testRoundBracketNumbersAreCitationsWhenTheReferenceListIsNumbered() {
+        // #138: "(17)" and "(3–5, 8)" were read aloud; [17] already was silent.
+        let body = ["Cells divide (17).", "This was shown before (3–5, 8).", "A range may use a hyphen (3-5) or spaces (3 – 5 , 8)."]
+        XCTAssertEqual(citationLabels(body, references: numberedReferences),
+                       ["(17)", "(3–5, 8)", "(3-5)", "(3 – 5, 8)"])
+        XCTAssertEqual(citationLabels(["Cells divide [17]."], references: ["[1] Ada.", "[2] Ben.", "[3] Dee."]), ["[17]"])
+        XCTAssertEqual(citationLabels(["Cells divide (3) here, and then (1)."], references: ["[1] Ada.", "[2] Ben.", "[3] Cy."]), ["(3)", "(1)"],
+                       "a lone (1) or (3) after a word is a citation; only neighbouring digits list things")
+        let doc = document([
+            StructuredDocumentLine(text: "Cells divide (17).", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2),
+        ] + numberedReferences.map { StructuredDocumentLine(text: $0, role: .reference, pageIndex: 1) })
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first, "Cells divide.")
+    }
+
+    func testOrdinaryNumbersInParenthesesAreStillRead() {
+        let listed = numberedReferences
+        XCTAssertEqual(citationLabels(["We tested (1) speed and (2) accuracy."], references: listed), [])
+        XCTAssertEqual(citationLabels(["The effect was large, n = 12 (95% CI)."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Cells divide (17)."], references: nil), [], "no reference list")
+        XCTAssertEqual(citationLabels(["In 2019 (2) groups met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["Cells divide (17)."], references: ["Ada A. Cells. J Biol. 2019.", "Ben B. Growth. 2020.", "Cy C. Mitosis. 2018."]),
+                       [], "author-year references are not numbered")
+        XCTAssertEqual(citationLabels(["Cells divide (40)."], references: listed), [], "no such entry")
+        XCTAssertEqual(citationLabels(["Substituting into Eq. (2), we get x. Also see Figure (3) and Table (4)."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Responses used a Likert scale (1–5); ages (10–15) were included. E = mc² (3)"], references: listed), [])
+        XCTAssertEqual(citationLabels(["Aims were (1), (2) and (3) as follows.", "(2) Second item", "We counted (1) 5 patients."], references: listed), [])
+        let wrapped = ["1. Ada A. Cells. J Biol.", "45 (2):100–5.", "2. Ben B. Growth.", "10 mg doses were given.", "3. Cy C. Mitosis."]
+        XCTAssertEqual(citationLabels(["Cells divide (17)."], references: wrapped), [], "wrapped lines do not make a 45-entry list")
+        XCTAssertEqual(citationLabels(["(17) is the question."], references: listed), [], "nothing before it to cite")
+        XCTAssertEqual(citationLabels(["The year (2020) began."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Cells divide (2)."], references: Array(numberedReferences.prefix(2))), [], "two entries are not a list")
+        XCTAssertEqual(citationLabels(["Cells divide (4)."], references: Array(numberedReferences.suffix(10))), [], "a list that does not start at 1")
+    }
+
     func testDocumentRoundTripsAsI13JSON() throws {
         let doc = document([StructuredDocumentLine(text: "Body [1].", role: .body, pageIndex: 0)])
         let json = try JSONEncoder().encode(doc)

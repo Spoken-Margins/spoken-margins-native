@@ -5,7 +5,9 @@ The `route` job of .github/workflows/lane.yml runs this before either Mac job ca
 
 1. stops this run when the PR is closed or merged, or has moved past this run's head;
 2. stops this run, per kind (`lane` or `automerge`), when an older run of the same PR and head already
-   has a job of that kind queued or running;
+   has a job of that kind queued or running, unless routing now sends the kind to a different queue than
+   that older run's job waits in and none of its Mac jobs has started: then the older run is cancelled and
+   this one goes ahead (#1194);
 3. cancels the PR's older-head runs whose Mac job has not started (GitHub only replaces a *pending*
    job in a concurrency group, never one already waiting for a runner, so these would hold the queue).
 
@@ -93,6 +95,27 @@ def mac_job_started(jobs):
                for job in jobs.values())
 
 
+def moved_queue(jobs, info, wants, queues):
+    """True when an older same-head run is only waiting in queues this run would no longer use.
+
+    Every Mac job the older run still holds must be wanted by this run and routed to different labels, and
+    no Mac job of the older run may have started; otherwise cancelling would lose work or change nothing.
+    Unknown labels (no routing given, job not created yet, no labels on the job) never count as moved.
+    """
+    if not queues or mac_job_started(jobs):
+        return False
+    held = [kind for kind in KINDS if info['kinds'][kind] and holds_a_slot(jobs, kind)]
+    if not held:
+        return False
+    for kind in held:
+        job, new = jobs.get(kind), queues.get(kind)
+        if not wants[kind] or job is None or not job.get('labels') or not new:
+            return False
+        if {label.lower() for label in job['labels']} == {label.lower() for label in new}:
+            return False
+    return True
+
+
 def obsolete_reason(pull, pr, head):
     if pull['state'] != 'open':
         return f'PR #{pr} is {"merged" if pull.get("merged") else "closed"}'
@@ -101,9 +124,12 @@ def obsolete_reason(pull, pr, head):
     return None
 
 
-def decide(api, pr, head, run_id, wants):
-    """What this run should do. Raises on any API doubt; the caller falls back to running normally."""
-    result = {'skip': {kind: False for kind in KINDS}, 'cancel': [], 'why': []}
+def decide(api, pr, head, run_id, wants, queues=None):
+    """What this run should do. Raises on any API doubt; the caller falls back to running normally.
+
+    `queues` maps each kind to the runner labels this run would use ({'lane': [...], 'automerge': [...]}).
+    """
+    result = {'skip': {kind: False for kind in KINDS}, 'cancel': [], 'replace': {}, 'why': []}
     pull = api.get(f'pulls/{pr}')
     why = obsolete_reason(pull, pr, head)
     if why:
@@ -121,6 +147,11 @@ def decide(api, pr, head, run_id, wants):
                 result['cancel'].append(other_id)
             continue
         jobs = mac_jobs(api, other_id)
+        if moved_queue(jobs, info, wants, queues):
+            held = [kind for kind in KINDS if info['kinds'][kind] and holds_a_slot(jobs, kind)]
+            result['cancel'].append(other_id)
+            result['replace'][other_id] = held
+            continue
         for kind in KINDS:
             if wants[kind] and info['kinds'][kind] and holds_a_slot(jobs, kind):
                 result['skip'][kind] = True
@@ -128,9 +159,9 @@ def decide(api, pr, head, run_id, wants):
     return result
 
 
-def route(api, pr, head, run_id, wants):
+def route(api, pr, head, run_id, wants, queues=None):
     try:
-        result = decide(api, pr, head, run_id, wants)
+        result = decide(api, pr, head, run_id, wants, queues)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         print(f'::warning::Lane dedupe unavailable ({error!r}); running as before.', file=sys.stderr)
         return {kind: False for kind in KINDS}
@@ -146,18 +177,38 @@ def route(api, pr, head, run_id, wants):
             return {kind: True for kind in KINDS}
         try:
             if mac_job_started(mac_jobs(api, run)):
+                # An older run of this very head started meanwhile: it is the one that counts.
+                for kind in result['replace'].get(run, ()):
+                    result['skip'][kind] = True
+                    result['why'].append(f'run {run} already started a {kind} job for {head[:7]}')
                 continue
         except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
             print(f'::warning::Lane dedupe unavailable ({error!r}); running as before.', file=sys.stderr)
             return {kind: False for kind in KINDS}
         try:
             api.post(f'actions/runs/{run}/cancel')
-            print(f'Cancelled run {run}: its Mac job had not started and the PR has a newer commit.', file=sys.stderr)
+            reason = ('this run routes to a different queue' if run in result['replace']
+                      else 'the PR has a newer commit')
+            print(f'Cancelled run {run}: its Mac job had not started and {reason}.', file=sys.stderr)
         except (OSError, subprocess.SubprocessError) as error:
+            # Never stop this run because a cancel failed: GitHub cancels asynchronously, so a timeout or an
+            # "active" status read straight after it can still be followed by the cancel completing, and stopping
+            # both runs would leave the PR with none. Two runs for one head is harmless (#1194 audit).
             print(f'::warning::Could not cancel run {run} ({error!r}); it ends itself when it starts.', file=sys.stderr)
     for why in result['why']:
         print(f'Not queuing: {why}.', file=sys.stderr)
     return result['skip']
+
+
+def read_queues(path):
+    """The routing file's queue labels, or None when it is missing or unreadable (then nothing is replaced)."""
+    try:
+        queues = json.loads(Path(path).read_text()) if path else None
+    except (OSError, ValueError):
+        return None
+    if not isinstance(queues, dict):
+        return None
+    return {kind: queues[kind] for kind in KINDS if isinstance(queues.get(kind), list)}
 
 
 def main(argv=None):
@@ -167,9 +218,11 @@ def main(argv=None):
     parser.add_argument('--run-id', type=int, required=True)
     parser.add_argument('--lane', choices=['true', 'false'], required=True)
     parser.add_argument('--auto', choices=['true', 'false'], required=True)
+    parser.add_argument('--queues', help='JSON file from `test-scope.py --runner-routing`: the runner labels '
+                        'this run would use. Without it, a duplicate in another queue is not replaced.')
     args = parser.parse_args(argv)
     skip = route(GitHubApi(os.environ['GH_REPO']), args.pr, args.head, args.run_id,
-                 {'lane': args.lane == 'true', 'automerge': args.auto == 'true'})
+                 {'lane': args.lane == 'true', 'automerge': args.auto == 'true'}, read_queues(args.queues))
     print(json.dumps({'skip_lane': skip['lane'], 'skip_automerge': skip['automerge']}))
     return 0
 

@@ -239,7 +239,7 @@ public enum MarginLayerSynthesis {
     /// The listener's copy has a position for the Margin. Ambiguous or missing matches are not
     /// placed, even when the sender's time is known. Approximate positions (a map interpolation)
     /// are placed, since that is where the listener hears the Margin play.
-    private static func placedTime(_ resolution: ImportedAnchorResolution) -> Int? {
+    static func placedTime(_ resolution: ImportedAnchorResolution) -> Int? {
         guard !resolution.isAmbiguous, let time = resolution.localMediaTimeMs, time >= 0 else { return nil }
         switch resolution.evidenceClass {
         case .exactEdition, .transcriptVerified, .acousticVerified, .fused, .recipientConfirmed,
@@ -250,7 +250,7 @@ public enum MarginLayerSynthesis {
         }
     }
 
-    private static func label(_ displayLabel: String?) -> String {
+    static func label(_ displayLabel: String?) -> String {
         let trimmed = displayLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmed.isEmpty ? unnamedSenderLabel : trimmed
     }
