@@ -105,9 +105,11 @@ final class ShippedReaderGateTests: XCTestCase {
     }
 
     func testTheAppTestsThatWritePacketsDirectlyAreTheOnesWeKnowAbout() throws {
-        // App tests cannot call exportPacket (the frozen reader is not linked into the app test target), so four
-        // writes there are not read by Build 29. This pins that list: a new direct write fails here until someone
-        // either routes it through a packet the Mac package tests also read with Build 29, or adds it below on purpose.
+        // App tests cannot call exportPacket (the frozen reader is not linked into the app test target), so five
+        // writes there are not read by Build 29. EpisodeMapStoredNamesTests writes one only to drive an import and
+        // check the names the app saves; it asserts nothing about what Build 29 can read. This pins that list: a new
+        // direct write fails here until someone either routes it through a packet the Mac package tests also read
+        // with Build 29, or adds it below on purpose.
         let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
         let appTests = tests.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("App/SpokenMarginsAppTests")
@@ -121,6 +123,7 @@ final class ShippedReaderGateTests: XCTestCase {
             let matches = call.numberOfMatches(in: text, range: NSRange(text.startIndex..., in: text))
             if matches > 0 { counts[file.lastPathComponent] = matches }
         }
-        XCTAssertEqual(counts, ["LocalAudioListeningPackageTests.swift": 3, "SpokenMarginsPackageHandoffTests.swift": 1])
+        XCTAssertEqual(counts, ["EpisodeMapStoredNamesTests.swift": 1, "LocalAudioListeningPackageTests.swift": 3,
+                                "SpokenMarginsPackageHandoffTests.swift": 1])
     }
 }
