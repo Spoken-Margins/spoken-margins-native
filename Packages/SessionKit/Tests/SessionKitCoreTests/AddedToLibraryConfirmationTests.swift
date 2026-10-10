@@ -14,6 +14,15 @@ final class AddedToLibraryConfirmationTests: XCTestCase {
         XCTAssertFalse(busy.offersPlayNow)
     }
 
+    /// #828: several Safari shares imported together get one message, never a Play now.
+    func testSeveralItemsGetOneMessage() {
+        XCTAssertEqual(AddedToLibraryConfirmation.message(addedCount: 3, nowPlayingIsEmpty: true), "Added 3 items to Library.")
+        XCTAssertEqual(
+            AddedToLibraryConfirmation.message(addedCount: 2, nowPlayingIsEmpty: false),
+            "Added 2 items to Library without changing Now Playing."
+        )
+    }
+
     func testAnOpenSessionHoldsNowPlayingUntilItEnds() {
         XCTAssertTrue(AddedToLibraryConfirmation.nowPlayingIsEmpty(sessionId: nil, phase: .idle))
         for phase in [SessionPhase.idle, .itemPlayback, .recordingInterjection, .summaryPlayback, .conversation] {
