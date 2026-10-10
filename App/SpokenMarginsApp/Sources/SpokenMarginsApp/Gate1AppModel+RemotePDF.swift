@@ -11,10 +11,11 @@ extension Gate1AppModel {
         return true
     }
 
+    @discardableResult
     func importRemotePDFInBackground(
         url: URL,
         onboardingSteps: Set<OnboardingStep> = [.addedOwnSource, .addedFromSafari]
-    ) async throws {
+    ) async throws -> String {
         #if canImport(PDFKit)
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
@@ -44,9 +45,38 @@ extension Gate1AppModel {
             contentFormat: .plainText,
             documentStructure: extracted.documentStructure
         )
-        try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
+        let itemId = try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
         diagnostics["lastRemotePDFImport"] = url.absoluteString
         markOnboardingSteps(onboardingSteps)
+        return itemId
+        #else
+        throw SourceFileImportError.pdfImportUnavailable
+        #endif
+    }
+
+    /// A PDF the share sheet saved to the app group (#828 returns the new item for the pending-share message).
+    func importLocalSharedPDFInBackground(url: URL) async throws -> String {
+        #if canImport(PDFKit)
+        let extracted = try await Task.detached(priority: .userInitiated) {
+            try NativePDFDocumentExtractor.extractStructured(from: url)
+        }.value
+        let fileTitle = url.deletingPathExtension().lastPathComponent
+        let title = extracted.title ?? (fileTitle.isEmpty ? "Shared PDF" : fileTitle)
+        let encodedName = url.lastPathComponent.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? "shared.pdf"
+        let handoff = BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(
+                url: "shared-file://share-sheet/\(encodedName)",
+                title: title
+            ),
+            text: extracted.document.text,
+            contentFormat: .plainText,
+            documentStructure: extracted.documentStructure
+        )
+        let itemId = try importBrowserTextInBackground(handoff, structuredDocument: extracted.document)
+        diagnostics["lastSharedPDFImport"] = url.lastPathComponent
+        markOnboardingSteps([.addedOwnSource, .addedFromSafari])
+        return itemId
         #else
         throw SourceFileImportError.pdfImportUnavailable
         #endif
