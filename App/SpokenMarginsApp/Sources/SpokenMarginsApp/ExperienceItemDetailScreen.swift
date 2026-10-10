@@ -67,6 +67,10 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
+                            Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
+                                .disabled(true)
+                        }
                         if episodeLinkStatus.canLink && episodeLinkStatus.canChange {
                             Button(
                                 episodeLinkStatus.episodeTitle == nil ? "This is a podcast episode…" : "Change linked episode…",

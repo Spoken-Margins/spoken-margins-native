@@ -196,6 +196,31 @@ final class LinkedFileEpisodeMatchTests: XCTestCase {
         XCTAssertNil(match(linkShared(), try store.listItems()))
     }
 
+    /// Only layers that need the link lock it: a wrong link must stay fixable when the only Margins on the file
+    /// came in by its checksum.
+    func testOnlyLayersThatNeedTheLinkLockIt() throws {
+        let file = try linkedFile()
+        let byChecksum = SharedItemIdentity(
+            itemType: .podcast, canonicalURL: "https://ana.example.com/elsewhere", title: "Harbour Lights",
+            episodeGUID: "ana-guid", durationMs: 1_800_000, exactEditionSHA256: Self.digest
+        )
+        let exactFile = SharedItemIdentity(itemType: .other, title: "Harbour Lights", durationMs: 1_800_000, exactEditionSHA256: Self.digest)
+        let byLink = linkShared()
+        func depending(_ identities: [SharedItemIdentity], item: Item? = nil, digest: String? = Self.digest) -> Int {
+            SharedPacketItemMatcher.layersDependingOnEpisodeLink(
+                identities.map(layer(for:)), item: item ?? file, ownedAudiobookDigest: digest
+            ).count
+        }
+        XCTAssertEqual(depending([]), 0)
+        XCTAssertEqual(depending([byChecksum, exactFile]), 0, "Ana's layers stand without the link")
+        XCTAssertEqual(depending([byChecksum, byLink]), 1)
+        XCTAssertEqual(depending([byLink, byLink]), 2)
+        XCTAssertEqual(depending([byLink], item: importedFile()), 0, "nothing to lock when the file is not linked")
+        var deleted = layer(for: byLink)
+        deleted.deletedAt = Date(timeIntervalSince1970: 1_777_000_100)
+        XCTAssertTrue(SharedPacketItemMatcher.layersDependingOnEpisodeLink([deleted], item: file, ownedAudiobookDigest: Self.digest).isEmpty)
+    }
+
     private func layer(for identity: SharedItemIdentity) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(
             id: "layer", itemId: "audiobook-1", packageDigest: String(repeating: "c", count: 64), packageId: "package",

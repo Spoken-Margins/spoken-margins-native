@@ -48,6 +48,21 @@ public enum SharedPacketItemMatcher {
         )
     }
 
+    /// The layers that sit on a linked file only because of its episode link (#755): ones the file would no longer
+    /// represent once the link is gone. A layer from a packet that names the exact file by checksum does not
+    /// depend on the link, so it never stops the listener from fixing a wrong one.
+    public static func layersDependingOnEpisodeLink(
+        _ layers: [ImportedCommentaryLayer],
+        item: Item,
+        ownedAudiobookDigest: String?
+    ) -> [ImportedCommentaryLayer] {
+        guard item.linkedEpisode != nil else { return [] }
+        let withoutLink = localIdentity(
+            for: ImportedFileEpisodeLink.unlink(item), ownedAudiobookDigest: ownedAudiobookDigest
+        )
+        return layers.filter { $0.deletedAt == nil && !ImportedItemResolver.canRepresentSameWork($0.itemIdentity, withoutLink) }
+    }
+
     public static func ownedAudiobookDigest(for item: Item, assets: [OwnedOfflineAsset]) -> String? {
         guard item.mediaType == "audiobook" else { return nil }
         return assets.first(where: {

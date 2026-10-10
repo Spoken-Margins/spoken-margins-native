@@ -2,6 +2,7 @@ import Foundation
 import SessionKit
 import SessionKitFeeds
 import SessionKitPersistence
+import SessionKitSharing
 
 /// Lets the listener say which podcast episode an audio file they imported is (#755), so a packet a friend
 /// shared by link lands on the file instead of adding a second, streamed copy. The rules for what may be
@@ -11,7 +12,7 @@ struct ImportedFileEpisodeLinker {
     struct Status: Equatable {
         var canLink = false
         var episodeTitle: String?
-        /// False once a friend's Margins sit on the file under its episode: changing it would orphan them.
+        /// False once Margins a friend shared by link sit on the file under its episode: changing it would orphan them.
         var canChange = true
     }
 
@@ -26,13 +27,19 @@ struct ImportedFileEpisodeLinker {
         return Status(
             canLink: true,
             episodeTitle: item.linkedEpisode.map { $0.title.isEmpty ? "Podcast episode" : $0.title },
-            canChange: item.linkedEpisode == nil || !hasSharedMargins(itemId: itemId, store: store)
+            canChange: !hasLinkedMargins(item: item, store: store)
         )
     }
 
+    /// Layers that stay on the file only through its episode link. Margins from a packet that names the exact
+    /// file do not count, so a wrong link stays fixable when only those are there.
     @MainActor
-    private func hasSharedMargins(itemId: String, store: SQLiteSessionStore) -> Bool {
-        ((try? store.loadImportedCommentaryLayers(itemId: itemId)) ?? []).contains { $0.deletedAt == nil }
+    private func hasLinkedMargins(item: Item, store: SQLiteSessionStore) -> Bool {
+        let layers = (try? store.loadImportedCommentaryLayers(itemId: item.id)) ?? []
+        let digest = SharedPacketItemMatcher.ownedAudiobookDigest(
+            for: item, assets: (try? store.loadOwnedOfflineAssets()) ?? []
+        )
+        return !SharedPacketItemMatcher.layersDependingOnEpisodeLink(layers, item: item, ownedAudiobookDigest: digest).isEmpty
     }
 
     /// Resolves the pasted link and links the file to the episode it names. Returns the episode's title.
@@ -66,10 +73,10 @@ struct ImportedFileEpisodeLinker {
         try store.saveItem(ImportedFileEpisodeLink.unlink(try store.loadItem(id: itemId)))
     }
 
-    /// A friend's Margins placed by the linked episode would lose their file if the link changed or went away.
+    /// Margins placed through the linked episode would lose their file if the link changed or went away.
     @MainActor
     private func requireChangeable(itemId: String, store: SQLiteSessionStore) throws {
-        if try store.loadItem(id: itemId).linkedEpisode != nil, hasSharedMargins(itemId: itemId, store: store) {
+        if hasLinkedMargins(item: try store.loadItem(id: itemId), store: store) {
             throw ImportedFileEpisodeLink.Refusal.hasSharedMargins
         }
     }
