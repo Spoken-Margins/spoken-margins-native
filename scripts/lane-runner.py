@@ -64,7 +64,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   tests build SessionKit in the workspace, which the job empties when it ends, and each automerge job removes
   the idle caches with no app build in them that its runner's earlier automerge runs left (host_build_folders).
 - Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
-  one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
+  one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build, or on the priority runner when
+  the build runners are busy and it is idle (test-scope.py runner_routing, #1327). --mode
   keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
   Trial (2026-10-01): an automerge job, which runs no xcodebuild, may start there beside a simulator job
