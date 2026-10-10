@@ -891,6 +891,33 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         coordinator.shutdown()
     }
 
+    /// APA-11: the file exists and is not empty but is shorter than what was recorded (an interrupted or half-evicted
+    /// write). It must not be offered as the episode.
+    func testValidatedLocalURLRejectsATruncatedFile() throws {
+        let fixture = try makeFixture()
+        let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: audioDirectory.appending(path: "truncated.mp3"))
+        try Data([1, 2, 3]).write(to: audioDirectory.appending(path: "complete.mp3"))
+        try Data([1, 2, 3]).write(to: audioDirectory.appending(path: "unrecorded.mp3"))
+        for (itemId, recordedBytes) in [("truncated", Int64(10)), ("complete", 3), ("unrecorded", 0)] {
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+                id: "download-\(itemId)", itemId: itemId, remoteURL: "https://example.com/\(itemId).mp3",
+                localRelativePath: "\(itemId).mp3", state: .availableOffline, bytesWritten: recordedBytes))
+        }
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+
+        XCTAssertNil(coordinator.validatedLocalURL(for: "truncated"), "3 bytes on disk, 10 recorded")
+        let record = coordinator.recordsByItemId["truncated"]
+        XCTAssertEqual(record?.state, .failed)
+        XCTAssertNil(record?.localRelativePath)
+        XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "truncated" }?.state, .failed)
+        XCTAssertEqual(record?.failureReason, "Downloaded file is missing or incomplete. Download it again.")
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "complete"), "control: size equals what was recorded")
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "unrecorded"), "control: a record with no size recorded is accepted")
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
