@@ -9,17 +9,33 @@ export async function activeTab(extensionAPI) {
 // Runs in the page, so it must not reference anything outside its own body.
 // On a PDF, Safari's tab document is its built-in PDF viewer, whose only text
 // is the viewer's own CSS (#658). Hand back the PDF's address instead.
+// The viewer markup counts only when it is the whole page: an article that
+// embeds a PDF among its prose is read as a page, and a page that is nothing
+// but a PDF embed hands over the embed's address, not its own (#689).
 export function invokeInjectedCapture() {
   try {
     const documentRef = globalThis.document;
     const href = String(documentRef?.location?.href || documentRef?.URL || "");
     let path = "";
     try { path = new URL(href).pathname; } catch { path = ""; }
-    const isPDF = String(documentRef?.contentType || "").toLowerCase() === "application/pdf"
-      || /\.pdf$/i.test(path)
-      || Boolean(documentRef?.querySelector?.('embed[type="application/pdf"], #annotationContainer'));
-    if (isPDF && /^https:\/\//i.test(href)) {
-      return { ok: true, pdfURL: href };
+    let pdfURL = "";
+    if (String(documentRef?.contentType || "").toLowerCase() === "application/pdf" || /\.pdf$/i.test(path)) {
+      pdfURL = href;
+    } else {
+      const nodes = Array.from(documentRef?.body?.childNodes || []);
+      const viewers = nodes.filter((node) => node.nodeType === 1
+        && Boolean(node.matches?.('embed[type="application/pdf"], #annotationContainer')));
+      const isViewerOnly = viewers.length > 0 && nodes.every((node) => viewers.includes(node)
+        || (node.nodeType === 1 && /^(style|script|link|meta|template)$/i.test(String(node.tagName || "")))
+        || node.nodeType === 8
+        || (node.nodeType === 3 && !String(node.textContent || "").trim()));
+      if (isViewerOnly) {
+        const source = viewers.find((node) => /^embed$/i.test(String(node.tagName || "")))?.getAttribute?.("src");
+        try { pdfURL = source ? new URL(source, href).href : href; } catch { pdfURL = ""; }
+      }
+    }
+    if (/^https:\/\//i.test(pdfURL)) {
+      return { ok: true, pdfURL };
     }
     const capture = globalThis.SpokenMarginsBrowserTextCapture;
     if (!capture) {
