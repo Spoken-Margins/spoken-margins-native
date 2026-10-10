@@ -65,10 +65,10 @@ final class PrivateFeedRecoveryTests: XCTestCase {
             ("day only", local(show: nil), true),
             ("neither", local(show: nil, published: nil), false),
             ("blank show and no day", local(show: "  ", published: nil), false),
-            ("another show", local(show: "Another Show"), false),
+            ("another show, no day", local(show: "Another Show", published: nil), false),
+            ("another show, same day: subscribers' feeds can title the show for each of them", local(show: "Another Show"), true),
             ("same show, another day", local(published: "2026-09-02T00:00:00Z"), false),
             ("no show, another day", local(show: nil, published: "2026-09-02T00:00:00Z"), false),
-            ("show differs even when the day agrees", local(show: "Another Show", published: "2026-09-01T00:00:00Z"), false),
             ("same instant written in another zone", local(show: nil, published: "2026-08-31T20:00:00-04:00"), true),
             ("RSS date", local(show: nil, published: "Tue, 01 Sep 2026 10:00:00 +0000"), true),
             ("a bare date", local(show: nil, published: "2026-09-01"), true),
@@ -104,6 +104,22 @@ final class PrivateFeedRecoveryTests: XCTestCase {
         XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(withFeed, local()))
         let blankLinks = SharedItemIdentity(itemType: .podcast, canonicalURL: " ", title: packet.title, showTitle: packet.showTitle, episodeGUID: "")
         XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(blankLinks, local()))
+    }
+
+    func testALinklessPacketWithAPlainGUIDMatchesDespiteAnotherShowTitleButOnlyWithTheSameTitle() {
+        let linkless = SharedItemIdentity(
+            itemType: .podcast, title: packet.title, showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1")
+        func friend(title: String, show: String) -> SharedItemIdentity {
+            SharedItemIdentity(itemType: .podcast, title: title, showTitle: show, episodeGUID: "smtf-ep1")
+        }
+        XCTAssertTrue(ImportedItemResolver.canRepresentSameWork(linkless, friend(title: packet.title, show: "Test Show (subscriber B)")))
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linkless, friend(title: "Episode 99: Another", show: "Test Show (subscriber B)")),
+                       "a short GUID from another show with another title is not this episode")
+        let linked = SharedItemIdentity(
+            itemType: .podcast, canonicalURL: "https://example.com/12", title: packet.title,
+            showTitle: "Test Show (subscriber A)", episodeGUID: "smtf-ep1")
+        XCTAssertFalse(ImportedItemResolver.canRepresentSameWork(linked, friend(title: packet.title, show: "Test Show (subscriber B)")),
+                       "a packet that has a link keeps the old show check")
     }
 
     func testOnlyAPodcastIsMatchedByItsWords() {
@@ -220,6 +236,12 @@ final class PrivateFeedRecoveryTests: XCTestCase {
         let episode = try XCTUnwrap(feed.items.first { $0.title.hasPrefix("Episode 12") })
         let entry = try XCTUnwrap(SharedEpisodeFeedEntry.entry(for: episode))
         XCTAssertEqual(entry.subscriptionId, SharedEpisodeFeedEntry.subscriptionId)
+        // The entry id lands in diagnostics keys, so it must not be the GUID, which can be a private link.
+        XCTAssertFalse(entry.id.contains("patreon"))
+        XCTAssertFalse(entry.id.contains(recipientEnclosureSecret))
+        XCTAssertEqual(entry.id, SharedEpisodeFeedEntry.entry(for: episode)?.id, "the same episode keeps its id")
+        let other = try XCTUnwrap(feed.items.first { $0.title.hasPrefix("Episode 13") })
+        XCTAssertNotEqual(entry.id, SharedEpisodeFeedEntry.entry(for: other)?.id)
         XCTAssertEqual(entry.title, "Episode 12: The Private One")
         XCTAssertEqual(entry.canonicalURL, "https://www.patreon.com/posts/episode-12-98765")
         XCTAssertEqual(entry.audioURL, enclosure(post: 98765, secret: recipientEnclosureSecret))

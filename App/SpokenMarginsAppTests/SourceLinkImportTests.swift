@@ -1869,7 +1869,7 @@ extension SourceLinkImportTests {
         return PrivateFeedFixture(model: model, store: store, packageURL: packageURL, manifest: manifest)
     }
 
-    private func parsedFeed(_ episodes: [(title: String, guid: String, published: String, minutes: Int, audio: String)]) throws -> ParsedFeed {
+    private func parsedFeed(_ episodes: [(title: String, guid: String, published: String, minutes: Int, audio: String)], show: String = "Members Only Show") throws -> ParsedFeed {
         var items = ""
         for episode in episodes {
             items += "<item><title>\(episode.title)</title><link>https://members.example/episodes/\(episode.guid)</link>"
@@ -1878,18 +1878,18 @@ extension SourceLinkImportTests {
             items += "<enclosure url=\"\(episode.audio)\" type=\"audio/mpeg\"/></item>"
         }
         return try FeedParser().parse(data: Data("""
-        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Members Only Show</title>\(items)</channel></rss>
+        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>\(show)</title>\(items)</channel></rss>
         """.utf8))
     }
 
     /// The listener's feed: the newest episode first, as feeds list them.
-    private func membersFeed(includingEpisode12: Bool = true) throws -> ParsedFeed {
+    private func membersFeed(includingEpisode12: Bool = true, show: String = "Members Only Show") throws -> ParsedFeed {
         var episodes = [(title: "Episode 13: The Next One", guid: "ep-13", published: "Tue, 08 Sep 2026 00:00:00 +0000", minutes: 50, audio: Self.episode13Audio)]
         if includingEpisode12 {
             episodes.append((title: "Episode 12: The Private One", guid: "ep-12", published: "Tue, 01 Sep 2026 00:00:00 +0000", minutes: 63, audio: Self.episode12Audio))
         }
         episodes.append((title: "Episode 11: The Earlier One", guid: "ep-11", published: "Tue, 25 Aug 2026 00:00:00 +0000", minutes: 58, audio: "https://media.members.example/ep11.mp3"))
-        return try parsedFeed(episodes)
+        return try parsedFeed(episodes, show: show)
     }
 
     private func recovery(for model: Gate1AppModel, feed: ParsedFeed) -> SharedEpisodeRecovery {
@@ -1942,6 +1942,37 @@ extension SourceLinkImportTests {
         XCTAssertEqual(recovery.phase, .added(itemId: itemId), "pasting the feed again finds the episode already in the Library")
         XCTAssertEqual(try fixture.store.listItems().filter { $0.media?.url == Self.episode12Audio }.count, 1)
         XCTAssertEqual(try fixture.store.loadImportedCommentaryLayers(itemId: itemId).count, 1)
+    }
+
+    func testFriendsFeedThatTitlesTheShowDifferentlyStillMatchesTheEpisode() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let recovery = recovery(for: fixture.model, feed: try membersFeed(show: "Members Only Show (subscriber B)"))
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
+        XCTAssertEqual(fixture.model.spokenMarginsPackageImportReview?.matchingItemId, itemId)
+        XCTAssertEqual(try fixture.store.loadItem(id: itemId).showTitle, "Members Only Show (subscriber B)")
+        // The feed's GUID can be a link carrying the subscriber's token; no diagnostics key may carry it.
+        XCTAssertFalse(fixture.model.diagnostics.keys.contains { $0.contains("ep-12") })
+    }
+
+    func testAnotherEpisodeOfTheSameShowIsNeverGivenThisEpisodesIdentity() async throws {
+        let fixture = try makePrivateFeedFixture()
+        // An episode added before GUIDs were kept, whose feed link is the show's page for every episode.
+        let other = Item(
+            id: "other-episode", title: "Episode 11: The Earlier One", mediaType: "transcript_backed_media", text: nil,
+            externalReference: "https://members.example/", status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: "https://media.members.example/ep11.mp3"))
+        try fixture.store.saveItem(other)
+        let recovery = recovery(for: fixture.model, feed: try membersFeed())
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
+        XCTAssertNotEqual(itemId, "other-episode")
+        XCTAssertNil(try fixture.store.loadItem(id: "other-episode").episodeGUID)
+        XCTAssertEqual(try fixture.store.loadItem(id: itemId).media?.url, Self.episode12Audio)
     }
 
     func testEpisodeAlreadyInTheLibraryIsReusedAndGainsTheIdentityItWasAddedWithout() async throws {

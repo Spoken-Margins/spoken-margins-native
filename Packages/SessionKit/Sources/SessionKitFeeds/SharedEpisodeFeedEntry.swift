@@ -15,7 +15,7 @@ public enum SharedEpisodeFeedEntry {
         guard let address = audio ?? nonEmpty(item.url) else { return nil }
         let guid = nonEmpty(item.guid)
         return FeedEntry(
-            id: guid ?? nonEmpty(item.id) ?? address,
+            id: stableID(for: guid ?? nonEmpty(item.id) ?? address),
             subscriptionId: subscriptionId,
             canonicalURL: nonEmpty(item.url) ?? address,
             audioURL: audio,
@@ -27,6 +27,17 @@ public enum SharedEpisodeFeedEntry {
             audioDurationMs: item.durationMs,
             episodeGUID: guid
         )
+    }
+
+    /// The entry id ends up in diagnostics keys, and a GUID can be a private link, so the entry is
+    /// named by a hash of it (FNV-1a, stable across launches) rather than by the GUID itself.
+    static func stableID(for value: String) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return "episode-" + String(hash, radix: 16)
     }
 
     private static func nonEmpty(_ value: String?) -> String? {

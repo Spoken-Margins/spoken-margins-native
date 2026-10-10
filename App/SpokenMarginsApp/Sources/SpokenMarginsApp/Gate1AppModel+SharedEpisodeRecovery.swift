@@ -10,21 +10,16 @@ extension Gate1AppModel {
     /// it was added without (GUID, show, publish day) filled in so the pending packet can find it.
     func libraryItemID(forRecoveredEpisode entry: FeedEntry, showTitle: String?) throws -> String? {
         let store = try requireStore()
-        let items = try store.listItems()
-        let episode = SharedItemIdentity(
-            itemType: .podcast,
-            canonicalURL: entry.canonicalURL,
-            originalURL: entry.canonicalURL,
-            title: entry.title,
-            showTitle: showTitle,
-            episodeGUID: entry.episodeGUID,
-            enclosureURL: entry.audioURL,
-            publishedAt: entry.publishedAt.map { ISO8601DateFormatter().string(from: $0) },
-            durationMs: entry.audioDurationMs
-        )
         let audioURL = entry.audioURL
-        guard let itemId = SharedPacketItemMatcher.matchingItemId(for: episode, among: items)
-            ?? items.first(where: { audioURL != nil && $0.media?.url == audioURL })?.id else { return nil }
+        let guid = entry.episodeGUID
+        let title = entry.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // The audio link names the episode. A GUID alone does not (some feeds reuse short ones, and
+        // many give every episode the show's page as its link), so it needs the title beside it.
+        guard let itemId = try store.listItems().first(where: { item in
+            if let audioURL, item.media?.url == audioURL { return true }
+            guard let guid, item.episodeGUID?.trimmingCharacters(in: .whitespacesAndNewlines) == guid else { return false }
+            return item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == title
+        })?.id else { return nil }
         try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle)
         return itemId
     }

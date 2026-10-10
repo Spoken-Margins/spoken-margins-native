@@ -277,7 +277,8 @@ public enum ImportedItemResolver {
            let packageGUID = packageItem.episodeGUID,
            let localGUID = localItem.episodeGUID {
             return packageGUID == localGUID
-                && guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
+                && (guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
+                    || privateFeedTitlesAgree(packageItem, localItem))
                 && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
         }
         // A page link names an episode's audio only for a podcast packet; an article, PDF or EPUB that shares
@@ -293,26 +294,37 @@ public enum ImportedItemResolver {
     /// A podcast packet from a private feed names its episode by nothing but words: #168 drops every
     /// link, and a GUID that is itself a link. The listener who pastes their own feed adds that
     /// episode (#454), so with no link or GUID on the packet, the same title backed by the same show
-    /// or the same publish day is the same episode. Anything either side states that disagrees
-    /// (show, day, a length more than 20% apart) rules it out.
+    /// or the same publish day is the same episode. A day or a length that disagrees rules it out.
+    /// A show title that differs does not: subscribers' feeds can title the show for each of them.
     static func privateFeedEpisodesAgree(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
-        let links = [packageItem.canonicalURL, packageItem.originalURL, packageItem.enclosureURL,
-                     packageItem.source?.canonicalURL, packageItem.episodeGUID]
-        guard packageItem.itemType == .podcast, localItem.itemType == .podcast,
-              links.allSatisfy({ ($0?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty }) else { return false }
-        let title = comparableTitle(packageItem.title)
-        guard !title.isEmpty, title == comparableTitle(localItem.title) else { return false }
+        guard hasNoLinks(packageItem), isBlank(packageItem.episodeGUID),
+              privateFeedTitlesAgree(packageItem, localItem) else { return false }
         guard LinkedEpisode.lengthsAgree(packageItem.durationMs, localItem.durationMs) else { return false }
         var corroborated = false
-        if let packageShow = foldedShowTitle(packageItem.showTitle), let localShow = foldedShowTitle(localItem.showTitle) {
-            guard packageShow == localShow else { return false }
-            corroborated = true
-        }
         if let packageDay = publishDay(packageItem.publishedAt), let localDay = publishDay(localItem.publishedAt) {
             guard packageDay == localDay else { return false }
             corroborated = true
         }
+        if let packageShow = foldedShowTitle(packageItem.showTitle), let localShow = foldedShowTitle(localItem.showTitle),
+           packageShow == localShow {
+            corroborated = true
+        }
         return corroborated
+    }
+
+    /// A packet whose podcast had no link the recipient could open, and the same non-blank title on both sides.
+    private static func privateFeedTitlesAgree(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
+        guard packageItem.itemType == .podcast, localItem.itemType == .podcast, hasNoLinks(packageItem) else { return false }
+        let title = comparableTitle(packageItem.title)
+        return !title.isEmpty && title == comparableTitle(localItem.title)
+    }
+
+    private static func hasNoLinks(_ item: SharedItemIdentity) -> Bool {
+        [item.canonicalURL, item.originalURL, item.enclosureURL, item.source?.canonicalURL].allSatisfy(isBlank)
+    }
+
+    private static func isBlank(_ value: String?) -> Bool {
+        (value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
     }
 
     private static func comparableTitle(_ value: String) -> String {
