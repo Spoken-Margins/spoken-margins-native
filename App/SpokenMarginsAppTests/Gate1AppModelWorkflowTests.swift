@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import XCTest
 @testable import SessionKit
@@ -1528,6 +1529,49 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(recorder.beginCount, 2)
         model.cancelInterjection()
         XCTAssertEqual(recorder.cancelCount, 2)
+    }
+
+    /// #1043 APM-03: the recording tests never looked at a saved Margin's audio. Each Margin here must point at
+    /// its own non-empty recording that the app can find and decode, and transcription must be given that file.
+    func testSpokenMarginsAreSavedAsTheirOwnPlayableRecordings() async throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        let transcribed = TranscribedAudioPaths()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            interjectionTranscriptionHandler: { path in
+                transcribed.append(path)
+                return "A spoken Margin."
+            }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        for _ in 0..<2 {
+            model.beginInterjection()
+            XCTAssertTrue(model.snapshot.isRecording)
+            model.finishInterjection()
+            XCTAssertFalse(model.snapshot.isRecording)
+        }
+
+        XCTAssertEqual(recorder.finishCount, 2)
+        XCTAssertEqual(Set(recorder.savedPaths).count, 2, "each Margin keeps its own recording")
+        let margins = model.selectedItem.interjections
+        XCTAssertEqual(margins.count, 2)
+        XCTAssertEqual(Set(margins.compactMap(\.audioPath)), Set(recorder.savedPaths))
+        for margin in margins {
+            XCTAssertEqual(margin.audioStatus, "saved")
+            let path = try XCTUnwrap(margin.audioPath)
+            let url = try XCTUnwrap(model.resolvedInterjectionAudioURL(for: path), "the app finds the file the recorder wrote")
+            XCTAssertEqual(url.standardizedFileURL.path, recorder.supportDirectory.appending(path: path).standardizedFileURL.path)
+            let file = try AVAudioFile(forReading: url)
+            XCTAssertGreaterThan(file.length, 0, "the saved Margin has audio behind it")
+        }
+        try await waitFor("both Margins to reach transcription", timeoutNanoseconds: 5_000_000_000) {
+            transcribed.all.count == 2
+        }
+        XCTAssertEqual(Set(transcribed.all), Set(recorder.savedPaths), "transcription is given each Margin's own file")
     }
 
     func testOpeningMarginFromAnotherSessionDoesNotReplaceNowPlaying() {
@@ -5146,6 +5190,14 @@ private final class CountingToneRecordingClient: RecordingClient {
     func removeSavedFiles() {
         for path in savedPaths { try? FileManager.default.removeItem(at: supportDirectory.appending(path: path)) }
     }
+}
+
+/// The audio paths the transcription step was handed, read from the test.
+private final class TranscribedAudioPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [String] = []
+    func append(_ path: String) { lock.withLock { paths.append(path) } }
+    var all: [String] { lock.withLock { paths } }
 }
 
 @MainActor
