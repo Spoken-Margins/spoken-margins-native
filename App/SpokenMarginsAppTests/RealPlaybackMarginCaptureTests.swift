@@ -6,9 +6,14 @@ import SessionKitAudio
 import XCTest
 @testable import SpokenMarginsApp
 
-/// Records a spoken Margin on a streamed episode through the real app model and real audio router, the way the
-/// Record button does, and checks that both anchor evidence windows are stored and place the Margin. Device Build 29
-/// showed no evidence because starting a Margin stopped the shared router and discarded the podcast player and its tap.
+/// Records a spoken Margin on a streamed episode through the real app model, real audio router and real player tap,
+/// and checks that both anchor evidence windows are stored and place the Margin. Device Build 29 showed no evidence
+/// because starting a Margin stopped the shared router and discarded the podcast player and its tap.
+///
+/// The recorder is `NoopRecordingClient`, so this covers the router, the player and the tap, not the microphone. The
+/// lane's fresh simulator has never granted the microphone and a unit test can't answer the prompt, so
+/// `SystemRecordingClient` would refuse to record, and its switch to `.playAndRecord` never runs here. What that switch
+/// does to the paused player and its tap belongs to the owner's device pass (#1308, ANC-13).
 @MainActor
 final class RealPlaybackMarginCaptureTests: XCTestCase {
     func testStreamedMarginStoresPreAndPostEvidence() async throws {
