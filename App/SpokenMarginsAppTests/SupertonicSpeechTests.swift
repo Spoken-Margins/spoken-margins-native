@@ -2189,6 +2189,50 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // APA-01 (#1042): every other test either ends a chunk through `debugFinishActiveChunk()` or never lets
+    // one end, so nothing showed that the player's own end-of-item notice chains the next chunk, or that the
+    // last chunk's end marks the article complete, which autoplay and the next item key off. Here the real
+    // player plays each chunk to its end, with no debug call.
+    func testThePlayersOwnEndChainsTheNextChunkAndCompletesTheArticle() async throws {
+        let template = try makeTestWAV(duration: 0.6)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let source = "The first sentence is long enough to be a chunk. The second sentence ends this short article."
+        let budget = 60
+        let spoken = SpeechTextNormalizer.normalizeWithSourceOffsets(source).text
+        XCTAssertEqual(RenderedSpeechChunker.sourceSlices(from: spoken, maxCharacters: budget).count, 2, "precondition: two chunks")
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let starts = PlaybackStartCapture()
+        let states = GenerationStateCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            maxCharacters: budget,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                starts.record()
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            observesPlayerLifecycle: true,
+            fallbackClient: fallback,
+            onGenerationStateChange: { state, reason in states.record(state, stopReason: reason) }
+        )
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "article")
+
+        for _ in 0..<300 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 2, "the first chunk's own end started the second chunk")
+        for _ in 0..<300 where !client.isPlaybackComplete(targetId: "article") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "article"), "the last chunk's own end completes the article")
+        XCTAssertEqual(client.playbackTransportState(targetId: "article"), .stopped, "and playback reads stopped, not waiting")
+        XCTAssertEqual(starts.count, 2, "no chunk played twice")
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, "Supertonic read it all; the iOS voice never stood in")
+        XCTAssertEqual(states.values.last, .ready, "the finished article keeps its rendered state: \(states.values)")
+        let renders = await renderer.renderCount
+        XCTAssertEqual(renders, 2)
+        try client.stop()
+    }
+
     func testDefaultPlaybackStartsWithFirstChunkWhileLaterChunkIsStillRendering() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }
