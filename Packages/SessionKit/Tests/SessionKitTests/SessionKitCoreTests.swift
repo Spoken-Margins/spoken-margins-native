@@ -1575,6 +1575,38 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
+    /// #943: the system card shows Play while a start is pending, so a Play tap there must not be an error.
+    func testPlayTapWhilePlaybackIsStartingChangesNothingAndPauseStillWorks() throws {
+        let audio = RecordingAudioClient()
+        audio.startStatus = .pending
+        let engine = SessionEngine(
+            profile: phonePlaybackProfile(),
+            repository: InMemorySessionRepository(items: [
+                "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+            ]),
+            audio: audio
+        )
+        _ = try engine.startSession(itemId: "item-pill")
+        let surface = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ],
+            forbiddenCapabilities: []
+        )
+        let dispatcher = CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine)
+
+        let result = try dispatcher.dispatch(.play)
+        XCTAssertEqual(result.snapshot.status, .starting)
+        XCTAssertEqual(engine.snapshot.status, .starting)
+        XCTAssertEqual(audio.startStatus, .pending)
+
+        _ = try dispatcher.dispatch(.pause)
+        XCTAssertEqual(engine.snapshot.status, .paused)
+    }
+
     func testPlaybackStartRemainsStartingUntilAudioConfirms() throws {
         let audio = RecordingAudioClient()
         audio.startStatus = .pending

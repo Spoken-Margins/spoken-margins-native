@@ -196,6 +196,13 @@ public final class CompactControlDispatcher {
         followUpText: String? = nil,
         summaryScope: SummaryScope? = nil
     ) throws -> CompactControlResult {
+        // While a start is pending the system card shows Play, because its clock must not run (#943).
+        // A Play tap there asks for what is already happening, so it is not an invalid command.
+        if command == .play,
+           canonicalRuntime.snapshot.status == .starting,
+           surfaceProfile.has("remoteControl", "send_transport_commands") {
+            return CompactControlResult(snapshot: compactSnapshot(from: canonicalRuntime.snapshot), delegatedToCanonicalRuntime: false)
+        }
         try validate(command)
         let updated: SessionSnapshot
         switch command {
