@@ -492,6 +492,38 @@ struct PlaybackScreen: View {
         }
     }
 
+    /// What the shared Margin's voice is doing, from the player's own report (#941).
+    @ViewBuilder
+    private var importedCommentaryStatus: some View {
+        switch model.importedCommentaryPhase {
+        case .loading:
+            Label("Loading Margin…", systemImage: "hourglass")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.loading")
+        case .playing:
+            Label("Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item", systemImage: "waveform")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.playing")
+        case .paused:
+            Label("Paused", systemImage: "pause.fill")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.paused")
+        case .failed:
+            VStack(spacing: 8) {
+                Label("Margin audio could not play", systemImage: "exclamationmark.triangle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("importedCommentary.status.failed")
+                Button("Retry", systemImage: "arrow.clockwise", action: model.retryImportedCommentary)
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.retry")
+            }
+        }
+    }
+
     @ViewBuilder
     private var importedCommentaryControl: some View {
         if let playing = model.playingImportedCommentary {
@@ -502,9 +534,7 @@ struct PlaybackScreen: View {
                 Text("Shared Margin \(playing.index) of \(playing.count)")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.72))
-                Text(model.importedCommentaryIsPaused ? "Paused" : "Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
+                importedCommentaryStatus
                 Text(playing.interjection.approvedTranscript)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
