@@ -1371,6 +1371,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.chapters.count, 5)
     }
 
+    /// #1043 APM-10: the practice-Margin step was checked once, before any tap. It must stay open through Add
+    /// Margin (button and compact control), through Cancel, and through a Finish whose save fails; only a saved
+    /// Margin completes it.
     func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
         let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
         let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
@@ -1379,9 +1382,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
         }
         SpokenMarginsTerms.recordAcceptance()
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            recordingClient: NoopRecordingClient(),
+            recordingClient: recorder,
             interjectionTranscriptionHandler: { _ in "A practice note." }
         )
         model.resetOnboardingProgressForTesting()
@@ -1395,6 +1400,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.shouldShowGuidedOnboardingCoach)
         XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection)
         XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection))
+
+        func assertPracticeStepStillOpen(_ moment: String) {
+            XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection), moment)
+            XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection, moment)
+        }
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        assertPracticeStepStillOpen("after Add Margin")
+        model.cancelInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        assertPracticeStepStillOpen("after Cancel")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        assertPracticeStepStillOpen("after Add Margin from the compact control")
+        model.dispatchGate2CompactCommand(.cancelInterjection)
+        assertPracticeStepStillOpen("after Cancel from the compact control")
+
+        recorder.refusesToFinish = true
+        model.beginInterjection()
+        model.finishInterjection()
+        XCTAssertNotNil(model.lastError, "the failed save is reported")
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "nothing was saved")
+        assertPracticeStepStillOpen("after a Finish whose save failed")
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        assertPracticeStepStillOpen("after a compact Finish whose save failed")
+        model.cancelInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        recorder.refusesToFinish = false
+        XCTAssertEqual(recorder.finishCount, 2, "both Finishes reached the recorder")
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.snapshot.isRecording)
@@ -5315,6 +5349,8 @@ private final class CountingToneRecordingClient: RecordingClient {
     private let tone: UITestingToneRecordingClient
     /// The next starts throw, as `AVAudioRecorder.record()` returning false or a call holding the session does.
     var refusesToStart = false
+    /// The next finishes throw before anything is saved, as a recorder whose file can't be closed would.
+    var refusesToFinish = false
     private(set) var beginCount = 0
     private(set) var finishCount = 0
     private(set) var cancelCount = 0
@@ -5335,6 +5371,7 @@ private final class CountingToneRecordingClient: RecordingClient {
 
     func finishRecording(audioRef: String?) throws -> String {
         finishCount += 1
+        if refusesToFinish { throw SessionKitError.persistenceFailed("recording_finish_failed") }
         let path = try tone.finishRecording(audioRef: audioRef)
         savedPaths.append(path)
         return path
