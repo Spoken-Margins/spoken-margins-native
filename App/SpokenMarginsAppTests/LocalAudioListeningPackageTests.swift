@@ -230,8 +230,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     ///
     /// A fixed 3 s window failed under load: the source sat at exactly its start or Skim destination with the
     /// session playing. AVPlayer reports playing before its clock moves, because the audio output takes time to
-    /// start (0.6–0.75 s on the Mac host, `StreamSeekLifecycleTests`), and a loaded simulator, whose audio I/O
-    /// logs "skipping cycle due to overload", stretched that past the window. After Skim the window also held the
+    /// start (about 0.4–0.7 s on the Mac host, measured for #835; `StreamSeekLifecycleTests` prints it).
+    /// A loaded simulator, whose audio I/O logs "skipping cycle due to overload", stretched that past the window. After Skim the window also held the
     /// summary player's stop, the resume, and possibly Companion's pause and its dismissal.
     ///
     /// So the clock's allowance starts only once the session is playing again (no Skim summary, no Companion pause
