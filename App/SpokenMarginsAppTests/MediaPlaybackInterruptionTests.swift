@@ -420,6 +420,30 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
+    /// #1308 (ANC-08): the host test drives the real player through pause and resume closures it wrote itself. This
+    /// one goes through the app's own: the episode stands still while their voice plays, then plays on by itself.
+    func testTheEpisodePlaysOnAfterASharedMarginsMoment() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true, "their voice is playing")
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive, "the episode is paused while their voice plays")
+        let pausedAtMs = model.snapshot.currentMediaTimeMs ?? 0
+
+        // The voice is 2 s long. When it ends, the app's resume closure must restart the episode.
+        try waitUntil("the episode plays again after their voice", timeout: 10) { model.snapshot.status == .playing }
+        XCTAssertNotEqual(marginMomentVoice(model)?.isPlaying, true, "their voice has finished")
+        try waitUntil("the episode's clock moves on past the Margin", timeout: 5) {
+            (model.snapshot.currentMediaTimeMs ?? 0) >= pausedAtMs + 1_000
+        }
+    }
+
     /// #1036: Start New Session closed the engine's session without the hook that ends a Margin moment. A new session
     /// of the same item (item page "Start New Session", or Play on a finished session) left the moment's voice and
     /// card alive over the restarted source. It must end the moment, as the mini player's X does.
