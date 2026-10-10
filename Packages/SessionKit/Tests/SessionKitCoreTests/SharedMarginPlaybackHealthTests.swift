@@ -139,6 +139,32 @@ final class SharedMarginPlaybackHealthTests: XCTestCase {
         XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1.2, at: 400.1), .playing)
     }
 
+    func testASystemPauseAfterPlayingIsPausedNotAFailure() {
+        // Mixing mode: a call, Siri or unplugged headphones stop the player and nothing calls setUserPaused.
+        var health = health()
+        health.observe(playerFailed: false, clockSeconds: 1, at: 101)
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1, playerAtRest: true, at: 102), .paused)
+        XCTAssertFalse(health.showsPause)
+        // Far past the stall limit it is still Paused, never failed.
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1, playerAtRest: true, at: 500), .paused)
+        // It resumes where it stopped, with the stall clock started afresh.
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1, playerAtRest: false, at: 500.1), .playing)
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 1.2, playerAtRest: false, at: 500.3), .playing)
+    }
+
+    func testAPlayerAtRestBeforeItEverSoundedStillTimesOut() {
+        // Before the first sound a resting player is indistinguishable from one that never started.
+        var health = health()
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 0, playerAtRest: true, at: 105), .loading)
+        XCTAssertEqual(health.observe(playerFailed: false, clockSeconds: 0, playerAtRest: true, at: 110), .failed(.noProgress))
+    }
+
+    func testAFailureWhileTheSystemHasItPausedIsStillReported() {
+        var health = health()
+        health.observe(playerFailed: false, clockSeconds: 1, at: 101)
+        XCTAssertEqual(health.observe(playerFailed: true, clockSeconds: 1, playerAtRest: true, at: 102), .failed(.unreadable))
+    }
+
     func testEachAttemptHasItsOwnIdentity() {
         // The model drops a reading whose attempt is not the current one, so a late callback from a
         // replaced or retried Margin cannot clear or mark the new one.

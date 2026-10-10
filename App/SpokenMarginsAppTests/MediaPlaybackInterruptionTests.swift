@@ -373,6 +373,27 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.stopInterjectionAudioPlayback()
     }
 
+    /// #941 audit: in mixing mode nothing tells the model the system paused the player (a call, Siri,
+    /// unplugged headphones). It reads Paused, not a dead voice, and resumes in place.
+    func testASharedMarginThePlayerPausedOnItsOwnReadsPausedAndResumesInPlace() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "item-pill", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        let player = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        try waitUntil("its clock advances") { model.importedCommentaryPhase == .playing }
+        player.pause() // the system's pause: the model is not told
+        try waitUntil("it reads Paused") { model.importedCommentaryPhase == .paused }
+        XCTAssertFalse(model.activePlaybackIsPlaying, "the transport offers Play")
+        XCTAssertNotNil(model.playingImportedCommentary)
+        let pausedAt = player.currentTime().seconds
+        model.playPause() // Play resumes the same player; it must not be treated as a pause request
+        XCTAssertTrue(model.activePlaybackIsPlaying)
+        XCTAssertTrue(player === (Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer))
+        try waitUntil("it plays on from where it stopped") { player.currentTime().seconds > pausedAt + 0.05 }
+        model.stopInterjectionAudioPlayback()
+    }
+
     private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () throws -> Bool) throws {
         let deadline = Date().addingTimeInterval(timeout)
         while try !condition() {

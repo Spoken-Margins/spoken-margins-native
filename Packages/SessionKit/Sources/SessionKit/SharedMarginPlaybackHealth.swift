@@ -93,8 +93,12 @@ public struct SharedMarginPlaybackHealth: Equatable, Sendable {
     /// - Parameters:
     ///   - playerFailed: the item's or the player's status is `.failed`.
     ///   - clockSeconds: the item's current time; `nil`, NaN, infinite or negative means "no reading".
+    ///   - playerAtRest: the player is paused (rate 0, not waiting) without the listener asking. The system
+    ///     does that for a call, Siri or unplugged headphones, and in mixing mode nothing else tells us.
+    ///     Once the voice has sounded this reads as Paused and the stall clock does not run; before the
+    ///     first sound it is ignored, because a player that has not started also rests.
     @discardableResult
-    public mutating func observe(playerFailed: Bool, clockSeconds: Double?, at now: TimeInterval) -> SharedMarginPlaybackPhase {
+    public mutating func observe(playerFailed: Bool, clockSeconds: Double?, playerAtRest: Bool = false, at now: TimeInterval) -> SharedMarginPlaybackPhase {
         if phase.isFailed { return phase }
         if playerFailed {
             phase = .failed(.unreadable)
@@ -106,6 +110,11 @@ public struct SharedMarginPlaybackHealth: Equatable, Sendable {
             hasPlayed = true
         }
         if isUserPaused {
+            phase = .paused
+            return phase
+        }
+        if playerAtRest, hasPlayed {
+            lastProgressAt = now
             phase = .paused
             return phase
         }

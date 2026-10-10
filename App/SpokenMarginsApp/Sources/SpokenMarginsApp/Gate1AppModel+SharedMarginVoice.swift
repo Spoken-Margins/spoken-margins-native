@@ -40,9 +40,9 @@ extension Gate1AppModel {
     }
 
     /// Feeds the player's own report into the health rule and shows what it concludes (#941).
-    func observeImportedCommentary(playerFailed: Bool, clockSeconds: Double) {
+    func observeImportedCommentary(playerFailed: Bool, clockSeconds: Double, playerAtRest: Bool) {
         guard var health = importedCommentaryHealth else { return }
-        let phase = health.observe(playerFailed: playerFailed, clockSeconds: clockSeconds, at: ProcessInfo.processInfo.systemUptime)
+        let phase = health.observe(playerFailed: playerFailed, clockSeconds: clockSeconds, playerAtRest: playerAtRest, at: ProcessInfo.processInfo.systemUptime)
         importedCommentaryHealth = health
         if phase != importedCommentaryPhase { importedCommentaryPhase = phase }
         if phase.isFailed { failImportedCommentaryPlayback() }

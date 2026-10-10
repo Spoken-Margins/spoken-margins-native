@@ -3503,8 +3503,8 @@ final class Gate1AppModel: ObservableObject {
 
     func playPause() {
         if playingImportedCommentary != nil {
-            // A failed voice has nothing to pause: the transport's Play is a Retry (#941).
-            setImportedCommentaryPaused(importedCommentaryPhase.isFailed ? false : !importedCommentaryIsPaused)
+            // Pause while it sounds or loads; Play (resume, or Retry after a failure) otherwise (#941).
+            setImportedCommentaryPaused(importedCommentaryPhase.showsPause)
             return
         }
         if let conductor = marginMomentConductor, conductor.isPlayingVoice {
@@ -6618,7 +6618,7 @@ final class Gate1AppModel: ObservableObject {
                         return
                     }
                     let failed = item.status == .failed || player?.status == .failed
-                    self.observeImportedCommentary(playerFailed: failed, clockSeconds: current)
+                    self.observeImportedCommentary(playerFailed: failed, clockSeconds: current, playerAtRest: player?.timeControlStatus == .paused)
                     if self.importedCommentaryPhase.isFailed { return }
                     self.publishImportedCommentaryNowPlaying()
                 }
