@@ -47,6 +47,74 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         XCTAssertNil(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: true))
     }
 
+    /// The article, the podcast with a transcript and the browser-owned player all count as "the original
+    /// content" a generated summary or reply must not barge into (APA-14). The old tests blocked only
+    /// `transcriptBackedMedia` at 8 percent, so dropping `itemTextTTS` (the default voice reading an article)
+    /// or `browserOwnedMedia` from the list went unseen.
+    func testAnUnfinishedOriginalOfAnyKindDefersAGeneratedTurnEvenAfterCurrentAudioCompletes() {
+        for target in [TargetType.itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia] {
+            var queue = Gate1PlaybackAutoplayQueue()
+            queue.enqueue("turn-summary-001")
+            let snapshot = snapshot(target: target, sourceProgressPercent: 8, phase: .itemPlayback, status: .paused)
+
+            XCTAssertTrue(
+                queue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: "turn-summary-001", completedCurrentAudio: true),
+                "\(target.rawValue) at 8 percent"
+            )
+            XCTAssertFalse(
+                queue.shouldPlayPendingTurnNow(snapshot: snapshot, turnId: "turn-summary-001", completedCurrentAudio: true),
+                "\(target.rawValue) at 8 percent"
+            )
+            XCTAssertNil(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: true), "\(target.rawValue) at 8 percent")
+            XCTAssertEqual(queue.pendingTurnIds, ["turn-summary-001"], "the turn waits, it is not dropped")
+        }
+    }
+
+    /// The boundary: a source at 100 percent is finished, and the queued turn is released (APA-14, the `< 100` test).
+    func testAFinishedOriginalOfAnyKindReleasesAQueuedTurn() {
+        for target in [TargetType.itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia] {
+            for (percent, phase) in [(100, SessionPhase.itemPlayback), (99, .finished)] {
+                var queue = Gate1PlaybackAutoplayQueue()
+                queue.enqueue("turn-summary-001")
+                let snapshot = snapshot(target: target, sourceProgressPercent: percent, phase: phase, status: .playing)
+                let label = "\(target.rawValue) at \(percent) percent in \(phase.rawValue)"
+
+                XCTAssertFalse(
+                    queue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: "turn-summary-001", completedCurrentAudio: true),
+                    label
+                )
+                XCTAssertEqual(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: true), "turn-summary-001", label)
+            }
+        }
+    }
+
+    /// 99 percent is still unfinished; only 100 releases (a `<= 100` slip would never release at the end).
+    func testOneShortOfTheEndStillDefers() {
+        for target in [TargetType.itemTextTTS, .transcriptBackedMedia, .browserOwnedMedia] {
+            let queue = Gate1PlaybackAutoplayQueue()
+            let snapshot = snapshot(target: target, sourceProgressPercent: 99, phase: .itemPlayback, status: .paused)
+            XCTAssertTrue(
+                queue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: "turn-summary-001", completedCurrentAudio: true),
+                target.rawValue
+            )
+        }
+    }
+
+    /// Generated audio is not "original content": a summary playing at 8 percent of the article does not hold the next turn
+    /// back on account of the percent, only on account of what is playing.
+    func testOnlyOriginalContentTargetsAreHeldByTheSourcePercent() {
+        for target in [TargetType.summaryTurnTTS, .assistantTurnTTS] {
+            var queue = Gate1PlaybackAutoplayQueue()
+            queue.enqueue("turn-response-001")
+            let snapshot = snapshot(target: target, sourceProgressPercent: 8, phase: .summaryPlayback, status: .paused)
+            XCTAssertFalse(
+                queue.shouldDeferGeneratedTurnPlayback(snapshot: snapshot, turnId: "turn-response-001", completedCurrentAudio: true),
+                target.rawValue
+            )
+            XCTAssertEqual(queue.popReadyTurn(snapshot: snapshot, completedCurrentAudio: true), "turn-response-001", target.rawValue)
+        }
+    }
+
     func testInterjectionSummaryFinishAllowsQueuedDiscussionToAutoplay() {
         var queue = Gate1PlaybackAutoplayQueue()
         queue.enqueue("turn-response-001")
@@ -184,6 +252,18 @@ final class Gate1PlaybackAutoplayQueueTests: XCTestCase {
         ), encoding: .utf8)
         XCTAssertTrue(model.contains("diagnostics[\"pendingAutoPlayQueue\"]"))
         XCTAssertTrue(model.contains("diagnostics[\"pendingAutoPlayTurnId\"]"))
+    }
+
+    private func snapshot(
+        target: TargetType, sourceProgressPercent: Int, phase: SessionPhase, status: PlaybackStatus
+    ) -> SessionSnapshot {
+        var snapshot = SessionSnapshot()
+        snapshot.status = status
+        snapshot.phase = phase
+        snapshot.targetType = target.rawValue
+        snapshot.targetId = "item-pill"
+        snapshot.sourceProgressPercent = sourceProgressPercent
+        return snapshot
     }
 
     private func interjection(id: String, targetType: InterjectionTargetType, targetId: String) -> Interjection {
