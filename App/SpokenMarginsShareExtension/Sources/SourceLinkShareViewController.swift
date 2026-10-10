@@ -21,6 +21,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         }
 
         var id: String
+        /// Set for shared text, so each share is its own Library item (#662).
+        var itemId: String?
         var schemaVersion = "browser-text-handoff.v1"
         var captureMode: String
         var contentFormat: String
@@ -35,13 +37,16 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case remotePDF(String)
         case localPDF(String)
         case browserText(BrowserTextSharePayload)
+        /// Plain text another app shared, such as a ChatGPT response (#662). Used only when
+        /// nothing else in the share yields a file, PDF, page or link.
+        case sharedText(BrowserTextSharePayload)
         case spokenMarginsPackage
 
         /// A link the app would download again, rather than content the share carried.
         var isLink: Bool {
             switch self {
             case .sourceLink, .remotePDF: true
-            case .localPDF, .browserText, .spokenMarginsPackage: false
+            case .localPDF, .browserText, .sharedText, .spokenMarginsPackage: false
             }
         }
     }
@@ -51,6 +56,8 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private var sharedAttachmentTypes: [[String]] = []
     /// A link found while files, PDFs or page results were still untried (#271).
     private var linkFallback = ShareSheetLinkFallback<SharedImport>()
+    /// The first plain text found, kept until every other representation has been tried (#662).
+    private var textFallback: SharedImport?
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let cardView = UIView()
@@ -102,7 +109,14 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 }
             }
         ).map { ProviderCandidate(provider: $0.provider, identifier: $0.identifier) }
-        loadFirstSharedImport(candidates, index: 0, completion: completion)
+        // Plain text another app shared goes after everything, links included (#662), so a link
+        // written in a share's text never replaces the share's own public.url.
+        let isSharedText = { (candidate: ProviderCandidate) in
+            SharedTextIntake.isPlainText(candidate.identifier)
+                && !SharedTextIntake.namesTextFile(candidate.provider.suggestedName)
+        }
+        let ordered = candidates.filter { !isSharedText($0) } + candidates.filter(isSharedText)
+        loadFirstSharedImport(ordered, index: 0, completion: completion)
     }
 
     private func loadFirstSharedImport(
@@ -113,6 +127,10 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         guard index < candidates.count else {
             if let deferredLink = linkFallback.deferredLink {
                 completion(.success(deferredLink))
+                return
+            }
+            if let textFallback {
+                completion(.success(textFallback))
                 return
             }
             let identifiers = Array(Set(candidates.map(\.identifier))).sorted().joined(separator: ", ")
@@ -164,7 +182,9 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             }
             return
         }
-        if candidateType?.conforms(to: .text) == true {
+        // A named Markdown or text file is read as a file. Plain text with no file name is loaded
+        // as a string below, so its title comes from its first words, not a temporary file name.
+        if candidateType?.conforms(to: .text) == true, SharedTextIntake.namesTextFile(candidate.provider.suggestedName) {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
                 if let url,
                    let payload = Self.browserPayloadFromFile(
@@ -207,7 +227,13 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                     presentsPDF: presentsPDF,
                     suggestedName: candidate.provider.suggestedName
                 )
-            if let sharedImport {
+            if case .sharedText = sharedImport {
+                // A file, PDF, page or link elsewhere in the share wins over its text (#662).
+                DispatchQueue.main.async {
+                    if self?.textFallback == nil { self?.textFallback = sharedImport }
+                    self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
+                }
+            } else if let sharedImport {
                 guard sharedImport.isLink else {
                     completion(.success(sharedImport))
                     return
@@ -286,7 +312,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 )
                 _ = try SourceLinkHandoffStore.appGroup().save(handoff)
                 showSaved("Sent PDF to Spoken Margins.")
-            case .success(.browserText(let payload)):
+            case .success(.browserText(let payload)), .success(.sharedText(let payload)):
                 try saveBrowserText(payload)
                 showSaved("Sent \(payload.source.title) to Spoken Margins.")
             case .success(.spokenMarginsPackage):
@@ -309,6 +335,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         case .success(.remotePDF): route = "share_sheet_pdf"
         case .success(.localPDF): route = "share_sheet_pdf_file"
         case .success(.browserText): route = "browser_text"
+        case .success(.sharedText): route = "shared_text"
         case .success(.spokenMarginsPackage): route = "spoken_margins_package"
         case .failure: route = "failed"
         }
@@ -477,7 +504,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
                 return sharedURLImport(url, forcePDF: presentsPDF)
             }
-            return nil
+            return sharedTextImport(cleaned, identifier: identifier, presentsPDF: presentsPDF)
         }
         if let dictionary = item as? [String: Any] ?? item as? NSDictionary as? [String: Any],
            let url = firstWebURL(in: dictionary) {
@@ -488,9 +515,30 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             if let url = firstURL(in: cleaned), cleaned == url.absoluteString || cleaned.count < url.absoluteString.count + 20 {
                 return sharedURLImport(url, forcePDF: presentsPDF)
             }
-            return nil
+            return sharedTextImport(cleaned, identifier: identifier, presentsPDF: presentsPDF)
         }
         return nil
+    }
+
+    /// Plain text shared as a string (#662): a lone link goes as that link, as Paste & go decides,
+    /// and anything else becomes a text item holding the whole text.
+    nonisolated private static func sharedTextImport(_ text: String, identifier: String, presentsPDF: Bool) -> SharedImport? {
+        guard SharedTextIntake.isPlainText(identifier) else { return nil }
+        switch SharedTextIntake.route(text) {
+        case .link(let url):
+            return sharedURLImport(url, forcePDF: presentsPDF)
+        case .text(let title, let body):
+            return .sharedText(BrowserTextSharePayload(
+                id: "browser-text-\(UUID().uuidString)",
+                itemId: SharedTextIntake.newItemID(),
+                captureMode: "plain_text_file",
+                contentFormat: "markdown",
+                source: .init(url: SharedTextIntake.sourceURL, title: title),
+                text: body
+            ))
+        case nil:
+            return nil
+        }
     }
 
     /// A PDF representation's item: a copied file or bytes, never a link.
@@ -627,8 +675,7 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
             return true
         }
         guard let type = UTType(identifier), type.conforms(to: .text) else { return true }
-        let fileExtension = ((suggestedName ?? "") as NSString).pathExtension.lowercased()
-        return ["md", "markdown", "txt"].contains(fileExtension)
+        return SharedTextIntake.acceptsTextRepresentation(identifier: identifier, suggestedName: suggestedName)
     }
 
     nonisolated private static func isSpokenMarginsPackage(_ candidate: ProviderCandidate) -> Bool {
@@ -688,8 +735,8 @@ private enum SourceLinkShareError: Error, LocalizedError {
         case .noInput:
             return "No shared input was provided."
         case .unsupportedInput(let identifiers):
-            let representationNote = identifiers.isEmpty ? "" : " Safari supplied: \(identifiers)."
-            return "Spoken Margins could not read this share. Share a .spokenmargins session, web page, podcast link, PDF, Markdown file, or text file.\(representationNote)"
+            let representationNote = identifiers.isEmpty ? "" : " The share offered: \(identifiers)."
+            return "Spoken Margins could not read this share, so nothing was added. Share a .spokenmargins session, web page, podcast link, PDF, text, or a Markdown or text file. Or copy the text and use Paste & go.\(representationNote)"
         }
     }
 }

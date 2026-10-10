@@ -54,6 +54,54 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         model.endSession()
     }
 
+    /// The model's own playback ticker turns confirmed playing into listening time (#1129, PERSIST-06).
+    /// ListeningSignalMergeIntegrationTests checks the source text; this drives Gate1AppModel and
+    /// reads the rows. Nothing here calls the coordinator's playbackProgress: only the tick does.
+    func testThePlaybackTickerRecordsListeningTimeForAFollowedItem() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("ticker.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let subscription = FeedSubscription(id: "followed", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        var item = try store.loadItem(id: "item-pill")
+        item.externalReference = nil
+        item.sourceURL = subscription.source.canonicalURL
+        try store.saveItem(item)
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+        model.listeningSignals = signals
+
+        // The launch refresh of followed sources reassigns feedSubscriptions, which ends the
+        // listening interval; let it land before playback so it doesn't split the window.
+        let deadline = Date().addingTimeInterval(10)
+        while model.diagnostics["followedSourceCount"] != "1" || model.isRefreshingFollowedSources, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.diagnostics["followedSourceCount"], "1", "the launch refresh saw the followed source")
+
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        try await Task.sleep(for: .milliseconds(3_600)) // about seven 500 ms ticks
+        XCTAssertEqual(model.snapshot.status, .playing, "every tick saw confirmed playing")
+
+        let exported = await signals.exportFileURL()
+        let rows = exported.map(ListeningSignalRecorder.read) ?? []
+        XCTAssertFalse(rows.isEmpty, "the ticker recorded no listening time")
+        XCTAssertEqual(Set(rows.map { $0.source.id }), [subscription.source.id], "rows are for the followed source")
+        // A late second refresh could still split the interval in two, so add the pieces up.
+        let seconds = rows.reduce(0.0) { total, row in
+            guard case .listened(let seconds) = row.event else { XCTFail("unexpected row \(row.event.name)"); return total }
+            return total + seconds
+        }
+        XCTAssertGreaterThanOrEqual(seconds, 1, "the first tick to the last spans about 3 s")
+        model.endSession()
+    }
+
     func testShareCreditsTheItemThePacketWasBuiltForNotTheSelection() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
