@@ -3062,7 +3062,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Supertonic renders the narration on the phone, so its start has no audio keeping a backgrounded app alive.
     private func narrationRendersOnDevice(itemId: String) -> Bool {
-        ttsVoiceSelection.supertonicVoice != nil
+        ttsVoiceSelection.supertonicVoice != nil && !playsPublisherAudio(itemId: itemId)
             && (try? store?.loadItem(id: itemId))?.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
@@ -8422,7 +8422,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func scheduleTextAudioPrewarmIfNeeded(itemId: String) {
+    func prewarmTextAudioForOnDeviceVoice(itemId: String) {
         if ttsVoiceSelection.supertonicVoice != nil {
             scheduleStartupAudioPreparationIfNeeded(itemId: itemId)
             return

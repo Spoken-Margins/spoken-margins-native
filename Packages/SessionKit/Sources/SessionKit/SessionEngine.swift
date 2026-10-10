@@ -11,7 +11,15 @@ public final class SessionEngine {
     public private(set) var profile: RuntimeCapabilityProfile
     public private(set) var snapshot = SessionSnapshot()
     public private(set) var currentSession: Session?
-    public private(set) var currentItem: Item?
+    public private(set) var currentItem: Item? {
+        // An article that plays its publisher's recording is always the playing copy in memory, however
+        // the item was loaded (#547).
+        didSet {
+            if let item = currentItem, let plan = publisherPlayback[item.id], item.media != plan.playingMedia {
+                currentItem = plan.playing(item)
+            }
+        }
+    }
     public private(set) var currentMap: ListeningMap?
     public private(set) var lastExport: SessionExport?
     public private(set) var lastSummaryCandidates: [Interjection] = []
@@ -27,6 +35,12 @@ public final class SessionEngine {
     public private(set) var lastMediaSeekResolution: MediaSeekResolution?
 
     private let repository: SessionRepository
+    /// Articles playing their publisher's recording right now, by item id (#547). The Library keeps
+    /// the plain article; the engine plays a copy whose audio is the recording.
+    private var publisherPlayback: [String: PublisherAudioPlayback] = [:]
+    /// Articles whose recording failed to play since the app opened. They keep their on-device voice
+    /// instead of waiting for the same failure again.
+    private var publisherAudioUnavailable: Set<String> = []
     private let audio: AudioPlaybackClient
     private let recorder: RecordingClient
     private let transcriber: TranscriptionClient
@@ -134,6 +148,7 @@ public final class SessionEngine {
         forgetFailure(unlessItemIs: itemId)
         var item = try repository.loadItem(id: itemId)
         item = try discardUnavailableGeneratedTextAudio(from: item)
+        item = adoptingPublisherAudio(for: item)
         currentItem = item
         currentMap = try repository.loadListeningMap(itemId: itemId)
         item = try prepareGeneratedTextAudioIfAvailable(for: item)
@@ -191,7 +206,7 @@ public final class SessionEngine {
         }
 
         let item = try sourceImportItem(from: candidate, result: result, request: request)
-        try repository.saveItem(item)
+        try saveItem(item)
         forgetFailure(unlessItemIs: item.id)
         currentItem = item
         currentMap = nil
@@ -241,7 +256,7 @@ public final class SessionEngine {
             return nil
         }
         let item = try sourceImportItem(from: candidate, result: result, request: request, sourceIdentity: sourceIdentity)
-        try repository.saveItem(item)
+        try saveItem(item)
         if item.media?.url == candidate.audioURL,
            try repository.loadListeningMap(itemId: item.id) == nil,
            let publisherChapters = preferredPublisherChapterCollection(in: candidate) {
@@ -562,7 +577,7 @@ public final class SessionEngine {
         if item.status == "ready" || item.status == "needs_transcript" || item.status == "audio_ready" {
             item.status = "needs_listening_map"
         }
-        try repository.saveItem(item)
+        try saveItem(item)
         if currentItem?.id == item.id || currentSession?.itemId == item.id {
             currentItem = item
             if let session = currentSession, session.itemId == item.id {
@@ -625,6 +640,7 @@ public final class SessionEngine {
                         publish(status: snapshot.status, phase: synchronized.phase)
                     }
                 } else if session.currentTargetType == .transcriptBackedMedia,
+                          publisherPlayback[session.itemId] == nil,
                           item.media?.sourceType == .generatedTTSPrerendered,
                           updated.media?.sourceType == .generatedTTSPrerendered {
                     let replacementTargetId = itemPlaybackTargetId(for: updated, targetType: .transcriptBackedMedia)
@@ -751,7 +767,7 @@ public final class SessionEngine {
         // was recorded) is found on its narration timeline (#866). A place the audio doesn't reach still throws.
         if let session = currentSession, session.currentTargetType == .transcriptBackedMedia,
            let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
-           isGeneratedTextMedia(item.media),
+           isTextBackedMedia(item),
            let timeline = sourceTranscriptTimeline(itemId: item.id),
            let mediaTimeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: charOffset, timeline: timeline) {
             do {
@@ -822,7 +838,7 @@ public final class SessionEngine {
     public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
-        try repository.saveItem(item)
+        try saveItem(item)
         if let deterministicMap {
             try repository.saveListeningMap(deterministicMap)
         }
@@ -851,7 +867,7 @@ public final class SessionEngine {
     public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
-        try repository.saveItem(item)
+        try saveItem(item)
         if let deterministicMap {
             try repository.saveListeningMap(deterministicMap)
         }
@@ -956,7 +972,7 @@ public final class SessionEngine {
         try repository.saveListeningMap(map)
         if item.status == "needs_listening_map" {
             item.status = "ready"
-            try repository.saveItem(item)
+            try saveItem(item)
         }
         if currentItem?.id == itemId || currentSession?.itemId == itemId {
             currentItem = item
@@ -980,7 +996,7 @@ public final class SessionEngine {
         try repository.saveListeningMap(map)
         if item.status == "needs_listening_map" {
             item.status = "ready"
-            try repository.saveItem(item)
+            try saveItem(item)
         }
         guard currentItem?.id == map.itemId || currentSession?.itemId == map.itemId else {
             return snapshot
@@ -1064,7 +1080,7 @@ public final class SessionEngine {
         try repository.saveListeningMap(map)
         if item.status == "needs_listening_map" {
             item.status = "ready"
-            try repository.saveItem(item)
+            try saveItem(item)
         }
 
         guard currentItem?.id == itemId || currentSession?.itemId == itemId else { return snapshot }
@@ -1300,6 +1316,7 @@ public final class SessionEngine {
         }
         var item = try repository.loadItem(id: session.itemId)
         item = try discardUnavailableGeneratedTextAudio(from: item)
+        (item, session) = resumingPublisherAudio(item: item, session: session)
         currentItem = item
         currentMap = try repository.loadListeningMap(itemId: session.itemId)
         session = try readingTextIfNarrationFileIsMissing(session)
@@ -1578,7 +1595,10 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
         }
 
+        // An article playing its publisher's recording hears the Margin there too (#547).
+        let publisher = publisherPlayback[originalSession.itemId]
         let item = try repository.loadItem(id: originalSession.itemId)
+        let playingItem = publisher?.playing(item) ?? item
         let map = try repository.loadListeningMap(itemId: item.id)
         var session = originalSession
         switch stored.targetType {
@@ -1586,17 +1606,20 @@ public final class SessionEngine {
             guard stored.targetId == item.id else {
                 throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
             }
-            let targetType = playbackTargetType(for: item)
+            let targetType = playbackTargetType(for: playingItem)
             session.currentTargetType = targetType
-            session.currentTargetId = itemPlaybackTargetId(for: item, targetType: targetType)
+            session.currentTargetId = itemPlaybackTargetId(for: playingItem, targetType: targetType)
             session.phase = .itemPlayback
             if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
-                guard let mediaTimeMs = stored.anchor.mediaTimeMs,
+                let anchorMediaTimeMs = publisher.flatMap {
+                    PreparedNarrationFallback.mediaTimeMs(textOffset: stored.anchor.startChar, timeline: $0.timeline)
+                } ?? stored.anchor.mediaTimeMs
+                guard let mediaTimeMs = anchorMediaTimeMs,
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
                 let durableDurationMs = (try repository.loadTranscriptTimeline(itemId: item.id))?.timeline.durationMs
-                    ?? item.media?.durationMs
+                    ?? playingItem.media?.durationMs
                 guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
@@ -1640,7 +1663,7 @@ public final class SessionEngine {
             session.position = Position(charOffset: stored.anchor.startChar, chapterId: nil)
             session.completionPercent = percent(for: stored.anchor.startChar, text: text)
         }
-        return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: item, map: map)
+        return InterjectionAnchorPlaybackPlan(originalSession: originalSession, session: session, item: playingItem, map: map)
     }
 
     @discardableResult
@@ -1672,7 +1695,7 @@ public final class SessionEngine {
             // The target session has not become the user's current source until
             // both its durable target and adapter setup succeed. Restore its
             // stored position before returning to the prior source.
-            try? repository.saveSession(plan.originalSession)
+            try? repository.saveSession(storedForm(of: plan.originalSession))
             currentSession = previousSession
             currentItem = previousItem
             currentMap = previousMap
@@ -2977,7 +3000,7 @@ public final class SessionEngine {
         }
         var repaired = item
         repaired.media = nil
-        try repository.saveItem(repaired)
+        try saveItem(repaired)
         try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: item.id, repository: repository)
         return repaired
     }
@@ -3000,7 +3023,7 @@ public final class SessionEngine {
         if updated.status == "ready" || updated.status == "needs_listening_map" {
             updated.status = currentMap == nil ? "needs_listening_map" : "ready"
         }
-        try repository.saveItem(updated)
+        try saveItem(updated)
         return updated
     }
 
@@ -3053,7 +3076,8 @@ public final class SessionEngine {
     }
 
     private func sourceTranscriptTimeline(itemId: String) -> TranscriptTimeline? {
-        try? repository.loadTranscriptTimeline(itemId: itemId)?.timeline
+        if let publisher = publisherPlayback[itemId] { return publisher.timeline }
+        return try? repository.loadTranscriptTimeline(itemId: itemId)?.timeline
     }
 
     private func sourceTranscriptTimeline(for session: Session) -> TranscriptTimeline? {
@@ -3078,11 +3102,53 @@ public final class SessionEngine {
         if currentItem?.id == session.itemId {
             return currentItem
         }
-        return try? repository.loadItem(id: session.itemId)
+        return (try? repository.loadItem(id: session.itemId)).map { publisherPlayback[$0.id]?.playing($0) ?? $0 }
     }
 
     private func isGeneratedTextMedia(_ media: ItemMedia?) -> Bool {
         media?.sourceType == .generatedTTSPrerendered
+    }
+
+    /// Audio whose clock is mapped onto the article's text: generated narration, or the publisher's
+    /// recording of the article (#547). Positions, percentages and Margin anchors come from the map.
+    private func isTextBackedMedia(_ item: Item?) -> Bool {
+        guard let item else { return false }
+        return isGeneratedTextMedia(item.media) || publisherPlayback[item.id] != nil
+    }
+
+    /// The publisher recording `item` plays instead of on-device speech, if it has one that can be used.
+    private func publisherAudioPlan(for item: Item) -> PublisherAudioPlayback? {
+        guard !publisherAudioUnavailable.contains(item.id),
+              let store = repository as? any PublisherAudioRepository,
+              let record = try? store.loadPublisherAudio(itemId: item.id) else { return nil }
+        return PublisherAudioPlayback.plan(for: item, record: record)
+    }
+
+    /// `item`, a stored article, as a new session plays it: with its publisher's recording as its
+    /// audio when it has a usable one, so it starts as the recording and not as on-device speech.
+    private func adoptingPublisherAudio(for item: Item) -> Item {
+        guard let plan = publisherAudioPlan(for: item) else {
+            publisherPlayback[item.id] = nil
+            return item
+        }
+        publisherPlayback[item.id] = plan
+        return plan.playing(item)
+    }
+
+    /// A restored article session continues as the recording when the article has one that reaches
+    /// the place it was left. Otherwise it stays as it was stored.
+    private func resumingPublisherAudio(item: Item, session: Session) -> (Item, Session) {
+        publisherPlayback[item.id] = nil
+        guard let plan = publisherAudioPlan(for: item), let playing = plan.playingSession(from: session) else {
+            return (item, session)
+        }
+        publisherPlayback[item.id] = plan
+        return (plan.playing(item), playing)
+    }
+
+    /// Saves an item as the Library stores it: never with the publisher's recording as its audio.
+    private func saveItem(_ item: Item) throws {
+        try repository.saveItem(publisherPlayback[item.id]?.stored(item) ?? item)
     }
 
     private func isStarterGeneratedTextMedia(_ media: ItemMedia?) -> Bool {
@@ -3374,14 +3440,17 @@ public final class SessionEngine {
               session.currentTargetId == targetId,
               session.phase == .itemPlayback,
               let item = item(for: session),
-              PreparedNarrationFallback.canReadText(instead: session, item: item) else {
+              PreparedNarrationFallback.canReadText(
+                  instead: session, item: item, playingPublisherAudio: isPlayingPublisherAudio(session)
+              ) else {
             return nil
         }
         playbackStartRecoveryAttemptId = attemptId
         do {
             try audio.stop()
+            let publisherAudio = isPlayingPublisherAudio(session)
             let reading = try readText(instead: session, item: item)
-            snapshot.lastFailure = "prepared_audio_unavailable:\(failure)"
+            snapshot.lastFailure = "\(publisherAudio ? "publisher_audio_unavailable" : "prepared_audio_unavailable"):\(failure)"
             try playCurrentTarget(reading)
         } catch {
             clearPlaybackStartPending()
@@ -3415,25 +3484,39 @@ public final class SessionEngine {
         return try readText(instead: session, item: item)
     }
 
+    /// True when `session` plays the publisher recording of its article (#547).
+    private func isPlayingPublisherAudio(_ session: Session) -> Bool {
+        publisherPlayback[session.itemId]?.plays(targetId: session.currentTargetId) ?? false
+    }
+
     /// Detaches the unusable narration from the item (so it can be rendered again) and persists the
-    /// session on live speech of the text at the matching position.
+    /// session on live speech of the text at the matching position. A publisher recording that
+    /// can't play isn't attached to the item: the article simply stops using it until the app opens again.
     private func readText(instead session: Session, item: Item) throws -> Session {
         // The cached item can be older than storage; don't write stale fields back.
         var detached = (try? repository.loadItem(id: item.id)) ?? item
+        let publisher = publisherPlayback[item.id].flatMap { $0.plays(targetId: session.currentTargetId) ? $0 : nil }
+        if publisher != nil {
+            publisherAudioUnavailable.insert(item.id)
+        }
+        let publisherTimeline = publisher?.timeline
+        if publisher != nil {
+            publisherPlayback[item.id] = nil
+        }
         // Only the render this session was playing is unusable. If the article has since been
         // prepared again, its newer render and timeline stay, and the saved character offset is the
         // position: the stored timeline now describes the newer render, not the missing one (#277).
         let targetIsCurrentRender = PreparedNarrationFallback.media(detached.media, isTarget: session.currentTargetId)
         if targetIsCurrentRender, detached.media?.sourceType == .generatedTTSPrerendered {
             detached.media = nil
-            try repository.saveItem(detached)
+            try saveItem(detached)
             try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: detached.id, repository: repository)
         }
         currentItem = detached
         let timelineDescribesTarget = targetIsCurrentRender || detached.media == nil
         var reading = PreparedNarrationFallback.liveSpeechSession(
             from: session, item: detached,
-            timeline: timelineDescribesTarget ? sourceTranscriptTimeline(for: session) : nil
+            timeline: publisherTimeline ?? (timelineDescribesTarget ? sourceTranscriptTimeline(for: session) : nil)
         )
         reading.position.chapterId = chapterId(for: reading.position.charOffset)
         currentSession = reading
@@ -3580,12 +3663,12 @@ public final class SessionEngine {
                         })?.title
                     }
                 }
-                let percent = isGeneratedTextMedia(item(for: session)?.media)
+                let percent = isTextBackedMedia(item(for: session))
                     ? generatedTextSourcePercent(for: session, textStart: position.textStart)
                     : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: position))
                 return PlaybackProgress(sourcePercent: percent, currentPercent: percent, chapterTitle: chapterTitle ?? currentItem?.title)
             }
-            let percent = isGeneratedTextMedia(item(for: session)?.media)
+            let percent = isTextBackedMedia(item(for: session))
                 ? generatedTextSourcePercent(for: session, textStart: position.textStart)
                 : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: position))
             return PlaybackProgress(sourcePercent: percent, currentPercent: percent, chapterTitle: currentItem?.title)
@@ -3696,7 +3779,7 @@ public final class SessionEngine {
                     timeline: timeline,
                     playbackRateObserved: session.playbackRate
                 )
-                let textStart = isGeneratedTextMedia(item(for: session)?.media)
+                let textStart = isTextBackedMedia(item(for: session))
                     ? generatedTextOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
                     : resolved.startChar
                 return PlaybackPosition(
@@ -3956,7 +4039,11 @@ public final class SessionEngine {
 
     func buildAnchor(for session: Session, targetType: InterjectionTargetType, targetId: String) -> Anchor {
         let playbackPosition = playbackPosition(for: session)
-        if session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia {
+        // A Margin on the publisher's recording anchors to the article's words, at the place the map gives
+        // for the playing time, like a Margin on the article itself. Nothing about the recording (its time,
+        // its map's segments) goes into the anchor, so a packet of it is an ordinary article packet (#547).
+        if (session.currentTargetType == .transcriptBackedMedia || session.currentTargetType == .browserOwnedMedia),
+           !isPlayingPublisherAudio(session) {
             let resolved = resolveMediaAnchor(for: session, playbackPosition: playbackPosition)
             lastResolvedMediaAnchor = resolved
             return Anchor(
@@ -4130,7 +4217,7 @@ public final class SessionEngine {
     private func ensureWatchPackageRecords(_ package: WatchAudioPackage) throws {
         if (try? repository.loadItem(id: package.itemId)) == nil {
             let text = package.transcript.segments.map(\.text).joined(separator: " ")
-            try repository.saveItem(
+            try saveItem(
                 Item(
                     id: package.itemId,
                     title: package.item.title,
@@ -4564,7 +4651,7 @@ public final class SessionEngine {
                 timeline: timeline,
                 playbackRateObserved: session.playbackRate
             )
-            let textStart = isGeneratedTextMedia(item(for: session)?.media)
+            let textStart = isTextBackedMedia(item(for: session))
                 ? generatedTextOffset(mediaTimeMs: clamped, timeline: timeline)
                 : resolved.startChar
             updated.position = Position(
@@ -4573,14 +4660,14 @@ public final class SessionEngine {
                 segmentIndex: timeline.segments.firstIndex { $0.id == resolved.transcriptSegmentId },
                 chapterId: resolved.chapterId
             )
-            updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+            updated.completionPercent = isTextBackedMedia(item(for: session))
                 ? generatedTextSourcePercent(for: session, textStart: textStart)
                 : percent()
             lastResolvedMediaAnchor = resolved
             return updated
         }
         updated.position.mediaTimeMs = clamped
-        updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+        updated.completionPercent = isTextBackedMedia(item(for: session))
             ? generatedTextSourcePercent(for: session, textStart: updated.position.charOffset)
             : percent()
         return updated
@@ -4717,13 +4804,13 @@ public final class SessionEngine {
                 timeline: timeline,
                 playbackRateObserved: playbackPosition.playbackRate
             )
-            let textStart = isGeneratedTextMedia(item(for: session)?.media)
+            let textStart = isTextBackedMedia(item(for: session))
                 ? generatedTextOffset(mediaTimeMs: mediaTimeMs, timeline: timeline)
                 : resolved.startChar
             updated.position.chapterId = resolved.chapterId
             updated.position.charOffset = textStart
             updated.position.segmentIndex = timeline.segments.firstIndex { $0.id == resolved.transcriptSegmentId }
-            updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+            updated.completionPercent = isTextBackedMedia(item(for: session))
                 ? generatedTextSourcePercent(for: session, textStart: textStart)
                 : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))
             lastResolvedMediaAnchor = resolved
@@ -4732,11 +4819,11 @@ public final class SessionEngine {
                let chapter = mediaChapter(at: mediaTimeMs, timeline: timeline) {
                 updated.position.chapterId = chapter.id
             }
-            updated.completionPercent = isGeneratedTextMedia(item(for: session)?.media)
+            updated.completionPercent = isTextBackedMedia(item(for: session))
                 ? generatedTextSourcePercent(for: session, textStart: playbackPosition.textStart)
                 : mediaPercent(mediaTimeMs, durationMs: mediaDurationMs(for: session, position: playbackPosition))
         }
-        if !isGeneratedTextMedia(item(for: session)?.media),
+        if !isTextBackedMedia(item(for: session)),
            let durationMs = mediaDurationMs(for: session, position: playbackPosition),
            durationMs > 0 {
             try persistObservedMediaDuration(durationMs, for: session)
@@ -4761,7 +4848,7 @@ public final class SessionEngine {
         }
         media.durationMs = durationMs
         item.media = media
-        try repository.saveItem(item)
+        try saveItem(item)
         if currentItem?.id == item.id {
             currentItem = item
         }
@@ -4769,7 +4856,7 @@ public final class SessionEngine {
 
     private func repairMediaPercentages(_ session: Session, durationMs: Int, forceNotes: Bool = false) throws -> Session {
         guard durationMs > 0,
-              !isGeneratedTextMedia(item(for: session)?.media) else {
+              !isTextBackedMedia(item(for: session)) else {
             return session
         }
         var updatedSession = session
@@ -5358,18 +5445,25 @@ public final class SessionEngine {
         if stamped.status == "finished", stamped.completedAt == nil {
             stamped.completedAt = timestamp
         }
-        try repository.saveSession(stamped)
+        try repository.saveSession(storedForm(of: stamped))
         if stamped.completionPercent > 98,
            completionPercentIsMeasured(stamped),
            var item = try? repository.loadItem(id: stamped.itemId),
            item.sourceCompletedAt == nil {
             item.sourceCompletedAt = timestamp
-            try repository.saveItem(item)
+            try saveItem(item)
             if currentItem?.id == item.id { currentItem = item }
         }
         if currentSession?.id == stamped.id {
             currentSession = stamped
         }
+    }
+
+    /// The session as the Library stores it. A session playing a publisher recording is stored as the
+    /// article being read at the same place, which Build 29 resumes with on-device speech (#547).
+    private func storedForm(of session: Session) -> Session {
+        guard let plan = publisherPlayback[session.itemId], let item = item(for: session) else { return session }
+        return plan.stored(session, item: item)
     }
 
     /// A media percent is only as good as the length it was divided by. It completes the
@@ -5390,7 +5484,7 @@ public final class SessionEngine {
         case .itemTextTTS:
             return true
         }
-        guard session.phase != .finished, !isGeneratedTextMedia(item?.media) else {
+        guard session.phase != .finished, !isTextBackedMedia(item) else {
             return true
         }
         let playerDurationMs = audio.currentPlaybackPosition().flatMap {
