@@ -1607,6 +1607,43 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
+    /// #943: a podcast that rebuffers keeps engine status `.playing` while the system card shows Play
+    /// (rate 0). That Play tap pauses instead of failing; with audio really playing, Play is still refused.
+    func testPlayTapWhileAudioIsWaitingForTheNetworkPauses() throws {
+        let surface = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ],
+            forbiddenCapabilities: []
+        )
+        func makeDispatcher(transport: PlaybackTransportState) throws -> (CompactControlDispatcher, SessionEngine) {
+            let audio = RecordingAudioClient()
+            let engine = SessionEngine(
+                profile: phonePlaybackProfile(),
+                repository: InMemorySessionRepository(items: [
+                    "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+                ]),
+                audio: audio
+            )
+            _ = try engine.startSession(itemId: "item-pill")
+            XCTAssertEqual(engine.snapshot.status, .playing)
+            audio.transportState = transport
+            return (CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine), engine)
+        }
+
+        let (stalled, stalledEngine) = try makeDispatcher(transport: .waiting)
+        let result = try stalled.dispatch(.play)
+        XCTAssertEqual(result.snapshot.status, .paused)
+        XCTAssertEqual(stalledEngine.snapshot.status, .paused)
+
+        let (running, runningEngine) = try makeDispatcher(transport: .playing)
+        XCTAssertThrowsError(try running.dispatch(.play))
+        XCTAssertEqual(runningEngine.snapshot.status, .playing)
+    }
+
     /// #943: delayed start, failed start and replacing the item never publish a running clock.
     func testSystemClockStaysStillThroughDelayedFailedAndReplacedStarts() throws {
         func rate(_ engine: SessionEngine) -> Double {
