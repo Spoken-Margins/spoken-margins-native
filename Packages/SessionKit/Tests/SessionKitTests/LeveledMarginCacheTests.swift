@@ -152,6 +152,45 @@ final class LeveledMarginCacheTests: XCTestCase {
         XCTAssertTrue(cachedCopies().isEmpty)
     }
 
+    func testACopyMadeBeforeTheEpisodeWasOnTheDeviceIsReplacedByAMatchedOne() async throws {
+        let margin = try recording(named: "margin.wav", seed: 11, lufs: -30)
+        let podcast = try recording(named: "episode.wav", seed: 12, lufs: -24)
+        let cache = LeveledMarginCache(directory: cacheFolder)
+
+        guard case .leveled(let fixed) = await cache.level(margin) else { return XCTFail("expected a leveled copy") }
+        XCTAssertEqual(try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: fixed).integratedLUFS), -16, accuracy: 1.5)
+
+        // The episode finishes downloading and the item is opened again.
+        guard case .leveled(let matched) = await cache.level(margin, sourceWindow: .init(file: podcast, anchorMediaTimeMs: 2_000)) else {
+            return XCTFail("expected a leveled copy")
+        }
+        XCTAssertNotEqual(matched.lastPathComponent, fixed.lastPathComponent)
+        XCTAssertEqual(try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: matched).integratedLUFS), -24, accuracy: 1.5)
+        XCTAssertEqual(cachedCopies().map(\.lastPathComponent), [matched.lastPathComponent], "the fixed copy was replaced")
+        XCTAssertEqual(cache.readyCopy(for: margin)?.lastPathComponent, matched.lastPathComponent)
+
+        // An episode that can't be read afterwards doesn't undo the match.
+        let unreadable = folder.appendingPathComponent("broken.mp3")
+        try Data(repeating: 3, count: 1_000).write(to: unreadable)
+        let kept = await cache.level(margin, sourceWindow: .init(file: unreadable, anchorMediaTimeMs: 2_000))
+        XCTAssertEqual(kept, .leveled(matched))
+    }
+
+    func testDeletingAMarginsRecordingCanRemoveItsCopies() async throws {
+        let margin = try recording(named: "margin.wav", seed: 13, lufs: -30)
+        let other = try recording(named: "other.wav", seed: 14, lufs: -30)
+        let cache = LeveledMarginCache(directory: cacheFolder)
+        _ = await cache.level(margin)
+        _ = await cache.level(other)
+        XCTAssertEqual(cachedCopies().count, 2)
+
+        cache.removeCopies(of: margin)
+
+        XCTAssertNil(cache.readyCopy(for: margin))
+        XCTAssertNotNil(cache.readyCopy(for: other), "only this recording's copies go")
+        XCTAssertEqual(cachedCopies().count, 1)
+    }
+
     func testTheOldestCopiesGoFirstWhenTheFolderIsFull() async throws {
         // Each copy of a 5 s mono 48 kHz Margin is about 960 KB; 1.5 MB holds one.
         let cache = LeveledMarginCache(directory: cacheFolder, maximumBytes: 1_500_000)

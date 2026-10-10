@@ -27,10 +27,16 @@ extension Gate1AppModel {
         return recording
     }
 
+    /// The episode's file on this device: the one the listener downloaded, or the one they brought for a
+    /// shared podcast.
+    private func localEpisodeFile(for itemId: String) -> URL? {
+        importedPodcastRecipientLocalURLs[itemId] ?? podcastDownloadCoordinator?.validatedLocalURL(for: itemId)
+    }
+
     /// Makes the leveled copy in the background, so it is ready by the time the Margin plays.
     func prepareLeveledMargin(_ recording: URL, itemId: String?, anchorMediaTimeMs: Int?) {
         var window: LeveledMarginCache.SourceWindow?
-        if let itemId, let anchorMediaTimeMs, let file = podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
+        if let itemId, let anchorMediaTimeMs, let file = localEpisodeFile(for: itemId) {
             window = .init(file: file, anchorMediaTimeMs: anchorMediaTimeMs)
         }
         let sourceWindow = window
@@ -56,7 +62,7 @@ extension Gate1AppModel {
 
     /// Starts the leveled copies of the open item's spoken Margins, its own and shared ones, when the item is
     /// opened or gains a Margin, so the first play is usually already leveled. Each recording is handed over
-    /// once per launch; a copy that has gone is made again when the Margin is played.
+    /// once per launch (twice if the episode arrives meanwhile); a copy that has gone is made again when the Margin is played.
     func prepareLeveledMargins(from previous: ItemDetailState) {
         let detail = selectedItem
         func count(_ item: ItemDetailState) -> Int {
@@ -72,7 +78,9 @@ extension Gate1AppModel {
             guard let path = margin.audioPath, let url = resolvedApplicationSupportAssetURL(for: path) else { continue }
             recordings.append((url, margin.resolution.localMediaTimeMs))
         }
-        for recording in recordings where Self.requestedLeveling.insert(recording.url.path).inserted {
+        // Handed over again once the episode is on the device, because a copy made without it is replaced.
+        let hasEpisode = localEpisodeFile(for: detail.id) != nil
+        for recording in recordings where Self.requestedLeveling.insert("\(recording.url.path)|\(hasEpisode)").inserted {
             prepareLeveledMargin(recording.url, itemId: detail.id, anchorMediaTimeMs: recording.anchorMediaTimeMs)
         }
     }

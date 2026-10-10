@@ -43,14 +43,6 @@ public enum MarginLoudnessLeveler {
         return meter.finish()
     }
 
-    /// How long the file plays, in milliseconds.
-    public static func durationMs(ofFileAt url: URL) throws -> Int {
-        let file = try AVAudioFile(forReading: url)
-        let rate = file.processingFormat.sampleRate
-        guard rate > 0 else { throw LevelerError.unreadable }
-        return Int((Double(file.length) / rate * 1000).rounded())
-    }
-
     /// The loudness of `durationMs` of the file from `startMs`, for the stretch of an episode around a
     /// Margin (#467). A window that runs past the end is measured as far as the file goes.
     public static func measure(

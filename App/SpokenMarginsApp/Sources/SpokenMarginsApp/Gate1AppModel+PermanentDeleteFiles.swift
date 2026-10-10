@@ -13,9 +13,16 @@ extension Gate1AppModel {
         guard !deleted.isEmpty,
               let surviving = try? store.allMarginAudioPaths(),
               let supportDirectory = try? applicationSupportDirectory() else { return }
+        let recordings = supportDirectory.appending(path: "SpokenMargins", directoryHint: .isDirectory)
+        // The leveled playback copies (#467) are the same voice. They are found by the recording's content,
+        // so they go before the recording does.
+        for file in MarginRecordingCleanup.filesToRemove(
+            deleted: deleted, survivingAudioPaths: surviving, within: recordings, resolve: resolvedInterjectionAudioURL(for:)
+        ) {
+            Self.leveledMargins.removeCopies(of: file)
+        }
         MarginRecordingCleanup.removeFiles(
-            deleted: deleted, survivingAudioPaths: surviving,
-            within: supportDirectory.appending(path: "SpokenMargins", directoryHint: .isDirectory),
+            deleted: deleted, survivingAudioPaths: surviving, within: recordings,
             resolve: resolvedInterjectionAudioURL(for:)
         )
     }

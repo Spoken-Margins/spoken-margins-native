@@ -19,7 +19,7 @@ public enum MarginLevelingTarget {
     public static let windowMsEachSide = 30_000
     /// A window shorter than this isn't enough audio to measure loudness reliably.
     public static let minimumWindowMs = 3_000
-    /// Targets are rounded to this step, so Margins on nearly the same stretch share one cached copy.
+    /// Matched targets are rounded to this step, which is also the grid the cache names copies on.
     public static let cacheStepDB = 0.5
 
     public struct Window: Equatable, Sendable {
@@ -30,7 +30,8 @@ public enum MarginLevelingTarget {
     /// The stretch of the source to measure around a Margin anchored at `anchorMediaTimeMs`, kept
     /// inside the episode when its length is known. Nil when too little of it is left to measure.
     public static func sourceWindow(anchorMediaTimeMs: Int, sourceDurationMs: Int?) -> Window? {
-        let anchor = max(0, anchorMediaTimeMs)
+        // An imported packet's time can be anything; keep the sums below in range.
+        let anchor = min(max(0, anchorMediaTimeMs), Int.max / 4)
         let start = max(0, anchor - windowMsEachSide)
         var end = anchor + windowMsEachSide
         if let sourceDurationMs { end = min(end, max(0, sourceDurationMs)) }
@@ -38,12 +39,17 @@ public enum MarginLevelingTarget {
         return Window(startMs: start, durationMs: end - start)
     }
 
+    /// Whether a measurement of the episode is something a Margin should match: it has a loudness, and the
+    /// stretch isn't a pause or a music bed.
+    public static func isMatchable(_ measured: LoudnessMeasurement?) -> Bool {
+        guard let integrated = measured?.integratedLUFS else { return false }
+        return integrated.isFinite && integrated >= silentWindowLUFS
+    }
+
     /// The loudness the Margin should be leveled to. Nil or unusable source measurements give the fixed
     /// level.
     public static func targetLUFS(sourceWindow measured: LoudnessMeasurement?) -> Double {
-        guard let integrated = measured?.integratedLUFS, integrated.isFinite, integrated >= silentWindowLUFS else {
-            return fixedLUFS
-        }
+        guard isMatchable(measured), let integrated = measured?.integratedLUFS else { return fixedLUFS }
         return min(loudestMatchLUFS, max(quietestMatchLUFS, rounded(integrated)))
     }
 

@@ -93,6 +93,21 @@ final class MarginLevelingTargetTests: XCTestCase {
         XCTAssertNotNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: 600_000, sourceDurationMs: 573_000))
     }
 
+    func testAHugeAnchorFromAnImportedPacketIsSafe() {
+        XCTAssertNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.max, sourceDurationMs: 3_600_000))
+        XCTAssertNotNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.max, sourceDurationMs: nil), "no length: nothing to compare with")
+        XCTAssertNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.min, sourceDurationMs: 2_000))
+    }
+
+    func testWhatCountsAsAnEpisodeWorthMatching() {
+        XCTAssertFalse(MarginLevelingTarget.isMatchable(nil))
+        XCTAssertFalse(MarginLevelingTarget.isMatchable(measurement(nil)))
+        XCTAssertFalse(MarginLevelingTarget.isMatchable(measurement(-41)))
+        XCTAssertFalse(MarginLevelingTarget.isMatchable(measurement(Double.nan)))
+        XCTAssertTrue(MarginLevelingTarget.isMatchable(measurement(-40)))
+        XCTAssertTrue(MarginLevelingTarget.isMatchable(measurement(-16)))
+    }
+
     func testTheCacheGridRoundsToHalfADecibel() {
         XCTAssertEqual(MarginLevelingTarget.rounded(-16), -16)
         XCTAssertEqual(MarginLevelingTarget.rounded(-16.24), -16)

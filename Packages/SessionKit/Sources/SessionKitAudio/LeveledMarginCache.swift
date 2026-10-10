@@ -7,10 +7,12 @@ import CryptoKit
 
 /// Leveled playback copies of spoken Margins (#467), made once and kept in a caches folder.
 ///
-/// A copy is named for a hash of the recording's content, so the same recording is leveled once,
-/// whatever path it is reached by (a shared Margin is re-imported, an app container moves). The first
-/// target a recording is leveled to is the one it keeps. The recording is only read. Leveling runs one
-/// recording at a time on a utility queue and never on the caller's thread.
+/// A copy is named for a hash of the recording's content and the kind of target it was leveled to, so
+/// the same recording is leveled once, whatever path it is reached by (a shared Margin is re-imported,
+/// an app container moves). A copy leveled to the fixed podcast level is replaced when the episode
+/// turns up on the device (it is downloaded, or the file is imported), because then the Margin has an
+/// episode to match. The recording is only read. Leveling runs one recording at a time on a utility
+/// queue and never on the caller's thread.
 ///
 /// A caller that needs the audio now asks `readyCopy` and plays the original when there is no copy
 /// yet; `level` makes the copy for the next play (or waits for it).
@@ -40,10 +42,11 @@ public final class LeveledMarginCache: @unchecked Sendable {
         }
     }
 
-    /// Copies are 32-bit float (about 10 MB a minute for mono 44.1 kHz), so the folder is capped. The
-    /// copies that were used longest ago go first, and the system may clear a caches folder anyway:
-    /// a missing copy is made again from the recording.
-    public static let defaultMaximumBytes: Int64 = 256 * 1_048_576
+    /// Copies are 32-bit float (about 10 MB a minute for mono 44.1 kHz, twice that for stereo 48 kHz), so
+    /// the folder is capped: 1 GB holds about an hour and a half of Margins. The copies that were used
+    /// longest ago go first, and the system may clear a caches folder anyway: a missing copy is made
+    /// again from the recording.
+    public static let defaultMaximumBytes: Int64 = 1_024 * 1_048_576
     static let copyExtension = "caf"
 
     private let directory: URL
@@ -57,14 +60,21 @@ public final class LeveledMarginCache: @unchecked Sendable {
         self.maximumBytes = maximumBytes
     }
 
-    /// The copy of this recording that is already made, or nil. Cheap enough for the main thread: it
-    /// hashes the recording and looks for one file.
+    /// The copy of this recording that is already made, or nil: the one matched to an episode if there is
+    /// one, else the one at the fixed level. Cheap enough for the main thread: it hashes the recording and
+    /// looks in one folder.
     public func readyCopy(for recording: URL) -> URL? {
-        guard let name = try? Self.copyName(for: recording) else { return nil }
-        let url = directory.appendingPathComponent(name)
-        guard isUsableCopy(url) else { return nil }
-        touch(url)
-        return url
+        guard let hash = try? Self.contentHash(of: recording) else { return nil }
+        return existingCopy(hash: hash)
+    }
+
+    /// Removes every copy of this recording, for when the recording itself is deleted for good. Call it
+    /// before the recording is removed: the copy is found by the recording's content.
+    public func removeCopies(of recording: URL) {
+        guard let hash = try? Self.contentHash(of: recording) else { return }
+        for copy in copies() where copy.url.lastPathComponent.hasPrefix("\(hash)-") {
+            try? FileManager.default.removeItem(at: copy.url)
+        }
     }
 
     /// Makes the copy if there isn't one, and says which file to play. Several callers asking for the
@@ -93,19 +103,23 @@ public final class LeveledMarginCache: @unchecked Sendable {
 
     private func levelNow(_ recording: URL, sourceWindow: SourceWindow?) -> Outcome {
         do {
-            let destination = directory.appendingPathComponent(try Self.copyName(for: recording))
-            if isUsableCopy(destination) {
-                touch(destination)
-                return .leveled(destination)
-            }
+            let hash = try Self.contentHash(of: recording)
+            let existing = existingCopy(hash: hash)
+            // A copy matched to the episode is final. Otherwise measure the episode, if there is one now.
+            if let existing, !Self.isFixed(existing) { return .leveled(existing) }
+            let matched = Self.matchedTarget(for: sourceWindow)
+            if matched == nil, let existing { return .leveled(existing) }
+            let name = Self.copyName(hash: hash, matchedTarget: matched)
+            let destination = directory.appendingPathComponent(name)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let result = try MarginLoudnessLeveler.renderLeveledCopy(
-                of: recording, to: destination, targetLUFS: Self.targetLUFS(for: sourceWindow)
+                of: recording, to: destination, targetLUFS: matched ?? MarginLevelingTarget.fixedLUFS
             )
             if result.plan.limit == .silent {
                 try? FileManager.default.removeItem(at: destination)
                 return .original(reason: "silent")
             }
+            if let existing { try? FileManager.default.removeItem(at: existing) }
             evict(keeping: destination)
             return .leveled(destination)
         } catch {
@@ -113,20 +127,29 @@ public final class LeveledMarginCache: @unchecked Sendable {
         }
     }
 
-    /// The loudness to level to: the episode's, around the Margin, when the episode is on the device
-    /// and can be measured; otherwise the fixed level.
-    static func targetLUFS(for sourceWindow: SourceWindow?) -> Double {
-        guard let sourceWindow else { return MarginLevelingTarget.fixedLUFS }
-        let duration = try? MarginLoudnessLeveler.durationMs(ofFileAt: sourceWindow.file)
-        guard let window = MarginLevelingTarget.sourceWindow(
-            anchorMediaTimeMs: sourceWindow.anchorMediaTimeMs, sourceDurationMs: duration
-        ) else {
-            return MarginLevelingTarget.fixedLUFS
+    /// The loudness of the episode around the Margin, on the cache's grid, when the episode is on the
+    /// device and that stretch of it can be measured; nil means the fixed level.
+    static func matchedTarget(for sourceWindow: SourceWindow?) -> Double? {
+        guard let sourceWindow,
+              let window = MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: sourceWindow.anchorMediaTimeMs, sourceDurationMs: nil),
+              let measured = try? MarginLoudnessLeveler.measure(
+                  fileAt: sourceWindow.file, startMs: window.startMs, durationMs: window.durationMs
+              ),
+              MarginLevelingTarget.isMatchable(measured) else {
+            return nil
         }
-        let measured = try? MarginLoudnessLeveler.measure(
-            fileAt: sourceWindow.file, startMs: window.startMs, durationMs: window.durationMs
-        )
         return MarginLevelingTarget.targetLUFS(sourceWindow: measured)
+    }
+
+    /// The finished copy for this content, matched to an episode if there is one, else fixed. Marks it used.
+    private func existingCopy(hash: String) -> URL? {
+        let matched = copies()
+            .filter { $0.url.lastPathComponent.hasPrefix("\(hash)-m") }
+            .max { $0.modified < $1.modified }?.url
+        let fixed = directory.appendingPathComponent(Self.copyName(hash: hash, matchedTarget: nil))
+        guard let url = matched ?? (isUsableCopy(fixed) ? fixed : nil) else { return nil }
+        touch(url)
+        return url
     }
 
     // MARK: Files
@@ -162,23 +185,41 @@ public final class LeveledMarginCache: @unchecked Sendable {
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
     }
 
-    /// Removes the least recently used copies until the folder fits, never the one just made.
+    /// Removes the least recently used copies until the folder fits, never the one just made. Also removes
+    /// half-written copies an interrupted render left behind (hidden files, an hour old or more).
     private func evict(keeping keep: URL) {
+        sweepInterruptedRenders()
         var all = copies()
         var total = all.reduce(Int64(0)) { $0 + $1.bytes }
         guard total > maximumBytes else { return }
         all.sort { $0.modified < $1.modified }
-        for copy in all where total > maximumBytes && copy.url != keep {
+        for copy in all where total > maximumBytes && copy.url.lastPathComponent != keep.lastPathComponent {
             if (try? FileManager.default.removeItem(at: copy.url)) != nil { total -= copy.bytes }
+        }
+    }
+
+    private func sweepInterruptedRenders() {
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys) else { return }
+        let cutoff = Date().addingTimeInterval(-3_600)
+        for url in urls where url.lastPathComponent.hasPrefix(".leveling-") {
+            let modified = (try? url.resourceValues(forKeys: Set(keys)))?.contentModificationDate ?? .distantPast
+            if modified < cutoff { try? FileManager.default.removeItem(at: url) }
         }
     }
 
     // MARK: Names
 
-    /// Bump the version when the leveling changes, so old copies aren't played in place of new ones.
-    static func copyName(for recording: URL) throws -> String {
-        "\(try contentHash(of: recording))-v1.\(copyExtension)"
+    /// `<hash>-fixed-v1.caf`, or `<hash>-m<steps>-v1.caf` for a copy matched to an episode, where steps
+    /// count the grid's half decibels. Bump the version when the leveling changes, so old copies aren't
+    /// played in place of new ones.
+    static func copyName(hash: String, matchedTarget: Double?) -> String {
+        guard let matchedTarget else { return "\(hash)-fixed-v1.\(copyExtension)" }
+        let steps = Int((-MarginLevelingTarget.rounded(matchedTarget) / MarginLevelingTarget.cacheStepDB).rounded())
+        return "\(hash)-m\(steps)-v1.\(copyExtension)"
     }
+
+    static func isFixed(_ url: URL) -> Bool { url.lastPathComponent.contains("-fixed-") }
 
     /// SHA-256 of the file's bytes, read a megabyte at a time.
     static func contentHash(of url: URL) throws -> String {
