@@ -1050,6 +1050,7 @@ final class Gate1AppModel: ObservableObject {
     var listeningMapGenerationAvailabilityDescription: String {
         if !selectedItem.listeningMapScenes.isEmpty {
             return selectedItem.listeningMapAvailabilityDescription
+        }
         if !selectedItem.mediaChapters.isEmpty {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         }
