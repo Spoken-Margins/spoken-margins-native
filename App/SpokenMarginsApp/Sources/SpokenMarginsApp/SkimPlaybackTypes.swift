@@ -10,6 +10,15 @@ struct ResolvedSkimPlaybackPlan {
     let destinationMediaTimeMs: Int
     let summaryAssetId: String
     let summaryAudioURL: URL
+
+    /// The same summary, landing at a chapter start instead of the scene start it lines up with (#569).
+    func landing(at mediaTimeMs: Int) -> ResolvedSkimPlaybackPlan {
+        ResolvedSkimPlaybackPlan(
+            direction: direction, itemId: itemId, originMediaTimeMs: originMediaTimeMs,
+            summarySceneId: summarySceneId, destinationSceneId: destinationSceneId,
+            destinationMediaTimeMs: mediaTimeMs, summaryAssetId: summaryAssetId, summaryAudioURL: summaryAudioURL
+        )
+    }
 }
 
 struct SkimResourceContext {

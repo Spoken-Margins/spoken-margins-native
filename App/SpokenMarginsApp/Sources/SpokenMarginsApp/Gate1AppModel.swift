@@ -3849,7 +3849,7 @@ final class Gate1AppModel: ObservableObject {
         isUpdatingSkimAvailability = false
     }
 
-    private func resolvedSkimPlaybackPlan(
+    func resolvedSkimPlaybackPlan(
         direction: SkimDirection,
         at recipientMediaTimeMs: Int
     ) -> ResolvedSkimPlaybackPlan? {
@@ -3921,10 +3921,10 @@ final class Gate1AppModel: ObservableObject {
         startSkimBridge(plan)
     }
 
-    private func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan) {
+    func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan, continueAfterSummary: Bool = false) {
         #if canImport(AVFoundation)
         guard let engine else { return }
-        let wasPlaying = snapshot.status.isPlaybackActive
+        let wasPlaying = snapshot.status.isPlaybackActive || continueAfterSummary
         do {
             snapshot = try engine.pause()
             var state = SkimBridgeState(
@@ -3974,7 +3974,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func completeSkimBridge() {
+    func completeSkimBridge() {
         guard var bridge = snapshot.skimBridgeState, let engine else { return }
         bridge.status = .completing
         snapshot.skimBridgeState = bridge
@@ -4137,20 +4137,6 @@ final class Gate1AppModel: ObservableObject {
               let position = snapshot.currentMediaTimeMs else { return nil }
         let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
         return chapters.sorted { $0.startMs < $1.startMs }.first { $0.startMs > position }
-    }
-
-    var canJumpToNextChapter: Bool {
-        !recordingNavigationIsLocked && snapshot.skimBridgeState == nil && playingImportedCommentary == nil
-            && (nextPlaybackChapter != nil || nextPlaybackMediaChapter != nil)
-    }
-
-    func jumpToNextChapter() {
-        guard canJumpToNextChapter else { return }
-        if let chapter = nextPlaybackChapter { jumpToChapter(chapter) }
-        else if let chapter = nextPlaybackMediaChapter {
-            if selectedItem.mediaChapters.isEmpty { jumpToListeningMapScene(chapter) }
-            else { jumpToMediaChapter(chapter) }
-        }
     }
 
     func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
@@ -7731,6 +7717,10 @@ final class Gate1AppModel: ObservableObject {
         }
         if command == .skimBackward {
             skimBackward()
+            diagnostics["gate2LastCommand"] = command.rawValue
+            return
+        }
+        if handlesLiveActivityNextChapter(command, chapterId: chapterId) {
             diagnostics["gate2LastCommand"] = command.rawValue
             return
         }

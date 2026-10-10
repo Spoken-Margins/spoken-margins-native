@@ -87,6 +87,18 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let loadedResources = model.skimResourceLoadCount
         for _ in 0..<40 { model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Progress updates must reuse the loaded map and asset metadata")
+        // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
+        // a second press skips the summary instead of queueing another (#569).
+        XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)
+        model.jumpToNextChapter()
+        XCTAssertEqual(model.snapshot.skimBridgeState?.direction, .forward)
+        XCTAssertEqual(model.snapshot.skimBridgeState?.summarySceneId, "scene-0", "the summary is of the chapter being left")
+        XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000)
+        XCTAssertTrue(model.canJumpToNextChapter, "a second press can skip the summary")
+        model.jumpToNextChapter()
+        XCTAssertNil(model.snapshot.skimBridgeState)
+        XCTAssertLessThanOrEqual(abs((model.snapshot.currentMediaTimeMs ?? 0) - 5_000), 250, "the skipped summary lands at the next chapter's start")
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 0))
         let priorRate = model.mediaPlaybackRate
         model.setMediaPlaybackRate(1.75)
         model.skimForward()
