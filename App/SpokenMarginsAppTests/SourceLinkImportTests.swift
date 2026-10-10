@@ -3,6 +3,7 @@ import SessionKit
 import SessionKitPersistence
 import SessionKitAudio
 import SessionKitFeeds
+import SessionKitSharing
 @testable import SpokenMarginsApp
 #if canImport(UIKit)
 import UIKit
@@ -1813,6 +1814,243 @@ final class SourceLinkImportTests: XCTestCase {
             elapsed += interval
         }
         XCTFail("Timed out waiting for \(description).")
+    }
+}
+
+// MARK: Recovering a private-feed packet's episode from the listener's own feed (#454)
+
+extension SourceLinkImportTests {
+    private static let episode12Audio = "https://media.members.example/ep12.mp3"
+    private static let episode13Audio = "https://media.members.example/ep13.mp3"
+    private static let pastedSecret = "PASTEDsecret0123456789"
+    private static let pastedFeedLink = "https://members.example/feed.rss?auth=PASTEDsecret0123456789"
+
+    private struct PrivateFeedFixture {
+        let model: Gate1AppModel
+        let store: SQLiteSessionStore
+        let packageURL: URL
+        let manifest: SpokenMarginsPackageManifest
+    }
+
+    /// A recipient whose Library lacks the episode, with a packet from a private feed open for import:
+    /// podcast, recipient-supplied, no link and no GUID.
+    private func makePrivateFeedFixture() throws -> PrivateFeedFixture {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // Model background tasks retain SQLite beyond this test; do not unlink its open WAL.
+        let databaseURL = root.appending(path: "library.sqlite")
+        let packageURL = root.appending(path: "private.spokenmargins")
+        let created = Date(timeIntervalSince1970: 1_777_000_000)
+        let revision = InterjectionShareRevision(
+            id: "revision", interjectionId: "margin", itemId: "sender", sessionId: "sender-session", createdAt: created,
+            approvedTranscript: "A thought on the private episode.", anchorBefore: "", anchorAfter: "", status: .senderApproved)
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "private-feed-package",
+            createdAt: created,
+            item: SharedItemIdentity(
+                itemType: .podcast,
+                title: "Episode 12: The Private One",
+                showTitle: "Members Only Show",
+                publishedAt: "2026-09-01T00:00:00Z",
+                durationMs: 3_780_000
+            ),
+            itemTransportSelection: .recipientSupplied,
+            selections: [ReviewedInterjectionSelection(
+                packageScopedId: "margin-001", revision: revision,
+                anchor: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 600_000), representation: .textOnly)],
+            senderDisplayLabel: "Ana"
+        )
+        let manifest = try SpokenMarginsPackageArchive.write(prepared, to: packageURL)
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let model = Gate1AppModel(
+            sourceLinkResolver: EchoAudioLinkResolver(), audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.handleIncomingURL(packageURL)
+        return PrivateFeedFixture(model: model, store: store, packageURL: packageURL, manifest: manifest)
+    }
+
+    private func parsedFeed(_ episodes: [(title: String, guid: String, published: String, minutes: Int, audio: String)]) throws -> ParsedFeed {
+        var items = ""
+        for episode in episodes {
+            items += "<item><title>\(episode.title)</title><link>https://members.example/episodes/\(episode.guid)</link>"
+            items += "<guid isPermaLink=\"false\">\(episode.guid)</guid><pubDate>\(episode.published)</pubDate>"
+            items += "<itunes:duration>\(episode.minutes * 60)</itunes:duration>"
+            items += "<enclosure url=\"\(episode.audio)\" type=\"audio/mpeg\"/></item>"
+        }
+        return try FeedParser().parse(data: Data("""
+        <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel><title>Members Only Show</title>\(items)</channel></rss>
+        """.utf8))
+    }
+
+    /// The listener's feed: the newest episode first, as feeds list them.
+    private func membersFeed(includingEpisode12: Bool = true) throws -> ParsedFeed {
+        var episodes = [(title: "Episode 13: The Next One", guid: "ep-13", published: "Tue, 08 Sep 2026 00:00:00 +0000", minutes: 50, audio: Self.episode13Audio)]
+        if includingEpisode12 {
+            episodes.append((title: "Episode 12: The Private One", guid: "ep-12", published: "Tue, 01 Sep 2026 00:00:00 +0000", minutes: 63, audio: Self.episode12Audio))
+        }
+        episodes.append((title: "Episode 11: The Earlier One", guid: "ep-11", published: "Tue, 25 Aug 2026 00:00:00 +0000", minutes: 58, audio: "https://media.members.example/ep11.mp3"))
+        return try parsedFeed(episodes)
+    }
+
+    private func recovery(for model: Gate1AppModel, feed: ParsedFeed) -> SharedEpisodeRecovery {
+        var services = SharedEpisodeRecovery.services(model: model)
+        services.fetchFeed = { _ in feed }
+        return SharedEpisodeRecovery(services: services)
+    }
+
+    func testPastedFeedWithOneMatchingEpisodeAddsThatEpisodeAndThePendingImportBecomesImportable() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let model = fixture.model
+        XCTAssertTrue(SharedEpisodeFeedMatcher.isPrivatePodcastSource(fixture.manifest))
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.requiresRecipientItem, true)
+        let recovery = recovery(for: model, feed: try membersFeed())
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
+        let review = try XCTUnwrap(model.spokenMarginsPackageImportReview)
+        XCTAssertEqual(review.matchingItemId, itemId, "the pending import found the episode that was just added")
+        XCTAssertFalse(review.requiresRecipientItem)
+        let item = try fixture.store.loadItem(id: itemId)
+        XCTAssertEqual(item.title, "Episode 12: The Private One")
+        XCTAssertEqual(item.media?.url, Self.episode12Audio, "the matching episode, not the feed's first")
+        XCTAssertEqual(item.episodeGUID, "ep-12")
+        XCTAssertEqual(item.showTitle, "Members Only Show")
+        XCTAssertFalse(try fixture.store.listItems().contains { $0.media?.url == Self.episode13Audio }, "the newest episode was not added")
+
+        // The pasted link is kept nowhere: not on the item, not in the diagnostics a listener can copy.
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(item), as: UTF8.self).contains(Self.pastedSecret))
+        XCTAssertFalse(model.diagnostics.contains { $0.key.contains(Self.pastedSecret) || $0.value.contains(Self.pastedSecret) })
+        let diagnostics = try XCTUnwrap(model.diagnosticsExportFileURL())
+        defer { try? FileManager.default.removeItem(at: diagnostics) }
+        XCTAssertFalse(try String(contentsOf: diagnostics, encoding: .utf8).contains(Self.pastedSecret))
+
+        // The Margins import onto that episode, and importing the packet again adds nothing.
+        model.confirmSpokenMarginsPackageImport()
+        try await waitFor("the package import", timeoutNanoseconds: 5_000_000_000) {
+            model.spokenMarginsPackageImportReview == nil && !model.isImportingSpokenMarginsPackage
+        }
+        let digest = try XCTUnwrap(fixture.manifest.contentDigest)
+        let layer = try XCTUnwrap(try fixture.store.loadImportedCommentaryLayer(packageDigest: digest))
+        XCTAssertEqual(layer.itemId, itemId)
+        XCTAssertNotEqual(layer.sourceResolutionStatus, .wrongSource)
+
+        model.handleIncomingURL(fixture.packageURL)
+        XCTAssertNil(model.spokenMarginsPackageImportReview, "already imported: there is nothing to confirm")
+        XCTAssertEqual(model.diagnostics["lastSpokenMarginsPackageImport"], "duplicate:\(digest)")
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+        XCTAssertEqual(recovery.phase, .added(itemId: itemId), "pasting the feed again finds the episode already in the Library")
+        XCTAssertEqual(try fixture.store.listItems().filter { $0.media?.url == Self.episode12Audio }.count, 1)
+        XCTAssertEqual(try fixture.store.loadImportedCommentaryLayers(itemId: itemId).count, 1)
+    }
+
+    func testEpisodeAlreadyInTheLibraryIsReusedAndGainsTheIdentityItWasAddedWithout() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let model = fixture.model
+        // The listener added the episode earlier by its audio link, which keeps no GUID, show or date.
+        let existing = Item(
+            id: "already-here", title: "Episode 12: The Private One", mediaType: "transcript_backed_media", text: nil,
+            externalReference: nil, status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: Self.episode12Audio, durationMs: 3_780_000))
+        try fixture.store.saveItem(existing)
+        let recovery = recovery(for: model, feed: try membersFeed())
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        XCTAssertEqual(recovery.phase, .added(itemId: "already-here"))
+        XCTAssertEqual(try fixture.store.listItems().filter { $0.media?.url == Self.episode12Audio }.count, 1, "no second episode")
+        let item = try fixture.store.loadItem(id: "already-here")
+        XCTAssertEqual(item.episodeGUID, "ep-12")
+        XCTAssertEqual(item.showTitle, "Members Only Show")
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, "already-here")
+    }
+
+    func testPastedFeedWithoutTheEpisodeSaysSoAndAddsNothing() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let before = try fixture.store.listItems().count
+        let recovery = recovery(for: fixture.model, feed: try membersFeed(includingEpisode12: false))
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        XCTAssertEqual(recovery.phase, .noMatch)
+        XCTAssertEqual(try fixture.store.listItems().count, before)
+        XCTAssertEqual(fixture.model.spokenMarginsPackageImportReview?.requiresRecipientItem, true, "the pending import is still waiting")
+        recovery.reset()
+        XCTAssertEqual(recovery.phase, .idle)
+    }
+
+    func testPastedFeedWithSeveralMatchingEpisodesAsksAndNeverGuesses() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let before = try fixture.store.listItems().count
+        let secondAudio = "https://media.members.example/ep12-second.mp3"
+        let feed = try parsedFeed([
+            (title: "Episode 12: The Private One", guid: "ep-12-first", published: "Tue, 01 Sep 2026 00:00:00 +0000", minutes: 63, audio: Self.episode12Audio),
+            (title: "Episode 12: The Private One", guid: "ep-12-second", published: "Tue, 01 Sep 2026 06:00:00 +0000", minutes: 63, audio: secondAudio)
+        ])
+        let recovery = recovery(for: fixture.model, feed: feed)
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        guard case .choose(let candidates) = recovery.phase else { return XCTFail("expected a choice, got \(recovery.phase)") }
+        XCTAssertEqual(candidates.count, 2)
+        XCTAssertEqual(try fixture.store.listItems().count, before, "nothing is added until the listener picks")
+
+        await recovery.choose(candidates[1].id)
+
+        guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the pick to be added, got \(recovery.phase)") }
+        XCTAssertEqual(try fixture.store.loadItem(id: itemId).media?.url, secondAudio)
+        XCTAssertFalse(try fixture.store.listItems().contains { $0.media?.url == Self.episode12Audio }, "only the pick was added")
+        XCTAssertEqual(fixture.model.spokenMarginsPackageImportReview?.matchingItemId, itemId)
+    }
+
+    func testAFeedThatCannotBeReadFailsPlainlyWithoutAddingAnything() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let before = try fixture.store.listItems().count
+        var services = SharedEpisodeRecovery.services(model: fixture.model)
+        services.fetchFeed = { _ in throw URLError(.notConnectedToInternet) }
+        let offline = SharedEpisodeRecovery(services: services)
+
+        await offline.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        XCTAssertEqual(offline.phase, .failed(SharedEpisodeRecovery.message(for: URLError(.notConnectedToInternet))))
+        XCTAssertFalse(SharedEpisodeRecovery.message(for: URLError(.timedOut)).contains(Self.pastedSecret))
+        XCTAssertNotEqual(
+            SharedEpisodeRecovery.message(for: URLError(.timedOut)), SharedEpisodeRecovery.message(for: FeedParserError.malformed))
+
+        await offline.recover(fixture.manifest.item, feedLink: "not a link")
+        XCTAssertEqual(offline.phase, .failed(SharedEpisodeRecovery.invalidLinkMessage))
+        XCTAssertEqual(try fixture.store.listItems().count, before)
+    }
+
+    func testFeedLinksFromPodcastAppsAreReadAsHTTPSAndAnythingElseIsRefused() {
+        let accepted = [
+            " https://a.example/f.rss \n": "https://a.example/f.rss",
+            "https://a.example/f.rss?auth=x": "https://a.example/f.rss?auth=x",
+            "feed://a.example/f.rss": "https://a.example/f.rss",
+            "FEED://a.example/f.rss": "https://a.example/f.rss",
+            "itpc://a.example/f.rss": "https://a.example/f.rss",
+            "pcast://a.example/f.rss": "https://a.example/f.rss",
+            "feed:https://a.example/f.rss": "https://a.example/f.rss"
+        ]
+        for (pasted, expected) in accepted {
+            XCTAssertEqual(SharedEpisodeRecovery.feedURL(from: pasted)?.absoluteString, expected, pasted)
+        }
+        for pasted in ["", "   ", "not a link", "a.example/f.rss", "http://a.example/f.rss", "ftp://a.example/f.rss", "https://", "file:///etc/passwd", "javascript:alert(1)"] {
+            XCTAssertNil(SharedEpisodeRecovery.feedURL(from: pasted), pasted)
+        }
+    }
+}
+
+private struct EchoAudioLinkResolver: LinkResolutionClient {
+    func resolve(_ request: LinkResolutionRequest) throws -> LinkResolutionResult {
+        LinkResolutionResult(
+            requestId: request.id,
+            status: .playable,
+            originalLink: SourceLink(url: request.inputURL, role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: request.inputURL, role: "media"),
+                title: "audio", audioURL: request.inputURL, confidence: 1)
+        )
     }
 }
 
