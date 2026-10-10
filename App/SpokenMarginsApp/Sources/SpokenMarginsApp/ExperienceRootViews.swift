@@ -50,7 +50,7 @@ struct ExperienceRootTabs: View {
                 }
                 .tag(AppRoot.library)
 
-            ExperienceSourcesScreen()
+            ExperienceSourcesScreen(scrollMemory: $navigation.followingScroll)
                 .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
                 .tabItem {
                     Label("Following", systemImage: AppRoot.sources.systemImage)
