@@ -54,6 +54,8 @@ final class ReadLaterModel: ObservableObject {
                 return (data, http)
             }
         }
+        // A token left from an earlier launch is "saved", not "connected", the moment the screen opens.
+        if connected { showStoredTokenStatus() }
     }
     /// A token is stored. That alone is not "connected" (#944); see `ReadLaterConnectionTracker`.
     var connected: Bool { credentials.load(service) != nil }

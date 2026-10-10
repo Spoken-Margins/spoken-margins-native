@@ -52,6 +52,9 @@ final class ReadLaterConnectionStatusAppTests: XCTestCase {
         let tokens = Tokens()
         tokens.stored[.reader] = "token-from-an-earlier-launch"
         let model = ReadLaterModel(transport: { request in response(request, status: 500) }, credentials: tokens.credentials)
+        // Straight after opening the screen, before anything touches the picker.
+        XCTAssertEqual(model.status, "Token saved — connection not checked. Refresh to choose articles.")
+        XCTAssertEqual(model.statusSymbol, .saved)
         model.selectService()
         XCTAssertEqual(model.status, "Token saved — connection not checked. Refresh to choose articles.")
         XCTAssertEqual(model.statusSymbol, .saved)
