@@ -43,6 +43,31 @@ public enum MarginLoudnessLeveler {
         return meter.finish()
     }
 
+    /// How long the file plays, in milliseconds.
+    public static func durationMs(ofFileAt url: URL) throws -> Int {
+        let file = try AVAudioFile(forReading: url)
+        let rate = file.processingFormat.sampleRate
+        guard rate > 0 else { throw LevelerError.unreadable }
+        return Int((Double(file.length) / rate * 1000).rounded())
+    }
+
+    /// The loudness of `durationMs` of the file from `startMs`, for the stretch of an episode around a
+    /// Margin (#467). A window that runs past the end is measured as far as the file goes.
+    public static func measure(
+        fileAt url: URL,
+        startMs: Int,
+        durationMs: Int,
+        chunkFrames: Int = defaultChunkFrames
+    ) throws -> LoudnessMeasurement {
+        let file = try openForReading(url)
+        let sampleRate = file.processingFormat.sampleRate
+        let startFrame = AVAudioFramePosition((Double(max(0, startMs)) / 1000 * sampleRate).rounded())
+        let endFrame = startFrame + AVAudioFramePosition((Double(max(0, durationMs)) / 1000 * sampleRate).rounded())
+        var meter = LoudnessMeter.Accumulator(channelCount: Int(file.processingFormat.channelCount), sampleRate: sampleRate)
+        try forEachChunk(of: file, chunkFrames: chunkFrames, from: startFrame, upTo: endFrame) { meter.add($0) }
+        return meter.finish()
+    }
+
     /// Writes `source` leveled to `targetLUFS` as 32-bit float PCM at the source's sample rate and
     /// channel count. The destination's extension picks the container (.caf or .wav). The source is
     /// read twice, once to measure and once to render; the copy is written beside the destination
@@ -132,15 +157,22 @@ public enum MarginLoudnessLeveler {
         return file
     }
 
-    /// Hands `body` the file's samples from the start, `chunkFrames` frames at a time, one array
-    /// per channel.
-    static func forEachChunk(of file: AVAudioFile, chunkFrames: Int, _ body: ([[Float]]) throws -> Void) throws {
+    /// Hands `body` the file's samples from `startFrame` (the start by default) up to `endFrame` (the
+    /// end by default), `chunkFrames` frames at a time, one array per channel.
+    static func forEachChunk(
+        of file: AVAudioFile,
+        chunkFrames: Int,
+        from startFrame: AVAudioFramePosition = 0,
+        upTo endFrame: AVAudioFramePosition? = nil,
+        _ body: ([[Float]]) throws -> Void
+    ) throws {
         let format = file.processingFormat
         let capacity = AVAudioFrameCount(max(1, chunkFrames))
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { throw LevelerError.unreadable }
-        file.framePosition = 0
-        while file.framePosition < file.length {
-            let remaining = file.length - file.framePosition
+        let stop = min(file.length, endFrame ?? file.length)
+        file.framePosition = max(0, min(startFrame, stop))
+        while file.framePosition < stop {
+            let remaining = stop - file.framePosition
             try file.read(into: buffer, frameCount: AVAudioFrameCount(min(Int64(capacity), remaining)))
             let frames = Int(buffer.frameLength)
             guard frames > 0 else { break }
