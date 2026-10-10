@@ -2832,6 +2832,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             try saveSpokenMargin(store: store, itemId: "item-pill", sessionId: doomedSession),
         ]
         let live = try saveSpokenMargin(store: store, itemId: liveID, sessionId: liveSession)
+        let doomedFiles = try givePreparedAudioAndEpisodeMap(store: store, itemId: "item-pill")
+        let liveFiles = try givePreparedAudioAndEpisodeMap(store: store, itemId: liveID)
         model.moveItemToTrash(id: "item-pill")
 
         model.permanentlyDeleteItem(id: "item-pill")
@@ -2841,6 +2843,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
+        assertDeleted(doomedFiles, kept: liveFiles)
         XCTAssertTrue(try store.loadInterjections(itemId: "item-pill").isEmpty)
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
@@ -2873,6 +2876,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             doomed.append(try saveSpokenMargin(store: store, itemId: id, sessionId: sessions[id]!))
         }
         let live = try saveSpokenMargin(store: store, itemId: liveID, sessionId: sessions[liveID]!)
+        let doomedFiles = try trashed.map { try givePreparedAudioAndEpisodeMap(store: store, itemId: $0) }
+        let liveFiles = try givePreparedAudioAndEpisodeMap(store: store, itemId: liveID)
         trashed.forEach { model.moveItemToTrash(id: $0) }
         XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), Set(trashed))
 
@@ -2883,8 +2888,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
+        doomedFiles.forEach { assertDeleted($0, kept: liveFiles) }
         XCTAssertTrue(try trashed.allSatisfy { try store.loadInterjections(itemId: $0).isEmpty })
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
+    }
+
+    /// #1043 APM-13: the other files a permanent delete must take with an item. Prepared narration in
+    /// Application Support/PreparedSupertonicAudio, named by the item's media, and the item's episode-map
+    /// folder under SpokenMargins/EpisodeMaps, both where the app writes them. Removed when the test ends.
+    private func givePreparedAudioAndEpisodeMap(store: SQLiteSessionStore, itemId: String) throws -> (narration: URL, episodeMap: URL) {
+        let support = try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let audioFolder = support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioFolder, withIntermediateDirectories: true)
+        let narration = audioFolder.appending(path: "test-1043-\(UUID().uuidString).caf")
+        try Data("prepared narration".utf8).write(to: narration)
+        addTeardownBlock { try? FileManager.default.removeItem(at: narration) }
+        var item = try store.loadItem(id: itemId)
+        item.media = ItemMedia(sourceType: .generatedTTSPrerendered, url: narration.absoluteString, durationMs: 1_000)
+        try store.saveItem(item)
+
+        let episodeMap = support
+            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
+            .appending(path: PodcastAnchorEvidencePaths.safeComponent(itemId), directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: episodeMap, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: episodeMap.appending(path: "map.json"))
+        addTeardownBlock { try? FileManager.default.removeItem(at: episodeMap) }
+        return (narration, episodeMap)
+    }
+
+    private func assertDeleted(
+        _ doomed: (narration: URL, episodeMap: URL),
+        kept live: (narration: URL, episodeMap: URL),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let files = FileManager.default
+        XCTAssertFalse(files.fileExists(atPath: doomed.narration.path), "the deleted item's prepared narration is gone", file: file, line: line)
+        XCTAssertFalse(files.fileExists(atPath: doomed.episodeMap.path), "the deleted item's episode map is gone", file: file, line: line)
+        XCTAssertTrue(files.fileExists(atPath: live.narration.path), "a live item's prepared narration stays", file: file, line: line)
+        XCTAssertTrue(files.fileExists(atPath: live.episodeMap.path), "a live item's episode map stays", file: file, line: line)
     }
 
     private func startAndEndSession(_ model: Gate1AppModel, itemId: String) throws -> String {
