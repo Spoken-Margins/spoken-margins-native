@@ -3969,10 +3969,10 @@ final class Gate1AppModel: ObservableObject {
         startSkimBridge(plan)
     }
 
-    private func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan) {
+    private func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan, continueAfterSummary: Bool = false) {
         #if canImport(AVFoundation)
         guard let engine else { return }
-        let wasPlaying = snapshot.status.isPlaybackActive
+        let wasPlaying = snapshot.status.isPlaybackActive || continueAfterSummary
         do {
             snapshot = try engine.pause()
             var state = SkimBridgeState(
@@ -4188,10 +4188,16 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var canJumpToNextChapter: Bool {
-        !recordingNavigationIsLocked && playingImportedCommentary == nil
+        let mediaChapter = nextPlaybackChapter == nil ? nextPlaybackMediaChapter : nil
+        return !recordingNavigationIsLocked && playingImportedCommentary == nil
             && NextChapterSummaryRule.isAvailable(
-                playingSummary: snapshot.skimBridgeState?.direction,
-                hasNextChapter: nextPlaybackChapter != nil || nextPlaybackMediaChapter != nil)
+                playing: playingSummaryForNextChapter,
+                hasNextChapter: nextPlaybackChapter != nil || mediaChapter != nil,
+                nextChapterStartMs: mediaChapter?.startMs)
+    }
+
+    private var playingSummaryForNextChapter: NextChapterSummaryRule.PlayingSummary? {
+        snapshot.skimBridgeState.map { .init(direction: $0.direction, landsAtMs: $0.destinationMediaTimeMs) }
     }
 
     /// Reads the summary of the chapter being left, when it has one, then lands at the next
@@ -4203,12 +4209,14 @@ final class Gate1AppModel: ObservableObject {
         let summary = snapshot.skimBridgeState == nil && mediaChapter != nil
             ? snapshot.currentMediaTimeMs.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) } : nil
         switch NextChapterSummaryRule.press(
-            playingSummary: snapshot.skimBridgeState?.direction,
+            playing: playingSummaryForNextChapter,
             hasNextChapter: textChapter != nil || mediaChapter != nil,
             nextChapterStartMs: mediaChapter?.startMs, summaryLandsAtMs: summary?.destinationMediaTimeMs
         ) {
         case .skipSummary: completeSkimBridge()
-        case .summaryThenJump(let landingMs): if let summary { startSkimBridge(summary.landing(at: landingMs)) }
+        case .summaryThenJump(let landingMs):
+            // Like the plain jump, playback carries on at the chapter start even if it was paused.
+            if let summary { startSkimBridge(summary.landing(at: landingMs), continueAfterSummary: true) }
         case .unavailable: return
         case .jump:
             if let chapter = textChapter { jumpToChapter(chapter) }
