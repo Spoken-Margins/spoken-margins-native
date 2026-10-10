@@ -84,6 +84,8 @@ enum TimelineTextPresentation {
 
         let boundary = normalized.index(normalized.startIndex, offsetBy: characterLimit)
         let prefix = normalized[..<boundary]
+        // The limit lands exactly after a word: it fits whole, so keep it.
+        if normalized[boundary] == " " { return String(prefix) + "…" }
         if let wordBoundary = prefix.lastIndex(of: " ") {
             return String(prefix[..<wordBoundary]) + "…"
         }

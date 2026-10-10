@@ -437,11 +437,17 @@ final class SupertonicSpeechTests: XCTestCase {
 
     private func stallClient(
         _ log: StallEventLog, template: URL, plays: Bool,
-        playsFromStart: Int? = nil, onStart: (@Sendable (AVPlayer) -> Void)? = nil
+        playsFromStart: Int? = nil, onStart: (@Sendable (AVPlayer) -> Void)? = nil,
+        fallback: RecordingFallbackAudioClient = RecordingFallbackAudioClient(),
+        renderer: CountingAudioSupertonicRenderer? = nil,
+        articleText: SupertonicSpeechPlaybackClient.ArticleTextLookup? = nil,
+        renderingAllowed: (@Sendable () -> Bool)? = nil,
+        maxCharacters: Int = RenderedSpeechChunker.spokenCostBudget
     ) -> SupertonicSpeechPlaybackClient {
         SupertonicSpeechPlaybackClient(
-            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            renderer: renderer ?? CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
             fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            maxCharacters: maxCharacters,
             audioSessionActivator: {},
             audioPlayerStarter: { player, rate in
                 log.started()
@@ -450,8 +456,12 @@ final class SupertonicSpeechTests: XCTestCase {
                     player.volume = 0; player.playImmediately(atRate: rate)
                 }
             },
-            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: renderingAllowed ?? { SupertonicResourcePolicy.allowsRendering() },
+            fallbackClient: fallback,
             interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
+            articleText: articleText,
+            onFallback: { reason, _, _ in log.fellBack(reason) },
             onStall: { kind, fields in log.stall(kind, fields) },
             stallThreshold: .milliseconds(400), stallSampleInterval: .milliseconds(100)
         )
@@ -471,37 +481,517 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.lastFields["recovery"], "reseat_player")
         XCTAssertNotNil(log.lastFields["playerRate"])
         XCTAssertNotNil(log.lastFields["sessionCategory"], "the session's state is recorded")
+        // #540: what the next export needs to say why the player never made sound.
+        XCTAssertEqual(log.lastFields["chunkEngine"], "supertonic")
+        XCTAssertNotNil(log.lastFields["appState"])
+        XCTAssertNotNil(log.lastFields["conditions"])
+        XCTAssertNotNil(log.lastFields["playerAgeMs"])
+        XCTAssertNotEqual(log.lastFields["startRequestedAgoMs"], "never", "the start had been asked for")
         XCTAssertGreaterThanOrEqual(log.startCount, 2, "the player was re-seated")
         try await Task.sleep(for: .milliseconds(800))
         XCTAssertEqual(log.values.filter { $0 == "supertonic.stall" }.count, 1, "at most one re-seat per 30 s")
         try client.stop()
     }
 
-    // #302 Done when 3 and 5: a re-seat that doesn't bring the clock back used to leave the app
-    // showing "playing" (and retry only after 30 s). It now pauses at the listener's place, so the
-    // control shows Play, and one tap plays again in a new player whose clock advances.
-    func testAStallTheReseatDoesNotFixPausesAndOneTapPlaysAgain() async throws {
+    // #540: the owner's phone, locked in a pocket, stalled and then paused for a tap: silence, with nothing on
+    // screen to tap. A re-seat that doesn't bring the sound back now hands over to the iOS voice at the
+    // listener's place, with no tap, and the chosen voice gets another try at the next play.
+    func testAStallTheReseatDoesNotFixHandsOverToTheIOSVoiceWithoutATap() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
         let log = StallEventLog()
-        let client = stallClient(log, template: template, plays: false, playsFromStart: 3)
+        let fallback = RecordingFallbackAudioClient()
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "handover", from: 0)
+        for _ in 0..<200 where !log.values.contains("supertonic.stall_handover") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.values.prefix(2), ["supertonic.stall", "supertonic.stall_handover"], "\(log.values)")
+        XCTAssertEqual(log.lastFields["recovery"], "hand_over_to_system_voice")
+        XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "no pause for a tap: \(log.values)")
+        XCTAssertFalse(log.values.contains("interruption.began"), "nobody is asked to tap")
+        XCTAssertEqual(fallback.playedOffsets, [0], "the iOS voice reads on from the listener's place")
+        XCTAssertEqual(log.fallbackReasons, ["supertonic_player_stalled"], "the app is told the voice changed")
+        XCTAssertTrue(client.isSystemVoiceActive)
+        XCTAssertNotEqual(client.playbackTransportState(targetId: "handover"), .paused, "the control still shows Pause")
+        XCTAssertEqual(log.startCount, 2, "one re-seat, then the hand-over")
+
+        // The chosen voice comes back at the next play, not at the listener's Retry.
+        try client.pause()
+        try client.play(targetId: "handover", from: 0)
+        for _ in 0..<150 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(client.isSystemVoiceActive, "Supertonic is back")
+        XCTAssertEqual(log.startCount, 3, "in a new player")
+        try client.stop()
+    }
+
+    // #302 Done when 3 and 5, now the last resort (#540): when the iOS voice can't start either, the stall
+    // still pauses at the listener's place, so the control shows Play, and one tap plays again in a new
+    // player whose clock advances.
+    func testAStallTheIOSVoiceCannotTakeOverPausesAndOneTapPlaysAgain() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.playError = NSError(domain: "test", code: 1)
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer)
         _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
         try client.play(targetId: "tap", from: 0)
         for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertEqual(log.values.prefix(2), ["supertonic.stall", "supertonic.stall_paused"], "\(log.values)")
+        XCTAssertEqual(
+            log.values.prefix(4),
+            ["supertonic.stall", "supertonic.stall_handover", "supertonic.stall_handover_failed", "supertonic.stall_paused"],
+            "\(log.values)"
+        )
         XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
         XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .paused, "the control shows Play, not Pause")
         XCTAssertEqual(log.startCount, 2, "one re-seat, then a pause")
-        XCTAssertEqual(client.debugBackgroundAudioReleaseCount, 1, "other apps' audio is no longer lowered")
+        XCTAssertGreaterThanOrEqual(client.debugBackgroundAudioReleaseCount, 1, "other apps' audio is no longer lowered")
+        fallback.playError = nil
+        let rendersBeforeTap = await renderer.renderCount
 
         try client.play(targetId: "tap", from: 0)
         for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(log.startCount, 3, "one tap starts a new player")
+        let rendersAfterTap = await renderer.renderCount
+        XCTAssertEqual(rendersAfterTap, rendersBeforeTap, "the failed hand-over kept the chunk: the tap replays it, not renders it again")
+        XCTAssertFalse(client.isSystemVoiceActive, "the tap goes back to the chosen voice, not to the voice that just failed")
         let before = client.currentCharOffset() ?? 0
         try await Task.sleep(for: .milliseconds(900))
         XCTAssertEqual(client.playbackTransportState(targetId: "tap"), .playing)
         XCTAssertGreaterThan(client.currentCharOffset() ?? 0, before, "and its clock advances")
-        XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 2, "no new stall: \(log.values)")
+        XCTAssertEqual(log.values.filter { $0.hasPrefix("supertonic.stall") }.count, 4, "no new stall: \(log.values)")
+        try client.stop()
+    }
+
+    // #540 audit: the iOS voice can accept `play` and still never begin (a session another app holds, a voice
+    // still loading). Playback must not sit silent with Pause showing: the stall pauses for a tap, as before,
+    // and the app is never told the voice changed.
+    func testAStallWhoseIOSVoiceNeverBeginsPausesForATap() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "mute", from: 0)
+        for _ in 0..<250 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(
+            log.values.prefix(4),
+            ["supertonic.stall", "supertonic.stall_handover", "supertonic.stall_handover_failed", "supertonic.stall_paused"],
+            "\(log.values)"
+        )
+        XCTAssertEqual(fallback.playedOffsets, [0], "the iOS voice was asked to read on")
+        XCTAssertGreaterThanOrEqual(fallback.stopCount, 1, "and the voice that never began is stopped")
+        XCTAssertTrue(log.fallbackReasons.isEmpty, "the app was never told the voice changed: \(log.fallbackReasons)")
+        XCTAssertFalse(client.isSystemVoiceActive)
+        XCTAssertEqual(client.playbackTransportState(targetId: "mute"), .paused, "the control shows Play, not Pause")
+        XCTAssertTrue(log.values.contains("interruption.began"), "the app is told playback paused")
+
+        // One tap plays the kept chunk in a new player; nothing is rendered again.
+        let rendersBeforeTap = await renderer.renderCount
+        fallback.startStatus = .confirmed
+        try client.play(targetId: "mute", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "one tap starts a new player")
+        let rendersAfterTap = await renderer.renderCount
+        XCTAssertEqual(rendersAfterTap, rendersBeforeTap, "the kept chunk is replayed, not rendered again")
+        XCTAssertFalse(client.isSystemVoiceActive, "the tap goes to the chosen voice")
+        try client.stop()
+    }
+
+    // #540 audit: a voice that is only slow to say its first word is not a failure. The hand-over holds the kept
+    // chunk until the word is heard, then tells the app and lets the chunk go.
+    func testAStallWhoseIOSVoiceBeginsLateStillHandsOver() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let client = stallClient(log, template: template, plays: false, playsFromStart: 3, fallback: fallback)
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "late", from: 0)
+        for _ in 0..<250 where fallback.playedOffsets.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(log.fallbackReasons.isEmpty, "the app is not told while the voice has not begun")
+        fallback.startStatus = .confirmed
+        for _ in 0..<100 where log.fallbackReasons.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.fallbackReasons, ["supertonic_player_stalled"], "told once the voice has begun")
+        XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "no pause for a tap: \(log.values)")
+        XCTAssertTrue(client.isSystemVoiceActive)
+        XCTAssertNotEqual(client.playbackTransportState(targetId: "late"), .paused)
+        try client.stop()
+    }
+
+    // #540 audit: the listener pauses before the iOS voice has said a word. The pause must not leave the chosen
+    // voice's player half-handed-over: the next play starts the kept chunk in a new player, as after any pause
+    // for a tap, and the app is not told of a pause it did not ask for twice.
+    func testPausingBeforeTheIOSVoiceBeginsLeavesTheChunkReadyForANewPlayer() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { true }
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "pause", from: 0)
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        try await Task.sleep(for: .milliseconds(30))
+        try client.pause()
+        for _ in 0..<100 where client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(client.isSystemVoiceActive, "the wait ends: the chosen voice has its chunk back")
+        XCTAssertGreaterThanOrEqual(fallback.stopCount, 1, "and the voice that never began is stopped")
+        XCTAssertTrue(log.fallbackReasons.isEmpty, "the app was never told the voice changed: \(log.fallbackReasons)")
+        XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "the listener's pause is not a stall pause: \(log.values)")
+        XCTAssertEqual(client.playbackTransportState(targetId: "pause"), .paused)
+
+        let rendersBeforePlay = await renderer.renderCount
+        fallback.startStatus = .confirmed
+        try client.play(targetId: "pause", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "the kept chunk plays in a new player, not the one the hand-over left")
+        let rendersAfterPlay = await renderer.renderCount
+        XCTAssertEqual(rendersAfterPlay, rendersBeforePlay, "and it is not rendered again")
+        XCTAssertFalse(client.isSystemVoiceActive)
+        try client.stop()
+    }
+
+    // #540 audit: a seek lands while the iOS voice has not yet begun. The wait must end with the seek: the old
+    // wait, still timing, would later overwrite the new place with the stalled chunk's and pause the new play.
+    func testASeekWhileTheIOSVoiceHasNotBegunEndsTheWaitAndPlaysOn() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { true }
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "seek", from: 0)
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        try await Task.sleep(for: .milliseconds(30))
+        let rendersBeforeSeek = await renderer.renderCount
+        try client.play(targetId: "seek", seekingTo: 10)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "the seek plays the kept chunk in a new player")
+        XCTAssertFalse(client.isSystemVoiceActive, "the chosen voice is back")
+
+        // Past the time the old wait had left: nothing from it may land on the new play.
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertFalse(log.values.contains("supertonic.stall_handover_failed"), "\(log.values)")
+        XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "\(log.values)")
+        XCTAssertEqual(client.playbackTransportState(targetId: "seek"), .playing, "the seek is still playing")
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(client.currentCharOffset()), 10, "from the place the listener chose")
+        let rendersAfterSeek = await renderer.renderCount
+        XCTAssertEqual(rendersAfterSeek, rendersBeforeSeek, "the kept chunk served the seek")
+        try client.stop()
+    }
+
+    // #540 audit: a play that lands while the iOS voice has not begun, when the chosen voice may not render now,
+    // stays with the iOS voice at the new place. The stalled chunk is let go and the app is told the voice changed.
+    func testAPlayWhileTheIOSVoiceHasNotBegunStaysWithItWhenTheChosenVoiceMayNotRender() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let condition = ResourceConditionSwitch(allowed: true)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback,
+            renderingAllowed: { condition.allowed }
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "busy", from: 0)
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        try await Task.sleep(for: .milliseconds(30))
+        condition.allowed = false
+        try client.play(targetId: "busy", seekingTo: 10)
+        XCTAssertEqual(fallback.playedOffsets.count, 2, "the iOS voice is asked again from the new place")
+        XCTAssertEqual(log.fallbackReasons, ["supertonic_player_stalled"], "the app is told the voice changed")
+        XCTAssertTrue(client.isSystemVoiceActive)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(log.values.contains("supertonic.stall_paused"), "\(log.values)")
+        XCTAssertEqual(log.startCount, 2, "no Supertonic player starts")
+        try client.stop()
+    }
+
+    // #540 audit: the hand-over cancels the render queue behind the chunk it keeps. When the voice never begins and
+    // the chunk comes back, the queue starts again from the chunk after it. Without that, every later chunk renders
+    // only after the one before has ended, and each is a rendering-length silence.
+    func testAFailedHandOverStartsTheRenderQueueAgainBehindTheKeptChunk() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { true }, maxCharacters: 120
+        )
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let spoken = try client.prepareSpeechText(source)
+        let chunkCount = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: 120).chunks.count
+        XCTAssertGreaterThanOrEqual(chunkCount, 3, "precondition: the article is several chunks")
+        try client.play(targetId: "queue", from: 0)
+        for _ in 0..<250 where await renderer.renderCount < chunkCount { try await Task.sleep(for: .milliseconds(10)) }
+        let renderedAhead = await renderer.renderCount
+        XCTAssertEqual(renderedAhead, chunkCount, "precondition: every chunk renders ahead of the stall")
+
+        for _ in 0..<250 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(log.values.contains("supertonic.stall_handover_failed"), "the voice never began: \(log.values)")
+        XCTAssertTrue(log.values.contains("supertonic.stall_paused"), "\(log.values)")
+        // The chunks after the kept one are made again; the kept one is not.
+        let expected = chunkCount + (chunkCount - 1)
+        for _ in 0..<200 where await renderer.renderCount < expected { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .milliseconds(150))
+        let rendersAfterPause = await renderer.renderCount
+        XCTAssertEqual(rendersAfterPause, expected, "the queue started again behind the kept chunk")
+
+        fallback.startStatus = .confirmed
+        try client.play(targetId: "queue", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "one tap plays the kept chunk in a new player")
+        XCTAssertFalse(client.isSystemVoiceActive)
+        try client.stop()
+    }
+
+    // #540 audit: stopping generation during the hand-over wait is the listener's choice and stays. The render
+    // queue that the give-up would start again must not run behind it.
+    func testStoppingGenerationDuringTheWaitKeepsTheRenderQueueFromStartingAgain() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { true }, maxCharacters: 120
+        )
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let spoken = try client.prepareSpeechText(source)
+        let chunkCount = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: 120).chunks.count
+        try client.play(targetId: "stopped", from: 0)
+        for _ in 0..<250 where await renderer.renderCount < chunkCount { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech())
+
+        for _ in 0..<250 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(log.values.contains("supertonic.stall_handover_failed"), "the voice never began: \(log.values)")
+        try await Task.sleep(for: .milliseconds(400))
+        let rendersAfterGiveUp = await renderer.renderCount
+        XCTAssertEqual(rendersAfterGiveUp, chunkCount, "nothing renders behind the listener's stop")
+        try client.stop()
+    }
+
+    // #540 audit: a memory warning that lands while the iOS voice has not begun brings the chosen voice back by
+    // itself once memory is free. The end of the hand-over wait must not remove the marker that says so, or the
+    // listener is left with the iOS voice and a Retry to tap. In an article of several chunks, the render queue
+    // the hand-over cancelled stays stopped while memory is short, and starts again from the chunk after the kept
+    // one when the chosen voice comes back. Without that, the next chunk renders only after the kept one has
+    // ended, in a rendering-length silence.
+    func testAMemoryWarningWhileTheIOSVoiceHasNotBegunStillLetsTheChosenVoiceReturn() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { true }, maxCharacters: 120
+        )
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let spoken = try client.prepareSpeechText(source)
+        let chunkCount = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: 120).chunks.count
+        XCTAssertGreaterThanOrEqual(chunkCount, 3, "precondition: the article is several chunks")
+        try client.play(targetId: "memory", from: 0)
+        for _ in 0..<250 where await renderer.renderCount < chunkCount { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(try client.stopOnDeviceRenderingAndUseSystemSpeech(returnsAutomatically: true))
+        try client.pause()
+        for _ in 0..<100 where client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(client.isSystemVoiceActive, "the wait ended with the pause")
+        try await Task.sleep(for: .milliseconds(300))
+        let rendersWhileMemoryIsShort = await renderer.renderCount
+        XCTAssertEqual(rendersWhileMemoryIsShort, chunkCount, "nothing renders while memory is short")
+
+        // Memory is free again: the play goes back to the chosen voice, with the kept chunk, as promised.
+        fallback.startStatus = .confirmed
+        let voiceAsksBefore = fallback.playedOffsets.count
+        try client.play(targetId: "memory", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "the chosen voice plays again without a Retry")
+        XCTAssertEqual(fallback.playedOffsets.count, voiceAsksBefore, "and the iOS voice is not asked again")
+        XCTAssertFalse(client.isSystemVoiceActive)
+
+        // The kept chunk is 3 s long; the chunk after it renders well inside that.
+        for _ in 0..<50 where await renderer.renderCount <= chunkCount { try await Task.sleep(for: .milliseconds(20)) }
+        let rendersAfterReturn = await renderer.renderCount
+        XCTAssertGreaterThan(rendersAfterReturn, chunkCount, "the queue starts again behind the kept chunk while it plays")
+        XCTAssertEqual(log.startCount, 3, "before the kept chunk has ended")
+        try client.stop()
+    }
+
+    // #540 audit: heat held the render queue back when the hand-over ended, and heat clears without a fallback
+    // marker (the hand-over's own marker is gone with the wait). The next play still starts the queue behind the
+    // kept chunk once the phone has cooled, so the chunk after it renders while the kept one plays.
+    func testHeatWhileTheIOSVoiceHasNotBegunStillStartsTheRenderQueueWhenThePhoneCools() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.startStatus = .pending
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let condition = ResourceConditionSwitch(allowed: true)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback, renderer: renderer,
+            renderingAllowed: { condition.allowed }, maxCharacters: 120
+        )
+        let source = String(repeating: "A distinct passage contains enough ordinary words to make a full narration chunk. ", count: 5)
+        let spoken = try client.prepareSpeechText(source)
+        let chunkCount = NarrationChunkPlanner.spokenPlan(spokenText: spoken, articleText: nil, articleSpokenStart: 0, budget: 120).chunks.count
+        XCTAssertGreaterThanOrEqual(chunkCount, 3, "precondition: the article is several chunks")
+        try client.play(targetId: "heat", from: 0)
+        for _ in 0..<250 where await renderer.renderCount < chunkCount { try await Task.sleep(for: .milliseconds(10)) }
+        for _ in 0..<250 where !client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(client.isSystemVoiceActive, "precondition: the hand-over is waiting for the voice")
+        try await Task.sleep(for: .milliseconds(30))
+        condition.allowed = false
+        try client.pause()
+        for _ in 0..<100 where client.isSystemVoiceActive { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(client.isSystemVoiceActive, "the wait ended with the pause")
+        try await Task.sleep(for: .milliseconds(300))
+        let rendersWhileWarm = await renderer.renderCount
+        XCTAssertEqual(rendersWhileWarm, chunkCount, "nothing renders while the phone is too warm")
+
+        // The phone has cooled: the play brings the kept chunk back, and the queue starts behind it.
+        condition.allowed = true
+        fallback.startStatus = .confirmed
+        try client.play(targetId: "heat", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "the kept chunk plays again")
+        for _ in 0..<50 where await renderer.renderCount <= chunkCount { try await Task.sleep(for: .milliseconds(20)) }
+        let rendersAfterCooling = await renderer.renderCount
+        XCTAssertGreaterThan(rendersAfterCooling, chunkCount, "the queue starts again behind the kept chunk while it plays")
+        XCTAssertEqual(log.startCount, 3, "before the kept chunk has ended")
+        try client.stop()
+    }
+
+    // #540 audit: a chunk kept through a failed hand-over keeps the boundaries it was made with. Rebuilt from
+    // the whole text, an Overview chunk would cover the article's first sentence too and skip it once played.
+    // The offsets are the client's own, read before the stall and after the kept chunk has played.
+    func testAFailedHandOverKeepsTheOverviewChunkApartFromTheArticle() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let article = (1...8).map { "Sentence \($0) of the article carries enough ordinary words to fill part of a chunk." }
+            .joined(separator: " ")
+        let preface = "Overview. The paper studies evaluation agents and how they choose their tools.\n\n"
+        let log = StallEventLog()
+        let fallback = RecordingFallbackAudioClient()
+        fallback.playError = NSError(domain: "test", code: 1)
+        let client = stallClient(
+            log, template: template, plays: false, playsFromStart: 3, fallback: fallback,
+            articleText: { _ in article }
+        )
+        _ = try client.prepareSpeechText(preface + article)
+        try client.play(targetId: "overview", from: 0)
+        for _ in 0..<100 where log.startCount < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        let overviewEnd = try XCTUnwrap(client.currentPlaybackPosition()?.textEnd)
+        XCTAssertGreaterThan(overviewEnd, 0)
+        XCTAssertLessThanOrEqual(overviewEnd, preface.count, "precondition: the Overview is a chunk of its own, not run into the article")
+
+        for _ in 0..<250 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(log.values.contains("supertonic.stall_paused"), "\(log.values)")
+        fallback.playError = nil
+        try client.play(targetId: "overview", from: 0)
+        for _ in 0..<100 where log.startCount < 3 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(log.startCount, 3, "the tap plays the kept Overview chunk")
+
+        client.debugFinishActiveChunk()
+        XCTAssertEqual(
+            try XCTUnwrap(client.currentCharOffset()), overviewEnd,
+            "after the kept Overview chunk the article's first sentence is next, not skipped"
+        )
+        try client.stop()
+    }
+
+    // #540: the owner could only guess that rendering had fallen behind playback. Each chunk the phone renders
+    // now reports its render time against its audio length, for the diagnostics export.
+    func testEachChunkTheClientRendersReportsItsPaceAgainstPlayback() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let paces = PaceLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            onRenderPace: { paces.add($0) }
+        )
+        _ = try client.prepareSpeechText("One sentence of narration is enough for this chunk.")
+        try client.play(targetId: "pace", from: 0)
+        for _ in 0..<150 where paces.values.isEmpty { try await Task.sleep(for: .milliseconds(20)) }
+        let summary = try XCTUnwrap(paces.values.first)
+        XCTAssertTrue(summary.hasPrefix("1 chunks, 0 behind playback; slowest "), summary)
+        XCTAssertTrue(summary.contains("3.0 s of audio"), summary)
+        try client.stop()
+    }
+
+    // #540, #538: when a chunk ends nothing plays until the app starts the next player, so iOS could suspend
+    // a backgrounded app in that moment. The end of a chunk holds background time until the next is heard moving.
+    func testTheEndOfAChunkHoldsBackgroundTimeUntilTheNextOneIsHeardMoving() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let ledger = HandOverLedger()
+        let hold = HandOverBackgroundHold(
+            begin: { _, _ in
+                ledger.begins += 1
+                return { ledger.ends += 1 }
+            },
+            record: { _, _ in }
+        )
+        let starts = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: CountingAudioSupertonicRenderer(templateURL: template), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                starts.bump()
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
+            stallSampleInterval: .milliseconds(100), handOverHold: hold
+        )
+        let text = (1...12).map { "Sentence \($0) contains enough ordinary words to keep the narration moving through several chunks." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "hold", from: 0)
+        await waitUntil { starts.value >= 1 }
+        XCTAssertEqual(ledger.begins, 0, "nothing is held while the first chunk plays")
+
+        client.debugFinishActiveChunk()
+        XCTAssertEqual(ledger.begins, 1, "the end of a chunk holds background time")
+        XCTAssertEqual(ledger.ends, 0, "and keeps it while nothing is playing")
+        await waitUntil { starts.value >= 2 }
+        await waitUntil { ledger.ends >= 1 }
+        XCTAssertEqual(ledger.ends, 1, "and gives it back once the next chunk is heard moving")
         try client.stop()
     }
 
@@ -3447,6 +3937,20 @@ private actor OrderGatedSupertonicRenderer: SupertonicRendering {
     func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
 }
 
+private final class PaceLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var items: [String] = []
+    var values: [String] { lock.withLock { items } }
+    func add(_ value: String) { lock.withLock { items.append(value) } }
+}
+
+/// Counts the background time the client asked for and gave back across a chunk seam.
+@MainActor
+private final class HandOverLedger {
+    var begins = 0
+    var ends = 0
+}
+
 private final class StallEventLog: @unchecked Sendable {
     private let lock = NSLock()
     private var kinds: [String] = []
@@ -3455,8 +3959,11 @@ private final class StallEventLog: @unchecked Sendable {
     var values: [String] { lock.withLock { kinds } }
     var startCount: Int { lock.withLock { starts } }
     var lastFields: [String: String] { lock.withLock { last } }
+    private var fallbacks: [String] = []
+    var fallbackReasons: [String] { lock.withLock { fallbacks } }
     func stall(_ kind: String, _ fields: [String: String]) { lock.withLock { kinds.append(kind); last = fields } }
     func started() { lock.withLock { starts += 1 } }
+    func fellBack(_ reason: String) { lock.withLock { fallbacks.append(reason) } }
 }
 
 /// Switches to another item the first time a stall is about to be handled.
@@ -3584,6 +4091,11 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
     /// Words started, as the iOS voice counts them; nil for a voice that can't count them.
     var spokenWords: Int?
     var wordsPerRead = 0
+    /// Set to make the iOS voice refuse to start, as a session that can't be activated would.
+    var playError: Error?
+    /// What the iOS voice says about having begun: `.pending` is speech queued that never started.
+    var startStatus: PlaybackStartStatus = .confirmed
+    var stopCount = 0
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedText = text
@@ -3592,11 +4104,16 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
 
     func isPlaybackComplete(targetId: String) -> Bool { completedTargetId == targetId }
 
+    func playbackStartStatus(targetId: String) -> PlaybackStartStatus { startStatus }
+
+    func stop() throws { stopCount += 1 }
+
     func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
     }
 
     func play(targetId: String, from charOffset: Int) throws {
+        if let playError { throw playError }
         offset = charOffset
         playedOffsets.append(charOffset)
     }
