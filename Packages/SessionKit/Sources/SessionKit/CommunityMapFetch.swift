@@ -75,19 +75,28 @@ public struct CommunityMapLocalState: Equatable, Sendable {
 
     /// What the store holds for the item. `hasEmbeddedChapters` is what the app read from the
     /// downloaded audio file, which the store can't tell. Any map counts, whoever made it: a
-    /// proposal or projection (the listener's, a friend's or a community one), a stored listening
+    /// proposal or projection (the listener's, a friend's or a community one), a friend's map
+    /// that is imported but not placed yet, a stored listening
     /// map that isn't the publisher's, or chapters in the transcript timeline.
     public static func read(itemId: String, repository: SessionRepository, hasEmbeddedChapters: Bool = false) -> Self {
         let timeline = (try? repository.loadTranscriptTimeline(itemId: itemId))?.timeline
         let listeningMap = try? repository.loadListeningMap(itemId: itemId)
         let proposals = (try? repository.loadPortableListeningMapProposals(itemId: itemId)) ?? []
         let projection = try? repository.loadResolvedListeningMapProjection(itemId: itemId)
+        let friendsMap = ((try? repository.loadImportedCommentaryLayers(itemId: itemId)) ?? []).contains(where: \.holdsListeningMap)
         return Self(
             hasPublisherChapters: hasEmbeddedChapters
                 || CommunityMapUploadPolicy.hasPublisherChapters(map: listeningMap, timeline: timeline),
-            hasMap: !proposals.isEmpty || projection != nil || listeningMap != nil || timeline?.chapters.isEmpty == false
+            hasMap: !proposals.isEmpty || projection != nil || listeningMap != nil || friendsMap
+                || timeline?.chapters.isEmpty == false
         )
     }
+}
+
+extension ImportedCommentaryLayer {
+    /// A friend's shared Listening Map that hasn't been deleted. It gets a projection only once the
+    /// episode's audio is on the phone, so until then it is the only trace of the map.
+    public var holdsListeningMap: Bool { deletedAt == nil && listeningMapProposals?.isEmpty == false }
 }
 
 public enum CommunityMapFetchPolicy {
@@ -208,6 +217,9 @@ public enum CommunityMapConverter {
     public static let maximumSummaryCharacters = 300
 
     public static func isCommunityProposal(id: String) -> Bool { id.hasPrefix(proposalIdPrefix) }
+    public static func isCommunityProjection(_ projection: ResolvedListeningMapProjection) -> Bool {
+        projection.id.hasPrefix(projectionIdPrefix) || projection.proposalId.map(isCommunityProposal(id:)) == true
+    }
     /// The item page holds scenes, not the proposal, so a scene id says where the map came from.
     public static func isCommunitySceneId(_ id: String) -> Bool { id.hasPrefix(sceneIdPrefix) }
 

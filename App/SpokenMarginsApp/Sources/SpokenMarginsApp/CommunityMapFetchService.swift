@@ -46,7 +46,9 @@ final class CommunityMapFetchService {
                 optedIn: { await MainActor.run { Self.optedIn } },
                 localState: {
                     var embedded = false
-                    if let audioFile { embedded = await CommunityMapUploadService.hasEmbeddedChapters(audioFile) ?? false }
+                    // A file that can't be read (gone, or being replaced) holds the lookup, as for an
+                    // upload; with no file yet, the map goes if embedded chapters turn up later.
+                    if let audioFile { embedded = await CommunityMapUploadService.hasEmbeddedChapters(audioFile) ?? true }
                     return CommunityMapLocalState.read(itemId: itemId, repository: store, hasEmbeddedChapters: embedded)
                 },
                 mapsState: {

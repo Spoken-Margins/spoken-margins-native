@@ -595,6 +595,87 @@ final class CommunityMapFetchTests: XCTestCase {
         }
     }
 
+    // MARK: A friend's map, and chapters that turn up later, outrank a community map
+
+    private func friendsLayer(deleted: Bool = false, withMap: Bool = true) -> ImportedCommentaryLayer {
+        ImportedCommentaryLayer(
+            id: "layer-friend", itemId: "item-episode", packageDigest: "digest", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, canonicalURL: "https://podcasts.example.com/show/episode-7", title: "Episode Seven"),
+            importedAt: now, deletedAt: deleted ? now : nil,
+            listeningMapProposals: withMap ? [ownProposal(id: "friend-map")] : nil
+        )
+    }
+
+    func testAFriendsMapThatIsNotPlacedYetCountsAsAMapAndBlocksTheStore() throws {
+        try openStore { store in
+            let itemId = "item-episode"
+            let map = try CommunityMapConverter.make(response: response(), episodeKey: key, itemId: itemId, itemDurationMs: 600_000, createdAt: now).get()
+            // A packet with no map, or a deleted one, holds nothing back.
+            try store.saveImportedCommentaryLayer(friendsLayer(withMap: false))
+            XCTAssertEqual(CommunityMapLocalState.read(itemId: itemId, repository: store), none)
+            try store.saveImportedCommentaryLayer(friendsLayer(deleted: true))
+            XCTAssertEqual(CommunityMapLocalState.read(itemId: itemId, repository: store), none)
+            // A live packet with a map, still waiting for the audio so it has no projection, does.
+            try store.saveImportedCommentaryLayer(friendsLayer())
+            XCTAssertEqual(CommunityMapLocalState.read(itemId: itemId, repository: store), .init(hasPublisherChapters: false, hasMap: true))
+            XCTAssertEqual(CommunityMapLocalState.read(itemId: "other-episode", repository: store), none)
+            // The store refuses too, so a request already out when the packet was imported stores nothing.
+            XCTAssertFalse(try store.saveCommunityMap(proposal: map.proposal, projection: map.projection))
+            XCTAssertTrue(try store.loadPortableListeningMapProposals(itemId: itemId).isEmpty)
+            XCTAssertNil(try store.loadResolvedListeningMapProjection(itemId: itemId))
+        }
+    }
+
+    func testRemovingACommunityMapLeavesEveryOtherMapAlone() throws {
+        try openStore { store in
+            let itemId = "item-episode"
+            let map = try CommunityMapConverter.make(response: response(), episodeKey: key, itemId: itemId, itemDurationMs: 600_000, createdAt: now).get()
+            try store.savePortableListeningMapProposal(ownProposal(), itemId: itemId)
+            try store.savePortableListeningMapProposal(map.proposal, itemId: itemId)
+            try store.saveResolvedListeningMapProjection(map.projection)
+            try store.savePortableListeningMapProposal(ownProposal(id: "other-item-map"), itemId: "other-episode")
+            try store.removeCommunityMap(itemId: itemId)
+            XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: itemId).map(\.id), ["own-map"])
+            XCTAssertNil(try store.loadResolvedListeningMapProjection(itemId: itemId))
+            XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: "other-episode").count, 1)
+            // A friend's projection (not a community one) stays, and removing with nothing to remove is fine.
+            let friends = ResolvedListeningMapProjection(
+                id: SharedListeningMapPlacement.projectionId(layerId: "layer-1"), itemId: itemId, proposalId: "friend-map",
+                createdAt: now, points: [], intervals: []
+            )
+            try store.saveResolvedListeningMapProjection(friends)
+            try store.removeCommunityMap(itemId: itemId)
+            XCTAssertEqual(try store.loadResolvedListeningMapProjection(itemId: itemId), friends)
+        }
+    }
+
+    func testPublisherChaptersThatArriveLaterRemoveTheCommunityMapButNotAnyOther() throws {
+        let repository = InMemorySessionRepository()
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(
+                id: "phone-tablet-online", displayName: "Phone/Tablet Online",
+                capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"], "timeline": ["chapter_timing"]]
+            ),
+            repository: repository
+        )
+        let item = episode()
+        try repository.saveItem(item)
+        let map = try CommunityMapConverter.make(response: response(), episodeKey: key, itemId: item.id, itemDurationMs: 600_000, createdAt: now).get()
+        try repository.savePortableListeningMapProposal(ownProposal(), itemId: item.id)
+        try repository.savePortableListeningMapProposal(map.proposal, itemId: item.id)
+        try repository.saveResolvedListeningMapProjection(map.projection)
+
+        // The audio's own chapter tags, found once the file has downloaded.
+        let chapters = PublisherChapterCollection(source: .embeddedMedia, chapters: [
+            PublisherChapter(title: "Intro", startMs: 0), PublisherChapter(title: "Topic", startMs: 300_000),
+        ])
+        _ = try engine.attachPublisherChapters(itemId: item.id, collection: chapters)
+
+        XCTAssertEqual(try repository.loadPortableListeningMapProposals(itemId: item.id).map(\.id), ["own-map"])
+        XCTAssertNil(try repository.loadResolvedListeningMapProjection(itemId: item.id))
+        XCTAssertEqual(try repository.loadListeningMap(itemId: item.id)?.chapters.map(\.title), ["Intro", "Topic"])
+    }
+
     func testAnExistingMapOnARealStoreIsLeftAlone() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

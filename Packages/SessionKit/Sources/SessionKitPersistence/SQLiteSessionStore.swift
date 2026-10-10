@@ -680,10 +680,26 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     ) throws -> Bool {
         try withTransaction {
             guard try loadPortableListeningMapProposals(itemId: projection.itemId).isEmpty,
-                  try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil else { return false }
+                  try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil,
+                  // A friend's map not placed yet (its audio may still be downloading) comes first.
+                  try !loadImportedCommentaryLayers(itemId: projection.itemId).contains(where: \.holdsListeningMap)
+            else { return false }
             try savePortableListeningMapProposal(proposal, itemId: projection.itemId)
             try saveResolvedListeningMapProjection(projection)
             return true
+        }
+    }
+
+    public func removeCommunityMap(itemId: String) throws {
+        try withTransaction {
+            for proposal in try loadPortableListeningMapProposals(itemId: itemId)
+            where CommunityMapConverter.isCommunityProposal(id: proposal.id) {
+                try deleteRecord(kind: "portable_listening_map_proposal", id: proposal.id)
+            }
+            if let projection = try loadResolvedListeningMapProjection(itemId: itemId),
+               CommunityMapConverter.isCommunityProjection(projection) {
+                try deleteRecords(kind: "resolved_listening_map_projection", itemId: itemId)
+            }
         }
     }
 
