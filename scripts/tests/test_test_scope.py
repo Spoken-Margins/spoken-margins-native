@@ -335,6 +335,60 @@ class LaneRunnerRoutingTests(unittest.TestCase):
             'filename': 'ops/codex/a.py', 'previous_filename': APP + 'ExperienceLibraryScreen.swift'}]]))
 
 
+    # #1327: sm-lane-mac-3 sat idle for hours while automerge jobs queued behind sm-lane-mac-2.
+    def runner(self, name, busy, online=True):
+        return {'status': 'online' if online else 'offline', 'busy': busy,
+                'labels': [{'name': 'self-hosted'}, {'name': name}]}
+
+    def spill(self, runners, paths=(APP + 'ExperienceLibraryScreen.swift',), labels=()):
+        return self.route(list(paths), labels, runners=[{'runners': runners}])
+
+    def test_idle_priority_runner_takes_automerge_when_every_build_runner_is_busy(self):
+        result = self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-build', True),
+                             self.runner('sm-lane-priority', False)])
+        self.assertEqual(result, {'lane': ['self-hosted', 'macOS', 'sm-lane'],
+                                  'automerge': ['self-hosted', 'sm-lane-priority']})
+
+    def test_idle_priority_runner_takes_overflow_for_ops_mixed_and_incomplete_diffs_too(self):
+        runners = [self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)]
+        for paths, files in [(['ops/codex/a.py', 'project.yml'], None), (['ops/codex/a.py'], [])]:
+            with self.subTest(paths=paths):
+                pr = {'labels': [], 'changed_files': len(paths)}
+                result = scope.runner_routing(pr, files if files is not None else [[{'filename': p} for p in paths]],
+                                              [{'runners': runners}])
+                self.assertEqual(result['automerge'], ['self-hosted', 'sm-lane-priority'])
+
+    def test_automerge_stays_in_the_build_queue_while_a_build_runner_is_idle(self):
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-build', False),
+                                       self.runner('sm-lane-priority', False)]))
+
+    def test_automerge_stays_in_the_build_queue_while_the_priority_runner_is_busy(self):
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True), self.runner('sm-lane-priority', True)]))
+
+    def test_unknown_busy_state_never_counts_as_idle(self):
+        runner = self.runner('sm-lane-priority', False)
+        del runner['busy']
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True), runner]))
+
+    def test_offline_priority_runner_never_takes_overflow(self):
+        self.assert_normal(self.spill([self.runner('sm-lane-build', True),
+                                       self.runner('sm-lane-priority', False, online=False)]))
+
+    def test_idle_priority_runner_takes_automerge_when_no_build_runner_is_online(self):
+        result = self.spill([self.runner('sm-lane-build', False, online=False), self.runner('sm-lane-priority', False)])
+        self.assertEqual(result['automerge'], ['self-hosted', 'sm-lane-priority'])
+        self.assertEqual(result['lane'], ['self-hosted', 'macOS', 'sm-lane'])
+
+    def test_priority_work_still_routes_priority_when_the_priority_runner_is_idle(self):
+        runners = [self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)]
+        self.assert_priority(self.spill(runners, labels=['priority']))
+        self.assert_priority(self.spill(runners, paths=['ops/codex/a.py']))
+
+    def test_main_runner_counts_as_a_build_runner(self):
+        main = self.runner('sm-lane', False)
+        main['labels'].append({'name': 'sm-lane-build'})
+        self.assert_normal(self.spill([main, self.runner('sm-lane-priority', False)]))
+
     def test_t2_lane_path_stays_normal(self):
         self.assert_normal(self.route(['ops/codex/a.py', 'project.yml']))
         with tempfile.TemporaryDirectory() as directory:

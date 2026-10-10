@@ -161,6 +161,35 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
+    /// #478: "Play now" on a Following entry adds it and starts it, so the listener hears audio after
+    /// two taps (long-press, Play now). Adding alone starts nothing.
+    func testPlayNowAddsAFollowedEpisodeAndStartsItButAddingAloneDoesNot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audioURL = "https://audio.example/play-now.mp3"
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(requestId: "ignored", status: .playable, originalLink: SourceLink(url: audioURL, role: "discovery"), selectedCandidate: LinkResolutionCandidate(sourceLink: SourceLink(url: audioURL, role: "media"), title: "audio", durationMs: 300_000, audioURL: audioURL, confidence: 1)))
+        let model = Gate1AppModel(sourceLinkResolver: resolver, audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        let added = FeedEntry(id: "added-entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/added", audioURL: audioURL, title: "Added only", bodyWordCount: 900, fullBody: String(repeating: "Podcast transcript. ", count: 450), episodeGUID: "added-1")
+        let played = FeedEntry(id: "played-entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/played", audioURL: audioURL, title: "Play now entry", bodyWordCount: 900, fullBody: String(repeating: "Podcast transcript. ", count: 450), episodeGUID: "played-1")
+        try store.saveFeedEntry(added)
+        try store.saveFeedEntry(played)
+
+        model.importFollowedSourceEntry(added)
+        try await waitFor("added entry import") { model.libraryItems.contains { $0.title == added.title } }
+        XCTAssertNil(model.snapshot.sessionId, "adding alone starts nothing")
+
+        model.importFollowedSourceEntry(played, playWhenFinished: true)
+        try await waitFor("play now import", timeoutNanoseconds: 3_000_000_000) { model.snapshot.sessionId != nil }
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == played.title })
+        XCTAssertEqual(model.snapshot.itemId, row.id, "the entry that was imported is the one playing")
+    }
+
     func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1152,6 +1181,76 @@ final class SourceLinkImportTests: XCTestCase {
         try await waitFor("manual context recovery") { !model.isRetryingAnchorContext(note) }
         XCTAssertEqual(try store.loadInterjections(sessionId: sessionID).first?.anchorContextStatus, .ready)
         XCTAssertEqual(model.feedbackEvent?.message, "Source context recovered.")
+    }
+
+    /// #871 / #1308 (ANC-03): when a download finishes, every saved Margin on the episode wants its source context. The
+    /// app must send those jobs through its SourceWindowJobQueue, two at a time, skip a Margin deleted while it waited,
+    /// and clear every pending mark. The queue's own tests can't see the call site: replacing the enqueue with a bare
+    /// Task, the original burst, passed them all.
+    func testADownloadRecoversEachMarginsContextTwoAtATimeAndSkipsADeletedOne() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Many Margins Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/many-margins.mp3",
+                confidence: 1
+            )
+        ))
+        let root = FileManager.default.temporaryDirectory.appending(path: "context-queue-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let db = root.appending(path: "library.sqlite")
+        let transcriber = GatedSourceWindowTranscriptionClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber,
+            localFoundationModelClient: SourceLinkFoundationModelStub(),
+            databaseURLOverride: db
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        let itemId = try XCTUnwrap(model.snapshot.itemId)
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        let store = try SQLiteSessionStore(path: db.path)
+        let margins = (1...6).map { index in
+            Interjection(id: "queued-\(index)", itemId: itemId, sessionId: sessionId, targetType: .item,
+                targetId: itemId, createdAt: Date(), roughPercent: index * 7,
+                anchor: Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "",
+                               mediaTimeMs: index * 20_000),
+                audioPath: nil, audioStatus: "none", transcriptionStatus: "transcribed", transcript: "Note \(index)",
+                cleanedTranscript: nil, displayText: nil, status: "active", anchorContextStatus: .unavailable)
+        }
+        for margin in margins { try store.saveInterjection(margin) }
+
+        let localURL = root.appending(path: "many-margins.mp3")
+        try Data("downloaded".utf8).write(to: localURL)
+        model.podcastLocalAssetDidBecomeReady(itemId: itemId, url: localURL)
+        for margin in margins {
+            XCTAssertTrue(model.isRetryingAnchorContext(margin), "\(margin.id) is waiting for its context")
+        }
+
+        try await waitFor("two jobs to start", timeoutNanoseconds: 5_000_000_000) { transcriber.runningNow == 2 }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(transcriber.runningNow, 2, "the other four wait for a slot")
+
+        // A Margin the listener deletes while its job waits is kept with status "deleted"; its job must not run.
+        let started = Set(transcriber.startedAnchors)
+        var deleted = try XCTUnwrap(margins.first { !started.contains($0.anchor.mediaTimeMs ?? 0) })
+        deleted.status = "deleted"
+        try store.saveInterjection(deleted)
+
+        try await waitFor("every job to finish and clear its pending mark", timeoutNanoseconds: 10_000_000_000) {
+            transcriber.releaseWaiting()
+            return margins.allSatisfy { !model.isRetryingAnchorContext($0) }
+        }
+        XCTAssertEqual(transcriber.peakRunning, 2, "at most two source-window jobs at once")
+        XCTAssertEqual(transcriber.startedAnchors.count, 5, "one job per Margin, none for the deleted one")
+        XCTAssertFalse(transcriber.startedAnchors.contains(deleted.anchor.mediaTimeMs ?? 0), "the deleted Margin's job ran")
     }
 
     func testStreamedMarginContextComesFromTheAudioHeardAroundIt() async throws {
@@ -2544,6 +2643,56 @@ private actor RecordingSourceWindowTranscriptionClient: SourceTranscriptionClien
 
     func windowRequestCount() -> Int {
         windowRequest == nil ? 0 : 1
+    }
+}
+
+/// Holds each source-window job until the test lets it go, and counts how many run at once (#1308, ANC-03). Main-actor
+/// state, so the test reads it without awaiting, and the jobs (which the model's queue runs on the main actor) update
+/// it in order.
+@MainActor
+private final class GatedSourceWindowTranscriptionClient: SourceTranscriptionClient {
+    private(set) var runningNow = 0
+    private(set) var peakRunning = 0
+    private(set) var startedAnchors: [Int] = []
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    nonisolated func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("source_transcription_disabled_for_test")
+    }
+
+    nonisolated func transcribeSourceAudioWindow(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> TranscriptTimeline {
+        throw SessionKitError.persistenceFailed("source_window_without_evidence_disabled_for_test")
+    }
+
+    func transcribeSourceAudioWindowWithEvidence(
+        url: URL, itemId: String, anchorMediaTimeMs: Int, durationMs: Int?, windowBeforeMs: Int, windowAfterMs: Int
+    ) async throws -> SourceAudioWindowTranscription {
+        runningNow += 1
+        peakRunning = max(peakRunning, runningNow)
+        startedAnchors.append(anchorMediaTimeMs)
+        await withCheckedContinuation { waiting.append($0) }
+        runningNow -= 1
+        return SourceAudioWindowTranscription(
+            timeline: TranscriptTimeline(
+                segments: [MediaTimelineSegment(id: "context-\(anchorMediaTimeMs)", startMs: max(0, anchorMediaTimeMs - 1_000),
+                                                endMs: anchorMediaTimeMs + 1_000, text: "Context near the Margin.")],
+                chapters: [],
+                durationMs: durationMs
+            ),
+            localAudioURL: nil,
+            sourceStartMs: max(0, anchorMediaTimeMs - windowBeforeMs),
+            sourceEndMs: anchorMediaTimeMs + windowAfterMs,
+            provenance: .sourceWindowReference
+        )
+    }
+
+    /// Lets every job that is waiting finish.
+    func releaseWaiting() {
+        let released = waiting
+        waiting = []
+        for job in released { job.resume() }
     }
 }
 

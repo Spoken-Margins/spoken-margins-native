@@ -1,3 +1,7 @@
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
+import Foundation
 import SessionKit
 import XCTest
 @testable import SessionKitAudio
@@ -45,6 +49,60 @@ final class SourceWindowReferenceEvidenceTests: XCTestCase {
         XCTAssertEqual(outcome.failure, "folder_unavailable")
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path), "the exported window is deleted even when signing fails")
     }
+
+    #if os(macOS) && canImport(AVFoundation) && canImport(ShazamKit)
+    /// The success path (#1133, ANC-01). The window's audio starts 30 s into the episode, so the signatures must
+    /// be cut around 60 s of the window, not 90 s, and a recipient holding the whole episode must place the
+    /// Margin back at 90 s. The window is cut with `AVAssetExportSession`, as the source-window job cuts it.
+    func testSignaturesFromAWindowPlaceTheMarginAtItsEpisodeTime() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "source-window-success-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let episode = root.appending(path: "episode.m4a")
+        try SeededNoiseAudio.write(to: episode, seconds: 180)
+        let windowFolder = root.appending(path: "window-90000-v3", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: windowFolder, withIntermediateDirectories: true)
+        let window = windowFolder.appending(path: "source-window.m4a")
+        try await Self.export(episode, fromMs: 30_000, toMs: 150_000, to: window)
+        let evidenceFolder = root.appending(path: "evidence", directoryHint: .isDirectory)
+
+        let outcome = await SourceWindowReferenceEvidence.generate(
+            from: analysis(audio: window),
+            anchorMediaTimeMs: 90_000,
+            outputDirectory: .success(evidenceFolder),
+            idPrefix: "anchor-s-i-source-window"
+        )
+
+        XCTAssertNil(outcome.failure)
+        XCTAssertEqual(outcome.evidence.map(\.windowRole), [.sourceWindowBefore, .sourceWindowAfter])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: windowFolder.path), "the exported window is deleted after signing too")
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin",
+            senderMediaTimeMs: 90_000,
+            evidence: try outcome.evidence.map {
+                PodcastAcousticEvidenceQuery(id: $0.id, signatureData: try Data(contentsOf: URL(fileURLWithPath: $0.localPath)),
+                                             anchorOffsetMs: $0.anchorOffsetMs)
+            }
+        )
+        let resolution = try await PodcastAcousticAnchorResolver.resolve(
+            queries: [query], recipientAudioURL: episode,
+            senderExactEditionSHA256: nil, senderDurationMs: 180_000, strongSourceIdentity: true
+        )["margin"]
+        let placed = try XCTUnwrap(resolution?.localMediaTimeMs, "evidence class: \(String(describing: resolution?.evidenceClass))")
+        XCTAssertLessThanOrEqual(abs(placed - 90_000), 1_500, "placed at \(placed) ms")
+        XCTAssertEqual(resolution?.evidenceClass, .fused, "both flanks must match and agree")
+    }
+
+    private static func export(_ source: URL, fromMs: Int, toMs: Int, to output: URL) async throws {
+        let exporter = try XCTUnwrap(AVAssetExportSession(asset: AVURLAsset(url: source), presetName: AVAssetExportPresetAppleM4A))
+        exporter.timeRange = CMTimeRange(
+            start: CMTime(seconds: Double(fromMs) / 1_000, preferredTimescale: 600),
+            duration: CMTime(seconds: Double(toMs - fromMs) / 1_000, preferredTimescale: 600)
+        )
+        try await exporter.export(to: output, as: .m4a)
+    }
+    #endif
 
     func testFlanksKeepTheirRoleAndSayWhereTheAudioCameFrom() {
         let before = GeneratedPodcastAnchorEvidence(

@@ -153,6 +153,8 @@ struct AppNavigationState: Equatable, Sendable {
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?
+    /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
+    var followingScroll = FollowingScrollMemory()
 
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
