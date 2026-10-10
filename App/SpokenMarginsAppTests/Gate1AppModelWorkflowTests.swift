@@ -787,7 +787,18 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 && $0.representationChoice == .cleaned
                 && $0.approvedTranscript == "Keep words."
         })
-        XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes)
+        let cleanedURLs = model.sharingState.drafts.compactMap(\.cleanedAudioURL)
+        defer {
+            for url in cleanedURLs { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        }
+        XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes, "the owner's recording is untouched")
+        XCTAssertEqual(cleanedURLs.count, 53)
+        XCTAssertEqual(Set(cleanedURLs.map(\.standardizedFileURL.path)).count, 53, "each Margin gets its own cleaned copy")
+        for url in cleanedURLs {
+            XCTAssertNotEqual(url.standardizedFileURL.path, originalURL.standardizedFileURL.path)
+            XCTAssertNotEqual(url.deletingLastPathComponent().standardizedFileURL.path, directory.standardizedFileURL.path)
+            XCTAssertEqual(try Data(contentsOf: url), BulkSharePreparationProbe.cleanedBytes)
+        }
 
         let firstID = try XCTUnwrap(model.sharingState.drafts.first?.id)
         model.undoShareDraftEdit(firstID)
@@ -4758,14 +4769,28 @@ private actor BulkSharePreparationProbe {
     private var maximumConcurrentRenders = 0
     private var renderCount = 0
 
+    /// What this renderer writes as the cleaned copy, so a test can tell it from the original recording.
+    static let cleanedBytes = Data("cleaned voice".utf8)
+
+    /// Behaves like `InterjectionAudioCleanupRenderer` on the filesystem: it clears whatever is at the destination,
+    /// then writes the cleaned copy there. A model that handed over the recording as its own destination would
+    /// lose the owner's original here, as it would on the phone (#1043 APM-04).
     func render(
         sourceURL: URL,
         destinationURL: URL,
         decisions: [InterjectionCleanupDecision]
     ) async throws -> Int {
-        _ = sourceURL
-        _ = destinationURL
         XCTAssertFalse(decisions.isEmpty)
+        XCTAssertNotEqual(
+            destinationURL.standardizedFileURL.path, sourceURL.standardizedFileURL.path,
+            "the cleaned copy must never be written over the recording"
+        )
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+        try fileManager.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Self.cleanedBytes.write(to: destinationURL)
         activeRenders += 1
         maximumConcurrentRenders = max(maximumConcurrentRenders, activeRenders)
         defer { activeRenders -= 1 }
