@@ -196,6 +196,19 @@ public final class CompactControlDispatcher {
         followUpText: String? = nil,
         summaryScope: SummaryScope? = nil
     ) throws -> CompactControlResult {
+        // While a start is pending the system card shows Play, because its clock must not run (#943).
+        // Before that change the card showed Pause and a tap cancelled the load, so a Play tap during a
+        // pending start still cancels it: the listener asked to stop waiting, not to start again.
+        // The same holds when playing audio has stalled for the network: the adapter publishes rate 0
+        // (Play glyph) while the engine still says playing, and `validate` would refuse that Play.
+        if command == .play,
+           canonicalRuntime.snapshot.status == .starting
+            || (canonicalRuntime.snapshot.status == .playing
+                && canonicalRuntime.currentPlaybackTransportState() == .waiting),
+           surfaceProfile.has("remoteControl", "send_transport_commands") {
+            let paused = try canonicalRuntime.pause()
+            return CompactControlResult(snapshot: compactSnapshot(from: paused), delegatedToCanonicalRuntime: true)
+        }
         try validate(command)
         let updated: SessionSnapshot
         switch command {

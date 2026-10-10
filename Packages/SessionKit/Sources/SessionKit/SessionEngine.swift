@@ -73,6 +73,8 @@ public final class SessionEngine {
     private var playbackURLOverrides: [String: String] = [:]
     private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
     private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
+    /// How the last saved Margin chose where its source resumes (#806), for diagnostics.
+    private var lastMarginRejoin: String?
     /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
@@ -2941,6 +2943,7 @@ public final class SessionEngine {
             "providerStatus": profile.has("ai", "provider_diagnostics") ? "available" : "unavailable",
             "pendingAiJobs": "\(try currentSession.map { try repository.loadAIJobs(sessionId: $0.id).filter { $0.status != "complete" }.count } ?? 0)",
             "recentFailure": snapshot.lastFailure ?? "none",
+            "lastMarginRejoin": lastMarginRejoin ?? "none",
             "sessionId": sessionId
         ]
     }
@@ -4467,11 +4470,27 @@ public final class SessionEngine {
         switch session.currentTargetType {
         case .transcriptBackedMedia, .browserOwnedMedia:
             guard let pausedAtMs = session.position.mediaTimeMs else { return session }
-            let resumeAtMs = MarginRejoin.mediaResumeTimeMs(pausedAtMs: pausedAtMs)
+            let resumeAtMs: Int
+            if session.currentTargetType == .transcriptBackedMedia,
+               let source = item(for: session), isGeneratedTextMedia(source.media),
+               let text = source.text, !text.isEmpty,
+               PreparedNarrationFallback.media(source.media, isTarget: session.currentTargetId),
+               let timeline = sourceTranscriptTimeline(for: session) {
+                // The stored timeline belongs to the item's current render, so it is used only while that
+                // render is what plays (an older file's times differ after the article is prepared again, #277).
+                // An article played as prepared audio is text: it rejoins at the start of its sentence (#806).
+                let resume = MarginRejoin.preparedNarrationResume(pausedAtMs: pausedAtMs, text: text, timeline: timeline)
+                resumeAtMs = resume.timeMs
+                lastMarginRejoin = resume.outcome.rawValue
+            } else {
+                resumeAtMs = MarginRejoin.mediaResumeTimeMs(pausedAtMs: pausedAtMs)
+                lastMarginRejoin = "media_step_back"
+            }
             guard resumeAtMs != pausedAtMs else { return session }
             rejoined = mediaSession(session, movedTo: resumeAtMs)
         case .itemTextTTS:
             guard let text = item(for: session)?.text else { return session }
+            lastMarginRejoin = "live_sentence_start"
             let start = MarginRejoin.textResumeOffset(pausedAt: session.position.charOffset, in: text)
             guard start != session.position.charOffset else { return session }
             rejoined.position.charOffset = start
