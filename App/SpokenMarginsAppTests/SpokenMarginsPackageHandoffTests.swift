@@ -639,7 +639,6 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             named: "article-unreadable",
             extraction: .failure(ReadablePageExtractionError.httpStatus(403))
         )
-        let before = model.libraryItems.map(\.id)
         model.confirmSpokenMarginsPackageImport()
         for _ in 0..<250 where model.spokenMarginsPackageImportError == nil {
             try await Task.sleep(for: .milliseconds(20))
@@ -647,10 +646,12 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
 
         XCTAssertEqual(
             model.spokenMarginsPackageImportError,
-            SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_article_unreadable"))
+            SharedMarginsImportMessage.userFacing(SessionKitError.persistenceFailed("shared_article_unreadable")),
+            "diagnostic: \(model.diagnostics["lastSpokenMarginsPackageImport"] ?? "none")"
         )
         XCTAssertNil(try store.loadImportedCommentaryLayer(packageDigest: try XCTUnwrap(manifest.contentDigest)), "no layer without a source")
-        XCTAssertEqual(model.libraryItems.map(\.id), before)
+        // Not the whole id list: a background fetch (the guided tour) can add its own row mid-test (#878).
+        XCTAssertFalse(model.libraryItems.contains { $0.title == Self.articleTitle }, "the article was not added")
         XCTAssertNotNil(model.spokenMarginsPackageImportReview, "the sheet stays open so the listener can retry")
         model.cancelSpokenMarginsPackageImport()
     }
