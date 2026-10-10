@@ -75,6 +75,36 @@ class BuildSlotTests(unittest.TestCase):
         self.wrapper('-derivedDataPath', '/tmp/explicit', 'build').communicate(timeout=30)
         self.assertEqual(self.runs()[0]['argv'].count('-derivedDataPath'), 1)
 
+    def test_a_generic_simulator_build_on_apple_silicon_compiles_arm64_only(self):
+        # #1326: a clean generic simulator build compiled 782 jobs for x86_64 beside 782 for arm64,
+        # packages included; a project.yml ARCHS setting left the 445 package jobs in place.
+        self.env['FAKE_SECONDS'] = '0'
+        self.wrapper('-destination', 'generic/platform=iOS Simulator', 'build-for-testing').communicate(timeout=30)
+        on_apple_silicon = __import__('platform').machine() == 'arm64'
+        self.assertEqual('ARCHS=arm64' in self.runs()[0]['argv'], on_apple_silicon)
+
+    def test_only_a_generic_simulator_build_that_sets_no_architecture_gets_arm64(self):
+        loader = importlib.machinery.SourceFileLoader('xcodebuild_lane', str(SCRIPTS / 'xcodebuild-lane'))
+        spec = importlib.util.spec_from_loader('xcodebuild_lane', loader)
+        wrapper = importlib.util.module_from_spec(spec)
+        loader.exec_module(wrapper)
+        rows = [  # (arguments, machine, expected)
+            (['-destination', 'generic/platform=iOS Simulator', 'build'], 'arm64', ['ARCHS=arm64']),
+            (['-destination', 'generic/platform=iOS  Simulator', 'build'], 'arm64', ['ARCHS=arm64']),
+            (['-destination', 'generic/platform=iOS Simulator,name=Any iOS Simulator Device'], 'arm64', ['ARCHS=arm64']),
+            (['-destination', 'generic/platform=iOS', 'build'], 'arm64', []),  # device: arm64 already
+            (['-destination', 'platform=iOS Simulator,id=ABC', 'test'], 'arm64', []),  # one device: active arch
+            (['-destination', 'generic/platform=iOS Simulator', 'build', 'ARCHS=x86_64'], 'arm64', []),
+            (['-destination', 'generic/platform=iOS Simulator', '-arch', 'x86_64', 'build'], 'arm64', []),
+            (['-destination', 'generic/platform=iOS Simulator', 'build'], 'x86_64', []),  # an Intel host
+            (['-scheme', 'S', 'build'], 'arm64', []),
+            (['-destination'], 'arm64', []),
+            ([], 'arm64', []),
+        ]
+        for args, machine, expected in rows:
+            with self.subTest(args=args, machine=machine):
+                self.assertEqual(wrapper.simulator_arch(args, machine), expected)
+
     def test_information_calls_skip_the_queue_and_derived_data(self):
         process = self.wrapper('-version')
         _, err = process.communicate(timeout=30)

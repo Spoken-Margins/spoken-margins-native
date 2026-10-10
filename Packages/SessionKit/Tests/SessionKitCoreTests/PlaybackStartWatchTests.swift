@@ -156,6 +156,37 @@ final class PlaybackStartWatchTests: XCTestCase {
         XCTAssertLessThan(abs(Int(samples.first ?? 1)), 200, "fades in, no click")
     }
 
+    /// #357 follow-up: the waiting sound is one whole period (pops, then silence) so the audio player can loop it.
+    func testWaitingCueIsOnePeriodOfSoftPopsThenSilence() throws {
+        let data = PlaybackWaitingCue.wavData()
+        let header = String(decoding: data.prefix(4), as: UTF8.self) + String(decoding: data[8..<16], as: UTF8.self)
+        XCTAssertEqual(header, "RIFFWAVEfmt ")
+        let seconds = Double(data.count - 44) / 2 / Double(PlaybackWaitingCue.sampleRate)
+        XCTAssertEqual(seconds, PlaybackWaitingCue.period, accuracy: 0.001, "a loop that repeats on the period")
+        let samples = stride(from: 44, to: data.count, by: 2).map { Int16(littleEndian: Int16(data[$0]) | Int16(data[$0 + 1]) << 8) }
+        let rate = Double(PlaybackWaitingCue.sampleRate)
+        let loudest = Double(samples.map { abs(Int($0)) }.max() ?? 0) / Double(Int16.max)
+        XCTAssertGreaterThan(loudest, 0.05, "audible")
+        XCTAssertLessThan(loudest, PlaybackWaitingCue.peak + 0.01, "quieter than the start chime")
+        XCTAssertLessThan(PlaybackWaitingCue.peak, PlaybackStartChime.peak)
+        XCTAssertEqual(samples.first, 0, "starts at zero, no click")
+        XCTAssertEqual(samples.last, 0, "ends at zero, no click when it loops")
+        let lastPop = PlaybackWaitingCue.pops.map(\.start).max() ?? 0
+        let quietFrom = Int((lastPop + PlaybackWaitingCue.popSeconds + 0.01) * rate)
+        XCTAssertEqual(samples[quietFrom...].map { abs(Int($0)) }.max(), 0, "silence after the pops")
+        for pop in PlaybackWaitingCue.pops {
+            let from = Int(pop.start * rate), to = Int((pop.start + PlaybackWaitingCue.popSeconds) * rate)
+            XCTAssertGreaterThan(samples[from..<to].map { abs(Int($0)) }.max() ?? 0, 1_000, "a pop at \(pop.start) s")
+        }
+    }
+
+    /// The waiting sound comes about two seconds after the start chime, which itself comes at 0.8 s.
+    func testWaitingCueTimingConstants() {
+        XCTAssertEqual(PlaybackWaitingCue.delay, 2.0)
+        XCTAssertGreaterThan(PlaybackWaitingCue.period, PlaybackStartChime.notes.map(\.seconds).reduce(0, +))
+        XCTAssertGreaterThan(PlaybackWaitingCue.limit, PlaybackWaitingCue.delay + PlaybackWaitingCue.period)
+    }
+
     func testWaitingTextNamesWhatIsHappening() {
         XCTAssertEqual(PlaybackStartWatch.waitingText(isMedia: false), "Preparing voice…")
         XCTAssertEqual(PlaybackStartWatch.waitingText(isMedia: true), "Loading audio…")

@@ -1184,6 +1184,7 @@ final class SourceLinkImportTests: XCTestCase {
             sourceTranscriptionClient: transcriber,
             interjectionTranscriptionHandler: { _ in "Recorded note." }
         )
+        let heardRoot = try makeHeardWindowRoot(for: model)
         model.resetAndSeed()
 
         XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
@@ -1212,6 +1213,71 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.first?.anchor.anchorAfter, "Minute after.")
         XCTAssertEqual(model.selectedItem.interjections.first?.anchorContextStatus, .ready)
         XCTAssertEqual(model.marginDiagnostic("sourceWindowContextProvenance", interjectionId: "ij-001"), "heard_stream_audio")
+        try await waitFor("the used heard audio to be deleted") {
+            (try? FileManager.default.contentsOfDirectory(atPath: heardRoot.path))?.isEmpty == true
+        }
+    }
+
+    /// #652: heard audio for a Margin whose context is already ready is never used, so it mustn't stay in the cache,
+    /// and the Margin's context must stay as it was.
+    func testHeardAudioForAMarginWithReadyContextIsDiscarded() async throws {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Ready Context Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/ready.mp3",
+                confidence: 1
+            )
+        ))
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let db = root.appending(path: "library.sqlite")
+        let audio = WindowContextAudioClient()
+        let transcriber = RecordingSourceWindowTranscriptionClient(timeline: TranscriptTimeline(
+            segments: [MediaTimelineSegment(id: "heard", startMs: 0, endMs: 120_000, text: "Heard context.")],
+            chapters: [], durationMs: 120_000
+        ))
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: audio,
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: transcriber,
+            interjectionTranscriptionHandler: { _ in "Recorded note." },
+            databaseURLOverride: db
+        )
+        let heardRoot = try makeHeardWindowRoot(for: model)
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        audio.currentMediaTimeValue = 123_000
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        try await waitFor("the Margin to wait for heard audio") {
+            model.marginDiagnostic("sourceWindowTranscription", interjectionId: "ij-001") == "waiting:heard_audio"
+        }
+        // The context arrives another way (a publisher transcript, say) before the heard audio is handed over.
+        let store = try SQLiteSessionStore(path: db.path)
+        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        var margin = try XCTUnwrap(try store.loadInterjections(sessionId: sessionId).first { $0.id == "ij-001" })
+        margin.anchor.anchorBefore = "Context already known."
+        margin.anchor.anchorAfter = "And after it."
+        margin.anchorContextStatus = .ready
+        try store.saveInterjection(margin)
+
+        try deliverHeardWindow(to: model, anchorMs: 123_000, startMs: 63_000, durationMs: 120_000)
+
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: heardRoot.path), [], "no unused heard audio left in the cache")
+        XCTAssertNil(model.heardSourceWindows.segments(for: "\(sessionId)::ij-001"))
+        let requests = await transcriber.windowRequestCount()
+        XCTAssertEqual(requests, 0)
+        let saved = try XCTUnwrap(try store.loadInterjections(sessionId: sessionId).first { $0.id == "ij-001" })
+        XCTAssertEqual(saved.anchorContextStatus, .ready)
+        XCTAssertEqual(saved.anchor.anchorBefore, "Context already known.")
+        XCTAssertEqual(saved.anchor.anchorAfter, "And after it.")
     }
 
     func testInterjectionTranscriptionFinishesBeforeSourceWindowTranscriptionStarts() async throws {
@@ -2090,6 +2156,15 @@ private final class WindowContextAudioClient: AudioPlaybackClient {
 }
 
 extension SourceLinkImportTests {
+    /// Points the model's heard-audio files at an empty temporary folder, so a test can see exactly what is left (#652).
+    func makeHeardWindowRoot(for model: Gate1AppModel) throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appending(path: "heard-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        model.heardSourceWindows = HeardSourceWindowFiles(rootDirectory: root)
+        return root
+    }
+
     /// Stands in for the player's audio tap, which these tests don't run: hands the model the audio heard around the
     /// first Margin (#156). Silent samples are enough; the fake transcriber doesn't read them.
     func deliverHeardWindow(to model: Gate1AppModel, anchorMs: Int, startMs: Int, durationMs: Int) throws {

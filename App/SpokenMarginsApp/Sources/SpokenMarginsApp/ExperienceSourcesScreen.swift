@@ -540,28 +540,26 @@ private struct SourceInboxRow: View {
 
     var body: some View {
         Button(action: addAndOpen) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 leadingImage
-                VStack(alignment: .leading, spacing: 5) {
+                // About the artwork's height (#884): two title lines and one line of show and length. A long
+                // title or show name truncates; it does not make the row taller.
+                VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
+                        .lineLimit(2)
                     Text(provenance)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     if let reason {
                         Label(reason, systemImage: reasonImage)
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(AppColors.evergreen)
                             .lineLimit(1)
-                    }
-                    if let summary, !summary.isEmpty {
-                        Text(summary)
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -578,7 +576,8 @@ private struct SourceInboxRow: View {
         }
         .buttonStyle(.plain)
         .disabled(isImporting)
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(AppColors.panel)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(accessibilityLabel)
@@ -648,11 +647,6 @@ private struct SourceInboxRow: View {
         case .localFile(let file): file.name
         case .followedSource(let entry): entry.title
         }
-    }
-
-    private var summary: String? {
-        if case .followedSource(let entry) = candidate { return entry.summary }
-        return nil
     }
 
     private var provenance: String {
@@ -756,7 +750,7 @@ private struct SourceInboxRow: View {
 
     private func dismiss() {
         switch candidate {
-        case .localFile(let file): model.dismissQuickAccessFile(file)
+        case .localFile(let file): model.dismissQuickAccessFileWithUndo(file)
         case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
         }
     }

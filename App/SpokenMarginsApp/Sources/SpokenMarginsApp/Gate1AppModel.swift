@@ -321,8 +321,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
     private var marginMomentConductor: MarginMomentConductor?
-    /// Heard audio around streamed Margins, written to temporary files until transcribed (#156). Keyed by margin identity.
-    private var heardSourceWindows: [String: [(url: URL, startMediaTimeMs: Int, durationMs: Int)]] = [:]
+    /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
+    var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
 
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return importedCommentaryPhase.showsPause }
@@ -350,7 +350,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var quickAccessRecentFiles: [QuickAccessFile] = [] { didSet { cachedQuickAddCandidates = nil } }
     @Published private(set) var dismissedQuickAccessFileKeys = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.dismissedQuickAccessFilesKey) ?? []
-    ) { didSet { cachedQuickAddCandidates = nil } }
+    ) {
+        didSet {
+            cachedQuickAddCandidates = nil
+            UserDefaults.standard.set(dismissedQuickAccessFileKeys.sorted(), forKey: Gate1AppModel.dismissedQuickAccessFilesKey)
+        }
+    }
     @Published private(set) var sourceImportProgressMessage: String?
     @Published private(set) var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
@@ -501,7 +506,7 @@ final class Gate1AppModel: ObservableObject {
     private var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
-    private let localFoundationModelClient: any LocalFoundationModelClient
+    let localFoundationModelClient: any LocalFoundationModelClient
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private(set) var speechPlaybackClient: AudioPlaybackClient?
@@ -2126,13 +2131,10 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    func dismissQuickAccessFile(_ file: QuickAccessFile) {
-        dismissedQuickAccessFileKeys.insert(file.dismissalKey)
-        UserDefaults.standard.set(
-            dismissedQuickAccessFileKeys.sorted(),
-            forKey: Self.dismissedQuickAccessFilesKey
-        )
-    }
+    func dismissQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.insert(file.dismissalKey) }
+
+    /// Brings a dismissed Quick Folder file back into Following (#477).
+    func restoreQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.remove(file.dismissalKey) }
 
     private func beginObsidianMarkdownImport(
         urls: [URL],
@@ -8810,10 +8812,8 @@ final class Gate1AppModel: ObservableObject {
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
                 fallbackRate: Float(speechRate),
                 diskCache: diskCache,
-                preparedAudioDirectory: supportDirectory.appending(
-                    path: "PreparedSupertonicAudio",
-                    directoryHint: .isDirectory
-                ),
+                preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
+                voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
                         self?.handleSpeechPlaybackInterruption(event)
@@ -9903,45 +9903,22 @@ final class Gate1AppModel: ObservableObject {
     func handleHeardSourceWindow(_ window: HeardAudioWindow) {
         let key = HeardAudioWindowRecorder.key(window.request)
         let diagnosticKey = Self.marginDiagnosticKey("heardSourceWindow", sessionId: window.request.sessionId, interjectionId: window.request.interjectionId)
-        do {
-            let caches = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let directory = caches.appending(path: "HeardSourceWindows/\(UUID().uuidString)", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            var files: [(url: URL, startMediaTimeMs: Int, durationMs: Int)] = []
-            for (index, segment) in window.segments.enumerated() where window.durationMs(of: segment) >= 2_000 {
-                let url = directory.appending(path: "segment-\(index).caf")
-                try Self.writeHeardSegment(segment.samples, sampleRate: window.sampleRate, to: url)
-                files.append((url, segment.startMediaTimeMs, window.durationMs(of: segment)))
-            }
-            let totalMs = files.reduce(0) { $0 + $1.durationMs }
-            diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
-            guard !files.isEmpty else {
-                try? FileManager.default.removeItem(at: directory)
-                return
-            }
-            heardSourceWindows[key] = files
-        } catch {
+        let files: [HeardSourceWindowFiles.Segment]
+        do { files = try heardSourceWindows.store(window, key: key) } catch {
             diagnostics[diagnosticKey] = "write_failed:\(error.localizedDescription)"
             return
         }
-        guard let store,
-              let interjection = try? store.loadInterjections(sessionId: window.request.sessionId)
-                .first(where: { $0.id == window.request.interjectionId }) else { return }
-        if interjection.anchorContextStatus != .ready {
-            scheduleSourceWindowContextIfNeeded(for: interjection)
+        let totalMs = files.reduce(0) { $0 + $1.durationMs }
+        diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
+        // #652: drop the files when the Margin is gone or its context is already ready, since nothing would use them.
+        // If the Margins can't be read, keep them: a later schedule may still need them.
+        guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
+        let interjection = margins.first(where: { $0.id == window.request.interjectionId })
+        guard let interjection, HeardSourceWindowFiles.isStillNeeded(by: interjection) else {
+            heardSourceWindows.discard(key)
+            return
         }
-    }
-
-    private nonisolated static func writeHeardSegment(_ samples: [Float], sampleRate: Double, to url: URL) throws {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
-              let channel = buffer.floatChannelData?[0] else {
-            throw SessionKitError.persistenceFailed("heard_audio_buffer_unavailable")
-        }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
+        scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
     /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the
@@ -9951,7 +9928,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "waiting:heard_audio"
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(240))
-            guard let self, self.heardSourceWindows[key] == nil,
+            guard let self, self.heardSourceWindows.segments(for: key) == nil,
                   !self.pendingSourceContextInterjectionIds.contains(key),
                   let store = self.store,
                   let current = try? store.loadInterjections(sessionId: interjection.sessionId).first(where: { $0.id == interjection.id }),
@@ -9964,14 +9941,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func transcribeHeardSourceWindow(
-        _ files: [(url: URL, startMediaTimeMs: Int, durationMs: Int)],
-        for interjection: Interjection,
-        itemId: String,
-        reportsResult: Bool
-    ) {
+    private func transcribeHeardSourceWindow(for interjection: Interjection, itemId: String, reportsResult: Bool) {
         let key = Self.marginIdentity(interjection)
-        guard pendingSourceContextInterjectionIds.insert(key).inserted else { return }
+        guard !pendingSourceContextInterjectionIds.contains(key), let files = heardSourceWindows.take(key) else { return }
+        pendingSourceContextInterjectionIds.insert(key)
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled:heard_audio"
         diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "heard_stream_audio"
         if reportsResult { reportConfirmation("Recovering source context…") }
@@ -9998,11 +9971,8 @@ final class Gate1AppModel: ObservableObject {
                     try? SourceTranscriptionCaches.remove(.windows, itemId: scratchID, cachesDirectory: caches)
                 }
             }
-            if let directory = files.first?.url.deletingLastPathComponent() {
-                try? FileManager.default.removeItem(at: directory)
-            }
+            HeardSourceWindowFiles.delete(files)
             await MainActor.run {
-                self.heardSourceWindows[key] = nil
                 self.pendingSourceContextInterjectionIds.remove(key)
                 let timeline = HeardAudioWindow.episodeTimeline(parts)
                 let transcriptionKey = Self.marginDiagnosticKey("sourceWindowTranscription", interjection)
@@ -10055,6 +10025,7 @@ final class Gate1AppModel: ObservableObject {
            ) {
             run { engine in
                 snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
+                heardSourceWindows.discard(Self.marginIdentity(interjection)) // #652: the context is ready without it
                 refreshSelectedItem()
                 refreshMarginRows()
                 if reportsResult { reportConfirmation("Source context recovered.") }
@@ -10070,8 +10041,8 @@ final class Gate1AppModel: ObservableObject {
         if !transcriptionURL.isFileURL {
             // #156: a window can't be cut from a stream after the fact (AVFoundation stops the export). Use the
             // minute before and after the Margin that the player's tap kept, once it has been handed over.
-            if let heard = heardSourceWindows[Self.marginIdentity(interjection)] {
-                transcribeHeardSourceWindow(heard, for: interjection, itemId: item.id, reportsResult: reportsResult)
+            if heardSourceWindows.segments(for: Self.marginIdentity(interjection)) != nil {
+                transcribeHeardSourceWindow(for: interjection, itemId: item.id, reportsResult: reportsResult)
             } else if reportsResult {
                 // A manual retry comes long after the heard audio was used or dropped.
                 reportWarning("Context for a streamed episode comes from the audio around the Margin as you heard it, and that's no longer available. Download the episode to recover it.")
@@ -10128,6 +10099,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 self.run { engine in
                     self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
+                    self.heardSourceWindows.discard(identity) // #652: the context is ready without it
                     if !reference.evidence.isEmpty {
                         try self.persistPodcastAnchorEvidence(
                             request: request,
@@ -11580,7 +11552,7 @@ final class Gate1AppModel: ObservableObject {
         feedbackEvent = event
     }
 
-    private func refreshSelectedItem() {
+    func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
@@ -12699,13 +12671,9 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func dismissFollowedSourceEntry(id: String) {
-        guard let coordinator = followedSourceCoordinator else { return }
-        listeningSignals.dismiss(entryId: id)
-        Task { [weak self] in
-            try? await coordinator.setEntryState(id: id, state: .dismissed)
-            await self?.performFollowedSourceRefresh(force: false)
-        }
+    /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
+    func reloadFollowedSourceEntries() async {
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
     }
 
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false) {

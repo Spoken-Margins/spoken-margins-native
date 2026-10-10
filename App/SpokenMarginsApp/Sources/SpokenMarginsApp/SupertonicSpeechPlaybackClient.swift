@@ -419,6 +419,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)?
     private let observesPlayerLifecycle: Bool
     private let onDeviceRenderingAllowed: @Sendable () -> Bool
+    /// Plays the cue that introduces the iOS voice when it takes over a passage (#934). nil in tests that don't listen.
+    private let voiceChangeCue: (@Sendable () -> Void)?
     private let lock = NSLock()
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
@@ -468,6 +470,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Chunks the guard gave to the iOS voice. While any remain, the whole article isn't
     /// assembled into the item's audio, so the next play can try Supertonic again (#363 audit).
     private var standInOffsets: Set<Int> = []
+    /// Decides which passage gets the voice-change cue, per generation (#934).
+    private var voiceChangeCueDecider = NarrationVoiceChangeCue()
+    private var voiceChangeCueGeneration: UUID?
     private var initialPlaybackOffset: Int?
     private var initialRequestedSpokenOffset: Int?
     private var failedRenderReasons: [Int: String] = [:]
@@ -572,6 +577,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioSessionActivator: (@Sendable () throws -> Void)? = nil,
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
         observesPlayerLifecycle: Bool = true,
+        voiceChangeCue: (@Sendable () -> Void)? = nil,
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { SupertonicResourcePolicy.allowsRendering() },
         fallbackClient: AudioPlaybackClient? = nil,
         interruptionHandler: InterruptionHandler? = nil,
@@ -617,6 +623,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.audioSessionActivator = audioSessionActivator
         self.audioPlayerStarter = audioPlayerStarter
         self.observesPlayerLifecycle = observesPlayerLifecycle
+        self.voiceChangeCue = voiceChangeCue
         self.onDeviceRenderingAllowed = onDeviceRenderingAllowed
         self.interruptionHandler = interruptionHandler
         self.maxCharacters = maxCharacters
@@ -1833,7 +1840,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         _ audioURL: URL,
         duration: TimeInterval,
         request: RenderRequest,
-        delay: TimeInterval = 0
+        delay requestedDelay: TimeInterval = 0
     ) {
         let shouldPlay = lock.withLock {
             generation == request.generation && transportIntent == .playing
@@ -1848,6 +1855,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             return
         }
+        // The first passage the iOS voice takes over from the chosen voice is introduced by a chime. The passage waits
+        // for it, so its own clock and the offsets Margins anchor to don't move (#934).
+        let cueLeadIn = lock.withLock { () -> TimeInterval in
+            if voiceChangeCueGeneration != request.generation {
+                voiceChangeCueGeneration = request.generation
+                voiceChangeCueDecider = NarrationVoiceChangeCue()
+            }
+            return voiceChangeCueDecider.leadIn(forStandIn: standInOffsets.contains(request.startOffset))
+        }
+        if cueLeadIn > 0, let voiceChangeCue { voiceChangeCue() }
+        let delay = requestedDelay + (voiceChangeCue == nil ? 0 : cueLeadIn)
         do {
             // Keep the session continuous between ready chunks so opted-in
             // background audio does not swell at each sentence boundary.
