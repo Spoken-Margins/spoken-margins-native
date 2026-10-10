@@ -197,11 +197,13 @@ public final class CompactControlDispatcher {
         summaryScope: SummaryScope? = nil
     ) throws -> CompactControlResult {
         // While a start is pending the system card shows Play, because its clock must not run (#943).
-        // A Play tap there asks for what is already happening, so it is not an invalid command.
+        // Before that change the card showed Pause and a tap cancelled the load, so a Play tap during a
+        // pending start still cancels it: the listener asked to stop waiting, not to start again.
         if command == .play,
            canonicalRuntime.snapshot.status == .starting,
            surfaceProfile.has("remoteControl", "send_transport_commands") {
-            return CompactControlResult(snapshot: compactSnapshot(from: canonicalRuntime.snapshot), delegatedToCanonicalRuntime: false)
+            let paused = try canonicalRuntime.pause()
+            return CompactControlResult(snapshot: compactSnapshot(from: paused), delegatedToCanonicalRuntime: true)
         }
         try validate(command)
         let updated: SessionSnapshot
