@@ -716,6 +716,53 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         return (model, store, manifest, extractor)
     }
 
+    /// #914: the download finishing mid-session must not move the Margins onto a file the listener isn't hearing.
+    /// Placement waits for the session that kept the stream to end, then runs against the download.
+    @MainActor
+    func testDownloadFinishingDuringAStreamingSessionDefersPlacementUntilTheSessionEnds() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-stream-then-download")
+        let databaseURL = root.appendingPathComponent("recipient.sqlite")
+        let packageURL = root.appendingPathComponent("stream-then-download.spokenmargins")
+        let manifest = try writePodcastPackage(to: packageURL, packageID: "package-stream-then-download")
+        let transcriber = PackageAnchorTranscriptionClient()
+        let model = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber,
+            databaseURLOverride: databaseURL
+        )
+        model.resetAndSeed()
+        model.handleIncomingURL(packageURL)
+        model.confirmSpokenMarginsPackageImport()
+        try await waitForImportToFinish(model)
+
+        let item = try XCTUnwrap(model.libraryItems.first(where: { $0.title == Self.podcastTitle }))
+        let store = try model.libraryStoreForTesting()
+        let digest = try XCTUnwrap(manifest.contentDigest)
+        model.declineCurrentTerms()
+        model.startItem(id: item.id)
+        XCTAssertEqual(model.snapshot.itemId, item.id)
+        XCTAssertNotNil(model.snapshot.sessionId, "the listener is streaming")
+
+        let localURL = root.appendingPathComponent("recipient.mp3")
+        try Data("recipient-edition".utf8).write(to: localURL)
+        model.podcastLocalAssetDidBecomeReady(itemId: item.id, url: localURL)
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(model.diagnostics["podcastPlacementDeferred:\(item.id)"], "session_keeps_its_edition")
+        let requestsWhileStreaming = await transcriber.fullRequestCount()
+        XCTAssertEqual(requestsWhileStreaming, 0, "nothing is placed against the download while the stream plays")
+        XCTAssertNotEqual(try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus, .resolved)
+
+        model.endSession()
+        for _ in 0..<250 {
+            if try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus == .resolved { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.diagnostics["podcastPlacementDeferred:\(item.id)"], "resumed_after_session_change")
+        XCTAssertEqual(try store.loadImportedCommentaryLayer(packageDigest: digest)?.sourceResolutionStatus, .resolved)
+    }
+
     private static let podcastTitle = "Can you spot the imported story?"
     private static let podcastURL = "https://podcasts.example.com/episodes/imported-story"
     private static let podcastAudioURL = "https://cdn.example.com/imported-story.mp3"
