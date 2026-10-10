@@ -350,7 +350,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var quickAccessRecentFiles: [QuickAccessFile] = [] { didSet { cachedQuickAddCandidates = nil } }
     @Published private(set) var dismissedQuickAccessFileKeys = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.dismissedQuickAccessFilesKey) ?? []
-    ) { didSet { cachedQuickAddCandidates = nil } }
+    ) {
+        didSet {
+            cachedQuickAddCandidates = nil
+            UserDefaults.standard.set(dismissedQuickAccessFileKeys.sorted(), forKey: Gate1AppModel.dismissedQuickAccessFilesKey)
+        }
+    }
     @Published private(set) var sourceImportProgressMessage: String?
     @Published private(set) var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
@@ -2126,23 +2131,10 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    func dismissQuickAccessFile(_ file: QuickAccessFile) {
-        dismissedQuickAccessFileKeys.insert(file.dismissalKey)
-        persistDismissedQuickAccessFileKeys()
-    }
+    func dismissQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.insert(file.dismissalKey) }
 
     /// Brings a dismissed Quick Folder file back into Following (#477).
-    func restoreQuickAccessFile(_ file: QuickAccessFile) {
-        dismissedQuickAccessFileKeys.remove(file.dismissalKey)
-        persistDismissedQuickAccessFileKeys()
-    }
-
-    private func persistDismissedQuickAccessFileKeys() {
-        UserDefaults.standard.set(
-            dismissedQuickAccessFileKeys.sorted(),
-            forKey: Self.dismissedQuickAccessFilesKey
-        )
-    }
+    func restoreQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.remove(file.dismissalKey) }
 
     private func beginObsidianMarkdownImport(
         urls: [URL],
@@ -12714,8 +12706,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        guard let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() else { return }
-        followedSourceEntries = entries
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
     }
 
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false) {
