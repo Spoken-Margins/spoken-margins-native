@@ -43,6 +43,11 @@ Replace this section when the focus changes; do not append to it.
     - Otherwise it's opt-in.
   - **Keep no user data that could identify someone unless the feature needs it.** Where a feature needs it (a voice Margin is traceable by voice alone), encrypt it end to end so the server holds only unreadable bytes, as share links do (#805).
   - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
+- **Owner's standing calls (2026-10-10).** Don't ask again:
+  - **Database changes stay backward compatible.** A full database migration happens only after the app tells the listener and they tap to migrate.
+  - **Map lookups and relay features are opt-in** until an anonymous relay exists. Relay experiments are fine; spend nothing until the owner approves a price.
+  - **Cloud voices start as a limited trial** (a couple of minutes per listener). No payment work until the trial shows whether to charge. Server maps stay free.
+  - **Solid Ground has no ship pressure.** Start the second half of the model split now; cutting Solid Ground off as its own branch first is fine.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
