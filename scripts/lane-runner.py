@@ -71,6 +71,10 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   while memory pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
   The builds-beside-a-simulator trial ended with the per-PR app builds (#1207): T2 builds take lane_slots'
   usual build slots wherever they run.
+- SessionKit tests are skipped when the tree under test already passed them on this Mac (#1328,
+  scripts/sessionkit_pass.py): the key is a digest of the package, the repository files its tests read, the
+  toolchain and the test runner. The PASS report says so. Never skipped without the changed-paths list,
+  and a pass older than 24 hours isn't used.
 - The step ledger (#1200, scripts/lane_ledger.py). Each step a job runs (the hot-file ratchet, host tests, app
   builds, app tests) is noted with its verdict and wall time, and when the job has reported, they go into
   step-ledger.json in the lane state folder: runs, time, PASS / FAIL / runner faults, and catches. A rule that
@@ -305,7 +309,12 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
     verify-tests.py manifests under <outputs>."""
     failed, counted = [], 0
     for output in outputs:
-        for step in _read_manifest(output).get('steps', []):
+        manifest = _read_manifest(output)
+        if manifest.get('sessionkit_pass'):  # SessionKit's tests were skipped as already passed (#1328): not a run of none
+            counted += 1
+        for step in manifest.get('steps', []):
+            if step.get('superseded'):  # the parallel SessionKitCoreTests run that a serial run replaced (#1328)
+                continue
             tests = step.get('tests') or {}
             counted += len(tests)
             failed += [test for test, record in tests.items() if record.get('status') == 'failed']
@@ -566,7 +575,8 @@ def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = Non
     if code == 0 and manifest.get('status') == 'verified':
         # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
         return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
-                        if isinstance(step.get('skipped'), list) for reason in step['skipped']]
+                        if isinstance(step.get('skipped'), list) for reason in step['skipped']] + [
+                        str(note) for note in manifest.get('notes', [])]
     return 'FAIL', [f'host tests (--plan fast) — expected: verified. observed: exit {code}. evidence: {log_path}',
                     *[f'  {line}' for line in first_errors(log_path)]]
 
