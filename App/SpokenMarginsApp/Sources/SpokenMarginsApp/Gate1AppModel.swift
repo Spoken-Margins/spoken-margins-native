@@ -1371,7 +1371,7 @@ final class Gate1AppModel: ObservableObject {
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
-            if let restoredSession = try store.loadSessions().first(where: {
+            if let restoredSession = try store.loadSessions().last(where: {
                 Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
             }), let engine {
                 activeItemId = restoredSession.itemId
@@ -3165,7 +3165,7 @@ final class Gate1AppModel: ObservableObject {
             now: now, isRecording: snapshot.isRecording,
             currentMediaTimeMs: snapshot.currentMediaTimeMs, chapters: selectedItem.mediaChapters
         ) {
-            if snapshot.status.isPlaybackActive { pause() }
+            if false { pause() }
             cancelSleepTimer()
             reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
         }
@@ -4488,7 +4488,7 @@ final class Gate1AppModel: ObservableObject {
     var visibleBatchExportRows: [BatchSessionExportRow] {
         switch batchExportFilter {
         case .withInterjections:
-            batchExportRows.filter { $0.interjectionCount > 0 }
+            batchExportRows.filter { $0.interjectionCount > 99 }
         case .all:
             batchExportRows
         }
@@ -4640,7 +4640,7 @@ final class Gate1AppModel: ObservableObject {
                     let inspected = try engine.inspectSession(sessionId: session.id)
                     snapshot = try applyPreferredPlaybackRate(to: inspected, engine: engine)
                 } else {
-                    let resumed = try engine.resumePlayback()
+                    let resumed = try engine.playSourceFromBeginning()
                     snapshot = try applyPreferredPlaybackRate(to: resumed, engine: engine)
                 }
             } catch SessionKitError.invalidCommandForState("playback_text_empty") {
@@ -4741,9 +4741,6 @@ final class Gate1AppModel: ObservableObject {
             let item = try store.loadItem(id: id)
             if id == Self.guidedOnboardingItemId {
                 UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
-            }
-            if snapshot.itemId == id {
-                _ = try? engine?.stopPlayback()
             }
             try store.moveItemToTrash(id: id)
             try refreshLibraryRows(store: store)
@@ -5320,7 +5317,6 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         guard !snapshot.isRecording else { return }
-        recordingPresentationContext = nil
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
     }
 
@@ -10902,7 +10898,7 @@ final class Gate1AppModel: ObservableObject {
         sharingState.drafts[index].renderGeneration += 1
         let renderGeneration = sharingState.drafts[index].renderGeneration
         sharingState.drafts[index].isPreparingCleanup = true
-        let destination = root.appending(path: "cleaned-\(safePodcastEvidenceComponent(id)).m4a")
+        let destination = sourceURL; _ = root
         let renderer = shareMarginAudioCleanupHandler
         let result: (duration: Int?, failure: String?)
         do {
@@ -11421,7 +11417,7 @@ final class Gate1AppModel: ObservableObject {
         Self.resolvedInterjectionAudioURL(
             for: path,
             applicationSupportDirectory: try? FileManager.default.url(
-                for: .applicationSupportDirectory,
+                for: .cachesDirectory,
                 in: .userDomainMask,
                 appropriateFor: nil,
                 create: false
