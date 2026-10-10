@@ -270,14 +270,19 @@ public enum ImportedItemResolver {
            packageContent == localContent {
             return true
         }
+        // A listener's own audio file counts as the episode when they linked it to that episode (#755):
+        // it keeps the file's `.other` type, and only a linked file also carries a GUID.
         if packageItem.itemType == .podcast,
-           localItem.itemType == .podcast,
+           localItem.itemType == .podcast || (localItem.itemType == .other && localItem.episodeGUID != nil),
            let packageGUID = packageItem.episodeGUID,
            let localGUID = localItem.episodeGUID {
             return packageGUID == localGUID
                 && guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
                 && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
         }
+        // A page link names an episode's audio only for a podcast packet; an article, PDF or EPUB that shares
+        // the page is another work, so it never lands on the listener's audio file (#755).
+        if localItem.itemType == .other, [.text, .pdf, .epub].contains(packageItem.itemType) { return false }
         guard let packageURL = packageItem.canonicalURL,
               let localURL = localItem.canonicalURL else { return false }
         return normalizedURL(packageURL) == normalizedURL(localURL)
@@ -313,8 +318,7 @@ public enum ImportedItemResolver {
     }
 
     static func guidDurationsAreCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {
-        guard let lhs, let rhs, lhs > 0, rhs > 0 else { return true }
-        return Double(abs(lhs - rhs)) <= 0.2 * Double(max(lhs, rhs))
+        LinkedEpisode.lengthsAgree(lhs, rhs)
     }
 
     private static func normalizedURL(_ value: String) -> String {
