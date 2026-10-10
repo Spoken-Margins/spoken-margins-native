@@ -810,6 +810,47 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         return wav
     }
 
+    // MARK: Test honesty (#1042: APA-03, APA-04, APA-10, APA-11)
+
+    /// APA-03: the older HTTP-failure test used a file the budget rejected anyway, so deleting the status check
+    /// still ended `.failed`. Here the file fits: only the status decides.
+    func testAnErrorPageThatFitsTheBudgetIsRefusedBecauseOfItsStatusAlone() async throws {
+        for httpOK in [false, true] {
+            let fixture = try makeFixture()
+            try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 10))
+            let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+            let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:status", byteCount: 3)
+            let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "status",
+                reservationId: reservation.id, userInitiated: true)
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+                remoteURL: "https://example.com/audio", state: .downloading))
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+            var published = false
+            coordinator.onLocalAssetReady = { _, _ in published = true }
+            coordinator.restoreAttempt(attempt)
+            let staged = fixture.root.appending(path: "status.mp3")
+            try Data([1, 2, 3]).write(to: staged)
+
+            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: httpOK)
+
+            let label = httpOK ? "a 2xx response" : "a non-2xx response"
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path), "\(label): the staged file is gone")
+            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "\(label): the reservation is released")
+            if httpOK {
+                XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, "control: the same file is adopted")
+                XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().count, 1)
+                XCTAssertTrue(published)
+            } else {
+                XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, label)
+                XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "\(label): nothing is owned")
+                XCTAssertNil(coordinator.validatedLocalURL(for: "episode"), label)
+                XCTAssertFalse(published, label)
+            }
+            coordinator.shutdown()
+        }
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
