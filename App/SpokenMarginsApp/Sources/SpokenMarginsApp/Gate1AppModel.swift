@@ -12414,7 +12414,7 @@ final class Gate1AppModel: ObservableObject {
                 self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
                 self?.tryRefreshOfflineStorageUsage()
             }
-            await self.refreshFollowedSources(force: false)
+            await self.performFollowedSourceRefresh(force: false)
             await self.refreshGuidedOnboardingContent()
         }
     }
@@ -12491,7 +12491,7 @@ final class Gate1AppModel: ObservableObject {
                 _ = try await coordinator.follow(candidate: candidate)
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
@@ -12517,7 +12517,7 @@ final class Gate1AppModel: ObservableObject {
         followedSourceCoordinator = coordinator
         let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
         diagnostics["followSourceFailure"] = nil
-        if refreshAfter { await refreshFollowedSources(force: false) }
+        if refreshAfter { await performFollowedSourceRefresh(force: false) }
         return sourceId
     }
 
@@ -12534,7 +12534,7 @@ final class Gate1AppModel: ObservableObject {
                 _ = try await coordinator.follow(candidate: candidate)
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
@@ -12664,7 +12664,7 @@ final class Gate1AppModel: ObservableObject {
                     try self.refreshLibraryRows(store: store)
                 }
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -12779,7 +12779,7 @@ final class Gate1AppModel: ObservableObject {
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
                 try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
                 self.storedSourceFollowSuggestionCandidates = []
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -12808,10 +12808,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshFollowedSources(force: Bool = true) {
-        Task { [weak self] in await self?.refreshFollowedSources(force: force) }
+        Task { [weak self] in await self?.performFollowedSourceRefresh(force: force) }
     }
 
-    private func refreshFollowedSources(force: Bool) async {
+    func performFollowedSourceRefresh(force: Bool) async {
         guard !isRefreshingFollowedSources else { return }
         isRefreshingFollowedSources = true
         defer { isRefreshingFollowedSources = false }
@@ -12834,7 +12834,7 @@ final class Gate1AppModel: ObservableObject {
         listeningSignals.dismiss(entryId: id)
         Task { [weak self] in
             try? await coordinator.setEntryState(id: id, state: .dismissed)
-            await self?.refreshFollowedSources(force: false)
+            await self?.performFollowedSourceRefresh(force: false)
         }
     }
 
@@ -12879,7 +12879,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 guard imported else { return }
                 try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
-                await self.refreshFollowedSources(force: false)
+                await self.performFollowedSourceRefresh(force: false)
                 self.reportConfirmation("Imported \(entry.title) into the library.")
             } catch {
                 self.reportFailure(error, context: "Source entry import failed")
@@ -12891,7 +12891,7 @@ final class Gate1AppModel: ObservableObject {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.unfollow(subscriptionId: id)
-            await self?.refreshFollowedSources(force: false)
+            await self?.performFollowedSourceRefresh(force: false)
         }
     }
 
