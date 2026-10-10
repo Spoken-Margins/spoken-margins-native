@@ -369,8 +369,8 @@ private struct ManageFeedsScreen: View {
             set: { if !$0 { pendingUnfollowID = nil } }
         ), titleVisibility: .visible) {
             Button("Unfollow", role: .destructive) {
+                // The dialog clears pendingUnfollowID as it closes, so its title keeps the show's name.
                 if let id = pendingUnfollowID { model.unfollowSource(id: id) }
-                pendingUnfollowID = nil
             }
         } message: {
             Text("Items already in your Library will be kept.")
@@ -588,9 +588,14 @@ private struct SourceInboxRow: View {
         }
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
-        .accessibilityAction(named: "Play now") { if isFollowedEntry { playNow() } }
-        .accessibilityAction(named: "Mute this show") { if let subscription { model.toggleMuteSource(id: subscription.id) } }
-        .accessibilityAction(named: "Unfollow") { if subscription != nil { confirmsUnfollow = true } }
+        .accessibilityActions {
+            // A Quick Folder file has no show to play from, mute or unfollow.
+            if let subscription {
+                Button("Play now", action: playNow)
+                Button("Mute this show") { model.toggleMuteSource(id: subscription.id) }
+                Button("Unfollow this show") { confirmsUnfollow = true }
+            }
+        }
     }
 
     private var isFollowedEntry: Bool {
