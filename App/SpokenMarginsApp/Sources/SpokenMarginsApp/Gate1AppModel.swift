@@ -501,7 +501,7 @@ final class Gate1AppModel: ObservableObject {
     private var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
-    private let localFoundationModelClient: any LocalFoundationModelClient
+    let localFoundationModelClient: any LocalFoundationModelClient
     private let openAIResponsesClient = OpenAIResponsesClient()
     private let streamingSpeechQueue = StreamingSpeechQueue()
     private(set) var speechPlaybackClient: AudioPlaybackClient?
