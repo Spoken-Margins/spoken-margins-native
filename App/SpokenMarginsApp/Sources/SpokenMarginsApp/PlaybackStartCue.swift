@@ -59,7 +59,7 @@ final class PlaybackStartCue: ObservableObject {
     /// Refresh Diagnostics doesn't drop the measurements (audit of #580).
     convenience init(model: Gate1AppModel, pinned: PinnedDiagnostics) {
         self.init(snapshots: model.$snapshot.eraseToAnyPublisher(),
-                  checkNow: { [weak model] in model?.tickPlaybackProgress() },
+                  checkNow: nil, // MUTATION APA-13b
                   record: { key, value in pinned.set(key, value) })
     }
 
@@ -109,8 +109,7 @@ final class PlaybackStartCue: ObservableObject {
 
     private func stopChime() {
         if let stopChimeOverride { stopChimeOverride(); return }
-        player?.stop()
-        player = nil
+        player = nil // MUTATION APA-13a: no stop
     }
 
     private func playSoftChime() -> String {

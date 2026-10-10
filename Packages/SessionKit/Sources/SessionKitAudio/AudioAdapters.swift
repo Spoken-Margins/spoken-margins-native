@@ -1030,7 +1030,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             paused = true
             replaceSynthesizer()
             #if os(iOS)
-            if mixesWithOtherAudio, lowersBackgroundAudio { try PlaybackAudioSessionPolicy.releaseDucking() }
+            // MUTATION APA-02a: pause keeps ducking
             #endif
         }
         #endif
@@ -1322,7 +1322,7 @@ extension SystemSpeechPlaybackClient: AVSpeechSynthesizerDelegate {
             completedTargetId = lastTargetId
             playbackComplete = true
             #if os(iOS)
-            if mixesWithOtherAudio, lowersBackgroundAudio { try? PlaybackAudioSessionPolicy.releaseDucking() }
+            // MUTATION APA-02b: the end keeps ducking
             #endif
         }
         pendingStartTargetId = nil

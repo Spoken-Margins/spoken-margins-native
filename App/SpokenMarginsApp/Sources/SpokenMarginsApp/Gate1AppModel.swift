@@ -12078,7 +12078,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// The foreground loop and the background task take turns, so two Library items never render at once (#281).
     func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
-        await libraryAudioRenderGate.run { await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) }
+        await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) // MUTATION APA-12
     }
 
     private func preparationPassInTurn(foregroundDemandOnly: Bool) async -> Bool {

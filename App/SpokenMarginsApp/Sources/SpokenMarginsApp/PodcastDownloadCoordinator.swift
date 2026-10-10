@@ -707,7 +707,7 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
         let responseOK = (downloadTask.response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
         // The URLSession temporary file is only valid until this delegate returns.
         let ext = URL(fileURLWithPath: downloadTask.response?.suggestedFilename ?? "episode.audio").pathExtension
-        let safeExtension = !ext.isEmpty && ext.count <= 10 && ext.allSatisfy({ $0.isLetter || $0.isNumber }) ? ext : "audio"
+        let safeExtension = !ext.isEmpty ? ext : "audio" // MUTATION APA-10
         let staged = directory.appending(path: "staging-\(UUID().uuidString).\(safeExtension)")
         let preserved: URL?
         do { try FileManager.default.moveItem(at: location, to: staged); preserved = staged }
