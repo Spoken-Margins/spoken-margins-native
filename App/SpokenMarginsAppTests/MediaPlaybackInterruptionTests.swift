@@ -654,6 +654,69 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 20, "anchored at the Margin that played, not at 5 s")
     }
 
+    // MARK: Leveled Margins (#467)
+
+    /// The owner's report (#181): Margins played from the raw recording, so a whisper was far quieter than
+    /// the episode. Each way a spoken Margin is heard must play the leveled copy once it is made.
+    func testEveryWayToHearASpokenMarginPlaysItsLeveledCopy() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeQuietBurstsWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        let voice = URL(fileURLWithPath: try XCTUnwrap(fixture.record.audioPath))
+        let own = Interjection(
+            id: "own-margin", itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),
+            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_000),
+            audioPath: voice.path, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
+        )
+        try fixture.store.saveInterjection(own)
+        let anchor = MarginMomentAnchor(marginId: "own-margin", mediaTimeMs: 1_000)
+        let momentVoice = model.leveledVoiceURL(["own-margin": voice], itemId: "real-source", margins: [anchor])
+
+        try waitUntil("the leveled copy is made", timeout: 20) { Gate1AppModel.leveledMargins.readyCopy(for: voice) != nil }
+        let copy = try XCTUnwrap(Gate1AppModel.leveledMargins.readyCopy(for: voice))
+        defer { try? FileManager.default.removeItem(at: copy) }
+        let recorded = try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: voice).integratedLUFS)
+        let leveled = try XCTUnwrap(MarginLoudnessLeveler.measure(fileAt: copy).integratedLUFS)
+        XCTAssertGreaterThan(leveled, recorded + 10, "the quiet recording was turned up")
+
+        XCTAssertEqual(momentVoice("own-margin")?.lastPathComponent, copy.lastPathComponent, "Play this moment and shared moments")
+
+        model.toggleInterjectionAudioPlayback(own)
+        XCTAssertEqual(model.diagnostics["marginLeveling"], "leveled")
+        XCTAssertEqual(try playingInterjectionFileName(model), copy.lastPathComponent, "your Margin from its detail")
+        model.stopInterjectionAudioPlayback()
+
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        XCTAssertEqual(try playingInterjectionFileName(model), copy.lastPathComponent, "a shared Margin")
+    }
+
+    private func playingInterjectionFileName(_ model: Gate1AppModel) throws -> String {
+        let player = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        return try XCTUnwrap((player.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent)
+    }
+
+    /// 100 ms bursts of a quiet 440 Hz tone with silence between, like speech: loudness a recording can
+    /// be turned up from (a steady tone's noise floor is its own level, which the leveler won't boost).
+    private func makeQuietBurstsWAV(duration: TimeInterval) throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appending(path: "media-interruption-\(UUID().uuidString).wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
+        let frameCount = AVAudioFrameCount(44_100 * duration)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount))
+        buffer.frameLength = frameCount
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<Int(frameCount) {
+            samples[frame] = (frame / 4_410) % 2 == 0 ? sin(Float(frame) * 2 * .pi * 440 / 44_100) * 0.01 : 0
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+        return url
+    }
+
     private func makeTestWAV(duration: TimeInterval) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appending(path: "media-interruption-\(UUID().uuidString).wav")
