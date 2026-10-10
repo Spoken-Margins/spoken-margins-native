@@ -48,13 +48,21 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(review.isHittable)
         captureScreen(named: "qol-item-share-sheet")
         review.tap()
-        // Tap two of three: Share is pinned at the bottom of Review. Its build, verify and system
-        // share path is covered by testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare.
         XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
         let shareAction = element("build23.sender.review.share")
         XCTAssertTrue(shareAction.waitForExistence(timeout: 5))
         XCTAssertTrue(shareAction.isHittable)
         captureScreen(named: "qol-item-share-review")
+        // Third tap: Share is pinned at the bottom of Review and builds, verifies and presents the iOS share sheet.
+        shareAction.tap()
+        let nativeShareSurface = element("ActivityListView")
+        XCTAssertTrue(
+            nativeShareSurface.waitForExistence(timeout: 8),
+            "Share, Review, Share did not reach the iOS share sheet from the Margins tab."
+        )
+        captureScreen(named: "qol-item-share-ios-sheet")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(nativeShareSurface, timeout: 5))
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
