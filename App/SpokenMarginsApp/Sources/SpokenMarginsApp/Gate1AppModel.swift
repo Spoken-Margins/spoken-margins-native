@@ -8837,6 +8837,7 @@ final class Gate1AppModel: ObservableObject {
                     path: "PreparedSupertonicAudio",
                     directoryHint: .isDirectory
                 ),
+                voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
                         self?.handleSpeechPlaybackInterruption(event)

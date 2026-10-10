@@ -228,6 +228,81 @@ final class SupertonicSpeechTests: XCTestCase {
         for _ in 0..<150 { if await condition() { return }; try? await Task.sleep(for: .milliseconds(20)) }
     }
 
+    /// #934: the first passage the iOS voice takes over is introduced by one cue, and the passage waits for it.
+    /// Later stand-in passages in the same run and a run with no stand-in get none.
+    func testVoiceChangeCuePlaysOnceBeforeTheFirstStandInPassage() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "voice-cue-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let template = try silentTemplate(root)
+        // The chosen voice renders the first chunk; the guard hands the next two to the iOS voice.
+        let renderer = StandInAfterFirstRenderer(template: template, standInFrom: 2)
+        let starts = ResumeStartCounter()
+        let cues = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
+            observesPlayerLifecycle: false, voiceChangeCue: { cues.bump() },
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        let sentence = "The quick brown fox jumps over the lazy dog near the river bank. "
+        let text = String(repeating: sentence, count: (RenderedSpeechChunker.spokenCostBudget * 3) / sentence.count + 3)
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "voice-cue", from: 0)
+        await waitUntil { starts.value >= 1 }
+        XCTAssertEqual(cues.value, 0, "the chosen voice opens the narration with no cue")
+
+        client.debugFinishActiveChunk() // the next passage is the first stand-in
+        await waitUntil { cues.value >= 1 }
+        XCTAssertEqual(cues.value, 1, "the cue plays as the first stand-in passage is about to start")
+        XCTAssertEqual(starts.value, 1, "the passage waits for the cue")
+        await waitUntil { starts.value >= 2 }
+        XCTAssertEqual(starts.value, 2)
+
+        client.debugFinishActiveChunk() // a second stand-in passage in the same run
+        await waitUntil { starts.value >= 3 }
+        XCTAssertEqual(starts.value, 3)
+        XCTAssertEqual(cues.value, 1, "a later stand-in passage gets no second cue")
+        try client.stop()
+    }
+
+    func testNoVoiceChangeCueWhenTheChosenVoiceReadsEverything() async throws {
+        let withCue = try await playTwoChunks(standInFrom: 2)
+        let without = try await playTwoChunks(standInFrom: Int.max)
+
+        XCTAssertEqual(without.cues, 0)
+        XCTAssertEqual(withCue.cues, 1)
+        XCTAssertEqual(withCue.offsetAtSecondChunk, without.offsetAtSecondChunk,
+                       "the cue is outside the narration: the passage starts at the same text offset either way")
+    }
+
+    /// Plays one text and moves from its first chunk to its second; returns the cues heard and the narration's text
+    /// offset once the second chunk has started.
+    private func playTwoChunks(standInFrom: Int) async throws -> (cues: Int, offsetAtSecondChunk: Int?) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "voice-cue-two-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let renderer = StandInAfterFirstRenderer(template: try silentTemplate(root), standInFrom: standInFrom)
+        let starts = ResumeStartCounter()
+        let cues = ResumeStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in starts.bump() },
+            observesPlayerLifecycle: false, voiceChangeCue: { cues.bump() },
+            fallbackClient: RecordingFallbackAudioClient()
+        )
+        let sentence = "The quick brown fox jumps over the lazy dog near the river bank. "
+        _ = try client.prepareSpeechText(String(repeating: sentence, count: (RenderedSpeechChunker.spokenCostBudget * 2) / sentence.count + 3))
+        try client.play(targetId: "voice-cue-two", from: 0)
+        await waitUntil { starts.value >= 1 }
+        client.debugFinishActiveChunk()
+        await waitUntil { starts.value >= 2 }
+        XCTAssertEqual(starts.value, 2)
+        let offset = client.currentCharOffset()
+        try client.stop()
+        return (cues.value, offset)
+    }
+
     // #235, Codex rank 2: " [1] " is spoken " citation 1 ", every character mapped to the "[" offset. When a
     // chunk boundary splits it, a pause in the second chunk maps back into the first, already played.
     func testPauseInsideASplitCitationResumesTheCurrentChunk() async throws {
@@ -3873,6 +3948,24 @@ private actor TextRecordingSupertonicRenderer: SupertonicRendering {
         let url = FileManager.default.temporaryDirectory.appending(path: "count-\(UUID().uuidString).wav")
         try FileManager.default.copyItem(at: template, to: url)
         return SupertonicNarrationResult(audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1)
+    }
+    func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
+}
+
+/// Renders every chunk from the `standInFrom`th on as the iOS voice would (the guard's replacement).
+private actor StandInAfterFirstRenderer: SupertonicRendering {
+    let template: URL
+    let standInFrom: Int
+    private var count = 0
+    init(template: URL, standInFrom: Int) { self.template = template; self.standInFrom = standInFrom }
+    func render(text: String, voice: SupertonicVoiceID, language: String, speed: Float, synthesisSteps: Int) async throws -> SupertonicNarrationResult {
+        count += 1
+        let url = FileManager.default.temporaryDirectory.appending(path: "stand-in-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: template, to: url)
+        return SupertonicNarrationResult(
+            audioURL: url, duration: 1, sampleRate: 44_100, renderDuration: 0.01, sessionLoadCount: 1,
+            engine: count >= standInFrom ? SupertonicNarrationResult.systemVoiceEngine : SupertonicNarrationResult.supertonicEngine
+        )
     }
     func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
 }
