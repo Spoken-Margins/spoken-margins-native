@@ -374,7 +374,25 @@ actor PreparedAudioCoordinator {
     /// pin so their own reservations can't evict them (#645). Chunk rows are committed to the
     /// ledger under `PreparedAudio/`, the coordinator's root.
     static func ledgerPaths(ofChunksIn manifest: PreparedAudioManifest) -> Set<String> {
-        Set(manifest.chunks.map { "PreparedAudio/\($0.relativePath)" })
+        Set(manifest.chunks.map(ledgerPath(of:)))
+    }
+
+    /// The ledger row for a committed chunk. It is built here, from the same path the pins use,
+    /// so a pin always names the row its reservation must not evict (#645).
+    static func ledgerAsset(for chunk: PreparedAudioChunk, itemId: String) -> OwnedOfflineAsset {
+        OwnedOfflineAsset(
+            id: chunk.id,
+            itemId: itemId,
+            category: .preparedChunk,
+            relativePath: ledgerPath(of: chunk),
+            byteCount: chunk.byteCount,
+            checksumSHA256: chunk.checksumSHA256,
+            isReproducible: true
+        )
+    }
+
+    private static func ledgerPath(of chunk: PreparedAudioChunk) -> String {
+        "PreparedAudio/\(chunk.relativePath)"
     }
 
     /// A size check, not a checksum: this runs on every preparation pass.

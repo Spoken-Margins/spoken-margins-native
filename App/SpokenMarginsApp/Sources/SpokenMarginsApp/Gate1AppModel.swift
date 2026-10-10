@@ -12217,18 +12217,7 @@ final class Gate1AppModel: ObservableObject {
                 try? await ledger.release(reservationId: reservation.id)
                 return !foregroundDemandOnly
             }
-            try await ledger.commit(
-                reservationId: reservation.id,
-                asset: OwnedOfflineAsset(
-                    id: committed.id,
-                    itemId: item.id,
-                    category: .preparedChunk,
-                    relativePath: "PreparedAudio/\(committed.relativePath)",
-                    byteCount: committed.byteCount,
-                    checksumSHA256: committed.checksumSHA256,
-                    isReproducible: true
-                )
-            )
+            try await ledger.commit(reservationId: reservation.id, asset: PreparedAudioCoordinator.ledgerAsset(for: committed, itemId: item.id))
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
                                                                 "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
