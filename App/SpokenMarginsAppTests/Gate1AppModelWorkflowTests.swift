@@ -516,19 +516,52 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelSleepTimer()
     }
 
-    func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+    /// #1043 APM-05: the expiry tests ran with nothing playing, so the pause the timer exists for never ran.
+    func testTimedSleepTimerExpiryPausesThePlayingSource() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive)
+        XCTAssertTrue(audio.isPlaying)
         model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
         guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
             return XCTFail("Expected armed sleep timer")
         }
-        model.snapshot.isRecording = true
+
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(-1))
+        XCTAssertTrue(audio.isPlaying, "nothing pauses before the deadline")
+
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(1))
+        XCTAssertEqual(model.sleepTimerState, .inactive)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertFalse(audio.isPlaying, "the timer said it paused playback, so the player must have stopped")
+    }
+
+    func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
+        guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
         model.reconcileSleepTimer(now: deadline.addingTimeInterval(1))
         XCTAssertEqual(model.sleepTimerState, .expiryDeferred(mode: .minutes15))
+        XCTAssertTrue(model.snapshot.isRecording, "the timer never cuts a Margin off")
 
-        model.snapshot.isRecording = false
+        model.finishInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertTrue(audio.isPlaying, "the source plays on after the Margin is saved")
         model.reconcileSleepTimer(now: deadline.addingTimeInterval(2))
         XCTAssertEqual(model.sleepTimerState, .inactive)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertFalse(audio.isPlaying, "the deferred expiry pauses the source once the Margin is saved")
     }
 
     func testEndOfChapterSleepTimerIsUnavailableForMaplessAndLastChapterPositions() {
@@ -4764,6 +4797,8 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
     var configuredSpeechRates: [Float] = []
     var configuredSpeechVoices: [String?] = []
     var currentOffset: Int?
+    /// Whether the player was last told to play or to stop. `stop()` falls back to `pause()`, so both clear it.
+    private(set) var isPlaying = false
     private var activeTargetId: String?
 
     func prepareSpeechText(_ text: String) throws -> String {
@@ -4783,9 +4818,12 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
         activeTargetId = targetId
         currentOffset = charOffset
         playedOffsets.append(charOffset)
+        isPlaying = true
     }
 
-    func pause() throws {}
+    func pause() throws {
+        isPlaying = false
+    }
 
     func currentCharOffset() -> Int? {
         currentOffset
