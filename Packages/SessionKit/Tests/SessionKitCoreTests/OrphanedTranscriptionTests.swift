@@ -42,10 +42,74 @@ final class OrphanedTranscriptionTests: XCTestCase {
         _ = try engine.transcriptionRetryFailed(interjectionId: "m1", sessionId: "session-A", error: "boom")
         XCTAssertEqual(try store.loadInterjections(sessionId: "session-A").first?.transcriptionStatus, "failed", "a failed retry stays failed")
 
+        engine.transcriptionRequested(interjectionId: "m1", sessionId: "session-A") // the app's Retry
         _ = try engine.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "Again")
         let stored = try XCTUnwrap(try store.loadInterjections(sessionId: "session-A").first)
         XCTAssertEqual(stored.transcriptionStatus, "transcribed")
         XCTAssertEqual(stored.transcript, "Again")
+    }
+
+    // MARK: Work that finishes after the listener deleted the words
+
+    func testWorkThatFinishesAfterADeleteDoesNotBringTheWordsBack() throws {
+        let (store, engine) = try makeEngine(path: makePath())
+        var aligned = margin(id: "m1", status: "failed", words: "Old words")
+        aligned.alignedTranscript = AlignedInterjectionTranscript(text: "Old words", segments: [])
+        try store.saveInterjection(aligned)
+
+        // The listener deletes the words while a Retry is running.
+        _ = try engine.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "transcript")
+        let afterDelete = try XCTUnwrap(try store.loadInterjections(sessionId: "session-A").first)
+        XCTAssertNil(afterDelete.alignedTranscript, "the aligned copy holds the same words")
+
+        _ = try engine.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "Late words")
+        _ = try engine.transcriptionCompleted(
+            interjectionId: "m1", sessionId: "session-A",
+            alignedTranscript: AlignedInterjectionTranscript(text: "Late aligned", segments: [])
+        )
+        _ = try engine.cleanupCompleted(interjectionId: "m1", sessionId: "session-A", cleanedTranscript: "Late cleaned")
+
+        XCTAssertEqual(try store.loadInterjections(sessionId: "session-A").first, afterDelete,
+                       "nothing the finished work returns reaches the row, so nothing reaches exports or notes")
+    }
+
+    func testAFreshRetryAfterADeleteMayReplaceTheWordsAndDuplicateRequestsAreHarmless() throws {
+        let (store, engine) = try makeEngine(path: makePath())
+        try store.saveInterjection(margin(id: "m1", status: "transcribed", words: "Old"))
+        _ = try engine.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "transcript")
+
+        engine.transcriptionRequested(interjectionId: "m1", sessionId: "session-A")
+        engine.transcriptionRequested(interjectionId: "m1", sessionId: "session-A")
+        _ = try engine.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "New")
+
+        let stored = try XCTUnwrap(try store.loadInterjections(sessionId: "session-A").first)
+        XCTAssertEqual(stored.transcript, "New")
+        XCTAssertEqual(stored.transcriptionStatus, "transcribed")
+    }
+
+    func testADeleteInOneSessionDoesNotBlockTheSameIdMarginInAnother() throws {
+        let (store, engine) = try makeEngine(path: makePath())
+        var other = margin(id: "same-id", status: "pending", words: nil)
+        other.sessionId = "session-B"
+        try store.saveInterjection(margin(id: "same-id", status: "transcribed", words: "A"))
+        try store.saveInterjection(other)
+        _ = try engine.deleteRepresentation(interjectionId: "same-id", sessionId: "session-A", representation: "transcript")
+
+        _ = try engine.transcriptionCompleted(interjectionId: "same-id", sessionId: "session-B", transcript: "B words")
+
+        XCTAssertEqual(try store.loadInterjections(sessionId: "session-B").first?.transcript, "B words")
+        XCTAssertNil(try store.loadInterjections(sessionId: "session-A").first?.transcript)
+    }
+
+    func testAMarginDeletedWhileWorkFinishesStaysDeleted() throws {
+        let (store, engine) = try makeEngine(path: makePath())
+        try store.saveInterjection(margin(id: "m1", status: "pending", words: nil))
+        _ = try engine.deleteInterjection(interjectionId: "m1", sessionId: "session-A")
+
+        _ = try engine.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "Late")
+
+        XCTAssertEqual(try store.loadInterjections(sessionId: "session-A").first?.status, "deleted")
+        XCTAssertEqual(try store.settleOrphanedTranscriptions(), 0)
     }
 
     // MARK: Launch recovery

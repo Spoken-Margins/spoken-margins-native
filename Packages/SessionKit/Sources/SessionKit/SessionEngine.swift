@@ -73,6 +73,9 @@ public final class SessionEngine {
     private var playbackURLOverrides: [String: String] = [:]
     private var pinnedMediaTransport: (sessionId: String, targetId: String, playbackURL: String?)?
     private var lastMediaPercentageRepair: (sessionId: String, durationMs: Int)?
+    /// Margins whose transcript the listener deleted since transcription was last asked for. Work that was already
+    /// running when they deleted it must not write the words back (#942); a new request (Retry) clears the entry.
+    private var transcriptsDeletedSinceRequest: Set<String> = []
     /// Where the last Back tap in text landed, so the next one can tell it is a repeat (#1102). Only listening on
     /// from there keeps it: every other change of position calls `forgetBackTapLanding()` (#1122).
     private var lastBackTapLanding: (targetKey: String, charOffset: Int)?
@@ -2334,6 +2337,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func transcriptionCompleted(interjectionId: String, sessionId: String? = nil, transcript: String) throws -> SessionSnapshot {
+        guard !transcriptWasDeleted(interjectionId, sessionId) else { return snapshot }
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.transcript = transcript
             interjection.alignedTranscript = nil
@@ -2350,6 +2354,7 @@ public final class SessionEngine {
         sessionId: String? = nil,
         alignedTranscript: AlignedInterjectionTranscript
     ) throws -> SessionSnapshot {
+        guard !transcriptWasDeleted(interjectionId, sessionId) else { return snapshot }
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.transcript = alignedTranscript.text
             interjection.alignedTranscript = alignedTranscript
@@ -2401,6 +2406,20 @@ public final class SessionEngine {
         }
         snapshot.lastFailure = "transcription_failed:\(error)"
         return snapshot
+    }
+
+    /// Transcription of this Margin was asked for again (Retry), so a transcript the listener deleted earlier may be
+    /// replaced by this new work (#942).
+    public func transcriptionRequested(interjectionId: String, sessionId: String? = nil) {
+        transcriptsDeletedSinceRequest.remove(Self.transcriptKey(interjectionId, sessionId))
+    }
+
+    private func transcriptWasDeleted(_ interjectionId: String, _ sessionId: String?) -> Bool {
+        transcriptsDeletedSinceRequest.contains(Self.transcriptKey(interjectionId, sessionId))
+    }
+
+    private static func transcriptKey(_ interjectionId: String, _ sessionId: String?) -> String {
+        "\(sessionId ?? "")|\(interjectionId)"
     }
 
     /// A retry of a Margin's transcription failed. A Margin that already has words keeps them and its status. One
@@ -2473,6 +2492,7 @@ public final class SessionEngine {
 
     @discardableResult
     public func cleanupCompleted(interjectionId: String, sessionId: String? = nil, cleanedTranscript: String) throws -> SessionSnapshot {
+        guard !transcriptWasDeleted(interjectionId, sessionId) else { return snapshot }
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             interjection.cleanedTranscript = cleanedTranscript
             interjection.displayText = cleanedTranscript
@@ -2482,12 +2502,14 @@ public final class SessionEngine {
 
     @discardableResult
     public func deleteRepresentation(interjectionId: String, sessionId: String? = nil, representation: String) throws -> SessionSnapshot {
+        if representation == "transcript" { transcriptsDeletedSinceRequest.insert(Self.transcriptKey(interjectionId, sessionId)) }
         try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
             if representation == "cleanedTranscript" {
                 interjection.cleanedTranscript = nil
                 interjection.displayText = interjection.transcript
             } else if representation == "transcript" {
                 interjection.transcript = nil
+                interjection.alignedTranscript = nil
                 interjection.cleanedTranscript = nil
                 interjection.displayText = nil
                 // "pending" would promise a transcription no one is doing (#942). "failed" is stored so Build 29

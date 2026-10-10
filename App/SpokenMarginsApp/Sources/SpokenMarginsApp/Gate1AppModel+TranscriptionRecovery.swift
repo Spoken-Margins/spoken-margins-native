@@ -24,4 +24,11 @@ extension Gate1AppModel {
             refreshMarginRows()
         }
     }
+
+    /// Retry asks for a fresh transcription, so words the listener deleted may be replaced by it. Work that was
+    /// already running when they deleted them is still dropped by the engine (#942).
+    func scheduleRetriedTranscription(for interjection: Interjection) {
+        engine?.transcriptionRequested(interjectionId: interjection.id, sessionId: interjection.sessionId)
+        scheduleTranscription(for: interjection)
+    }
 }

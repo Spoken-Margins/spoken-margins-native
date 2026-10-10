@@ -5989,7 +5989,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
-        scheduleTranscription(for: interjection)
+        scheduleRetriedTranscription(for: interjection)
         reportConfirmation("Retranscribing the saved Margin audio.")
     }
 
