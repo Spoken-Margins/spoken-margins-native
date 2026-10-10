@@ -2656,11 +2656,23 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         return file
     }
 
-    func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+    /// #1043 APM-06: with a player that reports no position, "resume where I stopped" and "start over" looked the
+    /// same. The player here reports a place two sentences in, and the resume must start there, from memory and
+    /// after a relaunch reads the session back from SQLite.
+    func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "resume-position-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, databaseURLOverride: databaseURL)
         model.resetAndSeed()
-        model.startItem(id: "item-pill")
+        model.importTitle = "Resume Position"
+        model.importText = "One. Two. Three. Four."
+        model.importTextItem()
         let sessionId = model.snapshot.sessionId
+        let stoppedAt = "One. Two. ".count
+        audio.currentOffset = stoppedAt
 
         model.endSession()
 
@@ -2673,6 +2685,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let saved = model.selectedItem.sessions.first(where: { $0.id == sessionId })
         XCTAssertEqual(saved?.status, "in_progress")
         XCTAssertLessThan(saved?.completionPercent ?? 100, 100)
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        XCTAssertEqual(try XCTUnwrap(store.loadSession(id: try XCTUnwrap(sessionId))).position.charOffset, stoppedAt)
         model.dismissFeedback()
         if let saved {
             model.resumeSession(saved)
@@ -2680,6 +2694,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, sessionId)
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertNil(model.feedbackEvent)
+        XCTAssertEqual(audio.playedOffsets.last, stoppedAt, "resume starts where the listener stopped, not at the top")
+        XCTAssertEqual(model.snapshot.currentTextStart, stoppedAt)
+        model.endSession()
+
+        let relaunchedAudio = WorkflowRecordingAudioClient()
+        let relaunched = Gate1AppModel(audioPlaybackClient: relaunchedAudio, databaseURLOverride: databaseURL)
+        relaunched.bootstrapLibraryIfNeeded()
+        relaunched.resumeSession(try XCTUnwrap(store.loadSession(id: try XCTUnwrap(sessionId))))
+        XCTAssertEqual(relaunched.snapshot.sessionId, sessionId)
+        XCTAssertEqual(relaunchedAudio.playedOffsets.last, stoppedAt, "a relaunched app resumes from the stored place")
     }
 
     func testHomePlayResumesLatestSessionWithoutCreatingAnother() throws {
