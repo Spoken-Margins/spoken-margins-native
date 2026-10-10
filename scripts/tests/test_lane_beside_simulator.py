@@ -22,8 +22,6 @@ import test_lane_runner  # noqa: E402
 from test_lane_runner import FakeGitHub, HEAD, lane  # noqa: E402
 import lane_slots  # noqa: E402
 
-original = lane.run_auto  # the real one, for tests that wrap it
-
 GIB = 2**30
 
 
@@ -293,103 +291,65 @@ class BuildRunnerEnvironmentTests(unittest.TestCase):
 
 class BuildRunnerJobTests(unittest.TestCase):
     run_main = test_lane_runner.MainFlowTests.run_main
-    conflicts, role, attempt = [], 'build', '1'
+    conflicts, role, attempt, state_dir, ops = [], 'build', '1', None, mock.Mock()
 
-    def run_job(self, host_only, beside=None, problem=None, state=None):
+    def run_job(self, tier, beside=None, problem=None, state=None):
+        """An automerge job on the build runner for a diff of <tier>. It builds no app at any tier (owner,
+        2026-10-09), so it never waits for room to build."""
         with tempfile.TemporaryDirectory() as folder, \
                 mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': state or folder}), \
-                mock.patch.object(lane, 'host_only_scope', return_value=host_only), \
+                mock.patch.object(lane, 'diff_scope', return_value={'tier': tier, 'why': [], 'files': []}), \
                 mock.patch.object(lane, 'run_auto', return_value=('PASS', 'host only', 'host tests', [])) as auto, \
                 mock.patch.object(lane, 'wait_for_room_to_build', return_value=None) as builds, \
                 mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(problem, beside)) as host:
             github = FakeGitHub(labels=('automerge',))
+            self.state_dir = state or folder
             self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
             log = Path(state or folder) / lane.BESIDE_SIMULATOR_LOG
             lines = log.read_text().splitlines() if log.exists() else []
         return github, auto, builds, host, lines
 
-    def test_a_host_only_job_takes_the_host_rules_and_logs_running_beside_a_simulator(self):
+    def test_a_job_takes_the_host_rules_and_logs_running_beside_a_simulator(self):
         note = 'ran beside a simulator job (trial): memory pressure normal, 41 GiB free'
-        github, auto, builds, host, lines = self.run_job(True, beside=note)
+        github, auto, builds, host, lines = self.run_job('T1', beside=note)
         host.assert_called_once()
         builds.assert_not_called()
         auto.assert_called_once()
-        self.assertIs(auto.call_args.kwargs['room_for_builds'].func, builds)  # builds after all still wait
         self.assertIn(note, github.posted[0])
         self.assertEqual(len(lines), 1)
         self.assertIn('pr5-r42', lines[0])
         self.assertIn('PR #5', lines[0])
         self.assertIn(note, lines[0])
 
-    def test_a_job_that_builds_beside_a_simulator_reports_and_logs_it(self):
-        text = 'built beside a simulator job (trial): memory pressure normal, 41 GiB free'
-        with tempfile.TemporaryDirectory() as folder, \
-                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': folder}), \
-                mock.patch.object(lane, 'host_only_scope', return_value=False), \
-                mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
-                mock.patch.object(lane, 'wait_for_room_to_build',
-                                  side_effect=lambda note=None: note(text)) as builds:
-            github = FakeGitHub(labels=('automerge',))
-            self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
-            lines = (Path(folder) / lane.BESIDE_SIMULATOR_LOG).read_text().splitlines()
-        builds.assert_called_once()
-        auto.assert_called_once()
-        self.assertIn(text, github.posted[0])
-        self.assertEqual(len(lines), 1)
-        self.assertIn('PR #5', lines[0])
-        self.assertIn(text, lines[0])
+    def test_an_app_diff_takes_the_host_rules_too_and_never_waits_for_room_to_build(self):
+        # Before 2026-10-09 an app diff (T2 and up) waited for the build runner's build rules (the one build slot
+        # left beside a simulator job), then built both targets. It builds nothing now, so the host rules hold.
+        for tier in ('T2', 'T3'):
+            with self.subTest(tier=tier):
+                github, auto, builds, host, _ = self.run_job(tier)
+                host.assert_called_once()
+                builds.assert_not_called()
+                auto.assert_called_once()
+                self.assertNotIn('room_for_builds', auto.call_args.kwargs)
 
-    def test_a_host_only_job_with_no_simulator_running_logs_nothing(self):
-        github, auto, _, _, lines = self.run_job(True, beside=None)
+    def test_a_job_with_no_simulator_running_logs_nothing(self):
+        github, auto, _, _, lines = self.run_job('T2', beside=None)
         auto.assert_called_once()
         self.assertEqual(lines, [])
         self.assertNotIn('beside a simulator', github.posted[0])
 
-    def test_a_job_that_builds_waits_as_before(self):
-        github, auto, builds, host, lines = self.run_job(False)
-        builds.assert_called_once()
-        host.assert_not_called()
-        self.assertIsNone(auto.call_args.kwargs.get('room_for_builds'))
-
-    def test_a_host_only_job_that_gets_no_room_reports_inconclusive(self):
-        github, auto, _, _, _ = self.run_job(True, problem='the build runner waited 1h30m00s for room: memory '
+    def test_a_job_that_gets_no_room_reports_inconclusive(self):
+        github, auto, _, _, _ = self.run_job('T2', problem='the build runner waited 1h30m00s for room: memory '
                                                            'pressure is above normal')
         auto.assert_not_called()
         self.assertTrue(github.posted[0].startswith('Lane report pr5-r42 — INCONCLUSIVE'))
 
     def test_the_main_runner_never_waits(self):
         self.role = ''
-        github, auto, builds, host, _ = self.run_job(True)
+        github, auto, builds, host, _ = self.run_job('T2')
         builds.assert_not_called()
         host.assert_not_called()
         auto.assert_called_once()
-
-
-class HostOnlyScopeTests(unittest.TestCase):
-    def test_t0_and_t1_are_host_only_and_anything_else_or_an_error_is_not(self):
-        for tier, expected in (('T0', True), ('T1', True), ('T2', False), ('T3', False)):
-            with self.subTest(tier=tier), mock.patch.object(lane, 'diff_scope', return_value={'tier': tier}):
-                self.assertIs(lane.host_only_scope(Path('.'), 'next'), expected)
-        with mock.patch.object(lane, 'diff_scope', side_effect=RuntimeError('no policy')):
-            self.assertFalse(lane.host_only_scope(Path('.'), 'next'))
-
-    def test_a_merge_commit_that_needs_builds_after_all_waits_for_the_build_room_first(self):
-        # The scope is read on the PR head before the job starts; the merge commit's is read again. If they
-        # disagree, the builds still wait for no simulator job.
-        calls = []
-        harness = test_lane_runner.MergeTests_Runner('test_a_pass_posts_the_merge_check_then_pushes_the_tested_commit')
-        for tier, problem, expected_verdict in (('T2', None, 'PASS'), ('T2', 'a simulator job is running', 'INCONCLUSIVE'),
-                                                ('T1', 'never asked', 'PASS')):
-            with self.subTest(tier=tier, problem=problem):
-                calls.clear()
-                scope = {'tier': tier, 'why': [], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
-                room = lambda: calls.append('room') or problem  # noqa: E731
-                with mock.patch.object(lane, 'run_auto', wraps=lambda *a, **k: original(*a, room_for_builds=room, **k)):
-                    (verdict, _, _, details), events = harness.run_auto(FakeGitHub(labels=('automerge',)), scope=scope)
-                self.assertEqual(verdict, expected_verdict, details)
-                self.assertEqual(calls, ['room'] if tier == 'T2' else [])
-                if problem and tier == 'T2':
-                    self.assertEqual(events, ['build'])
 
 
 if __name__ == '__main__':

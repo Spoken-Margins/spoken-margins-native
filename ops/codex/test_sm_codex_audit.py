@@ -457,6 +457,13 @@ class OutputAndComment(unittest.TestCase):
         self.assertIn('concrete failure scenario', A.INSTRUCTION)
         self.assertIn('No style notes', A.INSTRUCTION)
 
+    def test_instruction_blocks_a_pipeline_pr_without_cost_and_catch(self):
+        # Owner, 2026-10-09: the per-PR app builds ran 140 times in a week and caught nothing (#1196); a PR adding
+        # recurring cost must say what it costs and catches, and the audit blocks one that doesn't (#1202).
+        self.assertIn('"Cost and catch"', A.INSTRUCTION)
+        self.assertIn('recurring cost', A.INSTRUCTION)
+        self.assertIn('report that as blocking', A.INSTRUCTION)
+
     ANSWER = (
         "### PR #366\n\n1. **Plausible:** `Foo.swift:12` scenario.\n\n"
         "### PR #372: Speak leftover URL fragments\nNo blocking findings.\n"
@@ -474,7 +481,10 @@ class OutputAndComment(unittest.TestCase):
 
     def test_comment_first_line_and_batch_footer(self):
         body = A.build_comment(366, HEAD, "No blocking findings.", [366, 372, 380])
-        self.assertEqual(body.splitlines()[0], "**Codex audit (Astra) on `68fc333`**")
+        self.assertEqual(body.splitlines()[0], "**Claude audit on `68fc333`**")
+        self.assertIn("Claude ran read-only", body)
+        legacy = A.build_comment(366, HEAD, "No blocking findings.", [366], reviewer="Codex")
+        self.assertEqual(legacy.splitlines()[0], "**Codex audit (Astra) on `68fc333`**")
         self.assertIn("Batched with #372, #380.", body)
         # The posted comment must count as an audit on this head next run.
         self.assertTrue(A.audited_on([{"created_at": "z", "body": body}], HEAD))
@@ -494,24 +504,41 @@ class OutputAndComment(unittest.TestCase):
         self.assertEqual(s, {"Done when": "- a", "Must not break": "- b"})
 
 
-class Limits(unittest.TestCase):
-    OK = ("planType: prolite\nprimary: {'usedPercent': 19, 'windowDurationMins': 10080, 'resetsAt': 1791295846}\n"
-          "secondary: None\nlimitIds: ['codex']\n")
+class ClaudeReadiness(unittest.TestCase):
+    def test_needs_the_cli_and_the_keychain_token(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cli = Path(tmp) / "claude"
+            with patch.object(A, "CLAUDE", cli):
+                ok, why = A.check_claude()
+                self.assertFalse(ok)
+                self.assertIn("missing", why)
+                cli.write_text("#!/bin/sh\n")
+                with patch.object(A, "claude_token", return_value=None):
+                    ok, why = A.check_claude()
+                self.assertFalse(ok)
+                self.assertIn("Keychain", why)
+                with patch.object(A, "claude_token", return_value="tok"):
+                    self.assertEqual(A.check_claude()[0], True)
 
-    def test_ok(self):
-        ok, why = A.parse_limits(self.OK, 0)
-        self.assertTrue(ok)
-        self.assertIn("19%", why)
+    def test_token_comes_from_the_keychain_service(self):
+        seen = []
+        def run(cmd, **kwargs):
+            seen.append(cmd)
+            return SimpleNamespace(stdout="  secret\n", stderr="", returncode=0)
+        with patch.object(A, "run", run):
+            self.assertEqual(A.claude_token(), "secret")
+        self.assertEqual(seen[0][-3:], ["-s", A.KEYCHAIN_SERVICE, "-w"])
+        with patch.object(A, "run", lambda *a, **k: SimpleNamespace(stdout="", stderr="x", returncode=44)):
+            self.assertIsNone(A.claude_token())
 
-    def test_exhausted(self):
-        ok, why = A.parse_limits(self.OK.replace("19", "100"), 0)
-        self.assertFalse(ok)
-        self.assertIn("used up", why)
-
-    def test_unavailable(self):
-        self.assertFalse(A.parse_limits("no response\n", 1)[0])
-        self.assertFalse(A.parse_limits("error {'code': 401}\n", 1)[0])
-        self.assertFalse(A.parse_limits("planType: None\nprimary: None\n", 0)[0])
+    def test_paused_run_posts_nothing_and_says_why(self):
+        cand = dict(pr(number=1), lines=1, issues=[], reason="new head", ready_at="")
+        with patch.object(A, "find_candidates", return_value=([cand], {}, [])), \
+             patch.object(A, "check_claude", return_value=(False, "no Claude token in the Keychain")), \
+             patch.object(A, "audit_batch") as audit, patch.object(A, "log") as log:
+            self.assertEqual(A.audit_prs([pr(number=1)], False, "", 0.0), 0)
+        audit.assert_not_called()
+        self.assertIn("paused: no Claude token", log.call_args_list[-1].args[0])
 
 
 class Paths(unittest.TestCase):
@@ -520,24 +547,167 @@ class Paths(unittest.TestCase):
         self.assertTrue((A.REPO_ROOT / "AGENTS.md").is_file())
         self.assertEqual(A.OPS_DIR, A.REPO_ROOT / "artifacts" / "ops")
 
-    def test_limits_script_sits_beside_the_audit(self):
-        self.assertTrue(A.LIMITS_SCRIPT.is_file())
-        self.assertEqual(A.LIMITS_SCRIPT.parent, Path(A.__file__).resolve().parent)
+    def test_the_audit_no_longer_depends_on_codex(self):
+        source = Path(A.__file__).read_text()
+        self.assertNotIn("codex_limits", source)
+        self.assertNotIn("codex exec", source)
+
+
+CLAUDE_RESULT = {"type": "result", "subtype": "success", "is_error": False, "result": "### PR #1\nNo blocking findings.",
+                 "total_cost_usd": 0.27,
+                 "usage": {"input_tokens": 10, "cache_creation_input_tokens": 80, "cache_read_input_tokens": 10,
+                           "output_tokens": 10}}
+
+
+class RunClaude(unittest.TestCase):
+    def call(self, result, returncode=0, token="tok"):
+        seen = {}
+        class Process:
+            pid = 1
+            def __init__(self, command, **kwargs):
+                seen.update(command=command, **kwargs)
+                self.stdout = kwargs["stdout"]
+                self.returncode = returncode
+            def communicate(self, prompt, timeout):
+                seen["prompt"] = prompt
+                self.stdout.write(json.dumps(result).encode())
+                return None, "stderr text"
+        with tempfile.TemporaryDirectory() as tmp, patch.object(A.subprocess, "Popen", Process), \
+             patch.object(A, "claude_token", return_value=token), patch.object(A, "CLAUDE", Path(tmp) / "claude"):
+            (Path(tmp) / "claude").write_text("")
+            out = Path(tmp) / "answer.md"
+            ok, why = A.run_claude(Path(tmp), out, "the prompt", Path(tmp) / "transcript.jsonl")
+            answer = out.read_text() if out.exists() else None
+        return ok, why, answer, seen
+
+    def test_call_is_headless_read_only_and_keeps_the_prompt_off_the_command_line(self):
+        ok, why, answer, seen = self.call(CLAUDE_RESULT)
+        self.assertTrue(ok, why)
+        self.assertEqual(answer, CLAUDE_RESULT["result"])
+        command = seen["command"]
+        self.assertEqual(command[1:3], ["-p", "-"])
+        self.assertEqual(command[command.index("--tools") + 1], "Read,Grep,Glob")
+        self.assertEqual(command[command.index("--permission-mode") + 1], "dontAsk")
+        self.assertIn("--max-budget-usd", command)
+        self.assertNotIn("the prompt", command)
+        self.assertEqual(seen["prompt"], "the prompt")
+        self.assertEqual(seen["env"]["CLAUDE_CODE_OAUTH_TOKEN"], "tok")
+        self.assertNotIn("ANTHROPIC_API_KEY", seen["env"])
+
+    def test_failures_are_reported_and_leave_no_answer(self):
+        failed = dict(CLAUDE_RESULT, is_error=True, subtype="error_max_budget_usd", result="over budget")
+        ok, why, answer, _ = self.call(failed, returncode=1)
+        self.assertFalse(ok)
+        self.assertIn("error_max_budget_usd", why)
+        self.assertIsNone(answer)
+        ok, why, answer, _ = self.call(dict(CLAUDE_RESULT, result="  "))
+        self.assertEqual((ok, answer), (False, None))
+        ok, why, _, _ = self.call(CLAUDE_RESULT, token=None)
+        self.assertEqual((ok, why), (False, "no Claude token in the Keychain"))
+
+
+class FailureMemory(unittest.TestCase):
+    def test_a_head_whose_audit_failed_twice_is_left_alone_until_it_changes(self):
+        with tempfile.TemporaryDirectory() as tmp, patch.object(A, "FAILURES_PATH", Path(tmp) / "f.json"):
+            self.assertEqual(A.load_failures(), {})
+            A.record_failure(5, HEAD)
+            self.assertEqual(A.failed_count(A.load_failures(), 5, HEAD), 1)
+            A.record_failure(5, HEAD)
+            failures = A.load_failures()
+            self.assertEqual(A.failed_count(failures, 5, HEAD), 2)
+            self.assertEqual(A.failed_count(failures, 5, OLD), 0)  # a new head starts again
+            A.record_failure(5, OLD)
+            self.assertEqual(A.failed_count(A.load_failures(), 5, OLD), 1)
+            A.clear_failure(5)
+            self.assertEqual(A.load_failures(), {})
+            (Path(tmp) / "f.json").write_text("not json")
+            self.assertEqual(A.load_failures(), {})
+
+    def test_find_candidates_skips_it_and_says_why(self):
+        risky = [{"filename": "Packages/SessionKit/Sources/SessionKitAudio/X.swift", "additions": 1, "deletions": 0}]
+        lane = {"created_at": "2026-10-09T10:00:00Z", "body": f"Lane report pr366-r1 — PASS\ncommit {HEAD[:7]} tested"}
+        def find(fails):
+            with patch.object(A, "fetch_comments", return_value=[lane]), patch.object(A, "fetch_files", return_value=risky), \
+                 patch.object(A, "FAILURES", {"366": {"head": HEAD, "fails": fails}}):
+                return A.find_candidates([pr()])
+        cands, skips, _ = find(1)
+        self.assertEqual([c["number"] for c in cands], [366])
+        cands, skips, decisions = find(2)
+        self.assertEqual((cands, skips), ([], {"audit failed twice": 1}))
+        self.assertEqual(decisions[0][1], "audit failed twice on this head")
+
+    def test_a_bold_clean_verdict_is_posted_as_clean(self):
+        for text in ("**No blocking findings.**", "_No blocking findings._", "## No blocking findings", "No blocking findings."):
+            with self.subTest(text=text):
+                section = A.split_sections(f"### PR #366\n{text}\n\nNotes.", [366])[366]
+                body = A.build_comment(366, HEAD, section, [366])
+                self.assertTrue(A.head_audit([{"created_at": "z", "body": body}], HEAD)[1].lower().startswith("no blocking"))
+        findings = A.split_sections("### PR #366\n**1. High:** it loses data", [366])[366]
+        self.assertTrue(findings.startswith("**1."))
+
+    def test_claude_audit_requests_count(self):
+        self.assertTrue(A.asks_for_audit("Please run a Claude audit on this one."))
+        self.assertTrue(A.asks_for_audit("/claude audit"))
+        self.assertFalse(A.asks_for_audit("This doesn't need a Claude audit."))
+
+
+class HeadFiles(unittest.TestCase):
+    def export(self, files, blobs):
+        """blobs: path -> (mode, size, text or an Exception for show)."""
+        def run(cmd, **kwargs):
+            if cmd[1] == "ls-tree":
+                path = cmd[-1]
+                if path not in blobs:
+                    return SimpleNamespace(stdout="", stderr="", returncode=128)
+                mode, size, _ = blobs[path]
+                return SimpleNamespace(stdout=f"{mode} blob abc123 {size if size is not None else '-':>7}\t{path}\n",
+                                       stderr="", returncode=0)
+            text = blobs[cmd[-1].split(":", 1)[1]][2]
+            if isinstance(text, Exception):
+                raise text
+            return SimpleNamespace(stdout=text, stderr="", returncode=0)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(A, "run", run):
+            rel = A.export_head_files(Path(tmp), 7, HEAD, files)
+            root = Path(tmp) / rel
+            copied = sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+            return rel, copied, (root / A.INDEX_NAME).read_text()
+
+    def test_changed_files_are_copied_and_odd_ones_listed(self):
+        names = ["App/Foo.swift", "gone.txt", "../escape.txt", "/abs.txt", "research/B4/notes.md", "logo.png",
+                 "big.txt", "link", "sub", "missing.txt", "INDEX.txt", "x" * 300]
+        files = [{"filename": n, "status": "removed" if n == "gone.txt" else "added"} for n in names]
+        blobs = {"App/Foo.swift": ("100644", 10, "let a = 1\n"),
+                 "logo.png": ("100644", 10, UnicodeDecodeError("utf-8", b"\x89", 0, 1, "bad")),
+                 "big.txt": ("100644", A.HEAD_FILE_CAP + 1, "x"),
+                 "link": ("120000", 6, "target"), "sub": ("160000", None, ""),
+                 "INDEX.txt": ("100644", 3, "own"), "x" * 300: ("100644", 3, "long")}
+        rel, copied, index = self.export(files, blobs)
+        self.assertEqual(rel, ".sm-audit/pr-7-head")
+        self.assertEqual(copied, ["App/Foo.swift", "INDEX.txt", A.INDEX_NAME])
+        for line in ("gone.txt: deleted", "../escape.txt: skipped", "/abs.txt: skipped",
+                     "research/B4/notes.md: research/", "logo.png: not copied (UnicodeDecodeError)",
+                     "big.txt: too large", "link: symlink", "sub: submodule", "missing.txt: not readable"):
+            self.assertIn(line, index)
+        self.assertNotIn("INDEX.txt: ", index.replace(A.INDEX_NAME, ""))  # the changed INDEX.txt was copied, not clobbered
+
+    def test_total_cap_and_clean_index(self):
+        with patch.object(A, "HEAD_TOTAL_CAP", 25):
+            names = [f"f{i}.txt" for i in range(3)]
+            files = [{"filename": n, "status": "added"} for n in names]
+            _, copied, index = self.export(files, {n: ("100644", 10, "0123456789") for n in names})
+        self.assertEqual(copied, [A.INDEX_NAME, "f0.txt", "f1.txt"])
+        self.assertIn("f2.txt: too large", index)
+        _, _, index = self.export([], {})
+        self.assertEqual(index, "Every changed file was copied.\n")
+
+    def test_prompt_points_at_the_copies(self):
+        block = A.pr_context_block(dict(pr(number=7), lines=3, issues=[]), {}, ".sm-audit/pr-7.diff", OLD, OLD)
+        self.assertIn(".sm-audit/pr-7-head/<path>", block)
+        self.assertNotIn("git show", block)
+        self.assertIn("cannot run commands", A.build_prompt([dict(pr(number=7), lines=3)], [block], OLD))
 
 
 class UsageRecording(unittest.TestCase):
-    def test_audit_process_requests_json_events(self):
-        commands = []
-        class Process:
-            def __init__(self, command, **kwargs):
-                commands.append(command)
-                Path(command[command.index('-o') + 1]).write_text('No blocking findings.')
-            def wait(self, timeout):
-                return 0
-        with tempfile.TemporaryDirectory() as tmp, patch.object(A.subprocess, 'Popen', Process):
-            A.run_codex(Path(tmp), Path(tmp) / 'answer.md', 'prompt', Path(tmp) / 'transcript.jsonl')
-        self.assertIn('--json', commands[0])
-
     def test_batch_retains_transcript_and_records_once_even_on_timeout(self):
         for ok in (True, False):
             with self.subTest(ok=ok), tempfile.TemporaryDirectory() as temporary:
@@ -553,25 +723,28 @@ class UsageRecording(unittest.TestCase):
                     if command[:3] == ['gh', 'pr', 'comment']:
                         output = 'https://github.com/uncomposed/spoken-margins-native/pull/1#issuecomment-42'
                     return SimpleNamespace(stdout=output, stderr='', returncode=0)
-                def codex(wt, answer, prompt, transcript):
-                    transcript.write_text('{"type":"turn.completed","usage":{"input_tokens":100,"cached_input_tokens":90,"output_tokens":10}}\n')
+                def claude(wt, answer, prompt, transcript):
+                    transcript.write_text(json.dumps(CLAUDE_RESULT) + '\n')
                     if ok:
                         answer.write_text('### PR #1\nNo blocking findings.\n### PR #2\nNo blocking findings.')
                     return ok, 'ok' if ok else 'timed out'
                 batch = [dict(pr(number=n), lines=1, issues=[], reason='new head') for n in (1, 2)]
-                with patch.object(A, 'run', run), patch.object(A, 'run_codex', codex), \
+                with patch.object(A, 'run', run), patch.object(A, 'run_claude', claude), \
                      patch.object(A, 'fetch_comments', return_value=[]), patch.object(A, 'log'), \
                      patch.object(A, 'OUTPUT_KEEP_DIR', kept), patch.object(A.usage, 'DEFAULT_DIR', ledger), \
                      patch.object(A.tempfile, 'mkdtemp', return_value=str(scratch)), \
-                     patch.object(A.subprocess, 'run'):
+                     patch.object(A.subprocess, 'run'), patch.object(A, 'FAILURES_PATH', root / 'failures.json'):
                     A.audit_batch(batch)
                 rows = [json.loads(line) for line in (ledger / 'usage.jsonl').read_text().splitlines()]
                 self.assertEqual(len(rows), 1)
                 self.assertEqual(len(rows[0]['targets']), 2)
                 self.assertEqual(rows[0]['input_tokens'], 100)
+                self.assertEqual(rows[0]['model'], A.CLAUDE_MODEL)
                 self.assertEqual(len(list(kept.glob('*.jsonl'))), 1)
                 self.assertFalse(scratch.exists())
                 self.assertEqual(rows[0]['outcome']['kind'], 'audit completed' if ok else 'failed')
+                failures = json.loads((root / 'failures.json').read_text()) if (root / 'failures.json').exists() else {}
+                self.assertEqual(A.failed_count(failures, 1, HEAD), 0 if ok else 1)
 
 
 if __name__ == "__main__":

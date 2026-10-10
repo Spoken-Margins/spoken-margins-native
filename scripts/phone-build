@@ -38,8 +38,9 @@ pass; bugs are fine, crashes the runners would catch are not):
 - Memory pressure must be normal, and free disk at least 10 GB plus 4 GB per running build
   (counting this one). Otherwise it skips and exits 75; the next trigger tries again.
 - Checks on the exact commit: a tip the lane runner pushed after testing it (its "Merge check"
-  comment says so) has passed host tests and both builds. Any other commit (a merge by hand)
-  gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
+  comment says so) has passed host tests; its author built both targets, and the iPhone build
+  below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
+  merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
 
 The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
@@ -98,9 +99,13 @@ NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|veri
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
-# "None this time: ..." and "none needed." aren't either (#927: #811's heading section).
-NO_CHECK = re.compile(r'^(none|n/?a|nothing)(?:\s+(?:this time|needed|for now|yet))?\s*(?:[.;:,(\u2014\u2013]|-\s|$)',
-                      re.I)
+# "None this time: ..." and "none needed." aren't either (#927: #811's heading section), nor "none now;
+# ..." / "none at the moment" / "not needed" / "no owner check" (#1193: #177 reached the plan as a check).
+NO_CHECK = re.compile(
+    r'^(?:(?:none|n/?a|nothing)(?:\s+(?:this time|at this time|needed|required|for now|right now|now|yet|currently'
+    r'|at the moment|at all))*'
+    r'|not needed|no (?:(?:owner|phone) )?checks?(?:\s+needed)?)'
+    r'\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
 REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
 # "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927). Plain text

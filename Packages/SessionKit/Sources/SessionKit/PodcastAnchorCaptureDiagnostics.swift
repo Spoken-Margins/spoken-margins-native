@@ -37,15 +37,21 @@ public enum PodcastAnchorCaptureDiagnostics {
         "\(name):\(sessionToken(sessionId))/\(interjectionId)"
     }
 
+    /// The newest sessions the export looks at. Each one costs a store query and a decode, and the export
+    /// used to read all of them (273 on the owner's phone, about 30 s with the Share Diagnostics sheet
+    /// blank, #1191); a capture outcome older than this many sessions is not what a bug report is about.
+    public static let maximumSessionsScanned = 60
+
     /// One entry per stored podcast Margin, newest sessions first. Read from the store, so it survives relaunch.
     public static func exportEntries(
         sessions: [Session],
         interjections: (String) throws -> [Interjection],
-        limit: Int = 40
+        limit: Int = 40,
+        sessionLimit: Int = maximumSessionsScanned
     ) -> [String: String] {
         let ordered = sessions.sorted {
             ($0.updatedAt ?? $0.createdAt ?? .distantPast) > ($1.updatedAt ?? $1.createdAt ?? .distantPast)
-        }
+        }.prefix(sessionLimit)
         var entries: [String: String] = [:]
         for session in ordered {
             guard entries.count < limit else { break }

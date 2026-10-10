@@ -304,6 +304,43 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertNil(state.nextChapterId)
         XCTAssertNil(state.nextNavigationKind)
         XCTAssertNil(state.sharedMarginSenderLabel)
+        // A card published by a build without Skim destinations (#115) still decodes.
+        XCTAssertNil(state.skimForwardDestinationMs)
+        XCTAssertNil(state.skimBackwardDestinationMs)
+    }
+
+    func testLiveActivityContentStateCarriesSkimDestinations() throws {
+        let original = Gate2LiveActivityAttributes.ContentState(
+            title: "Episode",
+            chapterTitle: "Opening",
+            status: "playing",
+            phase: "itemPlayback",
+            progressPercent: 42,
+            isRecording: false,
+            skimForwardDestinationMs: 1_122_000,
+            skimBackwardDestinationMs: 725_000
+        )
+
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(original)
+        )
+
+        XCTAssertEqual(decoded.skimForwardDestinationMs, 1_122_000)
+        XCTAssertEqual(decoded.skimBackwardDestinationMs, 725_000)
+    }
+
+    /// #115: the Lock Screen's Skim buttons say where they land, with the playback screen's times.
+    func testSkimButtonLabelsSayWhereSkimLands() {
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 1_122_000, backward: false), "Skim forward to 18:42")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 725_000, backward: true), "Skim back to 12:05")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 3_909_000, backward: false), "Skim forward to 1:05:09")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: false), "Skim forward by scene summary")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: true), "Skim backward by scene summary")
+        // The playback screen keeps its titles, now from the same formatter.
+        XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 1_122_000, backward: false), "Skim to 18:42")
+        XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 725_000, backward: true), "Back to 12:05")
+        XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: nil, backward: false), "Skim Forward")
     }
 
     func testLiveActivityContentStateCarriesTheMicrophoneStateAndDefaultsToCapturing() throws {
@@ -898,6 +935,16 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true)
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipForward) == true)
+
+        // #115: the destinations ride along for the Lock Screen, only for a Skim that is offered.
+        controller.update(snapshot: appSnapshot, skimForwardDestinationMs: 90_000, skimBackwardDestinationMs: 30_000)
+        XCTAssertEqual(controller.snapshot?.skimForwardDestinationMs, 90_000)
+        XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
+        appSnapshot.canSkimForward = false
+        controller.update(snapshot: appSnapshot, skimForwardDestinationMs: 90_000, skimBackwardDestinationMs: 30_000)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+        XCTAssertNil(controller.snapshot?.skimForwardDestinationMs, "a hidden Skim shows no stale time")
+        XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {

@@ -1,4 +1,5 @@
 import Foundation
+import SessionKitSharing
 import SwiftUI
 
 @MainActor
@@ -51,6 +52,13 @@ struct Build23SenderSharingExperience: View {
                         .filledActionButton()
                         .accessibilityIdentifier("build23.sender.share.without-matching")
                     }
+                }
+                if snapshot.stage == .select || snapshot.stage == .review, let notice = snapshot.selectionSummary.notice {
+                    Label(notice, systemImage: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("build23.sender.left-out-notice")
                 }
                 stageContent(snapshot)
             }
@@ -112,7 +120,7 @@ struct Build23SenderSharingExperience: View {
 
     @ViewBuilder
     private func topPrimaryAction(_ snapshot: Build23SharingSnapshot) -> some View {
-        let includedCount = snapshot.margins.filter(\.isIncluded).count
+        let includedCount = snapshot.selectionSummary.packetCount
         switch snapshot.stage {
         case .select:
             Button("Review \(includedCount)") {

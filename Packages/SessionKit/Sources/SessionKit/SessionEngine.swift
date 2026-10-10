@@ -45,6 +45,18 @@ public final class SessionEngine {
     /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
     /// Save passes no path, so a Save that failed once could never be tried again (#911).
     private var closedRecordingRef: String?
+    /// A Margin that is stored but whose finishing steps (evidence capture, transcription, rejoining the source) did
+    /// not all run. The next Save picks up from here instead of asking the recorder for a recording it already
+    /// gave up, so the recording screen can't get stuck behind a Margin that is saved (#1121).
+    private var storedMarginFinish: StoredMarginFinish?
+    private struct StoredMarginFinish {
+        var interjection: Interjection
+        var capturesPostResumeEvidence: Bool
+        var evidenceHandled = false
+        var transcriptionScheduled = false
+        /// Stepping a podcast back is not idempotent, so it runs once even if saving the session after it fails.
+        var rejoinAttempted = false
+    }
     private var recordingTargetId: String?
     private var priorPhase: SessionPhase?
     /// The Margin being recorded started on a finished source, at its end (#142).
@@ -373,6 +385,21 @@ public final class SessionEngine {
             try audio.configureMediaContext(playbackMediaContext(for: session))
         }
         return snapshot
+    }
+
+    /// Whether the media session on `itemId` is playing `playbackURL`. A session keeps the edition it started on
+    /// (see `updatePlaybackTransport`), so a download that finishes mid-session is not what the listener hears (#914).
+    /// Nil when no media session on the item has chosen its edition yet.
+    public func mediaSessionPlays(itemId: String, playbackURL: String) -> Bool? {
+        guard let session = currentSession, session.itemId == itemId,
+              let pinned = pinnedMediaTransport,
+              pinned.sessionId == session.id, pinned.targetId == session.currentTargetId else { return nil }
+        guard let playing = pinned.playbackURL else { return false }
+        if playing == playbackURL { return true }
+        // The same file can be spelled two ways (a symlinked /private/var, a trailing slash).
+        guard let playingFile = URL(string: playing), playingFile.isFileURL,
+              let candidate = URL(string: playbackURL), candidate.isFileURL else { return false }
+        return playingFile.resolvingSymlinksInPath().standardizedFileURL == candidate.resolvingSymlinksInPath().standardizedFileURL
     }
 
     @discardableResult
@@ -1332,6 +1359,7 @@ public final class SessionEngine {
         recordingTargetId = target.id
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
         closedRecordingRef = nil
+        storedMarginFinish = nil
         do {
             try recorder.beginRecording()
         } catch {
@@ -1681,6 +1709,11 @@ public final class SessionEngine {
               let targetId = recordingTargetId else {
             throw SessionKitError.invalidCommandForState("finishInterjection")
         }
+        if let pending = storedMarginFinish, pending.interjection.sessionId == session.id {
+            // The Margin was stored by an earlier Save whose later steps failed (#1121).
+            return try finishStoredMargin(session, anchor: anchor, targetType: targetType)
+        }
+        storedMarginFinish = nil // left over from another session
         let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
         closedRecordingRef = savedAudioRef
         if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
@@ -1702,7 +1735,7 @@ public final class SessionEngine {
         let shouldCapturePostResumePodcastEvidence = targetType == .item
             && anchor.mediaTimeMs != nil
             && item.map(isNativeAudioSource) == true
-        var interjection = Interjection(
+        let interjection = Interjection(
             id: targetType == .assistantTurn ? "ij-ai-\(String(format: "%03d", count))" : "ij-\(String(format: "%03d", count))",
             itemId: session.itemId,
             sessionId: session.id,
@@ -1731,46 +1764,76 @@ public final class SessionEngine {
         try repository.saveInterjection(interjection)
         closedRecordingRef = nil // owned by a Margin now; a later failure must not store it again
         lastMediaPercentageRepair = nil
-        if shouldCapturePostResumePodcastEvidence,
-           let anchorMediaTimeMs = anchor.mediaTimeMs {
-            let evidenceRequest = PostResumeAudioSampleRequest(
-                interjectionId: interjection.id,
-                sessionId: session.id,
-                itemId: session.itemId,
-                anchorMediaTimeMs: anchorMediaTimeMs,
-                targetDurationMs: SparseFingerprintSchedule.targetDurationMs,
-                captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
-            )
-            let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
-            let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
-            if !capturedPreWindow && !armedPostWindow {
-                interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
-                interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
-                try repository.saveInterjection(interjection)
-                lastMediaPercentageRepair = nil
-            } else if !capturedPreWindow || !armedPostWindow {
-                // One window still runs; record the one that didn't so a later success can't hide it.
-                interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
-                    capturedPreWindow ? "post_window_not_armed" : "pre_window_not_captured",
-                    to: interjection.podcastAnchorEvidenceFailureReason
+        storedMarginFinish = StoredMarginFinish(
+            interjection: interjection,
+            capturesPostResumeEvidence: shouldCapturePostResumePodcastEvidence
+        )
+        return try finishStoredMargin(session, anchor: anchor, targetType: targetType)
+    }
+
+    /// Everything after the Margin is stored. Each step that has run is remembered, so a Save that failed part way
+    /// can be tried again without storing the Margin, capturing evidence or scheduling transcription twice (#1121).
+    private func finishStoredMargin(_ session: Session, anchor: Anchor, targetType: InterjectionTargetType) throws -> SessionSnapshot {
+        guard var pending = storedMarginFinish else {
+            throw SessionKitError.invalidCommandForState("finishInterjection")
+        }
+        var session = session
+        if !pending.evidenceHandled {
+            pending.evidenceHandled = true
+            storedMarginFinish = pending
+            if pending.capturesPostResumeEvidence,
+               let anchorMediaTimeMs = anchor.mediaTimeMs {
+                let evidenceRequest = PostResumeAudioSampleRequest(
+                    interjectionId: pending.interjection.id,
+                    sessionId: session.id,
+                    itemId: session.itemId,
+                    anchorMediaTimeMs: anchorMediaTimeMs,
+                    targetDurationMs: SparseFingerprintSchedule.targetDurationMs,
+                    captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
                 )
-                try repository.saveInterjection(interjection)
-                lastMediaPercentageRepair = nil
+                let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
+                let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
+                if !capturedPreWindow && !armedPostWindow {
+                    pending.interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
+                    pending.interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
+                    storedMarginFinish = pending
+                    try repository.saveInterjection(pending.interjection)
+                    lastMediaPercentageRepair = nil
+                } else if !capturedPreWindow || !armedPostWindow {
+                    // One window still runs; record the one that didn't so a later success can't hide it.
+                    pending.interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
+                        capturedPreWindow ? "post_window_not_armed" : "pre_window_not_captured",
+                        to: pending.interjection.podcastAnchorEvidenceFailureReason
+                    )
+                    storedMarginFinish = pending
+                    try repository.saveInterjection(pending.interjection)
+                    lastMediaPercentageRepair = nil
+                }
             }
         }
-        try transcriber.scheduleTranscription(interjection: interjection)
-        lastScheduledTranscriptionInterjectionId = interjection.id
+        if !pending.transcriptionScheduled {
+            try transcriber.scheduleTranscription(interjection: pending.interjection)
+            pending.transcriptionScheduled = true
+            storedMarginFinish = pending
+        }
+        lastScheduledTranscriptionInterjectionId = pending.interjection.id
         snapshot.lastInterjectionAnchorType = anchor.anchorType
         snapshot.lastInterjectionTargetType = targetType
         if returnsToFinishedSource(targetType: targetType) {
-            return try settleFinishedSourceAfterInterjection(session)
+            let settled = try settleFinishedSourceAfterInterjection(session)
+            storedMarginFinish = nil
+            return settled
         }
         session.phase = priorPhaseForResume(targetType: targetType)
         // beginInterjection already captured and persisted the authoritative
         // source position before pausing, and the anchor above was built from it.
         // The source rejoins a little earlier (#776); the step is idempotent at a
         // sentence start, so repeated Margins never drift into the sentence before.
-        session = try rejoiningAfterSavedMargin(session)
+        if !pending.rejoinAttempted {
+            pending.rejoinAttempted = true
+            storedMarginFinish = pending
+            session = try rejoiningAfterSavedMargin(session)
+        }
         currentSession = session
         try persistSession(session)
         if externallyStreamedTurnId == session.currentTargetId {
@@ -1779,6 +1842,7 @@ public final class SessionEngine {
             try playCurrentTarget(session)
             publishPlaybackStart(for: session, phase: session.phase)
         }
+        storedMarginFinish = nil
         return snapshot
     }
 
@@ -1797,6 +1861,7 @@ public final class SessionEngine {
         recordingTargetType = nil
         recordingTargetId = nil
         closedRecordingRef = nil
+        storedMarginFinish = nil
         if returnsToFinished {
             return try settleFinishedSourceAfterInterjection(session)
         }
@@ -2470,6 +2535,7 @@ public final class SessionEngine {
         recordingTargetType = nil
         recordingTargetId = nil
         closedRecordingRef = nil
+        storedMarginFinish = nil
         priorPhase = nil
         recordingOnFinishedSource = false
         // A protected position belongs to the session that just ended. Left set, it would
