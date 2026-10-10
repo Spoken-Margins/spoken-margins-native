@@ -10,8 +10,30 @@ import XCTest
 @discardableResult
 func exportPacket(_ prepared: PreparedSpokenMarginsPackage, to url: URL) throws -> SpokenMarginsPackageManifest {
     let manifest = try SpokenMarginsPackageArchive.write(prepared, to: url)
-    try ShippedPacketReader.importPacket(at: url)
+    let shippedReadIDs = try ShippedPacketReader.importPacket(at: url)
+    // Build 29 must decode every Margin the new writer put in (#1039 PKT-01): a packet whose Margins its reader
+    // drops comes back "successfully" with a short list. This compares what its reader decoded from the zip, not
+    // what its importer then saved. Skipped only when the packet has no commentary layer to compare with.
+    if let sentIDs = try marginIDs(in: prepared), sentIDs.sorted() != shippedReadIDs.sorted() {
+        throw ShippedReaderGateError.marginsDiffer(sent: sentIDs.sorted(), shippedBuildRead: shippedReadIDs.sorted())
+    }
     return manifest
+}
+
+enum ShippedReaderGateError: Error, Equatable {
+    case marginsDiffer(sent: [String], shippedBuildRead: [String])
+}
+
+/// The package-scoped IDs of the Margins in a prepared packet's commentary layers, or nil when there is no layer.
+/// A layer the packet declares but this helper cannot decode is an error, not a reason to skip the comparison.
+private func marginIDs(in prepared: PreparedSpokenMarginsPackage) throws -> [String]? {
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let layers = try prepared.manifest.artifacts
+        .filter { $0.kind == SpokenMarginsArtifactKind.commentaryLayer }
+        .compactMap { prepared.artifactData[$0.path] }
+        .map { try decoder.decode(SharedCommentaryLayerArtifact.self, from: $0) }
+    return layers.isEmpty ? nil : layers.flatMap { $0.interjections.map(\.packageScopedId) }
 }
 
 final class ShippedReaderRoundTripTests: XCTestCase {
