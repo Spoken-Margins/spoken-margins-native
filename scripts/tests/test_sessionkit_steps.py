@@ -220,6 +220,28 @@ class ParallelCoreTests(unittest.TestCase):
             self.assertIn('package failed', str(host.error))
             self.assertNotIn('package-core-serial', host.names)
 
+    def test_a_run_the_lane_stopped_is_not_run_again_serially(self):
+        # The lane interrupts a timed-out job; a serial run started then would outlive it in its own session.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            ran = []
+
+            def command(name, args, **kw):
+                ran.append(name)
+                run.manifest['steps'].append({'name': name, 'signalled': name == 'package-core'})
+                raise RuntimeError('stopped')
+            with patch.object(run, 'command', side_effect=command), self.assertRaises(RuntimeError):
+                run.package_core(CORE)
+            self.assertEqual(ran, ['package-core'])
+
+    def test_command_marks_an_interrupt_apart_from_its_own_time_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            with self.assertRaises(RuntimeError):
+                run.command('slow', [sys.executable, '-c', 'import time; time.sleep(30)'], timeout=1)
+            step = run.manifest['steps'][-1]
+            self.assertEqual((step['interrupted'], step['signalled']), (True, False))
+
     def test_a_package_with_no_core_tests_keeps_the_one_serial_step(self):
         with tempfile.TemporaryDirectory() as state:
             host = Host(self, None, core=set()).run(state)

@@ -890,6 +890,17 @@ class AutomergeTests(unittest.TestCase):
             self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'),
                              (['SessionKitCoreTests/A/testX'], False))
 
+    def test_skipped_sessionkit_tests_are_not_a_run_of_zero_tests(self):
+        # #1328: a skipped run has no test records, and the step ledger counted that as a runner fault.
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / 'manifest.json').write_text(json.dumps({
+                'status': 'verified', 'sessionkit_pass': {'reused': 'k'},
+                'steps': [{'name': 'runner-tests', 'exit_code': 0}, {'name': 'package', 'skipped': 'already passed'}]}))
+            self.assertEqual(lane.manifest_failures(Path(folder)), ([], False))
+            (Path(folder) / 'manifest.json').write_text(json.dumps({
+                'status': 'verified', 'steps': [{'name': 'runner-tests', 'exit_code': 0}]}))
+            self.assertEqual(lane.manifest_failures(Path(folder)), ([], True))  # still zero without the record
+
     def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
         # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
         def run(command, log, timeout):

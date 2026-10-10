@@ -17,7 +17,6 @@ ROOT = SCRIPTS.parent
 # Literals in the SessionKit sources and tests that start with a repository folder's name but don't read the
 # repository root's folder of that name (#1328). Each is relative to something else, or isn't a path at all.
 NOT_REPOSITORY_READS = {
-    'fixtures': 'Contracts/fixtures and research/B2/fixtures, reached from Contracts/ and research/B2/',
     'references': 'a heading word the Obsidian parser drops',
     'scripts/run.sh': 'a zip entry name in a packet-rejection test',
 }
@@ -34,7 +33,7 @@ def make_repo(root):
         'Packages/SessionKit/Sources/SessionKit/A.swift', 'Packages/SessionKit/Package.swift',
         'Contracts/fixtures/a.json', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift',
         'App/SpokenMarginsAppTests/T.swift', 'App/SpokenMarginsApp/Resources/Supertonic/asset-manifest.json',
-        'research/B2/f.json', 'research/B4/v.json', 'Site/onboarding/catalog/v1/catalog.json', 'README.md',
+        'research/B2/f.json', 'research/B4/v.json', 'fixtures/maps/m.json', 'Site/onboarding/catalog/v1/catalog.json', 'README.md',
         'traces/t.json', 'scripts/run-sessionkit-tests.sh', 'scripts/host-test-lane', 'scripts/verify-tests.py',
         'scripts/sessionkit_pass.py',
         # Not read by the package tests:

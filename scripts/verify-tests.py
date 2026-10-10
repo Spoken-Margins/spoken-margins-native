@@ -532,8 +532,9 @@ class Run:
                         break
                     except subprocess.TimeoutExpired:
                         continue
-            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError):
+            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError) as stop:
                 entry['interrupted'] = True
+                entry['signalled'] = isinstance(stop, KeyboardInterrupt)  # the lane stopped this run, not the step's own limit
                 stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
@@ -717,6 +718,8 @@ class Run:
             return
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
+            if step.get('signalled'):
+                raise  # the lane is stopping this run: a serial run would outlive it
             step['superseded'] = 'run again serially'
             self.manifest.setdefault('notes', []).append(
                 f'SessionKitCoreTests: the parallel run failed, so they ran again serially ({str(error)[:300]})')

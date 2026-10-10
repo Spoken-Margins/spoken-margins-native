@@ -37,6 +37,9 @@ READS = (
     # The trace tests find the repository root by its README.md and traces/ folder.
     'README.md',
     'traces/',
+    # Contracts/fixtures and research/B2/fixtures are what the tests name as "fixtures"; the top-level folder
+    # is cheap to hash, so a future read of it can't slip past the key.
+    'fixtures/',
 )
 # How the tests run: a change to any of these changes what "the package tests passed" means.
 RUNNERS = (

@@ -308,7 +308,10 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
     verify-tests.py manifests under <outputs>."""
     failed, counted = [], 0
     for output in outputs:
-        for step in _read_manifest(output).get('steps', []):
+        manifest = _read_manifest(output)
+        if manifest.get('sessionkit_pass'):  # SessionKit's tests were skipped as already passed (#1328): not a run of none
+            counted += 1
+        for step in manifest.get('steps', []):
             if step.get('superseded'):  # the parallel SessionKitCoreTests run that a serial run replaced (#1328)
                 continue
             tests = step.get('tests') or {}
