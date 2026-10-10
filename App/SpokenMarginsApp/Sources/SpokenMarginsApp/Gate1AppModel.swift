@@ -6682,7 +6682,7 @@ final class Gate1AppModel: ObservableObject {
         SharedMarginPrompts.prompts(
             layers: selectedItem.importedCommentaryLayers,
             recordsByLayerID: selectedItem.importedCommentaryInterjections,
-            announcedIDs: sharedMarginOffers.announcedIDs,
+            announcedIDs: includeAnnounced ? [] : sharedMarginOffers.announcedIDs, // nextOffer's autoclosure runs inside its modify of sharedMarginOffers
             includeAnnounced: includeAnnounced
         )
     }

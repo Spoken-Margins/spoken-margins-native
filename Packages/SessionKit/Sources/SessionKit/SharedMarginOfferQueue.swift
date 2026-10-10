@@ -17,6 +17,8 @@ public struct SharedMarginOfferQueue: Equatable {
     /// and queued behind any already waiting (Margins in `fresh` reveal mode are announced but never
     /// offered), and the first waiting Margin that can still be offered is returned. `prompts` is
     /// every current prompt, announced or not; it is only read when something may be offered.
+    /// It runs while this queue is being modified, so it must not read the queue (a stored property
+    /// of a class would trap on overlapping access).
     public mutating func nextOffer(
         previous: SessionSnapshot,
         current: SessionSnapshot,
