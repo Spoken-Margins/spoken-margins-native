@@ -106,6 +106,39 @@ final class PlacementPassSaveTests: XCTestCase {
         XCTAssertFalse(try store.isLiveImportedCommentaryLayer(id: original.id))
     }
 
+    func testTheLayersMarginsAreSavedWithItAndNotWhenItWasDeleted() throws {
+        let live = layer("layer-live-notes", status: .pending)
+        let gone = layer("layer-gone-notes", status: .pending)
+        try store.saveImportedCommentaryLayer(live)
+        try store.saveImportedCommentaryLayer(gone)
+        let liveNote = note("note-live", layerId: live.id)
+        let goneNote = note("note-gone", layerId: gone.id)
+        try store.saveImportedCommentaryInterjection(liveNote)
+        try store.saveImportedCommentaryInterjection(goneNote)
+        var deleted = gone
+        deleted.deletedAt = Date(timeIntervalSince1970: 1_777_000_100)
+        deleted.isEnabled = false
+        try store.saveImportedCommentaryLayer(deleted)
+
+        var placedLive = liveNote, placedGone = goneNote
+        placedLive.resolution = ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 12_000)
+        placedGone.resolution = ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 99_000)
+        XCTAssertTrue(try store.savePlacementResult(of: live, records: [placedLive]))
+        XCTAssertFalse(try store.savePlacementResult(of: gone, records: [placedGone]))
+
+        let savedLive = try store.loadImportedCommentaryInterjections(layerId: live.id)
+        let savedGone = try store.loadImportedCommentaryInterjections(layerId: gone.id)
+        XCTAssertEqual(savedLive.map(\.resolution.localMediaTimeMs), [12_000])
+        XCTAssertEqual(savedGone.map(\.resolution.localMediaTimeMs), [nil], "a deleted layer's Margins are not rewritten")
+    }
+
+    private func note(_ id: String, layerId: String) -> ImportedCommentaryInterjection {
+        ImportedCommentaryInterjection(
+            id: id, layerId: layerId, packageScopedId: "packet-\(id)", createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .media), approvedTranscript: "Words",
+            resolution: ImportedAnchorResolution(evidenceClass: .unresolved))
+    }
+
     private func layer(_ id: String, status: ImportedSourceResolutionStatus) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(id: id, itemId: "item", packageDigest: "digest-\(id)", packageId: "package-\(id)",
                                 itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),

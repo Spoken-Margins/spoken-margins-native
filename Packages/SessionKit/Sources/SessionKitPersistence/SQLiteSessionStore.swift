@@ -402,14 +402,19 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadImportedCommentaryLayer(id: id).map { $0.deletedAt == nil } ?? false
     }
 
+    /// `records` are the layer's Margins as the pass resolved them; they are saved only when the layer is.
     @discardableResult
-    public func savePlacementResult(of layer: ImportedCommentaryLayer) throws -> Bool {
+    public func savePlacementResult(
+        of layer: ImportedCommentaryLayer,
+        records: [ImportedCommentaryInterjection] = []
+    ) throws -> Bool {
         try withConnectionLock {
             guard var stored = try loadImportedCommentaryLayer(id: layer.id), stored.deletedAt == nil else { return false }
             stored.resolvedRecipientEditionSHA256 = layer.resolvedRecipientEditionSHA256
             stored.sourceResolutionStatus = layer.sourceResolutionStatus
             stored.sharedMapRefusalReason = layer.sharedMapRefusalReason
             try saveImportedCommentaryLayer(stored)
+            for record in records { try saveImportedCommentaryInterjection(record) }
             return true
         }
     }

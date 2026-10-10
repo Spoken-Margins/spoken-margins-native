@@ -13856,8 +13856,7 @@ final class Gate1AppModel: ObservableObject {
                             activeProjectionId: current?.id)
                         for (var layer, records, outcome) in livingWork {
                             layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
-                            guard try store.savePlacementResult(of: layer) else { continue }
-                            for record in records { try store.saveImportedCommentaryInterjection(record) }
+                            try store.savePlacementResult(of: layer, records: records)
                         }
                         let sharedProposals = Dictionary(livingWork.compactMap { work in
                             work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
