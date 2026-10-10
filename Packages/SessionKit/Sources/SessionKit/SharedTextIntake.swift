@@ -11,13 +11,12 @@ public enum SharedTextIntake {
     public static let textFileExtensions: Set<String> = ["md", "markdown", "txt"]
 
     /// The plain-text types an app shares a string as. Rich text, HTML, JSON and source code also
-    /// conform to `public.text`, but their bytes are markup, so they aren't read as text.
+    /// conform to `public.text`, but their bytes are markup, so they aren't read as text. UTF-16 text
+    /// is left out too: the extension decodes bytes as UTF-8, which would garble it.
     public static let plainTextIdentifiers: Set<String> = [
         "public.text",
         "public.plain-text",
         "public.utf8-plain-text",
-        "public.utf16-plain-text",
-        "public.utf16-external-plain-text",
     ]
 
     /// The source address recorded for shared text, which has no address of its own.

@@ -21,7 +21,7 @@ final class SharedTextIntakeTests: XCTestCase {
     // MARK: Which representations the extension tries
 
     func testUnnamedPlainTextIsTried() {
-        for identifier in ["public.utf8-plain-text", "public.plain-text", "public.text", "public.utf16-plain-text"] {
+        for identifier in ["public.utf8-plain-text", "public.plain-text", "public.text"] {
             XCTAssertTrue(SharedTextIntake.acceptsTextRepresentation(identifier: identifier, suggestedName: nil), identifier)
             XCTAssertTrue(SharedTextIntake.acceptsTextRepresentation(identifier: identifier, suggestedName: ""), identifier)
         }
@@ -35,7 +35,7 @@ final class SharedTextIntakeTests: XCTestCase {
 
     func testMarkupTypesStayOut() {
         // Their bytes are markup: reading them as text would speak the tags.
-        for identifier in ["public.rtf", "public.html", "public.json", "public.swift-source", "public.comma-separated-values-text"] {
+        for identifier in ["public.rtf", "public.html", "public.json", "public.swift-source", "public.comma-separated-values-text", "public.utf16-plain-text"] {
             XCTAssertFalse(SharedTextIntake.acceptsTextRepresentation(identifier: identifier, suggestedName: nil), identifier)
         }
         XCTAssertFalse(SharedTextIntake.acceptsTextRepresentation(identifier: "public.html", suggestedName: "page.html"))

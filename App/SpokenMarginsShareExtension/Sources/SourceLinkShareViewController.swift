@@ -109,7 +109,14 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 }
             }
         ).map { ProviderCandidate(provider: $0.provider, identifier: $0.identifier) }
-        loadFirstSharedImport(candidates, index: 0, completion: completion)
+        // Plain text another app shared goes after everything, links included (#662), so a link
+        // written in a share's text never replaces the share's own public.url.
+        let isSharedText = { (candidate: ProviderCandidate) in
+            SharedTextIntake.isPlainText(candidate.identifier)
+                && !SharedTextIntake.namesTextFile(candidate.provider.suggestedName)
+        }
+        let ordered = candidates.filter { !isSharedText($0) } + candidates.filter(isSharedText)
+        loadFirstSharedImport(ordered, index: 0, completion: completion)
     }
 
     private func loadFirstSharedImport(
