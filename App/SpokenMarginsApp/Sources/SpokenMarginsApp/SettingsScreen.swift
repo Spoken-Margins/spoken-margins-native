@@ -16,6 +16,7 @@ struct SettingsScreen: View {
     @State private var isResetConfirmationPresented = false
     @State private var diagnosticsExportURL: URL?
     @State private var isDiagnosticsSharePresented = false
+    @State private var isPreparingDiagnostics = false
     @State private var listeningSignalsExportURL: URL?
     @State private var isExportingListeningSignals = false
     @State private var isListeningSignalsSharePresented = false
@@ -368,12 +369,24 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.legal.openSource.link")
                     #if canImport(UIKit)
                     Button {
-                        diagnosticsExportURL = model.diagnosticsExportFileURL()
-                        isDiagnosticsSharePresented = diagnosticsExportURL != nil
+                        isPreparingDiagnostics = true
+                        Task {
+                            defer { isPreparingDiagnostics = false }
+                            diagnosticsExportURL = await model.prepareDiagnosticsExportFileURL()
+                            isDiagnosticsSharePresented = diagnosticsExportURL != nil
+                        }
                     } label: {
-                        Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                        if isPreparingDiagnostics {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Preparing diagnostics…")
+                            }
+                        } else {
+                            Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                        }
                     }
                     .buttonStyle(.borderless)
+                    .disabled(isPreparingDiagnostics)
                     .accessibilityIdentifier("settings.shareDiagnostics.button")
                     .sheet(isPresented: $isDiagnosticsSharePresented) {
                         if let diagnosticsExportURL {
