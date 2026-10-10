@@ -2128,6 +2128,16 @@ final class Gate1AppModel: ObservableObject {
 
     func dismissQuickAccessFile(_ file: QuickAccessFile) {
         dismissedQuickAccessFileKeys.insert(file.dismissalKey)
+        persistDismissedQuickAccessFileKeys()
+    }
+
+    /// Brings a dismissed Quick Folder file back into Following (#477).
+    func restoreQuickAccessFile(_ file: QuickAccessFile) {
+        dismissedQuickAccessFileKeys.remove(file.dismissalKey)
+        persistDismissedQuickAccessFileKeys()
+    }
+
+    private func persistDismissedQuickAccessFileKeys() {
         UserDefaults.standard.set(
             dismissedQuickAccessFileKeys.sorted(),
             forKey: Self.dismissedQuickAccessFilesKey
@@ -12819,15 +12829,6 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
         } catch {
             diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"
-        }
-    }
-
-    func dismissFollowedSourceEntry(id: String) {
-        guard let coordinator = followedSourceCoordinator else { return }
-        listeningSignals.dismiss(entryId: id)
-        Task { [weak self] in
-            try? await coordinator.setEntryState(id: id, state: .dismissed)
-            await self?.performFollowedSourceRefresh(force: false)
         }
     }
 
