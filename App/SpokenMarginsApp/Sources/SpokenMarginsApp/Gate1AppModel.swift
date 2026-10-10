@@ -6819,7 +6819,7 @@ final class Gate1AppModel: ObservableObject {
                 } else if review.contents.manifest.item.itemType == .podcast {
                     itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.item)
                 } else {
-                    itemId = nil
+                    itemId = try await self.acquireArticleForImportedPackage(review.contents.manifest.item)
                 }
                 let item = try itemId.map { try store.loadItem(id: $0) }
                 let localItem = item.map { SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: self.localAudiobookDigest(for: $0)) }
