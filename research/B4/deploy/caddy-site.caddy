@@ -13,6 +13,9 @@ spokenmargins.proximitytoprogress.com {
 			header Cache-Control "public, max-age=300"
 			file_server
 		}
+		handle /l/* {
+			reverse_proxy 127.0.0.1:@PORT@
+		}
 		handle /api/* {
 			reverse_proxy 127.0.0.1:@PORT@
 		}

@@ -62,6 +62,17 @@ class UntestedMovesTests(RealGit):
         self.assertIsNone(commits)
         self.assertIn('App/Shared.swift', why)
 
+    def test_a_file_the_pr_changed_in_an_earlier_commit_still_counts_as_the_pr_s(self):
+        # Every other test has a one-commit PR, where "the PR's files" and "its last commit's files" are the
+        # same set. Here the last commit only adds a doc, and next changes the file the first commit touched.
+        self.pr_head('App/Sharing.swift')
+        head = self.pr_head('docs/notes.md')
+        tested = lane.fetch_base(self.tree, 'next')
+        self.move_next('App/Sharing.swift', text='next side\n')
+        commits, why = self.moves(head, tested)
+        self.assertIsNone(commits)
+        self.assertIn('touch this PR\'s files (App/Sharing.swift)', why)
+
     def test_a_commit_touching_a_build_input_needs_a_re_test(self):
         for name in ('project.yml', 'SpokenMarginsNative.xcodeproj/project.pbxproj', 'Config/Base.xcconfig',
                      'Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved',
@@ -128,7 +139,7 @@ class RunAutoAfterNextMovedTests(RealGit):
                 mock.patch.object(lane, 'ROOT', self.tree), \
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (test)'), \
+                mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=self.SCOPE), \
                 mock.patch.object(lane, 'run_automerge',
                                   return_value=('PASS', 'no simulator (compile only)', 'host tests; builds', [])) as tests:

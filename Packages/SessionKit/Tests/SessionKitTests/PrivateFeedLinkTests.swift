@@ -54,6 +54,53 @@ final class PrivateFeedLinkTests: XCTestCase {
             enclosureURL: "https://cdn.example.net/Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode-12.mp3",
             episodeGUID: "https://cdn.example.net/Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode-12.mp3",
             publicEpisodeURL: "https://example.net/show/episode-12"
+        ),
+        // #945: the same private addresses written with percent-encoding must be withheld too.
+        // The secret is the part both spellings share, so a leak in either one is caught.
+        PrivateFeed(
+            name: "Encoded private path marker",
+            secret: "remium",
+            feedURL: "https://feeds.example.net/%70remium/feed.rss",
+            episodeURL: "https://example.net/show/episode-12",
+            enclosureURL: "https://feeds.example.net/%70remium/episode-12.mp3",
+            episodeGUID: "https://feeds.example.net/%70remium/episode-12.mp3",
+            publicEpisodeURL: "https://example.net/show/episode-12"
+        ),
+        PrivateFeed(
+            name: "Encoded private path marker on the episode page",
+            secret: "remium",
+            feedURL: "https://feeds.example.net/Pre%6dium/feed.rss",
+            episodeURL: "https://feeds.example.net/%70remium/episode-12",
+            enclosureURL: "https://feeds.example.net/%50REMIUM/episode-12.mp3",
+            episodeGUID: "example-episode-12",
+            publicEpisodeURL: nil
+        ),
+        PrivateFeed(
+            name: "Encoded path token",
+            secret: "k9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq",
+            feedURL: "https://feeds.example.net/%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/show.rss",
+            episodeURL: "https://example.net/show/episode-12",
+            enclosureURL: "https://cdn.example.net/%5ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode-12.mp3",
+            episodeGUID: "https://cdn.example.net/%5ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode-12.mp3",
+            publicEpisodeURL: "https://example.net/show/episode-12"
+        ),
+        PrivateFeed(
+            name: "Encoded token behind an encoded slash, with a malformed escape",
+            secret: "k9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq",
+            feedURL: "https://feeds.example.net/shows%2F%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/show.rss",
+            episodeURL: "https://example.net/show/episode-12",
+            enclosureURL: "https://cdn.example.net/%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq%zz/episode-12.mp3",
+            episodeGUID: "example-episode-12",
+            publicEpisodeURL: "https://example.net/show/episode-12"
+        ),
+        PrivateFeed(
+            name: "Token with an encoded slash at its edge",
+            secret: "k9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq",
+            feedURL: "https://feeds.example.net/Zk9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq%2F/show.rss",
+            episodeURL: "https://example.net/show/episode-12",
+            enclosureURL: "https://cdn.example.net/%2F%5Ak9xQ2hTb2tlbjEyMzQ1Njc4OTBhYmNkZWZnaGlq/episode-12.mp3",
+            episodeGUID: "example-episode-12",
+            publicEpisodeURL: "https://example.net/show/episode-12"
         )
     ]
 
@@ -126,6 +173,31 @@ final class PrivateFeedLinkTests: XCTestCase {
         )
         let prepared = try SpokenMarginsPackageBuilder.prepare(
             packageId: "public-package",
+            createdAt: fixedDate,
+            item: item,
+            itemTransportSelection: .reference,
+            selections: [selection()]
+        )
+        XCTAssertEqual(prepared.manifest.item, item)
+        XCTAssertEqual(prepared.manifest.itemTransport.kind, .reference)
+    }
+
+    /// #945: escapes that decode to ordinary text are not private. The packet keeps these links exactly
+    /// as the sender followed them, with no decoding on the way in.
+    func testPacketFromAPublicFeedKeepsItsEncodedLinksUnchanged() throws {
+        let item = SharedItemIdentity(
+            itemType: .podcast,
+            canonicalURL: "https://example.com/caf%C3%A9/episode-12",
+            originalURL: "https://example.com/caf%C3%A9/episode-12",
+            title: "Episode 12",
+            showTitle: "Public Show",
+            episodeGUID: "https://example.com/caf%C3%A9/episode-12",
+            enclosureURL: "https://feeds.example.net/my%20show/episode-12.mp3?q=100%25&page=2",
+            durationMs: 3_600_000,
+            source: SharedSourceIdentity(sourceType: .podcastFeed, canonicalURL: "https://feeds.example.net/shows%2Fnews%2Ffeed.rss")
+        )
+        let prepared = try SpokenMarginsPackageBuilder.prepare(
+            packageId: "public-encoded-package",
             createdAt: fixedDate,
             item: item,
             itemTransportSelection: .reference,

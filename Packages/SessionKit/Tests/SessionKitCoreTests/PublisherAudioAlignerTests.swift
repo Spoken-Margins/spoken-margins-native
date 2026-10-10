@@ -449,6 +449,35 @@ final class PublisherAudioAlignerTests: XCTestCase {
         XCTAssertNotNil(kept.textMap)
     }
 
+    /// The test above puts the line between 52% and 100%, which any threshold in that range keeps
+    /// in place. These two readings sit either side of 80%: 20 of the article's 25 sentences is
+    /// exactly 80% and keeps the map, 19 of 25 is 76% and does not.
+    func testTheMapLineIsEightyPercentNotLessAndNotMore() throws {
+        let paragraphs = Self.article.components(separatedBy: "\n")
+        func read(leavingOut left: Set<Int>) -> PublisherAudioAlignment {
+            let heard = paragraphs.enumerated().filter { !left.contains($0.offset) }.map(\.element).joined(separator: "\n")
+            return PublisherAudioAligner.align(articleText: Self.article, recognised: Self.spoken(heard).transcript)
+        }
+
+        // Without paragraph 2 (3 sentences) and the closing one (2 sentences): 20 of 25.
+        let atTheLine = read(leavingOut: [1, 7])
+        XCTAssertEqual(placed(atTheLine).0, 20, atTheLine.status)
+        XCTAssertEqual(placed(atTheLine).1, 25, atTheLine.status)
+        XCTAssertNotNil(atTheLine.timeline, "80% is enough: \(atTheLine.status)")
+        XCTAssertEqual(atTheLine.status, "aligned(20 of 25 sentences)")
+
+        // Without paragraph 3 (4 sentences) and the closing one: 19 of 25.
+        let belowTheLine = read(leavingOut: [2, 7])
+        guard case .tooFewPlaced(let placedCount, let totalCount) = belowTheLine else {
+            return XCTFail("expected too few placed, got \(belowTheLine.status)")
+        }
+        XCTAssertEqual(placedCount, 19)
+        XCTAssertEqual(totalCount, 25)
+        XCTAssertNil(belowTheLine.timeline)
+        XCTAssertEqual(belowTheLine.status, "too_few_sentences_placed(19 of 25, needs 80%)",
+                       "the stored status names the line, so a changed line shows in every stored record")
+    }
+
     func testTheMapIsStoredInsideThePublisherAudioRecordNotAsATranscript() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

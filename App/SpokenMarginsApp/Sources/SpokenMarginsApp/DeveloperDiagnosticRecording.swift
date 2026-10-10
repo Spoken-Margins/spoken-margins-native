@@ -110,7 +110,13 @@ extension DeveloperDiagnosticRecording {
     /// The fields of a "playback.state" record. While playing, the audio session's and the
     /// Supertonic player's state are added, so a silent player can be told from a stopped clock
     /// (#288, #301). For live speech the media clock is -1; the text offset shows whether it advances.
-    static func playbackStateFields(_ snapshot: SessionSnapshot, player: @autoclosure () -> [String: String]) -> [String: String] {
+    /// `narration` is the narration client's own intent and voice. It is added in every status, a pause
+    /// included, because a pause with no request behind it is the record that most needs it (#1109).
+    static func playbackStateFields(
+        _ snapshot: SessionSnapshot,
+        player: @autoclosure () -> [String: String],
+        narration: @autoclosure () -> [String: String] = [:]
+    ) -> [String: String] {
         var fields: [String: String] = [
             "item": token(snapshot.itemId),
             "target": token(snapshot.targetId),
@@ -121,6 +127,7 @@ extension DeveloperDiagnosticRecording {
             "failure": token(snapshot.lastFailure),
             "failureDetail": PlaybackFailureDetail.privacySafe(snapshot.lastFailure)
         ]
+        fields.merge(narration()) { current, _ in current }
         if snapshot.status.isPlaybackActive {
             fields.merge(AudioSessionDiagnostics.fields()) { current, _ in current }
             fields.merge(player()) { current, _ in current }

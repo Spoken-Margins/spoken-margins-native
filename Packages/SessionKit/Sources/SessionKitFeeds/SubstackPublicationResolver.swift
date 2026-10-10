@@ -99,8 +99,8 @@ public struct SubstackPublicationResolver: Sendable {
             trace.add("not an http(s) link")
             return nil
         }
-        if Self.isPrivateFeedURL(raw) {
-            return await feedLink(raw, isPrivate: true, trace: trace)
+        if let privateFeed = Self.canonicalPrivateFeedURL(raw) {
+            return await feedLink(privateFeed, isPrivate: true, trace: trace)
         }
         if Self.matches(raw, Self.publicPodcastFeed) {
             return await feedLink(raw, isPrivate: false, trace: trace)
@@ -291,23 +291,49 @@ public struct SubstackPublicationResolver: Sendable {
     private static let substackAppHosts: Set<String> = ["substack.com", "www.substack.com"]
 
     private static let trackingQueryName = #"^(utm_[a-z_]+|r|ref|s|triedRedirect|showWelcomeOnShare|publication_id|post_id|isFreemail|token|sd|next|action|open|source|img|share)$"#
-    private static let privateFeedPatterns = [
+    /// The path of a private feed link, with the host it is tied to (nil: any host). A trailing slash is allowed.
+    private static let privateFeedPaths: [(host: String?, path: String)] = [
         // The paid podcast feed a subscriber copies from their subscription page.
-        #"^https://api\.substack\.com/feed/podcast/\d+/private/[^/]+\.rss$"#,
+        (host: "api.substack.com", path: #"^/feed/podcast/\d+/private/[^/]+\.rss/?$"#),
         // A per-subscriber text feed path from third-party guides; unconfirmed, but it would carry a token.
-        #"^https://[^/]+/feed/private/[^/]+$"#
+        (host: nil, path: #"^/feed/private/[^/]+/?$"#)
     ]
     /// A publication's public podcast feed (where <origin>/feed/podcast redirects).
     private static let publicPodcastFeed = #"^https://api\.substack\.com/feed/podcast/\d+\.rss$"#
 
+    /// True for a private feed link whatever follows it: a query (an email's tracking parameters),
+    /// a fragment, a trailing slash, or `http://` (#1051).
     public static func isPrivateFeedURL(_ link: String) -> Bool {
+        canonicalPrivateFeedURL(link) != nil
+    }
+
+    /// The link to fetch and keep for a private feed: https, without the query, fragment or trailing
+    /// slash that came with the copied link (the token is in the path), or nil when `link` is not a
+    /// private feed link. Substack serves everything over https, so an `http://` link is upgraded,
+    /// never fetched as http, where its token would cross the network in the clear.
+    public static func canonicalPrivateFeedURL(_ link: String) -> String? {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        return privateFeedPatterns.contains { matches(trimmed, $0) }
+        guard var components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              let host = components.host?.lowercased(), !host.isEmpty else { return nil }
+        let path = components.percentEncodedPath
+        let hostOnly = components.user == nil && components.password == nil && components.port == nil
+        guard privateFeedPaths.contains(where: { entry in
+            guard let entryHost = entry.host else { return matches(path, entry.path) }
+            return hostOnly && host == entryHost && matches(path, entry.path)
+        }) else { return nil }
+        components.scheme = "https"
+        components.host = host
+        if scheme == "http", components.port == 80 { components.port = nil }
+        components.query = nil
+        components.fragment = nil
+        if path.hasSuffix("/") { components.percentEncodedPath = String(path.dropLast()) }
+        return components.string
     }
 
     /// A private feed link without its token, for reasons, logs and diagnostics.
     public static func redact(_ link: String) -> String {
-        link.replacingOccurrences(of: #"/private/[^/]+"#, with: "/private/…", options: .regularExpression)
+        link.replacingOccurrences(of: #"/private/[^/]+"#, with: "/private/…", options: [.regularExpression, .caseInsensitive])
     }
 
     /// Drops tracking and share parameters and the fragment; keeps any meaningful query.

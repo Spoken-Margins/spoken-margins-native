@@ -64,7 +64,8 @@
               "skip.request",
               "transport.request",
               "seek.media.result",
-              "download.state"
+              "download.state",
+              "supertonic.fallback"
             ]
           },
           "fields": {

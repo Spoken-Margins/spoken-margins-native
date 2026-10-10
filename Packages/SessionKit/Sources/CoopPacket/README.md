@@ -14,9 +14,9 @@ The binary lands in `Packages/SessionKit/.build/debug/coop-packet`. Keep packets
 - `build <plan.json> [--out <dir>]` writes a packet from a plan, then runs `check` on it.
 - `check <packet>...` runs four checks:
   - every packet imports in the current reader and in the Build 29 reader, with the same Margins;
-  - packets on the same item import into fresh SQLite Libraries in every order (all orders up to five packets, then 120 shuffles), and every order gives the same layers, Margins and reply threads;
+  - packets on the same item import into fresh SQLite Libraries in every order (all orders up to five packets, then 120 shuffles), and every order gives the same packets, Margins and reply threads;
   - opening any packet again adds nothing;
-  - the same Margin arriving in two packets (a sender who shared again) gives a warning.
+  - a sender who shared again (the same Margin in two packets, #858) leaves the listener one copy of it: a copy kept for a Margin no packet carries twice fails the check, and a note says how many Margins were re-sent.
 
   It exits 2 on a failure.
 

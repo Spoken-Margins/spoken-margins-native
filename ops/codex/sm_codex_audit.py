@@ -1,24 +1,26 @@
 #!/usr/bin/env python3
-"""Mechanical Codex (Astra) audit for Spoken Margins PRs into `next`.
+"""Mechanical Claude audit for Spoken Margins PRs into `next`.
 
-Replaces the `sm-codex-audit` Claude scheduled task. The gating is plain code,
-so an idle run makes a handful of `gh` calls and nothing else: no worktree, no
-Codex, no Claude.
+Since 2026-10-09 (#1195) the audit runs on headless Claude, read-only, not on Codex; the
+script keeps its old name so the loaded launchd job and its log files carry on. The gating
+is plain code, so an idle run makes a handful of `gh` calls and nothing else: no worktree,
+no model call.
 
 A PR is audited when all of these hold:
   * it is open, not a draft, and targets `next`;
-  * no audit comment (starting "**Codex audit (Astra)" or "## Codex audit",
+  * no audit comment (a headless Claude heading or a legacy Codex heading,
     the lane runner's own match) names its current head sha7;
   * the newest "Lane report ... — PASS/FAIL" comment is PASS for the current head;
   * its changed files touch a risky area (sharing/packets, persistence/SQLite/
     migrations/ledger, audio session/players/Supertonic, the lane: workflows,
     the runner and its helpers, owner rule 2026-10-01), or the lane runner's
-    newest report says it won't merge the PR until it has a Codex audit (the
+    newest report says it won't merge the PR until it has a Codex or Claude audit (the
     runner classifies files with scripts/test-scope.py, which is wider than the
     list here: #402 and #439 waited on an audit this script never ran), or a
     comment on the PR or its linked issue asks for a Codex audit.
 
-Small PRs are batched: one Codex call per batch, one comment per PR.
+Small PRs are batched: one Claude call per batch, one comment per PR. The comment opens
+`**Claude audit on `<sha7>`**`, the heading the lane runner counts as an audit.
 
 Re-arm: the runner merges an audio, persistence or packet PR only on a run
 after a clean audit, and nothing starts that run. So after each audit batch,
@@ -26,7 +28,9 @@ and again at the end of every run, the script removes and re-adds `automerge`
 on each PR that has the label, whose newest audit of the head opens "No
 blocking findings" (the runner's own rule, #441), whose newest lane report is
 a PASS on the head from before that audit, and that nobody has re-labelled
-since the audit. The label event starts the lane's
+since the audit. Re-arming waits while a same-head automerge job still holds
+a slot, without consuming the re-arm; a later pass retries when it completes.
+The label event starts the lane's
 automerge job, which tests and merges. Each audit re-arms at most once.
 
 Usage:
@@ -40,7 +44,6 @@ Python 3 stdlib only; `gh` and `git` must be on PATH.
 from __future__ import annotations
 
 import argparse
-import ast
 import datetime as _dt
 import fcntl
 import json
@@ -56,6 +59,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+from lane_dedupe import GitHubApi, automerge_holds_a_slot
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -67,21 +72,30 @@ AUTOMERGE = "automerge"
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parents[1]  # ops/codex/ -> repo root
 OPS_DIR = REPO_ROOT / "artifacts" / "ops"
-LOG_PATH = OPS_DIR / "codex-audit.log"
+LOG_PATH = OPS_DIR / "codex-audit.log"  # file names predate the switch to Claude; the launchd job writes here
 LOCK_PATH = OPS_DIR / "codex-audit.lock"
 OUTPUT_KEEP_DIR = OPS_DIR / "codex-audit-outputs"
-LIMITS_SCRIPT = HERE / "codex_limits.py"
 
-CODEX = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex"
-CODEX_MODEL = "gpt-6-astra"
-CODEX_TIMEOUT_S = 30 * 60
-LIMITS_TIMEOUT_S = 60
-EXHAUSTED_PERCENT = 100
+# Headless Claude, as ops/testdesk/sm_integration_run.py calls it: the OAuth token is in the login
+# Keychain, and the tools are read-only, so nothing a PR says can make the call write or run anything.
+CLAUDE = Path(os.environ.get("SM_CLAUDE_CLI", Path.home() / ".local" / "bin" / "claude"))
+KEYCHAIN_SERVICE = "claude-code-oauth"
+CLAUDE_MODEL = "opus"
+CLAUDE_EFFORT = "high"
+CLAUDE_TOOLS = "Read,Grep,Glob"
+CLAUDE_BUDGET_USD = "10"  # per call; a small batch costs well under $1
+CLAUDE_TIMEOUT_S = 30 * 60
+
+MAX_FAILED_AUDITS = 2  # a head whose audit call failed this many times is left alone (no blind retries)
+FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
+
+HEAD_FILE_CAP = 2_000_000  # bytes of one changed file copied out at the PR head
+HEAD_TOTAL_CAP = 10_000_000  # bytes copied out per PR
 
 SOLO_OVER_LINES = 400  # a PR with more changed lines than this is audited alone
 BATCH_MAX_PRS = 5
 BATCH_MAX_LINES = 600
-BODY_CHARS = 6000  # cap on each PR body / issue section passed to Codex
+BODY_CHARS = 6000  # cap on each PR body / issue section passed to the model
 HISTORY_AUDITS = 3
 
 INSTRUCTION = (
@@ -92,11 +106,15 @@ INSTRUCTION = (
     "Rank the most severe first. For each: file and line, the scenario, and the "
     "smallest fix. For a matching, sanitizing or page/title parsing finding, list "
     "sibling cases you suspect but did not confirm. Mark them suspected; they are "
-    "not blocking without a concrete failure scenario. No style notes. If you find nothing real, write "
+    "not blocking without a concrete failure scenario. A PR that adds or changes recurring cost (a lane step "
+    "or tier rule, a scheduled or launchd job, an agent loop or worker, a per-PR check, a CI workflow) and "
+    'whose description has no "Cost and catch" section (cost per run, how often, what it catches with '
+    "evidence, the signal that would show it's waste) violates AGENTS.md: report that as blocking. "
+    "No style notes. If you find nothing real, write "
     '"No blocking findings."'
 )
 
-FOOTER = (
+FOOTER = (  # the legacy Codex footer, kept for build_comment(reviewer="Codex")
     "Posted by the mechanical audit script; Codex ran read-only; findings are "
     "Codex's own, not re-checked by Claude."
 )
@@ -152,15 +170,15 @@ _UNCOUNTED_RE = re.compile(r"(^|/)research/|(^|/)fixtures/", re.I)
 _HEX_RE = re.compile(r"\b[0-9a-f]{7,40}\b")
 _LANE_RE = re.compile(r"^\s*Lane report\b.*?(?:—|--|-)\s*(PASS|FAIL)\b")
 _LANE_COMMIT_RE = re.compile(r"\bcommit\s+`?([0-9a-f]{7,40})\b")
-_REQUEST_CMD_RE = re.compile(r"(?im)^\s*/codex[- ]audit\b")
+_REQUEST_CMD_RE = re.compile(r"(?im)^\s*/(?:codex|claude)[- ]audit\b")
 _REQUEST_RE = re.compile(
     r"(?i)\b(please|request(?:s|ed|ing)?|asks?\s+for|asking\s+for|wants?|needs?)\b"
-    r"[^.\n]{0,25}?\bcodex\s+audit\b"
+    r"[^.\n]{0,25}?\b(?:codex|claude)\s+audit\b"
 )
 _NEGATION_RE = re.compile(r"(?i)(\bno\b|\bnot\b|n't\b|\bwithout\b|\bnever\b)[^.\n]{0,20}$")
 # The runner's hold line: 'not merged by the runner: it touches the audio session and has no
-# "Codex audit (Astra)" comment yet' (next), or '... and has no Codex audit of its head: ...' (#495).
-_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*\bhas no \"?Codex audit\b")
+# "Codex audit (Astra)" comment yet' (legacy), or the current "Codex or Claude audit" wording.
+_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*\bhas no \"?(?:Codex(?: or Claude)?|Claude) audit\b")
 # The runner's clean-audit rule (#441, lane-runner.py CLEAN_AUDIT): the verdict line opens so.
 _CLEAN_AUDIT_RE = re.compile(r"no (blocking )?findings\b", re.I)
 
@@ -177,15 +195,16 @@ def comment_time(c: dict) -> str:
     return c.get("created_at") or c.get("createdAt") or ""
 
 
-# How a real audit comment starts: this script's own heading (build_comment), or an older manual
-# "## Codex audit". The same prefixes as AUDITS in scripts/lane-runner.py, so this script counts
-# exactly the audits the runner merges on. A finisher's reply such as "**Codex audit on `a919a79`
-# (P2): fixed in `d00dd82`" is not an audit of `d00dd82` (#812).
-AUDIT_HEADINGS = ("**Codex audit (Astra)", "## Codex audit")
+# Headless Claude audits and legacy Codex headings use the same recognition as the lane.
+# A finisher's reply such as "**Codex audit on `a919a79` (P2): fixed in `d00dd82`"
+# is not an audit of `d00dd82` (#812). Claude headings must name only the audited head.
+AUDIT_HEADINGS = ("**Codex audit (Astra)", "## Codex audit", "**Claude audit on `")
 
 
 def is_audit_comment(c: dict) -> bool:
-    return comment_body(c).lstrip().startswith(AUDIT_HEADINGS)
+    body = comment_body(c).lstrip()
+    return bool(body.startswith(AUDIT_HEADINGS[:2]) or
+                re.fullmatch(r'\*\*Claude audit on `[0-9a-f]{7,40}`\*\*', body.partition('\n')[0].rstrip()))
 
 
 def names_sha(line: str, head_sha: str) -> bool:
@@ -245,7 +264,7 @@ def lane_pass_for_head(comments: list[dict], head_sha: str) -> tuple[bool, str]:
 
 
 def runner_waits_on_audit(comments: list[dict]) -> bool:
-    """The newest lane report says the runner won't merge until a Codex audit exists."""
+    """The newest lane report says the runner won't merge until a Codex or Claude audit exists."""
     c = newest_lane_comment(comments)
     return c is not None and bool(_RUNNER_WAITS_RE.search(comment_body(c)))
 
@@ -451,55 +470,35 @@ _PR_HEADING_RE = re.compile(r"(?im)^\s*#{1,6}\s*\**\s*PR\s*#(\d+)\b.*$")
 
 
 def split_sections(output: str, numbers: list[int]) -> dict[int, str]:
-    """Split Codex's answer into {pr_number: section text} by "### PR #N"."""
+    """Split the reviewer's answer into {pr_number: section text} by "### PR #N"."""
     marks = [(m.start(), m.end(), int(m.group(1))) for m in _PR_HEADING_RE.finditer(output or "")]
     out: dict[int, str] = {}
     for idx, (_, end, num) in enumerate(marks):
         stop = marks[idx + 1][0] if idx + 1 < len(marks) else len(output)
         text = output[end:stop].strip()
+        # The runner reads the verdict by its first characters, so "**No blocking findings.**" would
+        # hold the PR as if it had findings: drop the emphasis markup in front of a clean verdict.
+        bare = text.lstrip("*_#> \t")
+        if re.match(r"(?i)no (blocking )?findings\b", bare):
+            text = bare
         if num in numbers and text and num not in out:
             out[num] = text
     return out
 
 
-def build_comment(number: int, sha: str, section: str, batch: list[int]) -> str:
-    lines = [f"**Codex audit (Astra) on `{sha[:7]}`**", "", section.strip(), "", "---"]
-    footer = FOOTER
+def build_comment(number: int, sha: str, section: str, batch: list[int], *, reviewer: str = "Claude") -> str:
+    """Format an honestly named read-only audit; the scheduled job posts as Claude."""
+    heading, footer = {
+        "Codex": ("Codex audit (Astra)", FOOTER),
+        "Claude": ("Claude audit", "Posted by the mechanical audit script; Claude ran read-only; "
+                   "findings are Claude's own."),
+    }[reviewer]
+    lines = [f"**{heading} on `{sha[:7]}`**", "", section.strip(), "", "---"]
     others = [n for n in batch if n != number]
     if others:
         footer += " Batched with " + ", ".join(f"#{n}" for n in others) + "."
     lines.append(footer)
     return "\n".join(lines) + "\n"
-
-
-def parse_limits(stdout: str, returncode: int) -> tuple[bool, str]:
-    """Read codex_limits.py output. Returns (ok_to_run, reason)."""
-    if returncode != 0:
-        tail = (stdout or "").strip().splitlines()[-1:] or ["no output"]
-        return False, f"limits unavailable ({tail[0][:120]})"
-    worst = None
-    for line in (stdout or "").splitlines():
-        m = re.match(r"\s*(primary|secondary):\s*(.*)$", line)
-        if not m or m.group(2).strip() == "None":
-            continue
-        try:
-            win = ast.literal_eval(m.group(2).strip())
-        except (ValueError, SyntaxError):
-            continue
-        used = win.get("usedPercent") if isinstance(win, dict) else None
-        if used is None:
-            continue
-        if worst is None or used > worst[0]:
-            worst = (used, m.group(1), win.get("resetsAt"))
-    if worst is None:
-        return False, "limits unavailable (no usage windows in output)"
-    used, name, resets = worst
-    if used >= EXHAUSTED_PERCENT:
-        when = ""
-        if resets:
-            when = " until " + _dt.datetime.fromtimestamp(int(resets)).strftime("%Y-%m-%d %H:%M")
-        return False, f"codex {name} limit used up ({used}%){when}"
-    return True, f"codex {name} limit at {used}%"
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +582,9 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
                 if dry_run:
                     print(f"  re-arm #{n}: no ({why})")
                 continue
+            if automerge_holds_a_slot(GitHubApi(REPO), n, pr['headRefOid']):
+                log(f"re-arm #{n}: deferred until the same-head automerge job completes")
+                continue
             if dry_run:
                 log(f"dry-run: would re-arm #{n} on {pr['headRefOid'][:7]} ({why})")
                 continue
@@ -613,6 +615,9 @@ def fetch_issue(number: int) -> dict | None:
     return json.loads(res.stdout)
 
 
+FAILURES: dict = {}  # PR number -> {head, fails}, loaded once per run
+
+
 def find_candidates(prs: list[dict]) -> tuple[list[dict], dict[str, int], list[tuple[int, str]]]:
     """Returns (candidates, skip-reason counts, per-PR decisions)."""
     cands: list[dict] = []
@@ -635,6 +640,8 @@ def find_candidates(prs: list[dict]) -> tuple[list[dict], dict[str, int], list[t
                     for inum in issues:
                         issue_comments += fetch_comments(inum)
                     ok, why = evaluate_pr(pr, comments, files, issue_comments)
+                if ok and failed_count(FAILURES, n, pr["headRefOid"]) >= MAX_FAILED_AUDITS:
+                    ok, why = False, "audit failed twice on this head"
                 if ok:
                     rep = newest_lane_report(comments)
                     cands.append({
@@ -653,22 +660,54 @@ def find_candidates(prs: list[dict]) -> tuple[list[dict], dict[str, int], list[t
                 "no lane report": "no lane report",
                 "newest lane report on the head is FAIL": "lane FAIL",
                 "not risky, no request": "not risky",
+                "audit failed twice on this head": "audit failed twice",
             }.get(why, "lane report not on head" if why.startswith("newest lane report is on") else why)
             skips[key] = skips.get(key, 0) + 1
     cands.sort(key=lambda c: (c["ready_at"], c["number"]))  # oldest ready first
     return cands, skips, decisions
 
 
-def check_limits() -> tuple[bool, str]:
-    if not LIMITS_SCRIPT.exists():
-        return False, "limits unavailable (codex_limits.py missing)"
+def load_failures() -> dict:
     try:
-        res = subprocess.run(["/usr/bin/python3", str(LIMITS_SCRIPT)], cwd=REPO_ROOT,
-                             stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                             timeout=LIMITS_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        return False, "limits unavailable (codex_limits.py timed out)"
-    return parse_limits(res.stdout, res.returncode)
+        data = json.loads(FAILURES_PATH.read_text())
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def failed_count(failures: dict, number: int, head: str) -> int:
+    entry = failures.get(str(number))
+    return int(entry.get("fails", 0)) if isinstance(entry, dict) and entry.get("head") == head else 0
+
+
+def record_failure(number: int, head: str) -> None:
+    """Remember a failed audit call on this head, so a PR the model can't audit isn't retried every tick."""
+    failures = load_failures()
+    failures[str(number)] = {"head": head, "fails": failed_count(failures, number, head) + 1}
+    FAILURES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    FAILURES_PATH.write_text(json.dumps(failures))
+
+
+def clear_failure(number: int) -> None:
+    failures = load_failures()
+    if failures.pop(str(number), None) is not None:
+        FAILURES_PATH.write_text(json.dumps(failures))
+
+
+def claude_token() -> str | None:
+    res = run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN_SERVICE, "-w"],
+              cwd=REPO_ROOT, check=False, timeout=30)
+    token = res.stdout.strip() if res.returncode == 0 else ""
+    return token or None
+
+
+def check_claude() -> tuple[bool, str]:
+    """Whether a Claude call can start: the CLI is installed and the Keychain holds the token."""
+    if not CLAUDE.exists():
+        return False, f"{CLAUDE} is missing"
+    if not claude_token():
+        return False, f"no Claude token in the Keychain (service {KEYCHAIN_SERVICE})"
+    return True, f"claude {CLAUDE_MODEL} {CLAUDE_EFFORT}"
 
 
 def accepted_finding(comment: dict) -> dict | None:
@@ -761,17 +800,18 @@ def incremental_diffs(worktree: Path, number: int, head: str, comments: list[dic
         except Exception as error:
             log(f'#{number}: incremental diff from {sha} unavailable: {error}')
             parts.append(f'Diff since {label} `{sha}` unavailable. Do not infer that accepted code is unchanged; '
-                         'verify it from git/code before treating it as nonblocking.')
+                         'verify it from the diff files and the code before treating it as nonblocking.')
     return '\n'.join(parts) if parts else 'No earlier audited head or accepted finding code to compare.'
 
 
 def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: str,
                      base_sha: str, merge_base: str, delta_context: str = '') -> str:
+    head_rel = f".sm-audit/pr-{c['number']}-head"
     parts = [
         f"## PR #{c['number']}: {c['title']}",
         f"Head commit: {c['headRefOid']} (merge base with next: {merge_base}).",
         f"Diff file: {diff_rel} ({c['lines']} changed lines, research/ left out).",
-        f"Read its code at the head with `git show {c['headRefOid'][:12]}:<path>`.",
+        f"Its changed files as they are at the head: {head_rel}/<path> (see {head_rel}/_AUDIT_INDEX.txt for any left out).",
         "",
         "PR description:",
         (c.get("body") or "(none)").strip()[:BODY_CHARS],
@@ -795,10 +835,11 @@ def build_prompt(batch: list[dict], blocks: list[str], base_sha: str) -> str:
     head = [
         f"You are auditing {'this pull request' if len(batch) == 1 else 'these pull requests'} "
         f"({nums}) into `next` of Spoken Margins, read-only.",
-        f"The working directory is a checkout of origin/next at {base_sha}. Each PR's head "
-        "commit is fetched into this repository, and each PR's diff is in the file named "
-        "below. Read AGENTS.md first; its hard rules apply.",
-        "Do not build, run tests, boot simulators or run xcodebuild. Review each PR on its own.",
+        f"The working directory is a checkout of origin/next at {base_sha}. Each PR's diff, its "
+        "changed files as they are at its head, and the diffs since earlier audited heads are "
+        "files named below. Read AGENTS.md first; its hard rules apply.",
+        "You can only read files (Read, Grep, Glob); you cannot run commands or git. Do not ask to. "
+        "Review each PR on its own.",
         "Review memory: a complete **Accepted audit finding:** record identifies the audited sha7, "
         "exact file and finding title, follow-up issue, and accepter. Verify it matches that prior audit. "
         "The owner may accept any finding. A named thread with (Default taken) may accept ordinary findings, "
@@ -836,30 +877,96 @@ def kill_tree(proc: subprocess.Popen) -> None:
             pass
 
 
-def run_codex(worktree: Path, out_file: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
-    cmd = [
-        CODEX, "exec", "--json",
-        "-m", CODEX_MODEL,
-        "-c", 'model_reasoning_effort="high"',
-        "-s", "read-only",
-        "-C", str(worktree),
-        "-o", str(out_file),
-        prompt,
-    ]
-    with open(os.devnull, "rb") as devnull, open(transcript, "wb") as tfh:
-        proc = subprocess.Popen(cmd, stdin=devnull, stdout=tfh, stderr=subprocess.STDOUT,
+INDEX_NAME = "_AUDIT_INDEX.txt"  # not a likely name for a changed file
+
+
+def head_blob_info(head: str, path: str) -> tuple[str, int | None]:
+    """(mode, size in bytes) of a path at the head, from `git ls-tree -l`; ('', None) when unreadable."""
+    res = run(["git", "ls-tree", "-l", head, "--", path], cwd=REPO_ROOT, check=False, timeout=60)
+    match = re.match(r"(\d+) \w+ [0-9a-f]+ +(-|\d+)\t", res.stdout or "") if res.returncode == 0 else None
+    if not match:
+        return "", None
+    return match.group(1), None if match.group(2) == "-" else int(match.group(2))
+
+
+def export_head_files(worktree: Path, number: int, head: str, files: list[dict]) -> str:
+    """Copy each changed file as it is at the PR head into .sm-audit/pr-N-head/, since the reviewer can
+    only read files. Deleted, symlink, submodule, binary and over-cap files are listed in the index file
+    instead. Returns that directory relative to the worktree."""
+    rel = f".sm-audit/pr-{number}-head"
+    root = worktree / rel
+    root.mkdir(parents=True, exist_ok=True)
+    index, total = [], 0
+    for f in files:
+        path = f.get("filename") or f.get("path") or ""
+        parts = path.split("/")
+        if not path or path.startswith("/") or any(part in ("", ".", "..") for part in parts):
+            index.append(f"{path or '(empty)'}: skipped, not a plain relative path")
+            continue
+        if f.get("status") == "removed":
+            index.append(f"{path}: deleted by the PR")
+            continue
+        if re.search(r"(^|/)research/", path):
+            index.append(f"{path}: research/ left out, as in the diff")
+            continue
+        try:
+            mode, size = head_blob_info(head, path)
+            if mode in ("120000", "160000"):
+                index.append(f"{path}: {'symlink' if mode == '120000' else 'submodule'}, not copied")
+                continue
+            if size is None:
+                index.append(f"{path}: not readable at the head")
+                continue
+            if size > HEAD_FILE_CAP or total + size > HEAD_TOTAL_CAP:
+                index.append(f"{path}: too large to copy; read the diff")
+                continue
+            blob = run(["git", "show", f"{head}:{path}"], cwd=REPO_ROOT, check=False, timeout=120)
+            if blob.returncode != 0:
+                index.append(f"{path}: not readable at the head")
+                continue
+            target = root.joinpath(*parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(blob.stdout, encoding="utf-8")
+            total += size
+        except Exception as error:  # binary content fails to decode as text; a name may be too long to write
+            index.append(f"{path}: not copied ({type(error).__name__})")
+    (root / INDEX_NAME).write_text("\n".join(index) + "\n" if index else "Every changed file was copied.\n",
+                                   encoding="utf-8")
+    return rel
+
+
+def run_claude(worktree: Path, out_file: Path, prompt: str, transcript: Path) -> tuple[bool, str]:
+    """One headless, read-only Claude call. The prompt goes in on stdin; the JSON result is kept as the
+    transcript (the usage ledger reads it) and its `result` text is the answer."""
+    token = claude_token()
+    if not token or not CLAUDE.exists():
+        return False, "no Claude token in the Keychain" if not token else f"{CLAUDE} is missing"
+    cmd = [str(CLAUDE), "-p", "-", "--output-format", "json", "--model", CLAUDE_MODEL,
+           "--effort", CLAUDE_EFFORT, "--permission-mode", "dontAsk", "--tools", CLAUDE_TOOLS,
+           "--strict-mcp-config", "--setting-sources", "project", "--no-session-persistence",
+           "--max-budget-usd", CLAUDE_BUDGET_USD]
+    env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+    env["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    with open(transcript, "wb") as tfh:
+        proc = subprocess.Popen(cmd, cwd=worktree, env=env, stdin=subprocess.PIPE, stdout=tfh,
+                                stderr=subprocess.PIPE, encoding="utf-8", errors="replace",
                                 start_new_session=True)
         try:
-            rc = proc.wait(timeout=CODEX_TIMEOUT_S)
+            _, err = proc.communicate(prompt, timeout=CLAUDE_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             kill_tree(proc)
-            return False, f"timed out after {CODEX_TIMEOUT_S // 60} min"
-    if rc != 0:
-        tail = transcript.read_text(errors="replace").strip().splitlines()[-1:] or [""]
-        return False, f"codex exit {rc}: {tail[0][:160]}"
-    if not out_file.exists() or not out_file.read_text(errors="replace").strip():
-        return False, "codex wrote no answer"
-    return True, "ok"
+            return False, f"timed out after {CLAUDE_TIMEOUT_S // 60} min"
+    try:
+        answer = json.loads(transcript.read_text(encoding="utf-8", errors="replace"))
+    except ValueError:
+        return False, f"claude exit {proc.returncode}, no JSON result: {(err or '').strip()[-160:]}"
+    if proc.returncode != 0 or answer.get("is_error"):
+        return False, f"claude {answer.get('subtype') or proc.returncode}: {str(answer.get('result'))[:160]}"
+    text = answer.get("result")
+    if not isinstance(text, str) or not text.strip():
+        return False, "claude wrote no answer"
+    out_file.write_text(text, encoding="utf-8")
+    return True, "ok" if answer.get("total_cost_usd") is None else f"ok, ${answer['total_cost_usd']:.2f}"
 
 
 def audit_batch(batch: list[dict]) -> None:
@@ -902,6 +1009,7 @@ def audit_batch(batch: list[dict]) -> None:
                 if issue and not issue.get("pull_request"):
                     issue_texts[inum] = issue_sections(issue.get("body") or "")
             delta = incremental_diffs(worktree, c['number'], head, c.get('comments') or [])
+            export_head_files(worktree, c["number"], head, c.get("files") or [])
             blocks.append(pr_context_block(c, issue_texts, rel, base_sha, mb, delta))
             blocks.append("")
         prompt = build_prompt(live, blocks, base_sha)
@@ -917,16 +1025,18 @@ def audit_batch(batch: list[dict]) -> None:
                         if asks_for_audit(comment_body(comment))), None),
                     'outcome': {'kind': 'failed', 'reason': 'audit did not finish'},
                     'comment_url': None} for c in live]
-        usage_run = usage.Run(usage.DEFAULT_DIR, 'audit', CODEX_MODEL, 'high', transcript,
+        usage_run = usage.Run(usage.DEFAULT_DIR, 'audit', CLAUDE_MODEL, CLAUDE_EFFORT, transcript,
                               targets=targets, log=log)
         try:
-            ok, why = run_codex(worktree, out_file, prompt, transcript)
+            ok, why = run_claude(worktree, out_file, prompt, transcript)
         finally:
             usage_run.model_finished()
         usage_run.checkpoint(model_result={'ok': ok, 'reason': why})
         took = int(time.time() - t0)
         if not ok:
-            log(f"batch {','.join('#' + str(c['number']) for c in live)}: codex failed after {took}s ({why}); nothing posted")
+            for c in live:
+                record_failure(c["number"], c["headRefOid"])
+            log(f"batch {','.join('#' + str(c['number']) for c in live)}: claude failed after {took}s ({why}); nothing posted")
             return
         answer = out_file.read_text(encoding="utf-8", errors="replace")
         live_nums = [c["number"] for c in live]
@@ -937,7 +1047,8 @@ def audit_batch(batch: list[dict]) -> None:
             target = next(t for t in targets if t['pr'] == n)
             if n not in sections:
                 target['outcome'] = {'kind': 'failed', 'reason': 'no PR section in answer'}
-                results.append(f"#{n} no section in Codex's answer, nothing posted")
+                record_failure(n, head)
+                results.append(f"#{n} no section in Claude's answer, nothing posted")
                 continue
             target['outcome'] = usage.audit_outcome(sections[n])
             if audited_on(fetch_comments(n), head):
@@ -953,8 +1064,10 @@ def audit_batch(batch: list[dict]) -> None:
             if res.returncode:
                 target['post_missing_reason'] = res.stderr.strip()[:120]
             usage_run.checkpoint(targets=targets)
+            if res.returncode == 0:
+                clear_failure(n)
             results.append(f"#{n} posted" if res.returncode == 0 else f"#{n} post failed: {res.stderr.strip()[:120]}")
-        log(f"batch {','.join('#' + str(x) for x in live_nums)}: codex {took}s ok; " + "; ".join(results))
+        log(f"batch {','.join('#' + str(x) for x in live_nums)}: claude {took}s {why}; " + "; ".join(results))
         usage_run.checkpoint(outcome={'kind': 'audit completed', 'signature': usage.signature(answer)})
     except Exception as exc:  # log and move on to the next batch
         if usage_run:
@@ -981,9 +1094,11 @@ def describe(cands: list[dict], batches: list[list[int]]) -> tuple[str, str]:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--dry-run", action="store_true", help="print candidates and batches; no Codex, no posting")
+    ap.add_argument("--dry-run", action="store_true", help="print candidates and batches; no model call, no posting")
     ap.add_argument("--pr", type=int, help="consider only this PR")
     args = ap.parse_args(argv)
+    if args.pr is not None and not args.dry_run:
+        clear_failure(args.pr)  # an explicit request tries again
     tag = "dry-run " if args.dry_run else ""
     if not args.dry_run:
         usage.recover(usage.DEFAULT_DIR, log)
@@ -1011,6 +1126,8 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float) -> int:
+    FAILURES.clear()
+    FAILURES.update(load_failures())
     try:
         cands, skips, decisions = find_candidates(prs)
     except Exception as exc:
@@ -1031,10 +1148,10 @@ def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float) -> int:
     cand_s, batch_s = describe(cands, batches)
 
     if dry_run:
-        log(f"dry-run: candidates {cand_s}; batches {batch_s}; no Codex, nothing posted")
+        log(f"dry-run: candidates {cand_s}; batches {batch_s}; no model call, nothing posted")
         return 0
 
-    ok, why = check_limits()
+    ok, why = check_claude()
     if not ok:
         log(f"paused: {why}; candidates {cand_s} not audited")
         return 0

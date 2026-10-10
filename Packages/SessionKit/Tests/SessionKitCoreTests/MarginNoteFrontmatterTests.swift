@@ -80,6 +80,35 @@ final class MarginNoteFrontmatterTests: XCTestCase {
         }
     }
 
+    /// The titles above only exercise `\n`, `\t`, `\r`, `\\`, `"` and U+2028, and U+2028 matches the
+    /// generic escape clause on its own, so dropping the C0 range from it went unnoticed. PDF text
+    /// extraction yields form feeds and vertical tabs, and feed titles sometimes begin with a BOM. The
+    /// parser below rejects any raw control character, so each of these must be escaped to round-trip.
+    func testEveryControlAndLineBreakScalarInATitleIsEscapedAndRoundTrips() throws {
+        let scalars: [UInt32] = Array(0x00...0x1F) + [0x7F, 0x85, 0x2028, 0x2029, 0xFEFF]
+        for value in scalars {
+            let label = String(format: "U+%04X", value)
+            let character = Character(try XCTUnwrap(Unicode.Scalar(value)))
+            for title in ["Before\(character)after", "\(character)leading", "trailing\(character)"] {
+                let item = Item(id: "item", title: title, mediaType: "text", text: "Source.",
+                                externalReference: nil, status: "ready", author: "Au\(character)thor")
+                let note = try renderNote(item: item, margin: margin(item: item, kind: nil, mediaTimeMs: nil))
+                let properties: [String: FrontmatterParser.Value]
+                do { properties = try FrontmatterParser.parse(note) } catch {
+                    XCTFail("\(label) in a title broke the properties block: \(error)")
+                    continue
+                }
+                XCTAssertEqual(properties["title"], .string(title), label)
+                XCTAssertEqual(properties["author"], .string("Au\(character)thor"), label)
+                XCTAssertEqual(Array(properties.keys).sorted(), ["author", "created", "item_id", "margin_id", "margin_kind", "tags", "target", "title"], label)
+            }
+        }
+        // What the escape looks like, so a reader that only knows YAML's `\uXXXX` still decodes it.
+        XCTAssertEqual(MarginNoteFrontmatter.quoted("a\u{0C}b"), "\"a\\u000Cb\"")
+        XCTAssertEqual(MarginNoteFrontmatter.quoted("\u{FEFF}"), "\"\\uFEFF\"")
+        XCTAssertEqual(MarginNoteFrontmatter.quoted("\r\n"), "\"\\r\\n\"")
+    }
+
     func testPrivateFeedLinksNeverReachTheNote() throws {
         let privateLink = "https://www.patreon.com/rss/show?auth=abc123SECRET456def789ghi012jkl345"
         let privateMedia = "https://c10.patreonusercontent.com/episode.mp3?token-hash=zyx987SECRET654wvu321tsr098qpo765"

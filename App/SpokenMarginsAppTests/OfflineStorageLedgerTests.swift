@@ -6,6 +6,43 @@ import XCTest
 @testable import SpokenMarginsApp
 
 final class OfflineStorageLedgerTests: XCTestCase {
+    @MainActor
+    func testModelKeepsFallbackLedgerAndUsesItsStoreAndRoot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "lazy-ledger-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        XCTAssertNil(model.offlineStorageLedger)
+
+        let ledger = model.requireOfflineLedger(store: store, rootDirectory: root)
+        XCTAssertTrue(model.offlineStorageLedger === ledger)
+        XCTAssertTrue(model.requireOfflineLedger(store: store, rootDirectory: root) === ledger)
+        let reservation = try await ledger.reserve(ownerId: "lazy-ledger", byteCount: 3)
+        XCTAssertEqual(try store.loadOfflineStorageReservations().map(\.id), [reservation.id])
+        let audio = root.appending(path: "PodcastAudio/episode.m4a")
+        try FileManager.default.createDirectory(at: audio.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: audio)
+        try await ledger.adoptExistingAssets()
+        XCTAssertEqual(try store.loadOwnedOfflineAssets().map(\.relativePath), ["PodcastAudio/episode.m4a"])
+    }
+
+    @MainActor
+    func testModelReusesConfiguredLedgerWithoutEvaluatingFallbackDirectory() throws {
+        enum DirectoryError: Error { case unavailable }
+        let store = try SQLiteSessionStore(path: ":memory:")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        let configured = OfflineStorageLedger(repository: store, rootDirectory: FileManager.default.temporaryDirectory)
+        model.offlineStorageLedger = configured
+        func unavailableDirectory() throws -> URL { throw DirectoryError.unavailable }
+
+        let reused = try model.requireOfflineLedger(store: store, rootDirectory: try unavailableDirectory())
+        XCTAssertTrue(reused === configured)
+        model.offlineStorageLedger = nil
+        XCTAssertThrowsError(try model.requireOfflineLedger(store: store, rootDirectory: try unavailableDirectory()))
+        XCTAssertNil(model.offlineStorageLedger)
+    }
+
     func testReservationPreventsWriterFromExceedingBudget() async throws {
         let fixture = try makeFixture(limit: 10)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -306,6 +343,41 @@ final class OfflineStorageLedgerTests: XCTestCase {
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: narration.path), "real narration survives")
         XCTAssertEqual(try fixture.repository.loadOwnedOfflineAssets().map(\.id), ["real-narration"])
+    }
+
+    // #645: an article's own reservation, to assemble its chunks or render the next one, evicted
+    // the chunks it was about to read. A file a held reservation pins is skipped by every eviction
+    // until that reservation is committed or released; if nothing else frees the room, the
+    // reservation is refused and the file stays.
+    func testAPinnedFileIsNotEvictedUntilItsReservationEnds() async throws {
+        let fixture = try makeFixture(limit: 10)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let chunk = fixture.root.appending(path: "PreparedAudio/item/sig/chunks/00000.wav")
+        try FileManager.default.createDirectory(at: chunk.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 6).write(to: chunk)
+        try fixture.repository.saveOwnedOfflineAsset(OwnedOfflineAsset(
+            id: "chunk-0", category: .preparedChunk, relativePath: "PreparedAudio/item/sig/chunks/00000.wav",
+            byteCount: 6, isReproducible: true
+        ))
+
+        do {
+            _ = try await fixture.ledger.reserve(ownerId: "assembly", byteCount: 6, pinning: ["PreparedAudio/item/sig/chunks/00000.wav"])
+            XCTFail("the only room is the pinned chunk itself")
+        } catch let error as OfflineStorageLedgerError {
+            XCTAssertEqual(error, .insufficientSpace(requiredBytes: 6, availableBytes: 4))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: chunk.path), "a refused reservation deletes nothing it pins")
+
+        let held = try await fixture.ledger.reserve(ownerId: "assembly", byteCount: 4, pinning: ["PreparedAudio/item/sig/chunks/00000.wav"])
+        do {
+            _ = try await fixture.ledger.reserve(ownerId: "download", byteCount: 1)
+            XCTFail("another writer can't evict a file a held reservation pins")
+        } catch OfflineStorageLedgerError.insufficientSpace {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath: chunk.path))
+
+        try await fixture.ledger.release(reservationId: held.id)
+        _ = try await fixture.ledger.reserve(ownerId: "download", byteCount: 5)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: chunk.path), "once released, the chunk is ordinary evictable audio")
     }
 
     func testAMissingProtectedRowDoesNotRefuseAReservation() async throws {

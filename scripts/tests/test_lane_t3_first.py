@@ -58,21 +58,20 @@ class T3RequestForHeadTests(unittest.TestCase):
 
 class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
     run_main = test_lane_runner.MainFlowTests.run_main
-    conflicts, role, attempt = [], '', '1'
+    conflicts, role, attempt, state_dir, ops = [], '', '1', None, mock.Mock()
 
     def run_auto_job(self, github, role=''):
         self.role = role
         with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests; builds', [])) as auto, \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=None) as wait, \
-                mock.patch.object(lane, 'host_only_scope', return_value=False):  # an app change: it builds
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(None, None)) as wait:
             self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
         return auto, wait
 
-    def test_a_pending_t3_request_for_the_head_skips_the_host_tests_and_builds_off_the_build_runner(self):
+    def test_a_pending_t3_request_for_the_head_skips_the_host_tests_off_the_build_runner(self):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[T3_FOR_HEAD])
         auto, wait = self.run_auto_job(github, role='')
         auto.assert_not_called()
-        wait.assert_not_called()  # nothing to build, so nothing to wait for
+        wait.assert_not_called()  # it runs nothing, so it waits for nothing
         report = github.posted[0]
         self.assertTrue(report.startswith('Lane report pr5-r42 — INCONCLUSIVE'), report)
         self.assertIn('ran: nothing', report)
@@ -85,15 +84,14 @@ class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[T3_FOR_HEAD])
         auto, wait = self.run_auto_job(github, role='build')
         auto.assert_called_once()
-        wait.assert_called_once()  # under the build runner's usual room rules
+        wait.assert_called_once()  # under the build runner's host-test room rules
 
     def test_a_lane_fault_in_the_build_runner_s_checks_still_leaves_the_pr_for_the_t3_pass_to_release(self):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[T3_FOR_HEAD])
         self.role = 'build'
         with mock.patch.object(lane, 'run_auto', return_value=('INCONCLUSIVE', 'host only', 'interrupted',
                                                                ['host tests ran out of time'])), \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=None), \
-                mock.patch.object(lane, 'host_only_scope', return_value=False):
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(None, None)):
             self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
         self.assertTrue(lane.held_for_t3(github.comments(), HEAD))
         self.assertIsNone(lane.held_checks(github.comments(), HEAD))  # so the release tests again
@@ -103,8 +101,7 @@ class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[T3_FOR_HEAD])
         self.role = 'build'
         with mock.patch.object(lane, 'run_auto', side_effect=RuntimeError('gh api: 502')), \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value=None), \
-                mock.patch.object(lane, 'host_only_scope', return_value=False):
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(None, None)):
             self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
         self.assertIn('The lane itself failed', github.posted[0])
         self.assertTrue(lane.held_for_t3(github.comments(), HEAD))
@@ -114,8 +111,8 @@ class AutomergeJobLeavesItToTheT3Tests(unittest.TestCase):
         github = FakeGitHub(labels=('automerge', 'lane:queued'), comments=[T3_FOR_HEAD])
         self.role = 'build'
         with mock.patch.object(lane, 'run_auto') as auto, \
-                mock.patch.object(lane, 'wait_for_room_to_build', return_value='the build runner waited 90m for room'), \
-                mock.patch.object(lane, 'host_only_scope', return_value=False):
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host',
+                                  return_value=('the build runner waited 90m for room', None)):
             self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
         auto.assert_not_called()
         self.assertIn('the build runner waited 90m for room', github.posted[0])
@@ -169,6 +166,7 @@ class HeldChecksStandAfterTheT3PassTests(unittest.TestCase):
         for patch in (mock.patch.object(lane, 'ROOT', self.tree), mock.patch.dict(os.environ, {'GH_TOKEN': ''}),
                       mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T2', 'why': ['app'], 'files': []}),
                       mock.patch.object(lane, 'warm_build_folders', return_value='build folders: cold'),
+                      mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace'),
                       mock.patch.object(lane, 'TESTED_RECORD', None), mock.patch('builtins.print')):
             patch.start()
             self.addCleanup(patch.stop)

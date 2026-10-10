@@ -14,19 +14,19 @@ Publishers: BMC (Springer Nature); BMJ; Cell Press (Elsevier); Elsevier; F1000 (
 
 | Extractor | Median clutter | Median missing | Markers silent (I14) | No text |
 | --- | ---: | ---: | ---: | ---: |
-| app-baseline | 24.8% | 0.9% | 0.0% | 1 |
+| app-baseline | 24.2% | 0.9% | 0.0% | 1 |
 | pymupdf-raw | 35.7% | 0.4% | 0.0% | 1 |
 | pdfminer | 35.9% | 0.6% | 0.0% | 1 |
 | gt-i14 (ground truth spoken per I14: the floor for M3) | 0.2% | 0.1% | 100.0% | 0 |
-| app-v2 | 10.8% | 1.1% | 96.7% | 1 |
+| app-v2 | 10.9% | 1.0% | 97.3% | 1 |
 
 ## app-baseline
 
-- Papers scored: 66; produced no text: 1 (pmc-pmc11960816-imageonly)
-- Median clutter rate: **24.8%** of spoken words
+- Papers scored: 65; produced no text: 1 (pmc-pmc11960816-imageonly)
+- Median clutter rate: **24.2%** of spoken words
 - Median missing body text: **0.9%**
-- Median reading-order breaks: 2.36 per 1000 body words
-- Median extraction time: 863 ms
+- Median reading-order breaks: 2.38 per 1000 body words
+- Median extraction time: 875 ms
 
 ### Failure categories ranked by listener cost
 
@@ -35,44 +35,44 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Rank | Category | Corpus total (min) | Median per paper (min) | Papers ≥ 30 s |
 | ---: | --- | ---: | ---: | ---: |
-| 1 | Reference list read aloud | 291 | 0.1 | 28 |
+| 1 | Reference list read aloud | 282 | 0.1 | 27 |
 | 2 | Math read as symbols and letters | 230 | 0.9 | 40 |
-| 3 | Table cells read aloud | 199 | 0.5 | 33 |
-| 4 | Reading order broken (columns, floats) | 195 | 2.0 | 55 |
-| 5 | Body text missing (never spoken) | 166 | 0.4 | 26 |
+| 3 | Table cells read aloud | 199 | 0.6 | 33 |
+| 4 | Reading order broken (columns, floats) | 194 | 2.0 | 55 |
+| 5 | Body text missing (never spoken) | 166 | 0.3 | 25 |
 | 6 | Display equations read aloud | 118 | 0.1 | 20 |
-| 7 | Page furniture: running headers, footers, page and line numbers | 108 | 0.8 | 45 |
+| 7 | Page furniture: running headers, footers, page and line numbers | 108 | 0.7 | 44 |
 | 8 | Line-end hyphenation left in ("bio- logy") | 84 | 0.6 | 37 |
-| 9 | Citation and footnote markers read as numbers or names | 73 | 0.9 | 48 |
-| 10 | Back matter: funding, contributions, competing interests, reviewer reports | 60 | 0.3 | 29 |
-| 11 | Mid-sentence interruptions (captions, footers inside a sentence) | 59 | 0.5 | 28 |
-| 12 | Repeated text (running titles, duplicated lines) | 59 | 0.5 | 34 |
-| 13 | Title-page matter: authors, affiliations, identifiers | 50 | 0.5 | 36 |
-| 14 | Stray fragments: figure labels, axis ticks | 28 | 0.1 | 17 |
+| 9 | Citation and footnote markers read as numbers or names | 72 | 0.8 | 47 |
+| 10 | Mid-sentence interruptions (captions, footers inside a sentence) | 58 | 0.5 | 28 |
+| 11 | Repeated text (running titles, duplicated lines) | 58 | 0.5 | 34 |
+| 12 | Back matter: funding, contributions, competing interests, reviewer reports | 55 | 0.3 | 28 |
+| 13 | Title-page matter: authors, affiliations, identifiers | 48 | 0.5 | 35 |
+| 14 | Stray fragments: figure labels, axis ticks | 27 | 0.1 | 17 |
 | 15 | Footnote text read inline | 16 | 0.0 | 14 |
-| 16 | Stamps, licences and links | 15 | 0.1 | 2 |
+| 16 | Stamps, licences and links | 11 | 0.1 | 2 |
 
 ### Where the spoken words came from
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 407869 | 63.2% |
-| reference | 45037 | 7.0% |
-| math | 35634 | 5.5% |
-| table | 30881 | 4.8% |
-| caption | 26951 | 4.2% |
-| equation | 18261 | 2.8% |
-| furniture | 16787 | 2.6% |
-| unattributed_prose | 15998 | 2.5% |
-| back_matter | 9227 | 1.4% |
-| repeated | 9114 | 1.4% |
-| citation_markers | 7895 | 1.2% |
-| front_matter | 7750 | 1.2% |
-| inline_residue | 4466 | 0.7% |
-| fragment | 4265 | 0.7% |
-| footnote | 2455 | 0.4% |
-| stamp_link | 2262 | 0.4% |
-| authors | 772 | 0.1% |
+| body | 403898 | 63.3% |
+| reference | 43711 | 6.8% |
+| math | 35600 | 5.6% |
+| table | 30848 | 4.8% |
+| caption | 26877 | 4.2% |
+| equation | 18261 | 2.9% |
+| furniture | 16667 | 2.6% |
+| unattributed_prose | 15826 | 2.5% |
+| repeated | 9017 | 1.4% |
+| back_matter | 8598 | 1.3% |
+| citation_markers | 7840 | 1.2% |
+| front_matter | 7471 | 1.2% |
+| inline_residue | 4473 | 0.7% |
+| fragment | 4247 | 0.7% |
+| footnote | 2448 | 0.4% |
+| stamp_link | 1718 | 0.3% |
+| authors | 774 | 0.1% |
 | footnote_markers | 162 | 0.0% |
 | announcement | 10 | 0.0% |
 
@@ -80,12 +80,12 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3320 sites): spoken label 1540 (46%), label read 636 (19%), number read 518 (16%), silent 246 (7%), glued number 217 (7%), context missing 163 (5%)
+- Citation markers (3274 sites): spoken label 1540 (47%), label read 636 (19%), number read 481 (15%), silent 244 (7%), glued number 215 (7%), context missing 158 (5%)
 - Footnote markers (95 sites): label read 43 (45%), glued number 25 (26%), number read 11 (12%), silent 7 (7%), context missing 7 (7%), spoken label 2 (2%)
-- Figure and table captions: 510 of 548 read aloud (≥ half their words spoken)
-- Tables: 161 of 205 had their cells read aloud (≥ 30% of cell words)
-- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 398, 'furniture': 255, 'caption': 75, 'repeated': 57, 'table': 36, 'fragment': 20, 'front_matter': 11, 'stamp_link': 11, 'footnote': 7, 'reference': 6, 'equation': 5, 'back_matter': 1}
-- Line-end hyphenation left unrepaired: 5070 words
+- Figure and table captions: 506 of 544 read aloud (≥ half their words spoken)
+- Tables: 159 of 203 had their cells read aloud (≥ 30% of cell words)
+- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 398, 'furniture': 252, 'caption': 73, 'repeated': 57, 'table': 36, 'fragment': 20, 'front_matter': 11, 'stamp_link': 11, 'footnote': 7, 'reference': 6, 'equation': 5}
+- Line-end hyphenation left unrepaired: 5064 words
 
 Marker outcomes: *silent* (nothing spoken between the words around it), *spoken label* ("citation 12", the app's normalizer), *number read* ("cells 12 divide"), *glued number* ("cells12"), *label read* (the author-year text read in full), *context missing* (the neighbouring words weren't spoken, so the marker can't be judged).
 
@@ -93,15 +93,15 @@ Marker outcomes: *silent* (nothing spoken between the words around it), *spoken 
 
 | Format | Papers | Median clutter | Median missing | Median order breaks /1000 |
 | --- | ---: | ---: | ---: | ---: |
-| journal | 44 | 20.1% | 0.9% | 2.01 |
-| single-column | 34 | 25.5% | 0.7% | 1.59 |
+| journal | 43 | 20.1% | 0.9% | 2.08 |
+| single-column | 33 | 23.4% | 0.7% | 1.64 |
 | two-column | 31 | 24.8% | 0.9% | 2.74 |
 | math-heavy | 19 | 33.5% | 1.8% | 3.18 |
-| conference | 12 | 26.0% | 0.7% | 3.32 |
+| conference | 12 | 25.9% | 0.7% | 3.32 |
 | author-manuscript | 5 | 20.8% | 0.4% | 1.55 |
-| scanned | 4 | 21.9% | 12.3% | 4.60 |
+| scanned | 4 | 21.8% | 12.3% | 4.60 |
 | preprint | 4 | 42.3% | 2.5% | 2.74 |
-| ocr-text-layer | 3 | 21.9% | 10.2% | 4.60 |
+| ocr-text-layer | 3 | 21.8% | 10.2% | 4.60 |
 | thesis | 3 | 43.6% | 2.7% | 4.50 |
 | image-only | 1 | – | 100.0% | – |
 | derived | 1 | – | 100.0% | – |
@@ -112,19 +112,19 @@ Ranked by listener cost per minute of real body text.
 
 | Paper | Formats | Cost per body minute | Clutter | Missing |
 | --- | --- | ---: | ---: | ---: |
-| pmc-pmc11326079 | journal, single-column | 1.45 | 36.2% | 0.5% |
+| pmc-pmc11326079 | journal, single-column | 1.45 | 36.1% | 0.5% |
 | arxiv-2606.21736v1 | conference, two-column, math-heavy | 1.35 | 48.8% | 0.4% |
 | arxiv-2506.00547v1 | preprint, single-column, math-heavy | 1.34 | 53.0% | 2.9% |
-| arxiv-2609.06489v1 | conference, single-column, math-heavy | 1.24 | 47.6% | 3.7% |
-| arxiv-2605.07149v1 | conference, two-column, math-heavy | 1.23 | 43.9% | 0.7% |
+| arxiv-2609.06489v1 | conference, single-column, math-heavy | 1.24 | 47.7% | 3.7% |
+| arxiv-2605.07149v1 | conference, two-column, math-heavy | 1.23 | 43.8% | 0.7% |
 | arxiv-2609.07965v1 | conference, two-column | 1.16 | 46.8% | 0.3% |
 | arxiv-2609.27549v1 | thesis, single-column, math-heavy | 1.14 | 44.6% | 2.8% |
-| pmc-pmc10755645 | journal, two-column | 1.07 | 39.7% | 0.9% |
 | arxiv-2609.25172v1 | thesis, single-column, math-heavy | 1.07 | 43.6% | 2.7% |
+| pmc-pmc10755645 | journal, two-column | 1.07 | 39.7% | 0.9% |
 | arxiv-2506.00390v1 | preprint, single-column, math-heavy | 1.03 | 45.2% | 2.7% |
-| pmc-pmc11154291 | journal, single-column | 1.01 | 44.8% | 0.1% |
+| pmc-pmc11154291 | journal, single-column | 1.00 | 44.8% | 0.1% |
 | pmc-pmc11960816-imageonly | journal, scanned, image-only, derived | 1.00 | – | 100.0% |
-| pmc-pmc11843480 | journal, single-column | 0.99 | 44.3% | 0.4% |
+| pmc-pmc11150781 | journal, two-column | 0.99 | 44.6% | 0.5% |
 
 ## pymupdf-raw
 
@@ -444,11 +444,11 @@ Ranked by listener cost per minute of real body text.
 
 ## app-v2
 
-- Papers scored: 66; produced no text: 1 (pmc-pmc11960816-imageonly)
-- Median clutter rate: **10.8%** of spoken words
-- Median missing body text: **1.1%**
-- Median reading-order breaks: 1.87 per 1000 body words
-- Median extraction time: 1644 ms
+- Papers scored: 65; produced no text: 1 (pmc-pmc11960816-imageonly)
+- Median clutter rate: **10.9%** of spoken words
+- Median missing body text: **1.0%**
+- Median reading-order breaks: 1.14 per 1000 body words
+- Median extraction time: 988 ms
 
 ### Failure categories ranked by listener cost
 
@@ -457,57 +457,57 @@ Cost is listening time wasted or lost, summed over the corpus (cost model below)
 
 | Rank | Category | Corpus total (min) | Median per paper (min) | Papers ≥ 30 s |
 | ---: | --- | ---: | ---: | ---: |
-| 1 | Math read as symbols and letters | 188 | 0.6 | 35 |
-| 2 | Reading order broken (columns, floats) | 168 | 1.8 | 48 |
-| 3 | Body text missing (never spoken) | 143 | 0.5 | 33 |
-| 4 | Back matter: funding, contributions, competing interests, reviewer reports | 63 | 0.4 | 30 |
-| 5 | Table cells read aloud | 59 | 0.0 | 17 |
-| 6 | Mid-sentence interruptions (captions, footers inside a sentence) | 48 | 0.3 | 15 |
-| 7 | Reference list read aloud | 44 | 0.0 | 8 |
+| 1 | Math read as symbols and letters | 185 | 0.6 | 34 |
+| 2 | Body text missing (never spoken) | 139 | 0.4 | 31 |
+| 3 | Reading order broken (columns, floats) | 124 | 1.0 | 40 |
+| 4 | Table cells read aloud | 80 | 0.0 | 17 |
+| 5 | Reference list read aloud | 63 | 0.0 | 9 |
+| 6 | Back matter: funding, contributions, competing interests, reviewer reports | 60 | 0.3 | 29 |
+| 7 | Mid-sentence interruptions (captions, footers inside a sentence) | 48 | 0.3 | 16 |
 | 8 | Display equations read aloud | 42 | 0.1 | 14 |
-| 9 | Repeated text (running titles, duplicated lines) | 41 | 0.3 | 23 |
-| 10 | Title-page matter: authors, affiliations, identifiers | 33 | 0.2 | 20 |
-| 11 | Page furniture: running headers, footers, page and line numbers | 26 | 0.1 | 11 |
-| 12 | Stray fragments: figure labels, axis ticks | 17 | 0.1 | 6 |
-| 13 | Footnote text read inline | 14 | 0.0 | 12 |
-| 14 | Citation and footnote markers read as numbers or names | 14 | 0.1 | 9 |
-| 15 | Stamps, licences and links | 4 | 0.0 | 2 |
+| 9 | Title-page matter: authors, affiliations, identifiers | 29 | 0.1 | 18 |
+| 10 | Repeated text (running titles, duplicated lines) | 28 | 0.1 | 12 |
+| 11 | Page furniture: running headers, footers, page and line numbers | 27 | 0.0 | 10 |
+| 12 | Stray fragments: figure labels, axis ticks | 16 | 0.1 | 7 |
+| 13 | Footnote text read inline | 10 | 0.0 | 7 |
+| 14 | Citation and footnote markers read as numbers or names | 10 | 0.0 | 7 |
+| 15 | Stamps, licences and links | 3 | 0.0 | 1 |
 | 16 | Line-end hyphenation left in ("bio- logy") | 0 | 0.0 | 0 |
 
 ### Where the spoken words came from
 
 | Category | Words | Share of spoken |
 | --- | ---: | ---: |
-| body | 411492 | 74.5% |
-| math | 29173 | 5.3% |
-| caption | 26108 | 4.7% |
-| unattributed_prose | 18140 | 3.3% |
-| back_matter | 9801 | 1.8% |
-| table | 9165 | 1.7% |
-| announcement | 7519 | 1.4% |
-| reference | 6896 | 1.2% |
-| equation | 6464 | 1.2% |
-| repeated | 6305 | 1.1% |
-| front_matter | 5139 | 0.9% |
-| inline_residue | 4413 | 0.8% |
-| furniture | 4065 | 0.7% |
-| fragment | 2651 | 0.5% |
-| footnote | 2169 | 0.4% |
-| citation_markers | 1093 | 0.2% |
-| stamp_link | 669 | 0.1% |
-| authors | 616 | 0.1% |
+| body | 408012 | 75.1% |
+| math | 28625 | 5.3% |
+| caption | 26131 | 4.8% |
+| table | 12427 | 2.3% |
+| unattributed_prose | 11343 | 2.1% |
+| reference | 9824 | 1.8% |
+| back_matter | 9250 | 1.7% |
+| announcement | 7546 | 1.4% |
+| equation | 6550 | 1.2% |
+| front_matter | 4512 | 0.8% |
+| repeated | 4271 | 0.8% |
+| inline_residue | 4227 | 0.8% |
+| furniture | 4120 | 0.8% |
+| fragment | 2455 | 0.5% |
+| footnote | 1627 | 0.3% |
+| citation_markers | 953 | 0.2% |
+| authors | 772 | 0.1% |
+| stamp_link | 537 | 0.1% |
 | footnote_markers | 130 | 0.0% |
 
 `unattributed_prose` and `inline_residue` are not counted as clutter: they may be real text the ground truth lacks (text inside figures, code listings LaTeXML dropped) or body words garbled by the extractor.
 
 ### Citations, footnotes, figures and tables
 
-- Citation markers (3320 sites): silent 2813 (85%), number read 195 (6%), label read 161 (5%), context missing 135 (4%), glued number 16 (0%)
+- Citation markers (3274 sites): silent 2862 (87%), label read 163 (5%), context missing 134 (4%), number read 100 (3%), glued number 15 (0%)
 - Footnote markers (95 sites): label read 43 (45%), silent 35 (37%), number read 9 (9%), context missing 6 (6%), glued number 2 (2%)
-- Figure and table captions: 501 of 548 read aloud (≥ half their words spoken)
-- Tables: 29 of 205 had their cells read aloud (≥ 30% of cell words)
-- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 260, 'announcement': 201, 'caption': 120, 'repeated': 36, 'furniture': 28, 'table': 18, 'fragment': 16, 'front_matter': 13, 'footnote': 8, 'reference': 7, 'equation': 7, 'stamp_link': 6, 'back_matter': 1}
-- Line-end hyphenation left unrepaired: 16 words
+- Figure and table captions: 497 of 544 read aloud (≥ half their words spoken)
+- Tables: 48 of 203 had their cells read aloud (≥ 30% of cell words)
+- Mid-sentence interruptions by what interrupted: {'unattributed_prose': 257, 'announcement': 202, 'caption': 132, 'furniture': 38, 'repeated': 30, 'table': 20, 'front_matter': 13, 'reference': 7, 'fragment': 7, 'equation': 7, 'stamp_link': 7, 'footnote': 3}
+- Line-end hyphenation left unrepaired: 19 words
 
 Marker outcomes: *silent* (nothing spoken between the words around it), *spoken label* ("citation 12", the app's normalizer), *number read* ("cells 12 divide"), *glued number* ("cells12"), *label read* (the author-year text read in full), *context missing* (the neighbouring words weren't spoken, so the marker can't be judged).
 
@@ -515,16 +515,16 @@ Marker outcomes: *silent* (nothing spoken between the words around it), *spoken 
 
 | Format | Papers | Median clutter | Median missing | Median order breaks /1000 |
 | --- | ---: | ---: | ---: | ---: |
-| journal | 44 | 9.6% | 1.0% | 1.51 |
-| single-column | 34 | 10.9% | 0.8% | 1.44 |
-| two-column | 31 | 10.8% | 1.3% | 2.42 |
-| math-heavy | 19 | 19.9% | 2.8% | 3.39 |
-| conference | 12 | 10.4% | 1.6% | 3.35 |
-| author-manuscript | 5 | 7.1% | 0.4% | 1.37 |
-| scanned | 4 | 14.3% | 12.6% | 4.35 |
-| preprint | 4 | 31.1% | 3.3% | 2.84 |
-| ocr-text-layer | 3 | 14.3% | 10.6% | 4.35 |
-| thesis | 3 | 27.9% | 3.6% | 4.51 |
+| journal | 43 | 8.8% | 0.7% | 0.74 |
+| single-column | 33 | 11.0% | 0.7% | 0.52 |
+| two-column | 31 | 10.8% | 1.2% | 1.28 |
+| math-heavy | 19 | 27.4% | 1.7% | 2.52 |
+| conference | 12 | 11.9% | 1.4% | 1.67 |
+| author-manuscript | 5 | 5.1% | 0.4% | 0.00 |
+| scanned | 4 | 16.3% | 11.6% | 4.25 |
+| preprint | 4 | 31.0% | 3.3% | 0.68 |
+| ocr-text-layer | 3 | 16.3% | 8.5% | 4.25 |
+| thesis | 3 | 27.9% | 3.5% | 4.39 |
 | image-only | 1 | – | 100.0% | – |
 | derived | 1 | – | 100.0% | – |
 
@@ -534,19 +534,19 @@ Ranked by listener cost per minute of real body text.
 
 | Paper | Formats | Cost per body minute | Clutter | Missing |
 | --- | --- | ---: | ---: | ---: |
-| pmc-pmc5315337 | journal, scanned, ocr-text-layer, two-column | 1.25 | 18.0% | 14.6% |
+| arxiv-2609.22558v1 | journal, two-column, math-heavy | 1.03 | 39.1% | 43.4% |
 | pmc-pmc11960816-imageonly | journal, scanned, image-only, derived | 1.00 | – | 100.0% |
-| arxiv-2506.00547v1 | preprint, single-column, math-heavy | 0.90 | 41.1% | 4.0% |
-| arxiv-2609.06489v1 | conference, single-column, math-heavy | 0.82 | 36.9% | 3.7% |
-| arxiv-2609.27549v1 | thesis, single-column, math-heavy | 0.76 | 29.0% | 3.6% |
-| pmc-pmc11154291 | journal, single-column | 0.72 | 40.5% | 0.1% |
-| arxiv-2609.22558v1 | journal, two-column, math-heavy | 0.71 | 19.9% | 43.5% |
+| arxiv-2506.00547v1 | preprint, single-column, math-heavy | 0.90 | 41.0% | 4.0% |
+| arxiv-2609.06489v1 | conference, single-column, math-heavy | 0.81 | 37.2% | 3.5% |
+| pmc-pmc5315337 | journal, scanned, ocr-text-layer, two-column | 0.78 | 16.3% | 14.7% |
+| arxiv-2609.27549v1 | thesis, single-column, math-heavy | 0.76 | 28.9% | 3.5% |
+| pmc-pmc11154291 | journal, single-column | 0.72 | 40.6% | 0.1% |
 | arxiv-2609.25172v1 | thesis, single-column, math-heavy | 0.71 | 27.9% | 4.2% |
-| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 0.70 | 31.9% | 3.8% |
-| pmc-pmc11326079 | journal, single-column | 0.68 | 24.8% | 0.4% |
-| pmc-pmc11150781 | journal, two-column | 0.63 | 35.1% | 0.5% |
-| arxiv-2506.00268v2 | preprint, single-column, math-heavy | 0.58 | 30.3% | 2.8% |
-| arxiv-2609.19108v1 | journal, two-column, math-heavy | 0.53 | 29.9% | 1.2% |
+| arxiv-2506.00390v1 | preprint, single-column, math-heavy | 0.70 | 31.8% | 3.8% |
+| pmc-pmc11326079 | journal, single-column | 0.66 | 24.6% | 0.1% |
+| arxiv-2607.07895v1 | conference, two-column | 0.61 | 32.2% | 2.0% |
+| pmc-pmc11150781 | journal, two-column | 0.60 | 34.9% | 0.5% |
+| arxiv-2609.21432v1 | conference, two-column, math-heavy | 0.59 | 30.5% | 1.7% |
 
 ## Cost model
 

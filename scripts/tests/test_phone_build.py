@@ -254,8 +254,9 @@ with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
-    print("**Merge check (triage desk) on `1234567`: PASS.**\n- Tested the merge commit `%s`.\n"
-          "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now." % (tip[:7], tip[:7]))
+    print("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
+          "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now."
+          % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7]))
 elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
     for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
                  "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
@@ -374,6 +375,69 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('build-for-testing', calls)
         self.assertIn('passed here', json.loads((self.phone / 'latest/build.json').read_text())['checks'])
 
+    def commit_the_host_check_python(self, subject):
+        """Commit a fake `.venv/bin/python` (what the build runs verify-tests.py with) as the new tip.
+
+        It logs its command line to FAKE_LOG and exits with FAKE_FAST_EXIT."""
+        (self.repo / '.venv/bin').mkdir(parents=True)
+        python = self.repo / '.venv/bin/python'
+        python.write_text('#!/bin/sh\necho "fast $*" >> "$FAKE_LOG"\nexit ${FAKE_FAST_EXIT:-0}\n')
+        python.chmod(0o755)
+        self.git('add', '-f', '.venv/bin/python')
+        self.git('commit', '-q', '-m', subject)
+        self.tip = self.git('rev-parse', 'HEAD')
+
+    def build_the_merge_commit(self, runs_checks, **extra):
+        """Build a tip that reads "Merge pull request #12: ..." (the fake gh serves PR 12's merge check)."""
+        self.commit_the_host_check_python('Merge pull request #12: Keep the voice playing')
+        done = self.run_build(**{'FAKE_TIP': self.tip, **extra})
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        calls = self.log.read_text()
+        self.assertEqual('fast scripts/verify-tests.py --plan fast' in calls, runs_checks, calls)
+        self.assertEqual('build-for-testing' in calls, runs_checks, calls)
+        self.assertIn('-configuration Release', calls)  # either way the phone build itself ran
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertEqual('passed here' in checks, runs_checks, checks)
+
+    def test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks(self):
+        self.build_the_merge_commit(runs_checks=False)
+
+    def test_a_merge_check_that_pushed_another_commit_does_not_count_so_the_host_checks_run(self):
+        # The PR was re-merged after the runner's test (its comment says "Pushing `<sha7>`" of the old merge).
+        self.build_the_merge_commit(runs_checks=True, FAKE_TIP='deadbee' + '0' * 33)
+
+    def test_a_merge_check_that_says_fail_does_not_count_so_the_host_checks_run(self):
+        self.build_the_merge_commit(runs_checks=True, FAKE_MERGE_VERDICT='FAIL')
+
+    def assert_build_stopped(self, done, why, builds_after):
+        """A build that failed its checks: exit 1, the reason recorded, and nothing installable made."""
+        self.assertEqual(done.returncode, 1, done.stdout + done.stderr)
+        self.assertIn(f'FAILED on {self.tip[:7]}: {why}', done.stdout)
+        attempt = json.loads((self.phone / 'last-attempt.json').read_text())
+        self.assertEqual((attempt['sha'], attempt['result']), (self.tip, f'failed: {why}'))
+        self.assertTrue((self.phone / 'last-failure.log').exists())
+        self.assertFalse((self.phone / 'latest').exists())
+        calls = self.log.read_text()
+        self.assertEqual('-configuration Release' in calls, builds_after, calls)  # the Release build never ran
+        self.assertNotIn('is ready', calls)  # and the owner was not told to install anything
+
+    def test_failing_host_tests_stop_the_build_before_any_xcodebuild(self):
+        self.commit_the_host_check_python('Merge pull request #14 from someone/venv')  # no merge check: runs them
+        done = self.run_build(FAKE_FAST_EXIT='1')
+        self.assert_build_stopped(done, 'host tests (--plan fast) failed', builds_after=False)
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan fast', calls)
+        self.assertNotIn('build-for-testing', calls)  # not even the simulator build
+
+    def test_a_failing_simulator_build_stops_the_build_before_the_release_build(self):
+        self.commit_the_host_check_python('Merge pull request #14 from someone/venv')
+        done = self.run_build(FAKE_FAIL='error: cannot find type in scope')
+        self.assert_build_stopped(done, 'the simulator build failed', builds_after=False)
+        calls = self.log.read_text()
+        self.assertIn('fast scripts/verify-tests.py --plan fast', calls)  # the host tests passed first
+        self.assertIn('build-for-testing', calls)
+        self.assertNotIn('Signing needs the owner', done.stdout)
+
     def test_signing_failure_names_the_owner_step_and_is_not_retried(self):
         done = self.run_build(FAKE_FAIL='error: errSecInternalComponent')
         self.assertEqual(done.returncode, 1)
@@ -449,6 +513,9 @@ class ListenerRuleTests(unittest.TestCase):
         self.assertEqual(self.module.owner_check({'body': 'Owner check: open a chapter list.', 'issues': [none]}),
                          'open a chapter list.')
         self.assertIsNone(self.module.owner_check({'body': 'Owner check: nothing (lane only)', 'issues': []}))
+        # #1193: #177's "none now; #178's journey covers ..." must not reach the plan as a check.
+        now = {'body': "**Owner check:** none now; #178's journey covers the paid-feed case on the phone."}
+        self.assertIsNone(self.module.owner_check({'body': '', 'issues': [now]}))
         real = {'body': '**Owner check:** Nothing plays twice after a call.\n'}
         self.assertEqual(self.module.owner_check({'body': '', 'issues': [real]}), 'Nothing plays twice after a call.')
 
@@ -574,11 +641,20 @@ class ListenerRuleTests(unittest.TestCase):
     def test_ways_of_saying_there_is_no_check(self):
         none = self.module.NO_CHECK
         for text in ('none.', 'None this time: diagnostics only.', 'none needed.', 'Nothing yet.', 'n/a',
-                     'none (needs the app deleted)'):
+                     'none (needs the app deleted)',
+                     # #1193: #177 said "none now; #178's journey covers the paid-feed case" and reached the plan
+                     "none now; #178's journey covers the paid-feed case on the phone.", 'None now.',
+                     'none at the moment', 'none currently', 'None right now.', 'none for now', 'none yet',
+                     'not needed', 'Not needed.', 'no owner check', 'No owner check needed.', 'no phone check.',
+                     'None needed for now.', 'none needed right now', 'none required', 'none at all.',
+                     'none at this time', 'no check', 'No check needed.'):
             with self.subTest(text=text):
                 self.assertTrue(none.match(text))
         for text in ('Nothing plays twice after a call.', 'None of the Margins move when you seek.',
-                     'Nonetheless, play it.'):
+                     'Nonetheless, play it.', 'None nowhere near the end: skip to the last chapter.',
+                     'Not needed offline? Turn Wi-Fi off and play it.', 'No owner checkpoint here, open it.',
+                     'Nowadays the title reads wrong.', 'Nothing at all plays after the call.',
+                     'None required fields stay empty.', 'No checkmark shows.'):
             with self.subTest(text=text):
                 self.assertFalse(none.match(text))
 
@@ -859,6 +935,66 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('[#547](https://example/issue/547)', waiting)
         self.assertIn('Play publisher audio by default', waiting)
 
+    def test_a_check_that_asks_for_a_file_it_does_not_supply_waits_for_one(self):
+        # The 8065265 plan (#1038): "import a book PDF that has bookmarks" with no PDF; the owner had nothing
+        # to test with. A check with a link or a repo file to attach still goes in.
+        outline = self.pr(376, 'PDF outline chapters', [self.issue(
+            347, 'import a book PDF that has bookmarks but no printed chapter headings.', phone=True)])
+        arxiv = self.pr(758, 'Add arXiv PDFs', [self.issue(
+            759, 'Library > + > Link, paste `https://arxiv.org/pdf/2608.09666`, Add.')])
+        stamp = {'number': 162, 'title': 'PDF download stamp read aloud', 'url': 'https://example/issue/162',
+                 'state': 'OPEN', 'createdAt': '2026-09-25T00:00:00Z', 'milestone': None,
+                 'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
+                 'body': '**Owner check:** import a PDF whose footer has a download stamp, then listen.\n',
+                 'comments': {'nodes': [{'body': 'Merged in #600.'}]}, 'timelineItems': {'nodes': []}}
+        plan = self.write({376: outline, 758: arxiv}, waiting=[stamp], built_prs={600})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('1. **Add arXiv PDFs**', ten_minutes)
+        self.assertNotIn('bookmarks', ten_minutes)
+        self.assertNotIn('Still waiting on your check', plan)
+        waiting = plan.split('## Waiting on another change or a test file')[1].split('## ')[0]
+        self.assertIn('- PDF outline chapters (found on your phone) ([#376]', waiting)
+        self.assertIn(': needs a test PDF, not supplied yet', waiting)
+        also = plan.split('## Also waiting on your check')[1]
+        self.assertIn('- PDF download stamp read aloud ([#162](https://example/issue/162), [#600]', also)
+        self.assertIn(': needs a test PDF, not supplied yet', also)
+        self.assertIn('#347, #162', self.printed)
+        self.assertNotIn('#759', self.printed)
+
+    def test_which_checks_lack_the_file_they_ask_for(self):
+        with tempfile.TemporaryDirectory() as repo:
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True,
+                                      text=True).stdout.strip()
+            git('init', '-q')
+            files = Path(repo) / 'TestPlans' / 'phone-files'
+            files.mkdir(parents=True)
+            (files / 'footer-stamp-test.pdf').write_bytes(b'%PDF-1.4')
+            git('add', '-A')
+            git('-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'pdf')
+            sha = git('rev-parse', 'HEAD')
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': repo}):
+                module = load_phone_build()
+            rows = [  # (check, the file kind it lacks, or None)
+                ('Import a PDF whose footer has a stamp, then listen.', 'PDF'),
+                ('import two pdfs and compare them', 'PDF'),
+                ('Open the EPUB and play chapter 2.', 'EPUB'),
+                ('Import an audiobook with chapters.', 'audiobook'),
+                ('AirDrop the packet to the phone and import it.', 'packet'),
+                ('open `Hollywood-Was-Cooked.spokenmargins` and tap Import', 'packet'),
+                ('Open `TestPlans/phone-files/footer-stamp-test.pdf` from Files, then listen.', None),
+                ('Open `TestPlans/phone-files/missing.pdf` from Files.', 'PDF'),  # named, but not in the commit
+                ('Open <https://arxiv.org/pdf/2608.09666> in Safari, Share, Spoken Margins.', None),
+                ('Open https://example.org/book.epub in Safari.', None),
+                ('import a PDF once https://github.com/uncomposed/spoken-margins-native/issues/547 lands', 'PDF'),
+                ('Play a podcast and tap Add Margin.', None),
+                ('Read the PDFKit-backed reader page; nothing to import.', None),  # a word, not a file
+                ('', None),
+            ]
+            for check, lacks in rows:
+                with self.subTest(check=check):
+                    self.assertEqual(module.missing_material(check, sha), lacks)
+
     def test_one_unknown_number_does_not_hide_the_others(self):
         # gh fails a whole GraphQL query when one alias names no issue or PR (#847 review).
         module = self.module
@@ -1102,6 +1238,154 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('No phone checks were written for this build', plan)
         self.assertNotIn('Use the app as usual', plan)
         self.assertNotIn('1. ', plan)
+
+
+class PassedChecksTests(unittest.TestCase):
+    """#1100: the plan for 41a591e listed four checks the owner had already passed (#854, #537, #281, #223) and
+    eight passed fixes under "Also changed". Their issues are closed after an owner pass."""
+    pr, issue, write = (staticmethod(PlanGroupingTests.pr), staticmethod(PlanGroupingTests.issue),
+                        PlanGroupingTests.write)
+
+    def setUp(self):
+        self.module = load_phone_build()
+
+    def closed(self, number, check, phone=False):
+        issue = self.issue(number, check, phone)
+        issue['state'] = 'CLOSED'
+        return issue
+
+    def opened(self, number, check, phone=False):
+        issue = self.issue(number, check, phone)
+        issue['state'] = 'OPEN'
+        return issue
+
+    def prs(self):
+        both = self.pr(906, 'Half passed', [self.closed(7, 'Hear the half.'), self.opened(8, 'Hear the other half.')])
+        return {n: pr for n, pr in {
+            901: self.pr(901, 'James keeps his voice', [self.closed(854, 'Hear James through numbers.', phone=True)]),
+            902: self.pr(902, 'Skim lands on the sentence', [self.closed(537, 'Skim twice.', phone=True)]),
+            903: self.pr(903, 'Speech settings wording', [self.closed(281, 'Read the settings page.')]),
+            904: self.pr(904, 'Open fix', [self.opened(905, 'Hear the open fix.')]),
+            905: self.pr(905, 'No issue linked', body='Owner check: look at the new banner.'),
+            906: both,
+            907: self.pr(907, 'Passed fix with no check written', [{
+                **self.closed(223, 'x'), 'body': 'It always did this.', 'labels': {'nodes': [{'name': 'found-on-phone'}]}}]),
+        }.items()}
+
+    def test_closed_issues_keep_their_changes_out_of_every_section(self):
+        self.module.PLAN_CHECKS = 2  # so "Also changed (not in the ten minutes)" has entries too
+        plan = self.write(self.prs())
+        for passed in ('James keeps his voice', 'Skim lands on the sentence', 'Speech settings wording',
+                       'Passed fix with no check written'):
+            self.assertNotIn(passed, plan)
+        for kept in ('Open fix', 'No issue linked', 'Half passed'):
+            self.assertIn(kept, plan)
+        self.assertIn('4 changes whose issues are already closed are left out.', plan)
+        self.assertIn('7 pull requests merged; ', plan)  # the count of merges stays honest
+
+    def test_the_closed_ones_are_gone_from_the_checks_and_the_unchecked_list_alike(self):
+        plan = self.write(self.prs())
+        ten_minutes = plan.split('## Try these')[1].split('\n## ')[0]
+        self.assertEqual(ten_minutes.count('Links:'), 3, ten_minutes)  # Open fix, No issue linked, Half passed
+        self.assertNotIn('## Also changed (no phone check written)', plan)  # the only unchecked one had passed
+        self.assertNotIn('found on the phone but no "Owner check:" line', self.printed)  # nor asks for its check
+
+    def test_a_follow_up_pr_merged_after_its_issue_closed_is_still_a_pass(self):
+        # The real #223 (read from GitHub, 2026-10-08): closed 10-04 with the owner's pass; PR #578's follow-up
+        # #677 merged on 10-05 ("Closes #223") and the owner confirmed it in a later comment on the closed issue.
+        issue = self.closed(223, 'Share a Substack post.')
+        issue['closedAt'] = '2026-10-04T16:31:31Z'
+        first = self.pr(578, 'Fall back to the article extractor (#223)', [issue])
+        first['mergedAt'] = '2026-10-01T15:38:45Z'
+        follow_up = self.pr(677, 'Preserve article extractor errors for shared links (#223)', [issue])
+        follow_up['mergedAt'] = '2026-10-05T15:00:10Z'
+        self.assertTrue(self.module.passed_on_phone([follow_up, first]))
+        plan = self.write({677: follow_up, 578: first})
+        self.assertNotIn('extractor', plan)
+
+    def test_a_plan_of_only_passed_changes_says_nothing_is_left_to_check(self):
+        plan = self.write({n: pr for n, pr in self.prs().items() if n in (901, 902)})
+        self.assertIn('Nothing a listener would notice changed.', plan)
+        self.assertIn('2 changes whose issues are already closed are left out.', plan)
+
+    def test_the_plan_asks_github_for_each_issue_s_state(self):
+        # The filter reads issue['state']; without it in the queries every issue looks open and nothing is dropped.
+        self.assertRegex(self.module.PR_FIELDS, r'closingIssuesReferences\(first:5\)\{nodes\{[^}]*\bstate\b')
+        self.assertRegex(self.module.ISSUE_FIELDS, r'\bstate\b')
+
+
+class PlanBaseTests(unittest.TestCase):
+    """#1100: installed.txt named a build made on the Mac before its changes reached next, so the commit was
+    known but not behind next's tip; the plan fell back to Build 29 and listed 332 pull requests."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo, self.phone = Path(temporary.name) / 'repo', Path(temporary.name) / 'phone'
+        self.repo.mkdir()
+        self.phone.mkdir()
+        self.git('init', '-q', '-b', 'next')
+        self.first = self.commit('Merge pull request #1 from a/b')
+        self.git('tag', 'testflight/0.1-build-29')
+        self.second = self.commit('Merge pull request #2 from a/b')
+        self.git('switch', '-q', '-c', 'candidate')
+        self.candidate = self.commit('Merge pull request #9 from a/local-only')  # built on the Mac, never on next
+        self.git('switch', '-q', 'next')
+        self.tip = self.commit('Merge pull request #3 from a/b')
+        environment = unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': str(self.repo), 'SM_PHONE_DIR': str(self.phone)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.module = load_phone_build()
+
+    def git(self, *args):
+        return subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=T', *args], cwd=self.repo,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, subject):
+        self.git('commit', '-q', '--allow-empty', '-m', subject)
+        return self.git('rev-parse', 'HEAD')
+
+    def installed(self, sha):
+        (self.phone / 'installed.txt').write_text(f'{sha} 2026-10-08T08:00:00 phone\n')
+
+    def test_a_build_behind_next_is_the_base(self):
+        self.installed(self.second)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual((base, list(self.module.merged_prs(base, self.tip))), (self.second, [3]))
+        self.assertEqual(why, f'the build you last installed (`{self.second[:7]}`, from installed.txt)')
+
+    def test_a_candidate_that_is_not_in_nexts_history_is_still_the_base(self):
+        self.installed(self.candidate)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.candidate)  # not the TestFlight build
+        self.assertEqual(list(self.module.merged_prs(base, self.tip)), [3])  # what next has beyond it, not #1 to #3
+        self.assertIn("it isn't part of next's history", why)
+
+    def test_a_commit_this_checkout_does_not_have_falls_back_and_says_so(self):
+        self.installed('f' * 40)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.first)
+        self.assertIn("`fffffff`, which this checkout doesn't have", why)
+        self.assertEqual(list(self.module.merged_prs(base, self.tip)), [3, 2])
+
+    def test_a_commit_newer_than_the_build_falls_back_instead_of_planning_nothing(self):
+        # --plan-only or --commit for an older tip while the phone has a newer one: "since the installed build"
+        # would be empty and the plan would say "this is the same code, rebuilt".
+        newer = self.commit('Merge pull request #4 from a/b')
+        self.installed(newer)
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.first)
+        self.assertIn('which is newer than this build', why)
+
+    def test_the_build_itself_installed_is_the_base_and_plans_nothing_new(self):
+        self.installed(self.tip)
+        base, _ = self.module.plan_base(self.tip)
+        self.assertEqual((base, self.module.merged_prs(base, self.tip)), (self.tip, {}))
+
+    def test_nothing_installed_yet_falls_back_to_the_last_testflight_build(self):
+        base, why = self.module.plan_base(self.tip)
+        self.assertEqual(base, self.first)
+        self.assertIn('nothing recorded in installed.txt yet', why)
 
 
 if __name__ == '__main__':

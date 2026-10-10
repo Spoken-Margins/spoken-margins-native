@@ -268,6 +268,64 @@ final class SourceCatalogTests: XCTestCase {
         XCTAssertEqual(outcome, .failed(.untrustedURL))
     }
 
+    /// `https://evil.example` fails any version of the check. These are the near misses a loose one lets
+    /// through: plain http on the right host, a host that merely ends with, starts with or contains the
+    /// trusted one, the trusted name as userinfo or as a path, and a non-web scheme. None may be fetched.
+    func testStoreRefusesCatalogURLsThatOnlyLookLikeTheTrustedHost() async throws {
+        let trusted = "spokenmargins.proximitytoprogress.com"
+        let lookAlikes = [
+            "http://\(trusted)/onboarding/catalog/v1/catalog.json",
+            "https://evil-\(trusted)/onboarding/catalog/v1/catalog.json",
+            "https://\(trusted).evil.example/onboarding/catalog/v1/catalog.json",
+            "https://\(trusted)@evil.example/onboarding/catalog/v1/catalog.json",
+            "https://evil.example/\(trusted)/catalog.json",
+            "file:///\(trusted)/catalog.json",
+        ]
+        for catalogURL in lookAlikes {
+            let (manifestData, _) = try Self.remote(contentVersion: 2, catalogURL: catalogURL)
+            let requested = RequestLog()
+            let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
+                await requested.append(url.absoluteString)
+                return (200, manifestData)
+            }
+            let outcome = await store.refresh()
+            XCTAssertEqual(outcome, .failed(.untrustedURL), catalogURL)
+            let requestedURLs = await requested.values
+            XCTAssertEqual(requestedURLs, [Self.fixturePolicy.manifestURL.absoluteString], "\(catalogURL) was never fetched")
+        }
+    }
+
+    func testTheTrustedHostIsMatchedExactlyAndWithoutRegardToCase() throws {
+        let policy = Self.fixturePolicy
+        for url in ["https://spokenmargins.proximitytoprogress.com/a.json", "HTTPS://SpokenMargins.ProximityToProgress.com/a.json"] {
+            XCTAssertTrue(SourceCatalogVerifier.isTrusted(try XCTUnwrap(URL(string: url)), policy: policy), url)
+        }
+        for url in ["http://spokenmargins.proximitytoprogress.com/a.json", "https://proximitytoprogress.com/a.json",
+                    "https://xspokenmargins.proximitytoprogress.com/a.json", "https://spokenmargins.proximitytoprogress.com.evil.example/a.json",
+                    "https://spokenmargins.proximitytoprogress.com@evil.example/a.json"] {
+            XCTAssertFalse(SourceCatalogVerifier.isTrusted(try XCTUnwrap(URL(string: url)), policy: policy), url)
+        }
+    }
+
+    /// The manifest is the one URL the app fetches before any check on its content, so a policy whose
+    /// manifest URL is off the trusted host or not https must never reach the network.
+    func testStoreNeverFetchesAManifestURLOffTheTrustedHost() async throws {
+        for manifestURL in ["https://evil.example/onboarding/catalog/v1/manifest.json",
+                            "http://spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/manifest.json"] {
+            let policy = SourceCatalogPolicy(manifestURL: try XCTUnwrap(URL(string: manifestURL)), trustedHost: "spokenmargins.proximitytoprogress.com", catalogId: "fixture-top-podcasts")
+            let (manifestData, _) = try Self.remote(contentVersion: 2)
+            let requested = RequestLog()
+            let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: policy) { url, _ in
+                await requested.append(url.absoluteString)
+                return (200, manifestData)
+            }
+            let outcome = await store.refresh()
+            XCTAssertEqual(outcome, .failed(.untrustedURL), manifestURL)
+            let requestedURLs = await requested.values
+            XCTAssertEqual(requestedURLs, [], "\(manifestURL) was never fetched")
+        }
+    }
+
     func testStoreRejectsAnOversizedManifestAndHTTPErrors() async throws {
         let big = Data(repeating: 0x20, count: Self.fixturePolicy.maximumManifestBytes + 1)
         let oversized = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in (200, big) }

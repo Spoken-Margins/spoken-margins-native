@@ -1,4 +1,5 @@
 import Foundation
+import SessionKitSharing
 import AVFoundation
 import SwiftUI
 
@@ -240,16 +241,16 @@ struct Build23MarginSelectionRow: View {
                             .foregroundStyle(AppColors.text)
                             .multilineTextAlignment(.leading)
 
-                        Text(margin.isIncluded ? "Included" : "Tap to include")
+                        Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Tap to include"))
                             .font(.caption)
-                            .foregroundStyle(margin.isIncluded ? AppColors.evergreen : AppColors.secondaryText)
+                            .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .disabled(!isEnabled)
-                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(margin.isIncluded ? "included" : "not included")")
+                .accessibilityLabel("\(margin.isStarred ? "Starred " : "")Margin, \(margin.reviewedText), \(margin.shareStatusDescription)")
                 .accessibilityHint("Double tap to \(margin.isIncluded ? "exclude" : "include") this Margin")
                 .accessibilityIdentifier("build23.sender.margin.row.\(margin.id)")
 
@@ -263,7 +264,7 @@ struct Build23MarginSelectionRow: View {
                 .font(.caption.weight(.semibold))
                 .fixedSize(horizontal: true, vertical: false)
                 .accessibilityLabel("Include this Margin in the package")
-                .accessibilityValue(margin.isIncluded ? "Included" : "Not included")
+                .accessibilityValue(margin.isLeftOutForMissingText ? "Included, but left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
                 .accessibilityIdentifier("build23.sender.margin.include.\(margin.id)")
                 .disabled(!isEnabled)
             }
@@ -296,14 +297,20 @@ struct Build23ReviewSelectionRow: View {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
 
-                    Label("Included", systemImage: "checkmark.circle")
-                        .font(.caption)
-                        .foregroundStyle(AppColors.evergreen)
+                    if margin.isLeftOutForMissingText {
+                        Label("Left out: no transcript yet", systemImage: "info.circle")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.secondaryText)
+                    } else {
+                        Label("Included", systemImage: "checkmark.circle")
+                            .font(.caption)
+                            .foregroundStyle(AppColors.evergreen)
+                    }
                 }
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Included Margin, \(margin.reviewedText), \(isSelected ? "editor open" : "open editor")")
+        .accessibilityLabel("\(margin.isLeftOutForMissingText ? "Left out Margin, no transcript yet" : "Included Margin, \(margin.reviewedText)"), \(isSelected ? "editor open" : "open editor")")
         .accessibilityIdentifier("build23.sender.review.selector.\(margin.id)")
     }
 }
@@ -323,9 +330,9 @@ struct Build23MarginEditor: View {
                         .foregroundStyle(AppColors.text)
                         .accessibilityIdentifier("build23.sender.margin.editor.\(margin.id)")
                     Spacer()
-                    Text(margin.isIncluded ? "Included" : "Not included")
+                    Text(margin.isLeftOutForMissingText ? "Left out: no transcript yet" : (margin.isIncluded ? "Included" : "Not included"))
                         .font(.caption.weight(.semibold))
-                        .foregroundStyle(margin.isIncluded ? AppColors.evergreen : AppColors.secondaryText)
+                        .foregroundStyle(margin.isIncluded && !margin.isLeftOutForMissingText ? AppColors.evergreen : AppColors.secondaryText)
                 }
 
                 if margin.isPreparing {

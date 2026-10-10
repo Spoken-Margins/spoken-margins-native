@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitPersistence
 
 struct ExperienceItemDetailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -9,6 +10,10 @@ struct ExperienceItemDetailScreen: View {
     @State private var confirmsTrash = false
     @State private var confirmsNewSession = false
     @State private var showsAdvanced = false
+    @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
+    @State private var asksForEpisodeLink = false
+    @State private var episodeLinkText = ""
+    private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
         NavigationStack {
@@ -62,6 +67,23 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
+                            Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
+                                .disabled(true)
+                        }
+                        if episodeLinkStatus.canLink && episodeLinkStatus.canChange {
+                            Button(
+                                episodeLinkStatus.episodeTitle == nil ? "This is a podcast episode…" : "Change linked episode…",
+                                systemImage: "link.badge.plus"
+                            ) {
+                                episodeLinkText = ""
+                                asksForEpisodeLink = true
+                            }
+                            .accessibilityIdentifier("item.linkEpisode.button")
+                            if episodeLinkStatus.episodeTitle != nil {
+                                Button("Unlink episode", systemImage: "minus.circle") { unlinkEpisode() }
+                            }
+                        }
                         if !model.selectedItem.id.isEmpty {
                             Button("Move to Recently Deleted", systemImage: "trash", role: .destructive) {
                                 confirmsTrash = true
@@ -74,6 +96,17 @@ struct ExperienceItemDetailScreen: View {
                     }
                     .accessibilityLabel("Item options")
                 }
+            }
+            .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .alert("Which episode is this?", isPresented: $asksForEpisodeLink) {
+                TextField("Episode link", text: $episodeLinkText)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                Button("Cancel", role: .cancel) {}
+                Button("Link") { linkEpisode() }
+            } message: {
+                Text("Paste the link to this episode, like the one a friend shared. Margins a friend shares by link for it will then land on this file.")
             }
             .alert("Move to Recently Deleted?", isPresented: $confirmsTrash) {
                 Button("Cancel", role: .cancel) {}
@@ -106,8 +139,46 @@ struct ExperienceItemDetailScreen: View {
         .accessibilityElement(children: .combine)
     }
 
+    private func refreshEpisodeLinkStatus() {
+        guard let store = model.store, !model.selectedItem.id.isEmpty else {
+            episodeLinkStatus = ImportedFileEpisodeLinker.Status()
+            return
+        }
+        episodeLinkStatus = episodeLinker.status(itemId: model.selectedItem.id, store: store)
+    }
+
+    private func linkEpisode() {
+        guard let store = model.store else { return }
+        let itemId = model.selectedItem.id
+        let pasted = episodeLinkText
+        Task { @MainActor in
+            do {
+                let title = try await episodeLinker.link(itemId: itemId, to: pasted, store: store)
+                refreshEpisodeLinkStatus()
+                model.refreshSpokenMarginsPackageImportAfterAddingSource()
+                model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
+            } catch {
+                model.reportFailure(error.localizedDescription, itemId: itemId)
+            }
+        }
+    }
+
+    private func unlinkEpisode() {
+        guard let store = model.store else { return }
+        do {
+            try episodeLinker.unlink(itemId: model.selectedItem.id, store: store)
+            refreshEpisodeLinkStatus()
+            model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
+        } catch {
+            model.reportFailure(error.localizedDescription, itemId: model.selectedItem.id)
+        }
+    }
+
     @ViewBuilder
     private var metadataPills: some View {
+        if let episodeTitle = episodeLinkStatus.episodeTitle {
+            metadataPill("Episode: \(episodeTitle)", systemImage: "link")
+        }
         if chapterCount > 0 {
             metadataPill("\(chapterCount) chapter\(chapterCount == 1 ? "" : "s")", systemImage: "list.bullet")
         }

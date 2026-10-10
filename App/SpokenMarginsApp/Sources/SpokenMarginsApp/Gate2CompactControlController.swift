@@ -241,7 +241,8 @@ protocol Gate2LiveActivityControlling: AnyObject {
         _ snapshot: CompactControlSnapshot,
         staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
-        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry],
+        microphone: Gate2LiveActivityMicrophone
     )
     func endAll()
     /// Ends every activity with its current content and lets iOS remove it at `date`, so the
@@ -287,6 +288,10 @@ final class Gate2CompactControlController {
     private var nowPlayingEnabled = true
     private var lastPublishedSnapshot: CompactControlSnapshot?
     private var latestAppSnapshot: SessionSnapshot?
+    /// Where the model's Skim plans land (#115), carried to the Lock Screen with the snapshot.
+    private var latestSkimDestinations: (forward: Int?, backward: Int?) = (nil, nil)
+    /// Whether the microphone is really taking in sound, for the Live Activity's REC indicator (#937).
+    private(set) var microphone = Gate2LiveActivityMicrophone.capturing
     private(set) var lastCommand: CompactControlCommand?
     private(set) var lastCommandOrigin = "none"
     private(set) var lastApplicationCommand = "none"
@@ -347,15 +352,26 @@ final class Gate2CompactControlController {
         lastResult = "configured"
     }
 
+    /// The capture watcher found the microphone starting, capturing or stopped. The card says REC only
+    /// for capturing, and is republished at once while a Margin records.
+    func setMicrophone(_ state: Gate2LiveActivityMicrophone) {
+        guard microphone != state else { return }
+        microphone = state
+        if snapshot?.isRecording == true { publishCurrentSnapshot(force: true) }
+    }
+
     func update(
         snapshot: SessionSnapshot,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt? = nil,
-        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = [],
+        skimForwardDestinationMs: Int? = nil,
+        skimBackwardDestinationMs: Int? = nil
     ) {
         guard dispatcher != nil else { return }
         let activityContextChanged = self.sharedMarginPrompt != sharedMarginPrompt
             || self.upcomingSharedMargins != upcomingSharedMargins
         latestAppSnapshot = snapshot
+        latestSkimDestinations = (skimForwardDestinationMs, skimBackwardDestinationMs)
         self.sharedMarginPrompt = sharedMarginPrompt
         self.upcomingSharedMargins = upcomingSharedMargins
         let drainedCommand = drainQueuedWidgetCommands()
@@ -547,6 +563,11 @@ final class Gate2CompactControlController {
         if !app.isRecording, app.canSkimForward, compact.exposedCommands.contains(.skimForward) {
             compact.availableCommands.append(.skimForward)
         }
+        // Only for a button that is shown, so a hidden Skim never leaves a stale time behind.
+        compact.skimForwardDestinationMs = compact.availableCommands.contains(.skimForward)
+            ? latestSkimDestinations.forward : nil
+        compact.skimBackwardDestinationMs = compact.availableCommands.contains(.skimBackward)
+            ? latestSkimDestinations.backward : nil
         return compact
     }
 
@@ -578,7 +599,8 @@ final class Gate2CompactControlController {
                 snapshot,
                 staleDate: staleDate,
                 sharedMarginPrompt: sharedMarginPrompt,
-                upcomingSharedMargins: upcomingSharedMargins
+                upcomingSharedMargins: upcomingSharedMargins,
+                microphone: microphone
             )
             liveActivityLifecycleStatus = staleDate == nil ? "live" : "paused_idle_deadline"
             if staleDate == nil {
@@ -665,7 +687,8 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         _ snapshot: CompactControlSnapshot,
         staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
-        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry],
+        microphone: Gate2LiveActivityMicrophone
     ) {
         #if SPOKEN_MARGINS_LEGACY
         status = "unavailable_legacy"
@@ -722,8 +745,11 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             phase: snapshot.phase.rawValue,
             progressPercent: snapshot.currentPlaybackProgressPercent,
             isRecording: snapshot.isRecording,
+            microphone: snapshot.isRecording ? microphone : .capturing,
             availableCommands: Gate2LiveActivityPolicy.availableCommands(from: snapshot).map(\.rawValue),
-            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel
+            sharedMarginSenderLabel: sharedMarginPrompt?.senderLabel,
+            skimForwardDestinationMs: snapshot.skimForwardDestinationMs,
+            skimBackwardDestinationMs: snapshot.skimBackwardDestinationMs
         )
         activityTask = Task { @MainActor in
             await previousActivityTask?.value
@@ -1092,7 +1118,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         center.stopCommand.isEnabled = availability.canStop
         center.changePlaybackPositionCommand.isEnabled = availability.canSeek
         center.changePlaybackRateCommand.isEnabled = availability.canSetPlaybackRate
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = SpeechRateRule.supportedMultipliers.map { NSNumber(value: $0) }
         #endif
     }
 
@@ -1112,7 +1138,7 @@ private final class Gate2LiveSpeechNowPlayingController {
         #if canImport(MediaPlayer)
         guard remoteCommandTargets.isEmpty else { return }
         let center = MPRemoteCommandCenter.shared()
-        center.changePlaybackRateCommand.supportedPlaybackRates = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+        center.changePlaybackRateCommand.supportedPlaybackRates = SpeechRateRule.supportedMultipliers.map { NSNumber(value: $0) }
         center.skipBackwardCommand.preferredIntervals = [15]
         center.skipForwardCommand.preferredIntervals = [15]
         register(center.playCommand, command: .play, detail: "none")
