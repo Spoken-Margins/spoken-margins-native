@@ -468,6 +468,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var snapshot = SessionSnapshot() {
         didSet {
             recordPlaybackEventState(previous: oldValue)
+            if oldValue.sessionId != snapshot.sessionId { resumeDeferredPodcastPlacements() }
             if oldValue.isRecording, !snapshot.isRecording { endCaptureWatch() }
             if !oldValue.isRecording, snapshot.isRecording { startCaptureWatch() }
             settleSpeechInterruptionResume()
@@ -982,6 +983,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
     private var importedPodcastResolutionURLs: [String: URL] = [:]
+    var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
     private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
@@ -13706,7 +13708,7 @@ final class Gate1AppModel: ObservableObject {
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        if importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
+        if deferredPodcastPlacementURLs[itemId] == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
            let item = try? store.loadItem(id: itemId) {
             diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
             scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
@@ -13754,15 +13756,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func podcastResolution(
-        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
-        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
-    ) -> ImportedAnchorResolution {
-        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
-            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
-    }
-
-    private func resolveImportedPodcastCommentary(
+    func resolveImportedPodcastCommentary(
         itemId: String,
         localURL: URL,
         recipientTranscriptOverride: TranscriptTimeline? = nil
@@ -13771,7 +13765,8 @@ final class Gate1AppModel: ObservableObject {
               let file = try? PodcastPlacementFile(url: localURL),
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { return }
+              !layers.isEmpty else { deferredPodcastPlacementURLs[itemId] = nil; return }
+        guard !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: localURL) else { return }
         importedPodcastResolutionURLs[itemId] = localURL
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
