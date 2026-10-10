@@ -608,7 +608,7 @@ final class Gate1AppModel: ObservableObject {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
         if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
     private var importedTranscriptRetryDates: [String: Date] = [:]
-    private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
+    var importedPodcastRecipientLocalURLs: [String: URL] = [:]
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
@@ -1049,11 +1049,7 @@ final class Gate1AppModel: ObservableObject {
 
     var listeningMapGenerationAvailabilityDescription: String {
         if !selectedItem.listeningMapScenes.isEmpty {
-            let scenes = "\(selectedItem.listeningMapScenes.count) scene\(selectedItem.listeningMapScenes.count == 1 ? "" : "s")"
-            return selectedItem.listeningMapIsCommunity
-                ? "This item has a community map with \(scenes)."
-                : "This item has a private Listening Map with \(scenes)."
-        }
+            return selectedItem.listeningMapAvailabilityDescription
         if !selectedItem.mediaChapters.isEmpty {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
         }
@@ -3764,24 +3760,6 @@ final class Gate1AppModel: ObservableObject {
         return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
     }
 
-    /// A podcast episode with no chapters and no map of its own asks the server for a community map (#553).
-    private func fetchCommunityMapIfNeeded(itemId: String) {
-        guard let store else { return }
-        CommunityMapFetchService.shared.episodeOpened(
-            itemId: itemId, store: store,
-            localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) },
-            didStore: { [weak self] in self?.communityMapStored(itemId: itemId) },
-            report: { [weak self] in self?.diagnostics["communityMapFetch"] = $0 }
-        )
-    }
-
-    /// The scenes show on the item page now, and Skim's summaries are rendered like any stored map's.
-    private func communityMapStored(itemId: String) {
-        if itemId == activeItemId { refreshSelectedItem() }
-        prepareImportedLocalAudioBridges(itemId: itemId)
-        if itemId == activeItemId { updateSkimAvailability() }
-    }
-
     private func prepareSummaryBridgeAsset(
         itemId: String,
         proposalId: String,
@@ -3874,7 +3852,7 @@ final class Gate1AppModel: ObservableObject {
     func refreshSkimAvailabilityForTesting() { updateSkimAvailability() }
     #endif
 
-    private func updateSkimAvailability(refreshResources: Bool = true) {
+    func updateSkimAvailability(refreshResources: Bool = true) {
         if refreshResources { skimResourceContext = nil }
         guard !isUpdatingSkimAvailability else { return }
         let effectiveTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? snapshot.currentMediaTimeMs
@@ -4522,8 +4500,7 @@ final class Gate1AppModel: ObservableObject {
             activeItemId = id
             selectedItem = try loadItemDetail(id: id, store: store)
             prepareImportedLocalAudioBridges(itemId: id)
-            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }
-            fetchCommunityMapIfNeeded(itemId: id)
+            scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }; fetchCommunityMapIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
             discoverFollowOfferIfEligible(itemId: id, store: store)
@@ -4536,8 +4513,7 @@ final class Gate1AppModel: ObservableObject {
 
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
-        prepareImportedLocalAudioBridges(itemId: id)
-        fetchCommunityMapIfNeeded(itemId: id)
+        prepareImportedLocalAudioBridges(itemId: id); fetchCommunityMapIfNeeded(itemId: id)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
@@ -6897,7 +6873,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func prepareImportedLocalAudioBridges(itemId: String) {
+    func prepareImportedLocalAudioBridges(itemId: String) {
         guard let store, let item = try? store.loadItem(id: itemId),
               item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream || item.media?.sourceType == .generatedTTSPrerendered,
               let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId),
@@ -11703,7 +11679,7 @@ final class Gate1AppModel: ObservableObject {
         feedbackEvent = event
     }
 
-    private func refreshSelectedItem() {
+    func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
@@ -11859,7 +11835,6 @@ final class Gate1AppModel: ObservableObject {
             chapters: map?.chapters ?? [],
             mediaChapters: mediaChapters,
             listeningMapScenes: listeningMapScenes,
-            listeningMapIsCommunity: proposal.map { CommunityMapConverter.isCommunityProposal(id: $0.id) } ?? false,
             mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
             isNativeAudio: isNativeAudio,
             documentStructure: item.documentStructure,

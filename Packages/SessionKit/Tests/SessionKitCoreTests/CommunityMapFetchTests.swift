@@ -258,12 +258,14 @@ final class CommunityMapFetchTests: XCTestCase {
         let starts = SceneStarts(scenes: proposal.scenes, projection: map.projection)
         XCTAssertEqual(starts.chapters.map(\.title), ["Cold open", "The interview", "Listener questions"])
         XCTAssertEqual(starts.chapters.map(\.startMs), [0, 120_000, 300_000])
+        XCTAssertTrue(starts.chapters.allSatisfy { CommunityMapConverter.isCommunitySceneId($0.id) })
+        XCTAssertFalse(CommunityMapConverter.isCommunitySceneId("scene-1"))
         XCTAssertEqual(starts.chapters.first?.description, "The hosts introduce the guest and the topic.")
         let forward = try XCTUnwrap(starts.skimPlan(direction: .forward, at: 10_000, durationMs: 600_000))
-        XCTAssertEqual(forward.summaryScene.id, "scene-1")
+        XCTAssertEqual(forward.summaryScene.id, "community-scene-1")
         XCTAssertEqual(forward.destinationMediaTimeMs, 120_000)
         let back = try XCTUnwrap(starts.skimPlan(direction: .backward, at: 130_000, durationMs: 600_000))
-        XCTAssertEqual(back.summaryScene.id, "scene-1")
+        XCTAssertEqual(back.summaryScene.id, "community-scene-1")
         XCTAssertEqual(back.destinationMediaTimeMs, 120_000)
     }
 

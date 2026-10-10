@@ -195,6 +195,7 @@ public enum CommunityMapConverter {
     public static let durationToleranceMs = 2_000
     public static let generatorPrefix = "community:"
     public static let proposalIdPrefix = "community-map-"
+    public static let sceneIdPrefix = "community-scene-"
     public static let projectionIdPrefix = "community-projection-"
     public static let maximumScenes = 60
     /// The server's own limits (research/B4/server/internal/maps/service.go).
@@ -202,6 +203,8 @@ public enum CommunityMapConverter {
     public static let maximumSummaryCharacters = 300
 
     public static func isCommunityProposal(id: String) -> Bool { id.hasPrefix(proposalIdPrefix) }
+    /// The item page holds scenes, not the proposal, so a scene id says where the map came from.
+    public static func isCommunitySceneId(_ id: String) -> Bool { id.hasPrefix(sceneIdPrefix) }
 
     public static func make(
         response: CommunityMapResponse,
@@ -242,7 +245,7 @@ public enum CommunityMapConverter {
                 ? min(scene.endMs, response.scenes[index + 1].startMs)
                 : min(scene.endMs, itemDurationMs)
             return PortableListeningMapScene(
-                id: "scene-\(index + 1)", order: index, title: title,
+                id: sceneIdPrefix + "\(index + 1)", order: index, title: title,
                 summaryText: scene.summary.trimmingCharacters(in: .whitespacesAndNewlines),
                 summaryProvenance: .modelGenerated, eligibility: .eligible,
                 eligibilityReason: "Community map; the summary was made from another listener's transcript.",
