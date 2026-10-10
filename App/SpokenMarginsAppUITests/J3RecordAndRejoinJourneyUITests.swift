@@ -44,6 +44,10 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertEqual(app.buttons["playback.title"].firstMatch.label, episodeTitle, "A different item is playing")
             try waitUntilPlaying("Podcast never reached the playing state")
             try waitUntilAdvancing("Podcast clock did not move before recording")
+            // Record well past 0:00, so a Margin anchored at the start can't pass for one anchored here (#1044 APO-01).
+            waitUntil("Podcast did not reach 0:30 before recording", timeout: 45) {
+                self.currentPosition().map { $0 >= 30 } ?? false
+            }
             marginPosition = try position()
 
             tap("playback.interject.button")
@@ -94,7 +98,19 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertTrue(abs(now - beforeOpeningMargin) < 20 || abs(now - marginPosition) < 20,
                           "Podcast continued at \(now) s, not where you were (\(beforeOpeningMargin) s) or at the Margin (\(marginPosition) s)")
             try waitUntilAdvancing("Podcast is stuck after the Margin played")
-            playPause.tap()
+        }
+
+        try XCTContext.runActivity(named: "J3 step 3b: Play this moment goes back to where the Margin was recorded") { _ in
+            // The source is now a minute or more past the Margin, so landing near it proves where it was anchored.
+            openTimeline()
+            element(marginId).tap()
+            XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "Margin did not open")
+            tap("marginDetail.playMoment.button")
+            XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
+            waitUntil("Play this moment did not land at the Margin (\(marginPosition) s)", timeout: 10) {
+                self.currentPosition().map { abs($0 - marginPosition) <= 10 } ?? false
+            }
+            if playPause.label == "Pause" { playPause.tap() }
             waitUntil("Podcast did not pause before the force-quit") { self.playPause.label == "Play" }
         }
 
