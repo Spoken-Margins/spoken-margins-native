@@ -271,6 +271,7 @@ final class Gate1AppModel: ObservableObject {
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
             skimResourceContext = nil
+            prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
                 sourceFollowSuggestionItemId = nil
@@ -613,7 +614,7 @@ final class Gate1AppModel: ObservableObject {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
         if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
     private var importedTranscriptRetryDates: [String: Date] = [:]
-    private var importedPodcastRecipientLocalURLs: [String: URL] = [:]
+    var importedPodcastRecipientLocalURLs: [String: URL] = [:]
     private var pendingMapGenerationItemId: String?
     private var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
@@ -1702,7 +1703,7 @@ final class Gate1AppModel: ObservableObject {
                 resume: { [weak self] in self?.resumePlayback() },
                 seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
             ),
-            voiceURL: { voiceURLs[$0] }
+            voiceURL: leveledVoiceURL(voiceURLs, itemId: itemId, margins: [target] + otherMargins)
         )
         conductor.voiceRate = Float(Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate))
         conductor.prepareAudioSession = {
@@ -5970,7 +5971,7 @@ final class Gate1AppModel: ObservableObject {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
-            let item = AVPlayerItem(url: url)
+            let item = AVPlayerItem(url: leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs))
             item.audioTimePitchAlgorithm = .timeDomain
             let player = AVPlayer(playerItem: item)
             let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
@@ -6089,7 +6090,7 @@ final class Gate1AppModel: ObservableObject {
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
-            let item = AVPlayerItem(url: audioURL)
+            let item = AVPlayerItem(url: leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs))
             item.audioTimePitchAlgorithm = .timeDomain
             let player = AVPlayer(playerItem: item)
             player.volume = mixesWithOtherAudio ? Float(mixedPlaybackVolume) : 1
@@ -11117,25 +11118,6 @@ final class Gate1AppModel: ObservableObject {
         }
         #endif
         return "duration_ms=unknown;bytes=\(bytes)"
-    }
-
-    func resolvedInterjectionAudioURL(for path: String) -> URL? {
-        Self.resolvedInterjectionAudioURL(
-            for: path,
-            applicationSupportDirectory: try? FileManager.default.url(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask,
-                appropriateFor: nil,
-                create: false
-            )
-        )
-    }
-
-    private func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
-        Self.resolvedApplicationSupportAssetURL(
-            for: path,
-            applicationSupportDirectory: try? applicationSupportDirectory()
-        )
     }
 
     private func recordAnchorCaptureDiagnostics(for interjection: Interjection) {
