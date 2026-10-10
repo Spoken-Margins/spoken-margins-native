@@ -667,41 +667,21 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let root = try temporaryDirectory(named: "spoken-margins-\(name)")
         let databaseURL = root.appendingPathComponent("recipient.sqlite")
         let packageURL = root.appendingPathComponent("\(name).spokenmargins")
-        let revision = InterjectionShareRevision(
-            id: "revision-\(name)",
-            interjectionId: "sender-margin",
-            itemId: "sender-item",
-            sessionId: "sender-session",
-            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
-            approvedTranscript: "A sender-reviewed observation.",
-            anchorBefore: "the durable prefix has exactly enough unique words here",
-            anchorAfter: "the following suffix is also uniquely present right now",
-            status: .senderApproved
-        )
-        let prepared = try SpokenMarginsPackageBuilder.prepare(
-            packageId: "package-\(name)",
-            createdAt: Date(timeIntervalSince1970: 1_777_000_000),
+        let manifest = try writePodcastPackage(
+            to: packageURL,
+            packageID: "package-\(name)",
             item: SharedItemIdentity(
                 itemType: .text,
                 canonicalURL: Self.articleURL,
                 originalURL: Self.articleURL,
                 title: Self.articleTitle
             ),
-            itemTransportSelection: .reference,
-            selections: [ReviewedInterjectionSelection(
-                packageScopedId: "margin-001",
-                revision: revision,
-                anchor: PortableAnchorEvidence(
-                    anchorType: .text,
-                    prefix: "the durable prefix has exactly enough unique words here",
-                    suffix: "the following suffix is also uniquely present right now"
-                ),
-                representation: .textOnly
-            )],
-            senderDisplayLabel: "Cole",
-            suggestedRevealMode: .companion
+            anchor: PortableAnchorEvidence(
+                anchorType: .text,
+                prefix: "the durable prefix has exactly enough unique words here",
+                suffix: "the following suffix is also uniquely present right now"
+            )
         )
-        let manifest = try SpokenMarginsPackageArchive.write(prepared, to: packageURL)
         let store = try SQLiteSessionStore(path: databaseURL.path)
         let extractor = ArticlePackageExtractor(extraction)
         let model = Gate1AppModel(
@@ -786,7 +766,9 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         to url: URL,
         packageID: String,
         sender: String = "Cole",
-        exactEditionSHA256: String? = nil
+        exactEditionSHA256: String? = nil,
+        item: SharedItemIdentity? = nil,
+        anchor: PortableAnchorEvidence? = nil
     ) throws -> SpokenMarginsPackageManifest {
         let revision = InterjectionShareRevision(
             id: "revision-\(packageID)",
@@ -802,7 +784,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let prepared = try SpokenMarginsPackageBuilder.prepare(
             packageId: packageID,
             createdAt: Date(timeIntervalSince1970: 1_777_000_000),
-            item: SharedItemIdentity(
+            item: item ?? SharedItemIdentity(
                 itemType: .podcast,
                 canonicalURL: Self.podcastURL,
                 originalURL: Self.podcastURL,
@@ -815,7 +797,7 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
             selections: [ReviewedInterjectionSelection(
                 packageScopedId: "margin-001",
                 revision: revision,
-                anchor: PortableAnchorEvidence(
+                anchor: anchor ?? PortableAnchorEvidence(
                     anchorType: .transcript,
                     prefix: "the durable prefix has exactly enough unique words here",
                     suffix: "the following suffix is also uniquely present right now",
