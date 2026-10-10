@@ -3017,43 +3017,6 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
-    func testBackgroundingDuringInitialRenderPreservesSelectedSupertonicVoice() async throws {
-        let template = try makeTestWAV(duration: 0.5)
-        defer { try? FileManager.default.removeItem(at: template) }
-        let (renderGate, releaseRender) = AsyncStream<Void>.makeStream()
-        defer { releaseRender.finish() }
-        let renderer = CountingAudioSupertonicRenderer(
-            templateURL: template,
-            firstRenderGate: renderGate
-        )
-        let fallback = RecordingFallbackAudioClient()
-        let playbackStarted = expectation(description: "selected voice playback started")
-        let client = SupertonicSpeechPlaybackClient(
-            renderer: renderer,
-            voice: .m2,
-            speed: 1,
-            fallbackVoiceIdentifier: nil,
-            fallbackRate: 0.5,
-            audioSessionActivator: {},
-            audioPlayerStarter: { _, _ in playbackStarted.fulfill() },
-            observesPlayerLifecycle: false,
-            fallbackClient: fallback
-        )
-        let source = "Playback should become audible before the app is suspended during initial rendering."
-        _ = try client.prepareSpeechText(source)
-        try client.play(targetId: "background-start", from: 11)
-        XCTAssertEqual(client.playbackStartStatus(targetId: "background-start"), .pending)
-
-        XCTAssertFalse(client.ensurePlaybackStartsBeforeBackgrounding())
-
-        releaseRender.finish()
-        await fulfillment(of: [playbackStarted], timeout: 5)
-        XCTAssertTrue(fallback.playedOffsets.isEmpty)
-        XCTAssertEqual(client.playbackStartStatus(targetId: "background-start"), .confirmed)
-        XCTAssertNotEqual(client.playbackTransportState(targetId: "background-start"), .stopped)
-        try client.stop()
-    }
-
     func testUserCanStopOnDeviceRenderingAndContinueWithSystemVoice() async throws {
         let template = try makeTestWAV(duration: 0.5)
         defer { try? FileManager.default.removeItem(at: template) }

@@ -1023,6 +1023,55 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
                       "the error response's body is not kept")
     }
 
+    /// APA-10 (#1042), the file-name half: `didFinishDownloadingTo` names the staged file after the response's
+    /// suggested file name, keeping its extension only when it is short and letters or digits, and the adopted
+    /// episode keeps that extension. No test ran it. Each row is a real URLSession download through the probe host.
+    func testTheAdoptedEpisodeKeepsOnlyASafeExtensionFromTheServersFileName() async throws {
+        let rows: [(url: String, suggested: String, expected: String, note: String)] = [
+            ("https://probe.example.com/name-plain.mp3?download=1", "name-plain.mp3", "mp3",
+             "a query string after the file name doesn't hide a normal extension"),
+            ("https://probe.example.com/name-query-in-name.mp3", "episode.mp3?dl=1", "audio",
+             "punctuation in the extension"),
+            ("https://probe.example.com/name-long.mp3", "episode.abcdefghijklmnop", "audio",
+             "an extension longer than 10 characters"),
+            ("https://probe.example.com/name-bare.mp3", "episode", "audio",
+             "no extension"),
+        ]
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let audio = Self.wavData(seconds: 0.025)
+        for row in rows {
+            // Precondition: the name the sanitizer is handed, as this platform's URL loading derives it from
+            // the probe's headers. If the platform names it differently, this says so before the outcome does.
+            let url = try XCTUnwrap(URL(string: row.url))
+            let served = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                         headerFields: DownloadProbeURLProtocol.namedDownloadHeaders[url.path])
+            XCTAssertEqual(served?.suggestedFilename, row.suggested, "precondition: \(row.note)")
+            DownloadProbeURLProtocol.reset(audio: audio)
+            let fixture = try makeFixture()
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+                usesBackgroundSession: false, preflightSession: session,
+                foregroundSessionConfiguration: configuration)
+            defer { coordinator.shutdown() }
+            coordinator.setNetworkTransportForTesting(.wifi)
+            coordinator.register(itemId: "episode", remoteURL: url, userInitiated: true)
+            await coordinator.preparationTasks["episode"]?.value
+            for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, row.note)
+            let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"), row.note)
+            XCTAssertEqual(local.pathExtension, row.expected, row.note)
+            XCTAssertEqual(try Data(contentsOf: local), audio, "the downloaded bytes were adopted: \(row.note)")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: fixture.support.appending(path: "PodcastAudio").path),
+                           [local.lastPathComponent], "only the adopted episode remains: \(row.note)")
+        }
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
@@ -1071,6 +1120,8 @@ private final class ReconcileHookFileManager: FileManager, @unchecked Sendable {
 /// - /announces-nothing.mp3: HEAD is refused (405); GET answers 200 with no length at all.
 /// - /gone.mp3: every request answers 404.
 /// - /error-503.mp3: HEAD answers 200 with the audio's Content-Length; GET answers 503 with the audio as its body.
+/// - /name-*.mp3: HEAD answers 200 with the audio's Content-Length; GET answers 200 with the audio, under the
+///   file name `namedDownloadHeaders` gives that path (#1282).
 private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var seen: [String] = []
@@ -1099,6 +1150,15 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
     /// "HEAD /path" or "GET /path", with " range" when the request asked for a byte range.
     static var requests: [String] { lock.withLock { seen } }
 
+    /// The headers that name each /name-*.mp3 download, as a host's Content-Type and Content-Disposition would.
+    /// The odd names are served as octet-stream, so the platform has no audio type to name the file after.
+    static let namedDownloadHeaders: [String: [String: String]] = [
+        "/name-plain.mp3": ["Content-Type": "audio/mpeg"],
+        "/name-query-in-name.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode.mp3?dl=1\""],
+        "/name-long.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode.abcdefghijklmnop\""],
+        "/name-bare.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode\""],
+    ]
+
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "probe.example.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -1116,7 +1176,16 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
             "Content-Disposition": "attachment; filename=\"episode.wav\"",
         ]
         var body = Data()
+        if let named = Self.namedDownloadHeaders[url.path] {
+            headers = named
+        }
         switch (url.path, method) {
+        case (let path, "HEAD") where path.hasPrefix("/name-"):
+            status = 200
+            headers["Content-Length"] = "\(audio.count)"
+        case (let path, _) where path.hasPrefix("/name-"):
+            status = 200
+            body = audio
         case ("/gone.mp3", _):
             status = 404
         case ("/error-503.mp3", "HEAD"):

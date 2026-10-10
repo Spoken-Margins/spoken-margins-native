@@ -953,14 +953,6 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    /// Supertonic is a user-selected voice. Backgrounding during its initial
-    /// two-chunk buffer must never silently change the voice; playback remains
-    /// pending until the selected renderer can continue.
-    @discardableResult
-    func ensurePlaybackStartsBeforeBackgrounding() -> Bool {
-        false
-    }
-
     func pause() throws {
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
