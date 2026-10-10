@@ -4713,7 +4713,7 @@ final class Gate1AppModel: ObservableObject {
         }
         resetMixWithOtherAudioForNewSession()
         if engine.currentSession != nil {
-            snapshot = try engine.endSession()
+            snapshot = try endEngineSession(engine)
         }
         let started = try engine.startSession(itemId: activeItemId)
         snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
@@ -5000,7 +5000,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
-            _ = try? engine.endSession()
+            _ = try? endEngineSession(engine)
             snapshot = engine.snapshot
         }
         activeItemId = id
@@ -5917,7 +5917,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
-            snapshot = try engine.endSession(stoppingInlinePlayback: endMarginMoment)
+            snapshot = try endEngineSession(engine)
             activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {
