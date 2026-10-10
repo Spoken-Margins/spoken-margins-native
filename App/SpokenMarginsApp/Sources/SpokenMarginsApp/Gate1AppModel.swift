@@ -7826,6 +7826,9 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["recordingNavigationGuard"] = "blocked_compact_\(command.rawValue)"
             return
         }
+        // While a start is pending the system card shows Play (its clock must not run, #943). A Play tap
+        // there asks for what is already happening, so it is not an error.
+        if command == .play, snapshot.status == .starting { return }
         let canonicalTransportCommands: Set<CompactControlCommand> = [
             .play, .pause, .togglePlayPause, .skipBack, .skipForward, .jumpToChapter
         ]

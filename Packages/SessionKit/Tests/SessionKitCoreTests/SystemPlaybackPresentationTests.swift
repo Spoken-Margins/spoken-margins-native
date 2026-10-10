@@ -39,6 +39,17 @@ final class SystemPlaybackPresentationTests: XCTestCase {
         }
     }
 
+    func testAPlayerThatIsWaitingEarnsNoRunningClockEvenWhenTheListenerWantsPlayback() {
+        // AVPlayer path: play() was called (intent) but the stream is still opening or rebuffering.
+        func rate(intent: Bool, waiting: Bool) -> Double {
+            SystemPlaybackPresentation.playerRate(isPlayingByIntent: intent, isWaitingForPlayer: waiting, selectedRate: 1.5)
+        }
+        XCTAssertEqual(rate(intent: true, waiting: false), 1.5)
+        XCTAssertEqual(rate(intent: true, waiting: true), 0)
+        XCTAssertEqual(rate(intent: false, waiting: false), 0)
+        XCTAssertEqual(rate(intent: false, waiting: true), 0)
+    }
+
     func testResumeAfterPauseDoesNotRunTheClockUntilConfirmed() {
         // paused -> resume requested (starting) -> confirmed (playing)
         let rates = [PlaybackStatus.paused, .starting, .playing].map { presentation($0).playbackRate }

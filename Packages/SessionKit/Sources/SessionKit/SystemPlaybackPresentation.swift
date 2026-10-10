@@ -15,6 +15,12 @@ public struct SystemPlaybackPresentation: Equatable, Sendable {
     public static let loadingAudioLine = "Loading audio…"
     public static let preparingVoiceLine = "Preparing voice…"
 
+    /// The rate for a player that plays on the listener's intent (`!paused`) but may still be
+    /// opening a stream or rebuffering: intent alone does not earn a running clock.
+    public static func playerRate(isPlayingByIntent: Bool, isWaitingForPlayer: Bool, selectedRate: Double) -> Double {
+        isPlayingByIntent && !isWaitingForPlayer ? selectedRate : 0
+    }
+
     /// - Parameters:
     ///   - selectedRate: the listener's chosen speed.
     ///   - isNarration: the audio is the app's own voice reading text, not a podcast or media file.
