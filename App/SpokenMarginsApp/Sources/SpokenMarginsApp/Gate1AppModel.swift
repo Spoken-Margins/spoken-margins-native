@@ -1761,8 +1761,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
-        marginMomentConductor?.cancel()
-        marginMomentConductor = nil
+        // MUTATION M2 (#1045): the card clears but the conductor and its voice live on
         marginMoment = nil
         marginMomentVoiceIsPaused = false
     }
@@ -5482,7 +5481,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
-            snapshot = try endEngineSession(engine)
+            snapshot = try engine.endSession() // MUTATION M1 (#1045): the close path drops the hook
             activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {
