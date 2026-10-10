@@ -185,10 +185,36 @@ final class LeveledMarginCacheTests: XCTestCase {
         XCTAssertEqual(cachedCopies().count, 2)
 
         cache.removeCopies(of: margin)
+        cache.waitForQueuedWork()
 
         XCTAssertNil(cache.readyCopy(for: margin))
         XCTAssertNotNil(cache.readyCopy(for: other), "only this recording's copies go")
         XCTAssertEqual(cachedCopies().count, 1)
+    }
+
+    func testACopyBeingMadeWhenTheRecordingIsDeletedForGoodDoesNotSurvive() async throws {
+        let margin = try recording(named: "margin.wav", seed: 15, lufs: -30)
+        let cache = LeveledMarginCache(directory: cacheFolder)
+        async let outcome = cache.level(margin)
+        // Delete for good while the render may still be running: the copies are removed after it.
+        cache.removeCopies(of: margin)
+        try FileManager.default.removeItem(at: margin)
+        _ = await outcome
+        cache.waitForQueuedWork()
+
+        XCTAssertTrue(cachedCopies().isEmpty, "no copy of a deleted Margin's voice is left behind")
+    }
+
+    func testAnImportedMarginWithAnAbsurdTimeIsHandledNotCrashed() async throws {
+        let podcast = try recording(named: "episode.wav", seed: 16, lufs: -20)
+        let margin = try recording(named: "margin.wav", seed: 17, lufs: -30)
+        let cache = LeveledMarginCache(directory: cacheFolder)
+        for anchor in [Int.max, Int.max / 4, 1_000_000_000_000, 9_000_000_000_000_000_000, Int.min] {
+            let outcome = await cache.level(margin, sourceWindow: .init(file: podcast, anchorMediaTimeMs: anchor))
+            guard case .leveled = outcome else { return XCTFail("anchor \(anchor): \(outcome)") }
+        }
+        // The measurement itself copes with a start far past the end of the file.
+        _ = try MarginLoudnessLeveler.measure(fileAt: podcast, startMs: Int.max, durationMs: Int.max)
     }
 
     func testTheOldestCopiesGoFirstWhenTheFolderIsFull() async throws {

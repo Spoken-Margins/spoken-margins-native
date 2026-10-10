@@ -22,6 +22,8 @@ public enum MarginLevelingTarget {
     /// Matched targets are rounded to this step, which is also the grid the cache names copies on.
     public static let cacheStepDB = 0.5
 
+    static let maximumAnchorMs = 1_000_000_000_000
+
     public struct Window: Equatable, Sendable {
         public var startMs: Int
         public var durationMs: Int
@@ -30,8 +32,8 @@ public enum MarginLevelingTarget {
     /// The stretch of the source to measure around a Margin anchored at `anchorMediaTimeMs`, kept
     /// inside the episode when its length is known. Nil when too little of it is left to measure.
     public static func sourceWindow(anchorMediaTimeMs: Int, sourceDurationMs: Int?) -> Window? {
-        // An imported packet's time can be anything; keep the sums below in range.
-        let anchor = min(max(0, anchorMediaTimeMs), Int.max / 4)
+        // An imported packet's time can be anything; no episode is longer than this (about 31 years).
+        let anchor = min(max(0, anchorMediaTimeMs), maximumAnchorMs)
         let start = max(0, anchor - windowMsEachSide)
         var end = anchor + windowMsEachSide
         if let sourceDurationMs { end = min(end, max(0, sourceDurationMs)) }

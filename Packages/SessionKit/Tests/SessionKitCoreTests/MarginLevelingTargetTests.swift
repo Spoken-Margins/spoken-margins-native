@@ -97,6 +97,8 @@ final class MarginLevelingTargetTests: XCTestCase {
         XCTAssertNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.max, sourceDurationMs: 3_600_000))
         XCTAssertNotNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.max, sourceDurationMs: nil), "no length: nothing to compare with")
         XCTAssertNil(MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.min, sourceDurationMs: 2_000))
+        let window = MarginLevelingTarget.sourceWindow(anchorMediaTimeMs: Int.max, sourceDurationMs: nil)
+        XCTAssertLessThanOrEqual(window?.startMs ?? .max, MarginLevelingTarget.maximumAnchorMs, "no start beyond any real episode")
     }
 
     func testWhatCountsAsAnEpisodeWorthMatching() {

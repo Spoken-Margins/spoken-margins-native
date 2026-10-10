@@ -53,8 +53,10 @@ public enum MarginLoudnessLeveler {
     ) throws -> LoudnessMeasurement {
         let file = try openForReading(url)
         let sampleRate = file.processingFormat.sampleRate
-        let startFrame = AVAudioFramePosition((Double(max(0, startMs)) / 1000 * sampleRate).rounded())
-        let endFrame = startFrame + AVAudioFramePosition((Double(max(0, durationMs)) / 1000 * sampleRate).rounded())
+        // A shared Margin's time can be anything: work in Double and stop at the file's end before converting.
+        let length = Double(file.length)
+        let startFrame = AVAudioFramePosition(min(length, (Double(max(0, startMs)) / 1000 * sampleRate).rounded()))
+        let endFrame = AVAudioFramePosition(min(length, Double(startFrame) + (Double(max(0, durationMs)) / 1000 * sampleRate).rounded()))
         var meter = LoudnessMeter.Accumulator(channelCount: Int(file.processingFormat.channelCount), sampleRate: sampleRate)
         try forEachChunk(of: file, chunkFrames: chunkFrames, from: startFrame, upTo: endFrame) { meter.add($0) }
         return meter.finish()

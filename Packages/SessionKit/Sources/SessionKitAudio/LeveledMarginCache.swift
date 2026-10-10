@@ -69,11 +69,15 @@ public final class LeveledMarginCache: @unchecked Sendable {
     }
 
     /// Removes every copy of this recording, for when the recording itself is deleted for good. Call it
-    /// before the recording is removed: the copy is found by the recording's content.
+    /// before the recording is removed: the copy is found by the recording's content. The removal runs
+    /// on the leveling queue, after any render in progress, so a copy that is being made when the
+    /// recording is deleted goes too; renders queued later fail because the recording is gone.
     public func removeCopies(of recording: URL) {
         guard let hash = try? Self.contentHash(of: recording) else { return }
-        for copy in copies() where copy.url.lastPathComponent.hasPrefix("\(hash)-") {
-            try? FileManager.default.removeItem(at: copy.url)
+        queue.async { [self] in
+            for copy in copies() where copy.url.lastPathComponent.hasPrefix("\(hash)-") {
+                try? FileManager.default.removeItem(at: copy.url)
+            }
         }
     }
 
@@ -98,6 +102,9 @@ public final class LeveledMarginCache: @unchecked Sendable {
             }
         }
     }
+
+    /// Returns once the work queued so far has finished. For tests.
+    func waitForQueuedWork() { queue.sync {} }
 
     // MARK: Work (on the queue)
 
