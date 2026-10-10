@@ -988,15 +988,15 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
     /// suggested file name, keeping its extension only when it is short and letters or digits, and the adopted
     /// episode keeps that extension. No test ran it. Each row is a real URLSession download through the probe host.
     func testTheAdoptedEpisodeKeepsOnlyASafeExtensionFromTheServersFileName() async throws {
-        let rows: [(url: String, expected: String, note: String)] = [
-            ("https://probe.example.com/name-plain.mp3?download=1", "mp3",
+        let rows: [(url: String, suggested: String, expected: String, note: String)] = [
+            ("https://probe.example.com/name-plain.mp3?download=1", "name-plain.mp3", "mp3",
              "a query string after the file name doesn't hide a normal extension"),
-            ("https://probe.example.com/name-query-in-name.mp3", "audio",
-             "a file name of \"episode.mp3?dl=1\" has punctuation in its extension"),
-            ("https://probe.example.com/name-long.mp3", "audio",
-             "a file name of \"episode.abcdefghijklmnop\" has an extension longer than 10 characters"),
-            ("https://probe.example.com/name-bare.mp3", "audio",
-             "a file name of \"episode\" has no extension"),
+            ("https://probe.example.com/name-query-in-name.mp3", "episode.mp3?dl=1", "audio",
+             "punctuation in the extension"),
+            ("https://probe.example.com/name-long.mp3", "episode.abcdefghijklmnop", "audio",
+             "an extension longer than 10 characters"),
+            ("https://probe.example.com/name-bare.mp3", "episode", "audio",
+             "no extension"),
         ]
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [DownloadProbeURLProtocol.self]
@@ -1004,6 +1004,12 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         defer { session.invalidateAndCancel() }
         let audio = Self.wavData(seconds: 0.025)
         for row in rows {
+            // Precondition: the name the sanitizer is handed, as this platform's URL loading derives it from
+            // the probe's headers. If the platform names it differently, this says so before the outcome does.
+            let url = try XCTUnwrap(URL(string: row.url))
+            let served = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                         headerFields: DownloadProbeURLProtocol.namedDownloadHeaders[url.path])
+            XCTAssertEqual(served?.suggestedFilename, row.suggested, "precondition: \(row.note)")
             DownloadProbeURLProtocol.reset(audio: audio)
             let fixture = try makeFixture()
             let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
@@ -1012,7 +1018,7 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
                 foregroundSessionConfiguration: configuration)
             defer { coordinator.shutdown() }
             coordinator.setNetworkTransportForTesting(.wifi)
-            coordinator.register(itemId: "episode", remoteURL: URL(string: row.url)!, userInitiated: true)
+            coordinator.register(itemId: "episode", remoteURL: url, userInitiated: true)
             await coordinator.preparationTasks["episode"]?.value
             for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
                 try await Task.sleep(for: .milliseconds(25))
@@ -1105,11 +1111,12 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
     static var requests: [String] { lock.withLock { seen } }
 
     /// The headers that name each /name-*.mp3 download, as a host's Content-Type and Content-Disposition would.
-    private static let namedDownloadHeaders: [String: [String: String]] = [
+    /// The odd names are served as octet-stream, so the platform has no audio type to name the file after.
+    static let namedDownloadHeaders: [String: [String: String]] = [
         "/name-plain.mp3": ["Content-Type": "audio/mpeg"],
-        "/name-query-in-name.mp3": ["Content-Type": "audio/mpeg", "Content-Disposition": "attachment; filename=\"episode.mp3?dl=1\""],
-        "/name-long.mp3": ["Content-Type": "audio/mpeg", "Content-Disposition": "attachment; filename=\"episode.abcdefghijklmnop\""],
-        "/name-bare.mp3": ["Content-Type": "audio/mpeg", "Content-Disposition": "attachment; filename=\"episode\""],
+        "/name-query-in-name.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode.mp3?dl=1\""],
+        "/name-long.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode.abcdefghijklmnop\""],
+        "/name-bare.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode\""],
     ]
 
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "probe.example.com" }

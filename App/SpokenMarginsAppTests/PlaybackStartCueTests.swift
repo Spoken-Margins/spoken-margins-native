@@ -257,19 +257,29 @@ final class PlaybackStartCueTests: XCTestCase {
         let priorCategory = session.category, priorMode = session.mode, priorOptions = session.categoryOptions
         defer { try? session.setCategory(priorCategory, mode: priorMode, options: priorOptions) }
         try session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        weak var watched: PlaybackStartCue?
+        var heldPlayer: AVAudioPlayer?
         let cue = PlaybackStartCue(
             now: { [unowned self] in self.clock },
-            record: { [unowned self] key, value in self.recorded[key] = value }
+            record: { [unowned self] key, value in
+                self.recorded[key] = value
+                // Runs right after the real player starts. The 0.21 s chime could end by itself before a slow
+                // simulator checks it, so it loops silently here: only a stop can end it. The test also holds the
+                // player, so letting go of it can't pass for stopping it.
+                guard key == "lastPlaybackStartCue", let cue = watched, let player = self.chimePlayer(of: cue) else { return }
+                player.volume = 0
+                player.numberOfLoops = -1
+                heldPlayer = player
+            }
         )
+        watched = cue
 
         cue.observe(snapshot("article", .starting))
         clock += 1
         try await waitUntil { recorded["lastPlaybackStartCue"] != nil }
         XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played", "the real player took the chime")
-        // The test holds the player itself, so letting go of it can't pass for stopping it.
-        let player = try XCTUnwrap(chimePlayer(of: cue), "the cue keeps its chime player while it plays")
+        let player = try XCTUnwrap(heldPlayer, "the cue keeps its chime player while it plays")
         XCTAssertTrue(player.isPlaying, "the chime is playing")
-        player.volume = 0
 
         cue.observe(snapshot("article", .playing))
 
