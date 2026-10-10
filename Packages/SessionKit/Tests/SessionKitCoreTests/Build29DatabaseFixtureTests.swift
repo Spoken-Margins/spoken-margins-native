@@ -143,6 +143,45 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
 
+        // An article playing its publisher's recording through its map (#547). Build 29 must see a plain
+        // article, its session reading the article, and a Margin anchored to the article's words.
+        let postText = "The harbour shelters fishing boats. Gulls circle the old pier."
+        let post = Item(id: "item-publisher-post", title: "Harbour", mediaType: "text", text: postText,
+                        externalReference: "https://example.substack.com/p/harbour", status: "ready")
+        try store.saveItem(post)
+        try store.savePublisherAudio(PublisherAudio(
+            itemId: post.id, audioURL: "https://api.substack.com/feed/podcast/2/b.mp3", durationMs: 8_000, detectedFrom: "feed_enclosure",
+            textMap: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "publisher-audio-0001", startMs: 500, endMs: 3_500, startChar: 0, endChar: 35, text: "The harbour shelters fishing boats."),
+                MediaTimelineSegment(id: "publisher-audio-0002", startMs: 4_000, endMs: 7_000, startChar: 36, endChar: 62, text: "Gulls circle the old pier.")
+            ], chapters: [], durationMs: 8_000),
+            textMapStatus: "aligned(2 of 2 sentences)"
+        ))
+        let playingEngine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: [
+                "sync": ["canonical_persistence"], "playback": ["realtime_tts", "native_media"], "interjection": ["record_audio"]
+            ]),
+            repository: store
+        )
+        let playing = try playingEngine.startSession(itemId: post.id)
+        XCTAssertEqual(playing.targetType, TargetType.transcriptBackedMedia.rawValue, "the recording plays")
+        let postCapture = try playingEngine.beginWrittenInterjection()
+        _ = try playingEngine.saveWrittenInterjection(captureId: postCapture.id, text: "On the harbour")
+        let postSessionId = try XCTUnwrap(playing.sessionId)
+        let postMargin = try XCTUnwrap(try store.loadInterjections(sessionId: postSessionId).first)
+        XCTAssertEqual(postMargin.anchor.anchorType, .text)
+        XCTAssertNil(try store.loadItem(id: post.id).media)
+        XCTAssertEqual(try store.loadSession(id: postSessionId)?.currentTargetType, .itemTextTTS)
+        expected.append([
+            "itemId": post.id,
+            "textSHA256": SHA256.hash(data: Data(postText.utf8)).map { String(format: "%02x", $0) }.joined(),
+            "sessionId": postSessionId,
+            "marginId": postMargin.id,
+            "hasListeningMap": try store.loadListeningMap(itemId: post.id) != nil,
+            "sessionTargetType": TargetType.itemTextTTS.rawValue,
+            "itemHasNoMedia": true,
+        ])
+
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)

@@ -957,6 +957,76 @@ class VerificationTests(unittest.TestCase):
             self.assertEqual([a for a in args if a.startswith('-only-testing:')], [f'-only-testing:{method}'])
             self.assertEqual(expected, {method})
 
+    def simulator_listings(self, *runners):
+        """simctl listings, one per call: an iOS 26 iPhone template plus the Test Runner named in each."""
+        runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-26-0'
+        phone = 'com.apple.CoreSimulator.SimDeviceType.iPhone-17'
+        listings = []
+        for runner in runners:
+            group = [{'udid': 'template', 'name': 'iPhone 17', 'state': 'Shutdown', 'isAvailable': True,
+                      'deviceTypeIdentifier': phone}]
+            if runner:
+                group.append({'udid': runner, 'name': verification.TEST_RUNNER_NAME, 'state': 'Shutdown',
+                              'isAvailable': True, 'deviceTypeIdentifier': phone})
+            listings.append(json.dumps({'devices': {runtime: group}}))
+        return listings
+
+    def pick_simulator(self, listings, unsafe, device=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'app')
+            commands = []
+            with patch.object(verification, 'capture', side_effect=listings), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value=unsafe), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=lambda name, args, **_: commands.append((name, args))), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                chosen, created = run.simulator(device)
+        return chosen['udid'], created, commands
+
+    def test_an_unsafe_test_runner_is_replaced_and_the_new_one_counts_as_created(self):
+        # #1325: the Test Runner was marked unsafe on 10-09, and every integration run on next then
+        # stopped after 4 s with "is on the lane's unsafe list", because nothing ever replaced it.
+        udid, created, commands = self.pick_simulator(self.simulator_listings('old', None, 'new'),
+                                                      {'old': {'reason': 'SpringBoard restarted during boot'}})
+        self.assertEqual((udid, created), ('new', True))
+        self.assertEqual([name for name, _ in commands], ['simulator-retire', 'simulator-create'])
+        self.assertEqual(commands[0][1], ['xcrun', 'simctl', 'delete', 'old'])
+
+    def test_a_safe_test_runner_is_kept(self):
+        udid, created, commands = self.pick_simulator(self.simulator_listings('old'), {'other': {'reason': 'x'}})
+        self.assertEqual((udid, created, commands), ('old', False, []))
+
+    def test_a_given_device_is_never_replaced(self):
+        # --device is someone else's choice; xcode() still refuses it if it is marked unsafe.
+        udid, created, commands = self.pick_simulator(self.simulator_listings('old'), {'old': {'reason': 'x'}},
+                                                      device='old')
+        self.assertEqual((udid, created, commands), ('old', False, []))
+
+    def test_a_device_this_run_created_boots_with_the_first_boot_tolerance(self):
+        # A fresh device's first boot may restart SpringBoard once (lane_sim.FIRST_BOOT_TOLERANCE); without
+        # first_boot the boot marks it unsafe, which is likely how the Test Runner was lost in #1325.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            run.manifest['input_sha256'] = 'inputs'
+            fresh = {'udid': 'new', 'state': 'Shutdown', 'runtime': 'iOS-26', 'name': 'Other'}
+            boots = []
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='stub'), \
+                    patch.object(run, 'simulator', return_value=(fresh, True)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.lane_sim, 'boot',
+                                 side_effect=lambda udid, label, **kw: boots.append(kw) or 1.0), \
+                    patch.object(verification, 'acquire_simulator_slot', return_value=None), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', return_value=''):
+                run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
+            self.assertEqual([kw.get('first_boot') for kw in boots], [True])
+
     def test_unclassified_trace_and_fixture_and_empty_selection_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

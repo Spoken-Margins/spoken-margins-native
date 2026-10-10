@@ -17,7 +17,7 @@ final class MarginCaptureWatcher {
     private var restart: () throws -> Void = {}
     private var changed: HealthChange = { _, _ in }
     private var pollTask: Task<Void, Never>?
-    private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int)?
+    private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
     private var startedAtMs = 0
     /// Milliseconds on a clock that only moves forward. Tests replace it.
@@ -134,8 +134,9 @@ final class MarginCaptureWatcher {
     private func report() {
         guard let health = supervisor?.health else { return }
         let restarts = supervisor?.restarts ?? 0
-        guard lastReported?.health != health || lastReported?.restarts != restarts else { return }
-        lastReported = (health, restarts)
+        let keepable = supervisor?.hasKeepableAudio ?? false
+        guard lastReported?.health != health || lastReported?.restarts != restarts || lastReported?.keepable != keepable else { return }
+        lastReported = (health, restarts, keepable)
         changed(health, restarts)
     }
 }

@@ -302,7 +302,7 @@ private final class URLProtocolPageExtractor: NSObject, ReadablePageExtracting, 
         ))
         let rules = try await WKContentRuleListStore.default().compileContentRuleList(
             forIdentifier: "spoken-margins-shared-link-test",
-            encodedContentRuleList: #"[{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]"#
+            encodedContentRuleList: AppOwnedReadablePageExtractor.readablePageContentRules
         )
         configuration.userContentController.add(try XCTUnwrap(rules))
         let webView = WKWebView(frame: .zero, configuration: configuration)

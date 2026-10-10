@@ -742,6 +742,35 @@ class Run:
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
             self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
+    def simulator(self, device, ios=None):
+        """The destination, and whether this run created it (its first boot gets the lane's tolerance).
+
+        --device is used as given. Otherwise the dedicated Test Runner, created when missing, and
+        replaced when the lane has marked it unsafe: it is this script's own device, and refusing it
+        stopped every integration run on next for a day (#1325). A T3 gets a fresh device each run too.
+        """
+        def listed():
+            return json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+
+        if device:
+            return select_simulator(listed(), device, ios), False
+        chosen, template = dedicated_simulator(listed(), ios)
+        marked = lane_sim.unsafe_devices().get(chosen['udid']) if chosen else None
+        if marked:
+            print(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) is on the lane\'s unsafe list ({marked["reason"]}); '
+                  'replacing it with a fresh one', flush=True)
+            subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']], cwd=ROOT, capture_output=True, timeout=60)
+            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=120)
+            chosen, template = dedicated_simulator(listed(), ios)
+        if chosen is not None:
+            return chosen, False
+        self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
+                     template['deviceTypeIdentifier'], template['runtime']], timeout=60)
+        chosen, _ = dedicated_simulator(listed(), ios)
+        if chosen is None:
+            raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        return chosen, True
+
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
@@ -757,18 +786,7 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
-        devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-        if device:
-            chosen = select_simulator(devices, device, ios)
-        else:
-            chosen, template = dedicated_simulator(devices, ios)
-            if chosen is None:
-                self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
-                             template['deviceTypeIdentifier'], template['runtime']], timeout=60)
-                devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-                chosen, _ = dedicated_simulator(devices, ios)
-                if chosen is None:
-                    raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
         self.command('generate', ['xcodegen', 'generate'])
@@ -806,7 +824,8 @@ class Run:
                 self.manifest['steps'].append(entry)
                 self.save()
                 try:
-                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout), 3),
+                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout,
+                                                             first_boot=created), 3),
                                  exit_code=0, errors=[])
                 except lane_sim.BootError as error:
                     entry.update(exit_code=1, errors=[str(error)])
