@@ -10,6 +10,7 @@ public enum SharedItemIdentityBuilder {
     /// The recipient side: what `ImportedItemResolver.canRepresentSameWork` compares a packet against.
     /// `localAudioDigest` is the checksum of a valid local audiobook file, when there is one.
     public static func localIdentity(for item: Item, localAudioDigest: String? = nil) -> SharedItemIdentity {
+        if let linked = linkedFileIdentity(for: item, localAudioDigest: localAudioDigest) { return linked }
         let isPodcast = isPodcast(item)
         let external = item.externalReference.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
         let enclosure = item.media?.url.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
@@ -25,6 +26,30 @@ public enum SharedItemIdentityBuilder {
             durationMs: item.media?.durationMs,
             normalizedContentSHA256: isPodcast ? nil : PortableArticleAnchorResolver.normalizedContentSHA256(item.text ?? ""),
             exactEditionSHA256: localAudioDigest ?? (isPodcast ? nil : PortableArticleAnchorResolver.exactEditionSHA256(item.text ?? ""))
+        )
+    }
+
+    /// An imported audio file the listener linked to a podcast episode (#755). It stays an audio file
+    /// (`.other`, matched by its checksum like any other), and also carries the episode's identity so a
+    /// packet shared by link finds it, while the file is still there to be heard. Like a streamed
+    /// episode's local identity it is only compared, never sent, and the GUID goes through
+    /// `ShareableLinkPolicy` so a GUID that is itself a private link never takes part.
+    private static func linkedFileIdentity(for item: Item, localAudioDigest: String?) -> SharedItemIdentity? {
+        // Without a valid owned file there is nothing to place Margins on, so the link claims nothing.
+        guard item.mediaType == "audiobook", let episode = item.linkedEpisode, localAudioDigest != nil else { return nil }
+        let page = episode.pageURL.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
+        let enclosure = episode.enclosureURL.flatMap { normalizedSharingURL($0) == nil ? nil : $0 }
+        return SharedItemIdentity(
+            itemType: .other,
+            canonicalURL: page ?? enclosure,
+            originalURL: page,
+            title: item.title,
+            showTitle: bounded(episode.showTitle, 500),
+            episodeGUID: bounded(ShareableLinkPolicy.shareableEpisodeGUID(episode.guid), 1_000),
+            enclosureURL: enclosure,
+            publishedAt: bounded(episode.publishedAt, 100),
+            durationMs: item.media?.durationMs,
+            exactEditionSHA256: localAudioDigest
         )
     }
 

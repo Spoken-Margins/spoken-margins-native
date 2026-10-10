@@ -130,6 +130,99 @@ final class FollowingLengthAndArtworkTests: XCTestCase {
         XCTAssertEqual(FollowingArtworkCache.load(from: file), FollowingArtworkCache())
     }
 
+    // MARK: Row
+
+    func testAnEpisodeRowShowsItsArtworkLengthAndReadsShowTitleLength() {
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://example.com/e", audioURL: "https://example.com/e.mp3",
+                              title: "Housing costs", audioDurationMs: 42 * 60_000)
+        let art = URL(string: "https://example.com/show.jpg")
+        let row = FollowingEntryRow(entry: entry, showTitle: "The Daily", artworkURL: art, rate: 2)
+        XCTAssertEqual(row.artworkURL, art)
+        XCTAssertEqual(row.length?.label, "42 min", "an episode's length is its duration, not scaled by the speech rate")
+        XCTAssertEqual(row.accessibilityLabel, "The Daily. Housing costs. 42 minutes.")
+    }
+
+    func testAnArticleRowIsTimedAtTheSpeechRateAndFallsBackToAPageIcon() {
+        let entry = FeedEntry(id: "a", subscriptionId: "s", canonicalURL: "https://example.com/a", title: "On cities.", bodyWordCount: 2_160)
+        let row = FollowingEntryRow(entry: entry, showTitle: "Lab Notes", artworkURL: nil, rate: 1.5)
+        XCTAssertNil(row.artworkURL)
+        XCTAssertEqual(row.placeholder, .page)
+        XCTAssertEqual(row.length?.label, "8 min listen")
+        XCTAssertEqual(row.accessibilityLabel, "Lab Notes. On cities. 8 minutes.", "a title's own full stop isn't doubled")
+    }
+
+    func testAPodcastWithoutArtworkShowsTheShowsFirstLetter() {
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://example.com/e", audioURL: "https://example.com/e.mp3", title: "Episode 12")
+        XCTAssertEqual(FollowingEntryRow(entry: entry, showTitle: "the daily", artworkURL: nil).placeholder, .initial("T"))
+        XCTAssertEqual(FollowingEntryRow(entry: entry, showTitle: "99% Invisible", artworkURL: nil).placeholder, .initial("9"))
+        XCTAssertEqual(FollowingEntryRow(entry: entry, showTitle: "  ", artworkURL: nil).placeholder, .initial("E"), "no show name: the entry's title")
+    }
+
+    func testAnEntryWithNoLengthOrShowReadsOnlyItsTitle() {
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://example.com/e", audioURL: "https://example.com/e.mp3", title: "Episode 12")
+        let row = FollowingEntryRow(entry: entry, showTitle: nil, artworkURL: nil)
+        XCTAssertNil(row.length, "no \"0 min\" placeholder")
+        XCTAssertEqual(row.accessibilityLabel, "Episode 12.")
+    }
+
+    func testCatalogArtworkIsRecordedForFollowedShowsTheCatalogLists() {
+        let catalog = SourceCatalog(
+            schemaVersion: SourceCatalog.currentSchemaVersion, catalogId: "test", contentVersion: 1, title: "Test",
+            generatedAt: "2026-10-04T00:00:00Z", locale: "en-US", provenance: [], subjects: [], starterRows: nil,
+            entries: [
+                SourceCatalogEntry(id: "daily", kind: .podcastFeed, contentKind: .podcast, title: "The Daily",
+                                   feedURL: "https://feeds.example.com/daily.xml", artworkURL: "https://catalog.example/daily.jpg",
+                                   subjects: [], provenanceIds: []),
+                SourceCatalogEntry(id: "plain", kind: .podcastFeed, contentKind: .podcast, title: "No art",
+                                   feedURL: "https://feeds.example.com/plain.xml", subjects: [], provenanceIds: []),
+            ]
+        )
+        func subscription(_ id: String, _ url: String) -> FeedSubscription {
+            FeedSubscription(id: id, source: SourceIdentity(id: id, kind: .podcastFeed, canonicalURL: url, host: "feeds.example.com"))
+        }
+        var cache = FollowingArtworkCache()
+        cache.record(feedURL: "https://feed.example/daily-own.jpg", for: "sub-daily")
+        let followed = [
+            subscription("sub-daily", "http://FEEDS.example.com/daily.xml/"),
+            subscription("sub-plain", "https://feeds.example.com/plain.xml"),
+            subscription("sub-other", "https://elsewhere.example/feed"),
+        ]
+        XCTAssertTrue(cache.recordCatalogArtwork(for: followed, catalog: catalog))
+        XCTAssertEqual(cache.artworkURL(for: "sub-daily")?.absoluteString, "https://catalog.example/daily.jpg", "catalog wins over the feed's image")
+        XCTAssertNil(cache.artworkURL(for: "sub-plain"))
+        XCTAssertNil(cache.artworkURL(for: "sub-other"))
+        XCTAssertFalse(cache.recordCatalogArtwork(for: followed, catalog: catalog), "nothing new, so no save")
+        XCTAssertFalse(cache.recordCatalogArtwork(for: followed, catalog: nil), "no catalog loaded yet")
+    }
+
+    func testTheStoreWritesChangesStraightAwayAndDropsShowsNoLongerFollowed() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("artwork-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent(FollowingArtworkCache.fileName)
+        func subscription(_ id: String) -> FeedSubscription {
+            FeedSubscription(id: id, source: SourceIdentity(id: id, kind: .podcastFeed, canonicalURL: "https://feeds.example.com/\(id).xml", host: "feeds.example.com"))
+        }
+
+        var store = FollowingArtworkStore(file: file)
+        store.reconcile(with: [], catalog: nil)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "nothing changed, nothing written")
+        store.recordFeedArtwork("https://feed.example/a.jpg", for: "a")
+        store.recordFeedArtwork("https://feed.example/b.jpg", for: "b")
+        store.recordFeedArtwork("https://feed.example/c.jpg", for: "c")
+        XCTAssertEqual(FollowingArtworkStore(file: file).cache, store.cache, "a relaunch reads what was recorded")
+
+        store.remove(subscriptionID: "a")
+        store.reconcile(with: [subscription("b")], catalog: nil)  // "c" was unfollowed elsewhere
+        let relaunched = FollowingArtworkStore(file: file)
+        XCTAssertNil(relaunched.cache.artworkURL(for: "a"))
+        XCTAssertNil(relaunched.cache.artworkURL(for: "c"))
+        XCTAssertEqual(relaunched.cache.artworkURL(for: "b")?.absoluteString, "https://feed.example/b.jpg")
+
+        var inMemory = FollowingArtworkStore(file: nil)
+        inMemory.recordFeedArtwork("https://feed.example/a.jpg", for: "a")
+        XCTAssertNotNil(inMemory.cache.artworkURL(for: "a"))
+    }
+
     private func parse(_ text: String) throws -> ParsedFeed {
         try FeedParser().parse(data: Data(text.utf8))
     }

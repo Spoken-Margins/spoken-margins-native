@@ -65,6 +65,18 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     let cleanedVoiceURL: URL?
 }
 
+extension Build23SharingMarginSnapshot {
+    /// Included, but with no reviewed words, so the packet can't carry it (#1185).
+    var isLeftOutForMissingText: Bool {
+        isIncluded && !SharedMarginTextRequirement.hasReviewedText(reviewedText)
+    }
+
+    /// What VoiceOver says about the Margin's place in the packet; matches the visible status.
+    var shareStatusDescription: String {
+        isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
+    }
+}
+
 struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
     let id: String
     let reviewedText: String
@@ -114,6 +126,13 @@ struct Build23SharingSnapshot: Equatable {
     let canShareVerifiedFile: Bool
 }
 
+extension Build23SharingSnapshot {
+    /// What the packet will hold. The Review and Share buttons count this, not the include flags.
+    var selectionSummary: SharedMarginSelectionSummary {
+        SharedMarginSelectionSummary(margins, isIncluded: { $0.isIncluded }, text: { $0.reviewedText })
+    }
+}
+
 struct Build23RecipientImportSnapshot: Equatable {
     let itemTitle: String
     let senderLabel: String
@@ -141,6 +160,8 @@ struct Build23ImportedMarginSnapshot: Identifiable, Equatable {
     let positionDescription: String
     let isPlayable: Bool
     let hasVoice: Bool
+    /// Shown instead of the resolution while the Margin is being placed (#872).
+    var placementLabel: String? = nil
 }
 
 struct Build23ImportedLayerSnapshot: Identifiable, Equatable {
@@ -354,14 +375,19 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             .filter { $0.deletedAt == nil }
             .map { layer in
                 let margins = item.importedCommentaryInterjections[layer.id, default: []]
-                    .map { margin in
-                        Build23ImportedMarginSnapshot(
+                    .map { margin -> Build23ImportedMarginSnapshot in
+                        let placement = SharedMarginPlacementStatus(resolution: margin.resolution, marginId: margin.id,
+                            layerStatus: layer.sourceResolutionStatus, pass: item.sharedMarginPlacement,
+                            hasPositionEvidence: margin.carriesPositionEvidence(in: layer),
+                            awaitingPlacementPass: layer.awaitsPlacementPass)
+                        return Build23ImportedMarginSnapshot(
                             id: margin.id,
                             reviewedText: margin.approvedTranscript,
                             resolution: margin.resolution.evidenceClass,
-                            positionDescription: Self.positionDescription(for: margin.resolution),
+                            positionDescription: placement.positionDescription ?? Self.positionDescription(for: margin.resolution),
                             isPlayable: Gate1AppModel.isPlayableImportedCommentaryResolution(margin.resolution),
-                            hasVoice: margin.audioPath != nil
+                            hasVoice: margin.audioPath != nil,
+                            placementLabel: placement.label
                         )
                     }
                 return Build23ImportedLayerSnapshot(
@@ -383,7 +409,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         switch action {
         case .begin:
             discardPreview(resetTo: .select)
-            model.prepareShareInterjections()
+            if model.sharingState.draftsPreparedForExport && model.isSharingInterjectionsPresented {
+                model.sharingState.draftsPreparedForExport = false
+            } else {
+                model.prepareShareInterjections()
+            }
             selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
             model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
         case .setFilter(let filter):
@@ -515,6 +545,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         verifiedPreview = nil
         previewState = .notBuilt
         stage = newStage
+    }
+
+    /// The share sheet sent the verified packet (logged as an I4 `share` for its item, #483).
+    func recordSystemShareCompleted(packetURL: URL) {
+        model.listeningSignals.share(packetURL: packetURL)
     }
 
     private func buildRecipientPreview() {

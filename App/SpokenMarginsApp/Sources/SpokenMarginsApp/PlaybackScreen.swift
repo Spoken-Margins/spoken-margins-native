@@ -189,11 +189,6 @@ struct PlaybackScreen: View {
         }
     }
 
-    private var isUITesting: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-testing")
-            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
-    }
-
     private var playbackControls: some View {
         VStack(spacing: 10) {
             playbackPosition
@@ -492,6 +487,38 @@ struct PlaybackScreen: View {
         }
     }
 
+    /// What the shared Margin's voice is doing, from the player's own report (#941).
+    @ViewBuilder
+    private var importedCommentaryStatus: some View {
+        switch model.importedCommentaryPhase {
+        case .loading:
+            Label("Loading Margin…", systemImage: "hourglass")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.loading")
+        case .playing:
+            Label("Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item", systemImage: "waveform")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.playing")
+        case .paused:
+            Label("Paused", systemImage: "pause.fill")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.paused")
+        case .failed:
+            VStack(spacing: 8) {
+                Label("Margin audio could not play", systemImage: "exclamationmark.triangle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("importedCommentary.status.failed")
+                Button("Retry", systemImage: "arrow.clockwise", action: model.retryImportedCommentary)
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.retry")
+            }
+        }
+    }
+
     @ViewBuilder
     private var importedCommentaryControl: some View {
         if let playing = model.playingImportedCommentary {
@@ -502,9 +529,7 @@ struct PlaybackScreen: View {
                 Text("Shared Margin \(playing.index) of \(playing.count)")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.72))
-                Text(model.importedCommentaryIsPaused ? "Paused" : "Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
+                importedCommentaryStatus
                 Text(playing.interjection.approvedTranscript)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
@@ -563,6 +588,15 @@ struct PlaybackScreen: View {
     private var marginMomentControl: some View {
         if let moment = model.marginMoment {
             VStack(alignment: .leading, spacing: 10) {
+                // A shared Margin still being placed says so for the whole moment (#872); it plays from its
+                // approximate time meanwhile.
+                if let placing = model.sharedMarginRows.first(where: { $0.id == moment.target.marginId })?
+                    .placementStatus.positionDescription {
+                    Text(placing)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.85))
+                        .accessibilityIdentifier("marginMoment.placing")
+                }
                 if moment.isPlayingMargin {
                     Label(model.marginMomentVoiceIsPaused ? "\(model.marginMomentTitle) is paused" : "Playing \(model.marginMomentTitle)",
                           systemImage: "waveform")
@@ -717,18 +751,23 @@ struct PlaybackScreen: View {
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
                 .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue("\(textScrubberPercent) percent")
+                .accessibilityValue(textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
                 .disabled(model.snapshot.isRecording)
-                Text("100%")
+                Text(textTimeEstimate?.remainingText ?? "100%")
                     .frame(minWidth: 34, alignment: .leading)
+                    .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
         } else {
+            let barLabels = PlaybackProgressBarLabels(
+                percent: model.displayPlaybackProgressPercent,
+                estimate: model.isMediaPlaybackSnapshot ? nil : textTimeEstimate // starter audio still shows time left
+            )
             HStack(spacing: 8) {
                 Text("\(model.displayPlaybackProgressPercent)%")
                     .frame(minWidth: 34, alignment: .trailing)
@@ -745,9 +784,10 @@ struct PlaybackScreen: View {
                     }
                     .accessibilityLabel("Playback progress")
                     .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                    .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
-                Text("100%")
+                    .accessibilityValue(barLabels.accessibilityValue)
+                Text(barLabels.trailing)
                     .frame(minWidth: 34, alignment: .leading)
+                    .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
@@ -800,6 +840,14 @@ struct PlaybackScreen: View {
                 .disabled(!model.hasActiveSession)
                 .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
                 .accessibilityIdentifier("playback.forward.button")
+            }
+
+            if model.snapshot.status == .starting {
+                // #357: say what the silence is, instead of a bare spinner.
+                Text(PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.starting.label")
             }
 
             if model.isMediaPlaybackSnapshot,
@@ -1224,6 +1272,16 @@ struct PlaybackScreen: View {
 
     private var textScrubRange: ClosedRange<Double> {
         0...Double(textLength)
+    }
+
+    /// "about 12 min left" at the listener's speed, following a drag (#305).
+    private var textTimeEstimate: ListeningTimeEstimate? {
+        let offset = textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange)
+        return ListeningTimeEstimator.estimate(
+            totalCharacters: textLength,
+            charactersHeard: Int(offset.rounded()),
+            playbackSpeed: model.speechPlaybackRateMultiplier
+        )
     }
 
     private var textScrubberPercent: Int {
@@ -1947,19 +2005,7 @@ private struct Pill: View {
 }
 
 private func turnTitle(_ turn: ConversationTurn) -> String {
-    switch turn.turnType {
-    case "interjection_summary":
-        return "Interjection Summary \(turnSequenceNumber(turn.id) ?? 1)"
-    case "assistant_response":
-        if let number = turnSequenceNumber(turn.id) {
-            return "AI Response \(number)"
-        }
-        return "AI Response"
-    case "user_response":
-        return "Follow-up"
-    default:
-        return turn.turnType.replacingOccurrences(of: "_", with: " ").capitalized
-    }
+    ConversationTurnTitle.numbered(turn)
 }
 
 private func turnBadge(_ turn: ConversationTurn) -> String {
@@ -1983,14 +2029,6 @@ private func interjectionPreview(_ interjection: Interjection) -> String {
         return transcript
     }
     return TranscriptionFailureWording.marginStatus(transcriptionStatus: interjection.transcriptionStatus, speechRecognitionOff: SpeechRecognitionAccess.isOff) ?? interjection.transcriptionStatus
-}
-
-private func turnSequenceNumber(_ id: String) -> Int? {
-    guard let raw = id.split(separator: "-").last,
-          let value = Int(raw) else {
-        return nil
-    }
-    return value
 }
 
 private struct LightButtonStyle: ButtonStyle {

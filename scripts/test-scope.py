@@ -28,12 +28,15 @@ T0_PREFIXES = ('docs/', 'research/', 'Design/', 'references/', 'tmp/', 'Site/', 
                'Contracts/docs/')
 T0_FILES = {'.gitignore', '.gitattributes', 'LICENSE', '.worktreeinclude'}
 VALIDATED_PREFIXES = ('Contracts/', 'validation/', 'schemas/', 'traces/', 'fixtures/', 'TestPlans/')
+# The research code that scripts/research_tests.py tests (and the share-link page test), so a diff there is
+# T1, not docs (#1033). research_tests.py keeps its own copy; test_research_tests.py fails if they differ.
+RESEARCH_TESTED_PREFIXES = ('research/B4/', 'research/B2/', 'research/D3/', 'research/C1/tools/')
 BROWSER_PREFIXES = ('Tools/BrowserExtraction/',)
 BROWSER_FILES = {'package.json', 'package-lock.json'}
 BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 
 # The lane's own machinery (owner rule 2026-10-01). A PR touching any of these merges only after a clean
-# Codex audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
+# Codex or Claude audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
 # The list: every workflow; the runner and its helpers (lane-runner.py, lane_sim.py, lane_slots.py,
 # lane_guard.py, lane-sim-boot, xcodebuild-lane, host-test-lane, install-lane-guard.py); the policies the
 # runner loads from next (this file, hot_file_ratchet.py, merge_audit.py); verify-tests.py, which runs the
@@ -44,7 +47,7 @@ LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
               'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
-LANE_NOTE = ('Lane change: the runner merges it only after a Codex audit of the head that says "No blocking '
+LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
              'findings". The audit runs by itself once the automerge run passes.')
 
 SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
@@ -67,6 +70,7 @@ SWIFT_TEST_LIMIT = 8
 
 REASONS = {
     'docs': 'docs, research or tooling notes',
+    'research': 'research code with its own tests (Go server, Python, Caddy script)',
     'scripts': 'repo scripts (runner tests)',
     'guard': 'lane guard hook',
     'build-script': 'script run by the Xcode build',
@@ -167,6 +171,8 @@ def is_lane_path(path):
 
 def classify_path(root, path, diff_text='', build_script_paths=frozenset()):
     name = Path(path).name
+    if path.startswith(RESEARCH_TESTED_PREFIXES) and not path.endswith('.md'):
+        return Finding(path, 1, 'research', commands=['.venv/bin/python scripts/research_tests.py'])
     if path.endswith('.md') or path in T0_FILES or path.startswith(T0_PREFIXES):
         return Finding(path, 0, 'docs')
     if path.startswith('scripts/'):

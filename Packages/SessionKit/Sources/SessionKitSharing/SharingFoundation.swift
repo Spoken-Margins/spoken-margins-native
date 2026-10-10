@@ -84,6 +84,10 @@ public enum ReviewedItemTransportSelection: Sendable {
 }
 
 public enum SpokenMarginsPackageBuilder {
+    /// `localSourceTexts` are the item's own text on this device and an episode's transcript when it
+    /// has one. They are never written into the packet, so map proposals are checked against the whole
+    /// of each (except the embedded text, which is checked as the packet carries it): a scene summary,
+    /// title or reason quoting any part of the source is dropped even when the source goes by reference.
     public static func prepare(
         packageId: String,
         createdAt: Date,
@@ -91,6 +95,7 @@ public enum SpokenMarginsPackageBuilder {
         itemTransportSelection: ReviewedItemTransportSelection,
         selections: [ReviewedInterjectionSelection],
         mapProposals: [PortableListeningMapProposalArtifact] = [],
+        localSourceTexts: [String] = [],
         fingerprintSpines: [EditionFingerprintSpineArtifact] = [],
         phraseSketches: [TranscriptPhraseSketchArtifact] = [],
         machineEvidence: [ReviewedMachineEvidenceAsset] = [],
@@ -98,7 +103,14 @@ public enum SpokenMarginsPackageBuilder {
         suggestedRevealMode: ImportedCommentaryRevealMode? = nil
     ) throws -> PreparedSpokenMarginsPackage {
         let item = removingPrivateLinks(from: item)
-        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:))
+        // Each signature may back one landmark across all spines: Build 29's importer keys a dictionary
+        // by signature and traps on a repeat.
+        var unusedSignatureAssetIDs = Set(machineEvidence.map(\.id))
+        let fingerprintSpines = fingerprintSpines.map(removingPrivateLinks(from:)).compactMap { spine in
+            let repaired = FingerprintSpineExportRepair.repaired(spine, item: item, signatureAssetIDs: unusedSignatureAssetIDs)
+            unusedSignatureAssetIDs.subtract(repaired?.landmarks.map(\.signatureAssetId) ?? [])
+            return repaired
+        }
         let scopedIds = selections.map(\.packageScopedId)
         if let duplicate = Dictionary(grouping: scopedIds, by: { $0 }).first(where: { $0.value.count > 1 })?.key {
             throw InterjectionPackagePreparationError.duplicatePackageScopedId(duplicate)
@@ -117,11 +129,12 @@ public enum SpokenMarginsPackageBuilder {
                 throw InterjectionPackagePreparationError.emptyApprovedTranscript(revision.id)
             }
 
+            let provenance = MarginShareProvenance.token(sessionId: revision.sessionId, interjectionId: revision.interjectionId)
             let representation: SharedInterjectionRepresentation
             switch selection.representation {
             case .textOnly:
                 representation = SharedInterjectionRepresentation(
-                    id: String(format: "representation-%04d-text", index + 1),
+                    id: MarginShareProvenance.representationID(token: provenance, kind: "text", fallback: String(format: "representation-%04d-text", index + 1)),
                     kind: .textOnly,
                     approvedTranscript: approvedTranscript,
                     provenance: .senderApprovedTextOnly
@@ -142,7 +155,7 @@ public enum SpokenMarginsPackageBuilder {
                     provenance: SharedInterjectionProvenance.senderApprovedOriginal.rawValue
                 ))
                 representation = SharedInterjectionRepresentation(
-                    id: String(format: "representation-%04d-original", index + 1),
+                    id: MarginShareProvenance.representationID(token: provenance, kind: "original", fallback: String(format: "representation-%04d-original", index + 1)),
                     kind: .originalAudioAndText,
                     approvedTranscript: approvedTranscript,
                     assetId: assetID,
@@ -169,7 +182,7 @@ public enum SpokenMarginsPackageBuilder {
                     provenance: SharedInterjectionProvenance.deterministicCleanupV1SenderApproved.rawValue
                 ))
                 representation = SharedInterjectionRepresentation(
-                    id: String(format: "representation-%04d-cleaned", index + 1),
+                    id: MarginShareProvenance.representationID(token: provenance, kind: "cleaned", fallback: String(format: "representation-%04d-cleaned", index + 1)),
                     kind: .cleanedAudioAndText,
                     approvedTranscript: approvedTranscript,
                     assetId: assetID,
@@ -214,6 +227,18 @@ public enum SpokenMarginsPackageBuilder {
             path: commentaryPath,
             required: true
         )]
+        // The on-device labeller describes every scene, and a Listening Edition's summaries come from
+        // outside the app, so drop what breaks the scene rules rather than refuse the Margins (#480).
+        var embeddedItemText: String?
+        if case .embeddedText(let text, _, _) = itemTransportSelection { embeddedItemText = text }
+        // Text the packet doesn't carry is checked whole: a quotation of any part of it would leak it.
+        var mapProposals = PortableListeningMapContract.forSharing(
+            mapProposals, sourceTexts: [embeddedItemText].compactMap { $0 },
+            withheldTexts: localSourceTexts.filter { $0 != embeddedItemText })
+        // Shared by reference, the packet carries none of the item's text, so its map anchors don't quote it.
+        if embeddedItemText == nil {
+            mapProposals = mapProposals.map(PortableListeningMapContract.withoutLongAnchorQuotations)
+        }
         for (index, proposal) in mapProposals.enumerated() {
             let path = String(format: "artifacts/listening-map-proposal-%04d.json", index + 1)
             artifactData[path] = try encodeArtifact(proposal)
@@ -444,7 +469,8 @@ public enum SpokenMarginsPackageImporter {
                 podcastAnchorEvidence: podcastEvidence,
                 resolution: itemResolution.anchorsByPackageScopedId[record.packageScopedId]
                     ?? ImportedAnchorResolution(evidenceClass: .unresolved),
-                replyLinks: replyLinks[record.packageScopedId]
+                replyLinks: replyLinks[record.packageScopedId],
+                shareProvenance: MarginShareProvenance.token(representationID: representation.id)
             ))
         }
         let layer = ImportedCommentaryLayer(
@@ -462,17 +488,53 @@ public enum SpokenMarginsPackageImporter {
             listeningMapProposals: contents.listeningMapProposals,
             editionFingerprintSpines: contents.editionFingerprintSpines,
             transcriptPhraseSketches: contents.transcriptPhraseSketches,
-            episodeMapEvidencePaths: Dictionary(uniqueKeysWithValues:
+            // A packet may name one signature from two landmarks; uniqueKeysWithValues would trap (#536).
+            episodeMapEvidencePaths: Dictionary(
                 contents.editionFingerprintSpines
                     .flatMap(\.landmarks)
                     .compactMap { landmark in
                         contents.extractedAssetURLs[landmark.signatureAssetId].map {
                             (landmark.signatureAssetId, $0.path)
                         }
-                    }
+                    },
+                uniquingKeysWith: { first, _ in first }
             )
         )
-        return try repository.importCommentaryLayer(layer, interjections: importedInterjections)
+        // A sender who shares again sends their earlier Margins too; the listener keeps one copy of each (#858).
+        return try ImportedMarginResends.importLayer(layer, interjections: importedInterjections, repository: repository)
+    }
+
+    public static func repairAssociation(
+        existing: ImportedCommentaryLayer,
+        contents: VerifiedSpokenMarginsPackage,
+        itemId: String?,
+        localItem: SharedItemIdentity?,
+        itemText: String?,
+        repository: SessionRepository
+    ) throws {
+        guard let itemId,
+              let localItem,
+              let commentary = contents.commentaryLayers.first else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_item_is_unavailable")
+        }
+        let resolution = ImportedItemResolver.resolve(
+            item: contents.manifest.item,
+            interjections: commentary.interjections,
+            against: localItem,
+            itemText: itemText
+        )
+        guard resolution.status != .wrongSource else {
+            throw SessionKitError.persistenceFailed("shared_package_repair_source_did_not_match")
+        }
+        var layer = existing
+        layer.itemId = itemId
+        layer.sourceResolutionStatus = resolution.status
+        try repository.saveImportedCommentaryLayer(layer)
+        for var interjection in try repository.loadImportedCommentaryInterjections(layerId: layer.id) {
+            interjection.resolution = resolution.anchorsByPackageScopedId[interjection.packageScopedId]
+                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
+            try repository.saveImportedCommentaryInterjection(interjection)
+        }
     }
 
     public static func defaultLocalID(kind: String, packageScopedID: String) -> String {

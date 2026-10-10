@@ -60,18 +60,16 @@ struct ExperienceWrittenMarginScreen: View {
                 .padding(.top, 12)
                 .background(AppColors.bone)
                 .safeAreaInset(edge: .bottom, spacing: 0) {
-                    Button {
-                        model.saveWrittenMargin(text: draft.text)
-                    } label: {
-                        Label(draft.priorWasPlaying ? "Save & resume" : "Save Margin", systemImage: "checkmark")
-                            .frame(maxWidth: .infinity)
+                    // While the listener is typing, Save lives in the navigation bar
+                    // (see the toolbar below) so nothing the listener needs sits where
+                    // the keyboard can cover it (#1184).
+                    if !isEditing {
+                        saveButton(draft, fillsWidth: true)
+                            .buttonStyle(PrimaryButtonStyle())
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 12)
+                            .background(AppColors.bone)
                     }
-                    .buttonStyle(PrimaryButtonStyle())
-                    .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .accessibilityIdentifier("writtenMargin.save.button")
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 12)
-                    .background(AppColors.bone)
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("writtenMargin.screen")
@@ -81,6 +79,13 @@ struct ExperienceWrittenMarginScreen: View {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Cancel", action: requestCancel)
                             .accessibilityIdentifier("writtenMargin.cancel.button")
+                    }
+                    if isEditing {
+                        ToolbarItem(placement: .confirmationAction) {
+                            saveButton(draft, fillsWidth: false)
+                                .labelStyle(.titleOnly)
+                                .fontWeight(.semibold)
+                        }
                     }
                     ToolbarItemGroup(placement: .keyboard) {
                         Spacer()
@@ -98,6 +103,20 @@ struct ExperienceWrittenMarginScreen: View {
             }
         }
         .tint(AppColors.evergreen)
+    }
+
+    /// One Save button, built twice: the bottom bar when the keyboard is down, the
+    /// navigation bar while typing. Only one is on screen at a time, so the
+    /// identifier stays unique.
+    private func saveButton(_ draft: WrittenMarginDraft, fillsWidth: Bool) -> some View {
+        Button {
+            model.saveWrittenMargin(text: draft.text)
+        } label: {
+            Label(draft.priorWasPlaying ? "Save & resume" : "Save Margin", systemImage: "checkmark")
+                .frame(maxWidth: fillsWidth ? CGFloat.infinity : nil)
+        }
+        .disabled(draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityIdentifier("writtenMargin.save.button")
     }
 
     private func requestCancel() {

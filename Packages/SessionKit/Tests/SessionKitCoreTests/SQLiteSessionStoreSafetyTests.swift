@@ -191,9 +191,43 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
 
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), SQLiteSessionStore.currentSchemaVersion)
         XCTAssertEqual(session.id, "session-legacy")
-        XCTAssertNotNil(session.createdAt)
-        XCTAssertNotNil(session.updatedAt)
-        XCTAssertNil(session.completedAt)
+        // The timestamps come from the row's own updated_at (read as UTC), not from the clock.
+        let legacyUpdatedAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-20T12:34:56Z"))
+        XCTAssertEqual(session.createdAt, legacyUpdatedAt)
+        XCTAssertEqual(session.updatedAt, legacyUpdatedAt)
+        XCTAssertNil(session.completedAt, "an in-progress session has not completed")
+        XCTAssertEqual(session.position.charOffset, 12, "the listener's place is kept")
+        XCTAssertEqual(session.completionPercent, 25)
+        XCTAssertEqual(session.status, "in_progress")
+
+        // A session that had finished keeps its completion, dated by the same row.
+        let finished = try XCTUnwrap(store.loadSessions(itemId: "item-finished").first)
+        let finishedAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-21T01:02:03Z"))
+        XCTAssertEqual(finished.createdAt, finishedAt)
+        XCTAssertEqual(finished.updatedAt, finishedAt)
+        XCTAssertEqual(finished.completedAt, finishedAt, "a finished session stays completed")
+        XCTAssertEqual(finished.position.charOffset, 90)
+        XCTAssertEqual(finished.completionPercent, 100)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 0)
+    }
+
+    /// The app no longer moves a version 1 file aside before opening it (#1004), so the store
+    /// upgrades it in place. The tables are the ones version 1 wrote: no quarantine table yet.
+    func testVersionOneDatabaseUpgradesInPlaceWithoutLosingItsRecords() throws {
+        let path = temporaryDatabasePath()
+        try createVersionOneLibraryDatabase(path: path)
+
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), SQLiteSessionStore.currentSchemaVersion)
+        XCTAssertEqual(try store.listItems().map(\.id), ["item-v1"], "the item survives the upgrade")
+        let session = try XCTUnwrap(store.loadSessions(itemId: "item-v1").first)
+        let legacyUpdatedAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-19T08:00:00Z"))
+        XCTAssertEqual(session.id, "session-v1")
+        XCTAssertEqual(session.createdAt, legacyUpdatedAt)
+        XCTAssertEqual(session.updatedAt, legacyUpdatedAt)
+        XCTAssertEqual(session.position.charOffset, 40, "the listener's place is kept")
+        XCTAssertEqual(session.completionPercent, 50)
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
     }
 
@@ -335,11 +369,32 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
             "INSERT INTO metadata(key,value) VALUES('schema_version','2');",
             "CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT, item_id TEXT, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
             "CREATE TABLE quarantined_records (kind TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL, decode_error TEXT NOT NULL, quarantined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
-            "INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES('session','session-legacy','session-legacy','item-legacy','{\"id\":\"session-legacy\",\"itemId\":\"item-legacy\",\"status\":\"in_progress\",\"phase\":\"item_playback\",\"currentTargetType\":\"item_text_tts\",\"currentTargetId\":\"item-legacy\",\"position\":{\"charOffset\":12},\"completionPercent\":25,\"playbackRate\":1}','2026-07-20 12:34:56');"
+            "INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES('session','session-legacy','session-legacy','item-legacy','{\"id\":\"session-legacy\",\"itemId\":\"item-legacy\",\"status\":\"in_progress\",\"phase\":\"item_playback\",\"currentTargetType\":\"item_text_tts\",\"currentTargetId\":\"item-legacy\",\"position\":{\"charOffset\":12},\"completionPercent\":25,\"playbackRate\":1}','2026-07-20 12:34:56');",
+            "INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES('session','session-finished','session-finished','item-finished','{\"id\":\"session-finished\",\"itemId\":\"item-finished\",\"status\":\"finished\",\"phase\":\"finished\",\"currentTargetType\":\"item_text_tts\",\"currentTargetId\":\"item-finished\",\"position\":{\"charOffset\":90},\"completionPercent\":100,\"playbackRate\":1}','2026-07-21 01:02:03');"
         ]
         for sql in statements {
             guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
                 throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 4)
+            }
+        }
+    }
+
+    private func createVersionOneLibraryDatabase(path: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 11)
+        }
+        defer { sqlite3_close(database) }
+        let statements = [
+            "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            "INSERT INTO metadata(key,value) VALUES('schema_version','1');",
+            "CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT, item_id TEXT, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
+            "INSERT INTO records(kind,id,item_id,payload) VALUES('item','item-v1','item-v1','{\"id\":\"item-v1\",\"title\":\"Version One Item\",\"mediaType\":\"text\",\"text\":\"Still here.\",\"status\":\"ready\"}');",
+            "INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES('session','session-v1','session-v1','item-v1','{\"id\":\"session-v1\",\"itemId\":\"item-v1\",\"status\":\"in_progress\",\"phase\":\"item_playback\",\"currentTargetType\":\"item_text_tts\",\"currentTargetId\":\"item-v1\",\"position\":{\"charOffset\":40},\"completionPercent\":50,\"playbackRate\":1}','2026-07-19 08:00:00');"
+        ]
+        for sql in statements {
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 12)
             }
         }
     }

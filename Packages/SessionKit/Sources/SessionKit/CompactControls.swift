@@ -48,6 +48,10 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     public var skimBridgeState: SkimBridgeState?
     public var canSkimForward: Bool
     public var canSkimBackward: Bool
+    /// Where Skim forward and back would land, so the Lock Screen can say it (#115). Nil when
+    /// that Skim isn't available. Optional, so a snapshot encoded without them still decodes.
+    public var skimForwardDestinationMs: Int?
+    public var skimBackwardDestinationMs: Int?
 
     public init(
         sessionId: String?,
@@ -78,7 +82,9 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         surfaceProfileId: String,
         skimBridgeState: SkimBridgeState? = nil,
         canSkimForward: Bool = false,
-        canSkimBackward: Bool = false
+        canSkimBackward: Bool = false,
+        skimForwardDestinationMs: Int? = nil,
+        skimBackwardDestinationMs: Int? = nil
     ) {
         self.sessionId = sessionId
         self.itemId = itemId
@@ -109,6 +115,8 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.skimBridgeState = skimBridgeState
         self.canSkimForward = canSkimForward
         self.canSkimBackward = canSkimBackward
+        self.skimForwardDestinationMs = skimForwardDestinationMs
+        self.skimBackwardDestinationMs = skimBackwardDestinationMs
     }
 }
 

@@ -28,6 +28,7 @@ const (
 	// MapUploadToken, when on, makes map uploads carry an anonymous token
 	// (#743). It is a switch of its own, not a field on maps, so an app that
 	// knows nothing of it reads it as off and nothing else changes.
+	ServiceLinks          = "links"
 	ServiceAttest         = "attest"
 	ServiceBridge         = "bridge"
 	ServiceMaps           = "maps"
@@ -36,7 +37,7 @@ const (
 )
 
 // KnownServices are the switches the owner can flip.
-var KnownServices = []string{ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken}
+var KnownServices = []string{ServiceLinks, ServiceAttest, ServiceBridge, ServiceMaps, ServiceTokens, ServiceMapUploadToken}
 
 type Service struct {
 	Enabled bool `json:"enabled"`
@@ -59,7 +60,7 @@ type Document struct {
 func Default() Document {
 	return Document{
 		Schema: Schema, Version: Version, Serial: 1, CheckAfterSeconds: 6 * 3600,
-		Services: map[string]Service{ServiceAttest: {Enabled: true}, ServiceBridge: {Enabled: true}},
+		Services: map[string]Service{ServiceAttest: {Enabled: true}, ServiceBridge: {Enabled: true}, ServiceLinks: {Enabled: false}},
 	}
 }
 

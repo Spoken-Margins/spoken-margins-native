@@ -11,50 +11,6 @@ import AVFoundation
 #endif
 
 final class SessionKitCoreTests: XCTestCase {
-    func testMediaCompletionAcceptsTerminalPlayerPauseWithinLastSecond() {
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
-            completionNotificationObserved: false,
-            targetMatches: true,
-            playerIsPaused: true,
-            userRequestedPause: false,
-            seekIsPending: false,
-            currentMediaTimeMs: 59_050,
-            durationMs: 60_000
-        ))
-    }
-
-    func testASeekBackFromTheEndLeavesTheEndedState() {
-        // #588: a scrub back from the end must clear the end-of-item notification, or the
-        // engine moves the episode straight back to its end.
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 0, durationMs: 178_808))
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 177_000, durationMs: 178_808))
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: 178_808),
-                      "a place the listener chose inside the end tolerance is not the end")
-        XCTAssertFalse(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_808, durationMs: 178_808))
-        XCTAssertTrue(MediaPlaybackCompletionPolicy.seekLeavesEnd(toMediaTimeMs: 178_000, durationMs: nil))
-    }
-
-    func testMediaCompletionDoesNotMistakeUserPauseOrPendingSeekForCompletion() {
-        XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
-            completionNotificationObserved: false,
-            targetMatches: true,
-            playerIsPaused: true,
-            userRequestedPause: true,
-            seekIsPending: false,
-            currentMediaTimeMs: 59_050,
-            durationMs: 60_000
-        ))
-        XCTAssertFalse(MediaPlaybackCompletionPolicy.reachedEffectiveEnd(
-            completionNotificationObserved: false,
-            targetMatches: true,
-            playerIsPaused: true,
-            userRequestedPause: false,
-            seekIsPending: true,
-            currentMediaTimeMs: 59_050,
-            durationMs: 60_000
-        ))
-    }
-
     func testMediaSeekLifecycleTreatsDeclinedCurrentSeekAsTerminal() {
         var lifecycle = MediaSeekLifecycle()
         let generation = lifecycle.begin(
@@ -150,20 +106,41 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     #if canImport(AVFoundation)
+    /// A callback from a synthesizer the client has retired must not move the current playback,
+    /// even when it names an utterance the current playback has registered (#1129, BIG-08). Each
+    /// callback names a registered utterance, so only the `synthesizer === self.synthesizer`
+    /// guards can reject it; the current synthesizer then shows the same utterances are live.
     func testRetiredSpeechSynthesizerCannotConfirmOrCancelCurrentPlayback() throws {
         let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
+        var queued: [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)] = []
+        client.speakNarration = { queued.append(($0, $1)) } // nothing is spoken, so no real callback races the test
         _ = try client.prepareSpeechText(String(repeating: "Keep the current speech request intact. ", count: 30))
-        try client.play(targetId: "current", from: 0)
-        let status = client.playbackStartStatus(targetId: "current")
-        let position = client.currentCharOffset()
-        let retired = AVSpeechSynthesizer()
-        let obsolete = AVSpeechUtterance(string: "Earlier request")
-        client.speechSynthesizer(retired, didStart: obsolete)
-        client.speechSynthesizer(retired, didCancel: obsolete)
-        client.speechSynthesizer(retired, didFinish: obsolete)
-        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), status)
+        try client.play(targetId: "earlier", from: 0)
+        let retired = try XCTUnwrap(queued.first?.synthesizer)
+        queued.removeAll()
+        try client.play(targetId: "current", from: 40)
+        let current = try XCTUnwrap(queued.first?.synthesizer)
+        XCTAssertFalse(retired === current, "playing again retires the earlier synthesizer")
+        let first = try XCTUnwrap(queued.first?.utterance)
+        let last = try XCTUnwrap(queued.last?.utterance)
+        let position = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending)
+
+        client.speechSynthesizer(retired, didStart: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending, "a retired start doesn't confirm playback")
+        client.speechSynthesizer(retired, willSpeakRangeOfSpeechString: NSRange(location: 5, length: 4), utterance: first)
+        XCTAssertEqual(client.currentCharOffset(), position, "a retired word marker doesn't move the place")
+        client.speechSynthesizer(retired, didFinish: last)
+        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"), "a retired finish doesn't end playback")
         XCTAssertEqual(client.currentCharOffset(), position)
-        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"))
+        client.speechSynthesizer(retired, didCancel: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending, "a retired cancel doesn't fail the start")
+
+        // The same utterances, from the current synthesizer, start and finish playback.
+        client.speechSynthesizer(current, didStart: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .confirmed)
+        client.speechSynthesizer(current, didFinish: last)
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "current"))
         try client.stop()
     }
 
@@ -1462,7 +1439,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertTrue(summary.delegatedToCanonicalRuntime)
         XCTAssertEqual(summary.snapshot.pendingAiJobKind, "interjection_summary")
         XCTAssertEqual(summary.snapshot.pendingAiJobStatus, "pending")
-        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Interjection Summary 1" })
+        XCTAssertTrue(summary.snapshot.timeline.contains { $0.kind == "interjection_summary" && $0.title == "Margin Summary 1" })
 
         let discussion = try dispatcher.dispatch(.submitFollowup, followUpText: "Can you respond to my interjection?")
         XCTAssertTrue(discussion.delegatedToCanonicalRuntime)
@@ -2027,8 +2004,8 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(interjection.anchor.anchorBefore, "First")
         XCTAssertEqual(interjection.anchor.anchorAfter, "sentence. Second sentence.")
         XCTAssertEqual(transcriber.scheduledInterjectionIds, [interjection.id])
-        XCTAssertEqual(engine.currentSession?.position.charOffset, "First ".count)
-        XCTAssertEqual(audio.playedOffsets.last, "First ".count)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 0, "rejoins at the start of its sentence (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 0)
     }
 
     /// #624: spoken Margins were stamped one second after 1970 per Margin, which Readwise and the
@@ -2165,35 +2142,6 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(snapshot.currentTranscriptSegmentId, "seg-2")
         XCTAssertEqual(snapshot.currentAnchorConfidence, .transcriptSpan)
         XCTAssertEqual(snapshot.chapterTitle, "Middle")
-    }
-
-    func testLinkResolutionContractCanRepresentResolvedPodcastEpisode() throws {
-        let request = LinkResolutionRequest(
-            id: "link-request-1",
-            inputURL: "https://open.spotify.com/episode/example",
-            sourceSurface: "share_sheet",
-            createdAt: Date(timeIntervalSince1970: 1)
-        )
-        let candidate = LinkResolutionCandidate(
-            sourceLink: SourceLink(url: "https://feeds.example.com/show.xml", provider: "rss", title: "Example Show", role: "canonical_feed"),
-            title: "Episode Title",
-            showTitle: "Example Show",
-            durationMs: 1_800_000,
-            publishedAt: "2026-06-19",
-            audioURL: "https://cdn.example.com/episode.mp3",
-            confidence: 0.96
-        )
-        let result = LinkResolutionResult(
-            requestId: request.id,
-            status: .playable,
-            originalLink: SourceLink(url: request.inputURL, provider: "spotify", role: "discovery"),
-            selectedCandidate: candidate,
-            candidates: [candidate]
-        )
-
-        XCTAssertEqual(result.status, .playable)
-        XCTAssertEqual(result.selectedCandidate?.audioURL, "https://cdn.example.com/episode.mp3")
-        XCTAssertEqual(result.originalLink.role, "discovery")
     }
 
     func testImportSourceLinkCreatesPlayableNativeAudioItem() throws {
@@ -2631,7 +2579,7 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
-    func testNativeAudioInterjectionFreezesClockBeforeSavingAndResumesAtExactAnchor() throws {
+    func testNativeAudioInterjectionFreezesClockBeforeSavingAndRejoinsJustBeforeTheAnchor() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
             displayName: "Phone/Tablet Online",
@@ -2664,8 +2612,8 @@ final class SessionKitCoreTests: XCTestCase {
 
         let interjection = try XCTUnwrap(try repo.loadInterjections(sessionId: engine.currentSession?.id ?? "").first)
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 124_250)
-        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 124_250)
-        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 121_250, "rejoins 3 s earlier (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 121_250)
     }
 
     func testRecordingInterjectionRejectsTimelineNavigationAndPreservesMediaAnchor() throws {
@@ -2740,8 +2688,8 @@ final class SessionKitCoreTests: XCTestCase {
         let saved = try XCTUnwrap(try repo.loadInterjections(sessionId: sessionID).first)
         XCTAssertEqual(saved.anchor.mediaTimeMs, 124_250)
         XCTAssertEqual(resumed.status, .playing)
-        XCTAssertEqual(resumed.currentMediaTimeMs, 124_250)
-        XCTAssertEqual(audio.playedOffsets.last, 124_250)
+        XCTAssertEqual(resumed.currentMediaTimeMs, 121_250, "rejoins 3 s earlier (#776)")
+        XCTAssertEqual(audio.playedOffsets.last, 121_250)
     }
 
     func testInspectSessionRepairsMediaPercentagesFromDurableTimestamps() throws {
@@ -2936,17 +2884,17 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(detached.status, .idle)
         XCTAssertNil(detached.sessionId)
-        XCTAssertEqual(persisted.position.mediaTimeMs, 1_500_000)
+        XCTAssertEqual(persisted.position.mediaTimeMs, 1_497_000, "rejoined 3 s earlier (#776)")
         XCTAssertEqual(persisted.status, "in_progress")
         XCTAssertEqual(interjection.anchor.mediaTimeMs, 1_500_000)
 
         let restored = try engine.inspectSession(sessionId: sessionID)
         XCTAssertEqual(restored.status, .paused)
-        XCTAssertEqual(restored.currentMediaTimeMs, 1_500_000)
+        XCTAssertEqual(restored.currentMediaTimeMs, 1_497_000)
 
         let resumed = try engine.resumePlayback()
         XCTAssertEqual(resumed.status, .playing)
-        XCTAssertEqual(audio.playedOffsets.last, 1_500_000)
+        XCTAssertEqual(audio.playedOffsets.last, 1_497_000)
     }
 
     func testRepeatedMediaSeekInterjectionResumeCyclesKeepOneAdvancingClock() throws {
@@ -2992,8 +2940,8 @@ final class SessionKitCoreTests: XCTestCase {
             let recording = try engine.beginInterjection()
             XCTAssertEqual(recording.currentMediaTimeMs, beforeInterjection)
             let resumed = try engine.finishInterjection(audioRef: "interjections/cycle-\(index).m4a")
-            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection)
-            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection)
+            XCTAssertEqual(resumed.currentMediaTimeMs, beforeInterjection - MarginRejoin.mediaStepBackMs)
+            XCTAssertEqual(audio.playedOffsets.last, beforeInterjection - MarginRejoin.mediaStepBackMs)
 
             audio.currentMediaTimeValue = beforeInterjection + 12_000
             let postResume = try engine.syncPlaybackProgress()
@@ -6553,7 +6501,7 @@ final class SessionKitCoreTests: XCTestCase {
 
         XCTAssertEqual(snapshot.sourceProgressPercent, 100)
         XCTAssertLessThan(snapshot.currentPlaybackProgressPercent, 100)
-        XCTAssertEqual(snapshot.chapterTitle, "Interjection Summary 1")
+        XCTAssertEqual(snapshot.chapterTitle, "Margin Summary 1")
     }
 
     func testAssistantSeekAndPausedSkipPreserveSourceCompletionAndPersistTarget() throws {
@@ -7213,6 +7161,48 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertNil(audio.mediaContexts.last??.playbackURL)
         _ = try engine.startSession(itemId: item.id)
         XCTAssertEqual(audio.mediaContexts.last??.playbackURL, local)
+    }
+
+    /// #914: shared Margins are placed against the edition the listener hears, so the engine says which file a session plays.
+    func testMediaSessionReportsWhichEditionItPlays() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "podcast-edition-report",
+            displayName: "Podcast edition report",
+            capabilities: ["sync": ["canonical_persistence"], "playback": ["native_media"]]
+        )
+        let remote = "https://example.com/episode.mp3"
+        let local = URL(fileURLWithPath: "/tmp/episode-edition.mp3").absoluteString
+        let item = Item(
+            id: "episode-edition",
+            title: "Episode",
+            mediaType: "audio",
+            text: nil,
+            externalReference: remote,
+            status: "ready",
+            media: ItemMedia(sourceType: .remoteStream, url: remote, durationMs: 120_000)
+        )
+        let engine = SessionEngine(
+            profile: profile, repository: InMemorySessionRepository(items: [item.id: item]), audio: RecordingAudioClient()
+        )
+        XCTAssertNil(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), "no session")
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), false, "streaming")
+        XCTAssertNil(engine.mediaSessionPlays(itemId: "another-item", playbackURL: local))
+
+        _ = try engine.updatePlaybackTransport(itemId: item.id, playbackURL: local, replaceActivePlayback: false)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), false, "the download finished mid-session")
+
+        _ = try engine.updatePlaybackTransport(itemId: item.id, playbackURL: local)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), true, "Download Again moved the session")
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: local), true, "a new session starts on the download")
+        XCTAssertEqual(engine.mediaSessionPlays(itemId: item.id, playbackURL: "file:///tmp/other.mp3"), false)
+        XCTAssertEqual(
+            engine.mediaSessionPlays(itemId: item.id, playbackURL: "file:///tmp/../tmp/episode-edition.mp3"), true,
+            "the same file spelled another way is the same edition"
+        )
     }
 }
 

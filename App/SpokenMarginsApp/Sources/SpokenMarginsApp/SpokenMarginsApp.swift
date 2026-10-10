@@ -25,6 +25,8 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = ListeningReadyNotifications.shared
         #if canImport(BackgroundTasks)
         AudioPreparationBackgroundController.shared.register()
+        FollowedSourceBackgroundRefreshController.shared.register()
+        ContinuedAudioPreparationController.shared.register()
         #endif
         return true
     }
@@ -52,6 +54,7 @@ struct SpokenMarginsApp: App {
     @StateObject private var model: Gate1AppModel
     @StateObject private var sharingCoordinator: Build23SharingCoordinator
     @StateObject private var catalogDrawer: CatalogDrawerModel
+    @StateObject private var playbackStartCue: PlaybackStartCue
     @StateObject private var bridge: BridgeService
     @Environment(\.scenePhase) private var scenePhase
     private let memoryFootprint: MemoryFootprintRecorder
@@ -76,7 +79,12 @@ struct SpokenMarginsApp: App {
         #if !SPOKEN_MARGINS_LEGACY
         ListeningEditionShortcutBridge.model = model
         #endif
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        // The same refresh as in the foreground, with the same six-hour staleness (#170).
+        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
+        #endif
         _model = StateObject(wrappedValue: model)
+        _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
         _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
         _sharingCoordinator = StateObject(
             wrappedValue: Build23SharingCoordinator(model: model)
@@ -97,7 +105,8 @@ struct SpokenMarginsApp: App {
                     },
                     didFollow: { model?.refreshFollowedSources(force: false) }
                 )
-            }
+            },
+            searcher: CatalogDrawerModel.makeSearcher()
         ))
     }
 
@@ -116,7 +125,10 @@ struct SpokenMarginsApp: App {
                     if phase == .active {
                         model.handleAppBecameActive()
                     } else if phase == .inactive || phase == .background {
-                        model.handleAppBecameInactiveOrBackground()
+                        model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background)
+                        #if canImport(BackgroundTasks) && canImport(UIKit)
+                        if phase == .background { FollowedSourceBackgroundRefreshController.shared.schedule(enabled: !model.storedFeedSubscriptions().isEmpty) }
+                        #endif
                     }
                 }
                 #if canImport(UIKit)

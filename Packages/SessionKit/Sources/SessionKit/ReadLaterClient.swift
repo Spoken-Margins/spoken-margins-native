@@ -37,7 +37,7 @@ public struct ReadLaterClient: Sendable {
         let (data, response) = try await transport(request)
         guard (200..<300).contains(response.statusCode) else {
             switch response.statusCode {
-            case 401, 403: throw EditionError.invalid("Access was rejected. Reconnect with a valid token.")
+            case 401, 403: throw EditionError.invalid(Self.accessRejectedMessage)
             case 429: throw EditionError.invalid("The service rate limit was reached. Wait before refreshing again.")
             // Readwise answers a wrong token with 401, so a 404 from the Reader list means the token
             // works but this account has no Reader (#621). Highlights use a different API. A 404 on a
@@ -68,6 +68,8 @@ public struct ReadLaterClient: Sendable {
             return ReadLaterDocument(id: "raindrop:\(doc._id)", title: doc.title, url: url, html: nil)
         }, nextCursor: page.items.count == 50 ? String((Int(cursor ?? "0") ?? 0) + 1) : nil)
     }
+    /// A 401 or 403: the one answer that says the token itself is not accepted (#944).
+    public static let accessRejectedMessage = "Access was rejected. Reconnect with a valid token."
     public static let readerUnavailableMessage = "Reader isn’t available on this Readwise account, so there are no Later articles to list. Sending Margins to Readwise as highlights can still work."
 
     /// The line under Choose Articles when it lists nothing, so the section never shows a bare

@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 struct HelpScreen: View {

@@ -1,4 +1,5 @@
 import Foundation
+import SessionKitSharing
 import SwiftUI
 
 @MainActor
@@ -29,10 +30,31 @@ struct Build23SenderSharingExperience: View {
                     .accessibilityIdentifier("build23.sender.cancel")
                 }
                 if let error = shareError(snapshot) {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .foregroundStyle(AppColors.coral)
-                        .fixedSize(horizontal: false, vertical: true)
+                    FailureMessageLabel(error)
                         .accessibilityIdentifier("build23.sender.share.error")
+                }
+                if Build23SenderPresentation.offersShareWithoutMatching(
+                    previewState: snapshot.previewState, includesAcousticEvidence: snapshot.includesAcousticEvidence
+                ) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("You can still share these Margins without episode matching. Your recipient's copy places each one by its time instead.")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Button("Share without episode matching", systemImage: "square.and.arrow.up") {
+                            coordinator.send(.setIncludesAcousticEvidence(false))
+                            shareVerifiedPackage()
+                        }
+                        .filledActionButton()
+                        .accessibilityIdentifier("build23.sender.share.without-matching")
+                    }
+                }
+                if snapshot.stage == .select || snapshot.stage == .review, let notice = snapshot.selectionSummary.notice {
+                    Label(notice, systemImage: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("build23.sender.left-out-notice")
                 }
                 stageContent(snapshot)
             }
@@ -84,7 +106,7 @@ struct Build23SenderSharingExperience: View {
         }
         .sheet(isPresented: $isSystemSharePresented, onDismiss: finishSystemShare) {
             if let packageURL = verifiedShareURLForPresentation {
-                SharedSpokenMarginsPackageActivityView(packageURL: packageURL)
+                SharedSpokenMarginsPackageActivityView(packageURL: packageURL) { coordinator.recordSystemShareCompleted(packetURL: packageURL) }
             }
         }
     }
@@ -105,22 +127,20 @@ struct Build23SenderSharingExperience: View {
 
     @ViewBuilder
     private func primaryAction(_ snapshot: Build23SharingSnapshot) -> some View {
-        let includedCount = snapshot.margins.filter(\.isIncluded).count
+        let includedCount = snapshot.selectionSummary.packetCount
         switch snapshot.stage {
         case .select:
             Button("Review \(includedCount)") {
                 advanceToReview(from: snapshot)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(!snapshot.canAdvance || snapshot.isPreparingAll)
             .accessibilityIdentifier("build23.sender.select.continue")
         case .review:
             Button("Share \(includedCount)", systemImage: "square.and.arrow.up") {
                 shareVerifiedPackage()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(!snapshot.canAdvance)
             .accessibilityIdentifier("build23.sender.review.share")
         case .recipientPreview:
@@ -130,8 +150,7 @@ struct Build23SenderSharingExperience: View {
             ) {
                 shareVerifiedPackage()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(AppColors.evergreen)
+            .filledActionButton()
             .disabled(snapshot.previewState != .ready)
         case .share:
             EmptyView()
@@ -158,7 +177,8 @@ struct Build23SenderSharingExperience: View {
             .accessibilityIdentifier("build23.sender.sharing-options")
 
             if let errorMessage = snapshot.errorMessage, !errorMessage.isEmpty {
-                Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: errorMessage, tint: AppColors.plum)
+                FailureMessageLabel(errorMessage)
+                    .font(.subheadline)
                     .accessibilityIdentifier("build23.sender.error")
             }
 
@@ -222,13 +242,16 @@ struct Build23SenderSharingExperience: View {
                         }
                     }
                 } else if snapshot.preparationTotal > 0 {
-                    Build23StatusLabel(
-                        icon: snapshot.preparationFailures == 0 ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
-                        title: snapshot.preparationFailures == 0
-                            ? "Cleaned \(snapshot.preparationCompleted) selected Margins"
-                            : "Cleaned \(snapshot.preparationCompleted - snapshot.preparationFailures); \(snapshot.preparationFailures) kept their available Original or Text version.",
-                        tint: snapshot.preparationFailures == 0 ? AppColors.evergreen : AppColors.plum
-                    )
+                    if snapshot.preparationFailures == 0 {
+                        Build23StatusLabel(
+                            icon: "checkmark.circle.fill",
+                            title: "Cleaned \(snapshot.preparationCompleted) selected Margins",
+                            tint: AppColors.evergreen
+                        )
+                    } else {
+                        FailureMessageLabel("Cleaned \(snapshot.preparationCompleted - snapshot.preparationFailures); \(snapshot.preparationFailures) kept their available Original or Text version.")
+                            .font(.subheadline)
+                    }
                 }
             }
         }
@@ -488,7 +511,8 @@ struct Build23SenderSharingExperience: View {
             .font(.headline)
 
             if let errorMessage = snapshot.errorMessage, !errorMessage.isEmpty {
-                Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: errorMessage, tint: AppColors.plum)
+                FailureMessageLabel(errorMessage)
+                    .font(.subheadline)
             }
 
             HStack(spacing: 12) {
@@ -545,8 +569,7 @@ struct Build23SenderSharingExperience: View {
                         Button("Share verified package", systemImage: "square.and.arrow.up") {
                             presentVerifiedSystemShare()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.evergreen)
+                        .filledActionButton()
                         .disabled(!snapshot.canShareVerifiedFile || coordinator.verifiedShareFileURL == nil)
                         .accessibilityHint("Opens the system share sheet with the verified package file")
                         .accessibilityIdentifier("build23.sender.share.present")
@@ -569,7 +592,8 @@ struct Build23SenderSharingExperience: View {
             case let .failed(message):
                 unavailablePreview(
                     title: "The package could not be verified.",
-                    detail: message
+                    detail: message,
+                    isFailure: true
                 )
 
             case .notBuilt:
@@ -581,10 +605,16 @@ struct Build23SenderSharingExperience: View {
         }
     }
 
-    private func unavailablePreview(title: String, detail: String) -> some View {
+    /// A stale or unbuilt preview is a notice; a package that failed verification is a failure (#308).
+    private func unavailablePreview(title: String, detail: String, isFailure: Bool = false) -> some View {
         ExperienceSurface(tint: AppColors.ochre.opacity(0.12)) {
             VStack(alignment: .leading, spacing: 10) {
-                Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: title, tint: AppColors.plum)
+                if isFailure {
+                    FailureMessageLabel(title)
+                        .font(.subheadline)
+                } else {
+                    Build23StatusLabel(icon: "exclamationmark.triangle.fill", title: title, tint: AppColors.plum)
+                }
                 Text(detail)
                     .font(.subheadline)
                     .foregroundStyle(AppColors.secondaryText)
@@ -621,8 +651,7 @@ struct Build23SenderSharingExperience: View {
                         Button("Open system share sheet", systemImage: "square.and.arrow.up") {
                             presentVerifiedSystemShare()
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(AppColors.evergreen)
+                        .filledActionButton()
                         .accessibilityIdentifier("build23.sender.share.reopen")
                     }
                 }

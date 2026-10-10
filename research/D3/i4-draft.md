@@ -1,8 +1,14 @@
-# I4 engagement log — DRAFT
+# I4 engagement log — DRAFT (superseded)
 
-> **DRAFT only. D3 M1 finalizes and publishes I4.** This research format is an
-> input contract for the offline M2 experiment, not an app/database contract.
-> Field names and event boundaries may change when the recorder is built.
+> **Superseded by the published I4:** [`Contracts/schemas/i4-engagement.schema.json`](../../Contracts/schemas/i4-engagement.schema.json)
+> with the fixture `Contracts/fixtures/listening-signals/i4-engagement-sample.jsonl`, which is exactly
+> what the app's recorder writes (#483). `evaluate.py` reads both. What changed from this draft:
+>
+> - `schema_version` is `i4-engagement.1`.
+> - `export` rows also carry `packet_id`, so a later `packet_import` of the same packet has `from_other: false`.
+> - `listened.at` is when the interval started. Intervals close on pause, item switch, a gap over 5 s, or after 5 minutes.
+> - Only items from a followed source are logged. An item imported from a feed entry keeps the entry's id; any other item of that source is `library-<Library item id>`.
+> - `categories` is always present and empty until I2 assigns categories; `content_kind` is derived from the subscription kind until then.
 
 The owner's export is UTF-8 JSON Lines: one complete JSON object per line,
 ordered by `at` (readers must not depend on that order). All timestamps are UTC

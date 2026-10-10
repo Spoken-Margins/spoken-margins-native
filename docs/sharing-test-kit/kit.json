@@ -1,0 +1,138 @@
+{
+  "kit": "sharing-test-kit",
+  "issue": 848,
+  "createdAt": "2026-10-09T12:00:00Z",
+  "items": {
+    "episode-a": {
+      "kind": "podcast",
+      "label": "Episode A: Ethernet run",
+      "listenerMayAdd": true,
+      "identity": {
+        "itemType": "podcast",
+        "canonicalURL": "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3",
+        "title": "HPR4737: Keep spare parts for Ethernet run",
+        "publisher": "Hacker Public Radio",
+        "showTitle": "Hacker Public Radio",
+        "episodeGUID": "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4737/hpr4737.mp3",
+        "enclosureURL": "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3",
+        "publishedAt": "Tue, 29 Sep 2026 00:00:00 +0000",
+        "durationMs": 487824,
+        "languageCode": "en"
+      },
+      "audio": {
+        "url": "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3",
+        "bytes": 3904485,
+        "sha256": "479063beead7ad3f91c8d6e863aa7414e30ccc08029ab35abc7c4a64d7275270",
+        "sharedIntroSeconds": 6
+      },
+      "source": {
+        "page": "https://hackerpublicradio.org/eps/hpr4737/index.html",
+        "host": "Archer72",
+        "license": "CC BY-SA 4.0",
+        "licenseURL": "https://creativecommons.org/licenses/by-sa/4.0/"
+      }
+    },
+    "episode-b": {
+      "kind": "podcast",
+      "label": "Episode B: key fob",
+      "identity": {
+        "itemType": "podcast",
+        "canonicalURL": "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4736/hpr4736.mp3",
+        "title": "HPR4736: How to replace the battery in a car key fob",
+        "publisher": "Hacker Public Radio",
+        "showTitle": "Hacker Public Radio",
+        "episodeGUID": "https://hub.hackerpublicradio.org/ccdn.php?filename=/eps/hpr4736/hpr4736.mp3",
+        "enclosureURL": "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4736/hpr4736.mp3",
+        "publishedAt": "Mon, 28 Sep 2026 00:00:00 +0000",
+        "durationMs": 314184,
+        "languageCode": "en"
+      },
+      "audio": {
+        "url": "https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4736/hpr4736.mp3",
+        "bytes": 2515405,
+        "sha256": "e96c9e471425fbe4a28ce5c76796e1c8265db2dca8cb17c252599db7adf2801f",
+        "sharedIntroSeconds": 6
+      },
+      "source": {
+        "page": "https://hackerpublicradio.org/eps/hpr4736/index.html",
+        "host": "Ken Fallon",
+        "license": "CC BY-SA 4.0",
+        "licenseURL": "https://creativecommons.org/licenses/by-sa/4.0/"
+      }
+    },
+    "article-w": {
+      "kind": "article",
+      "label": "Article W: Declaration of Independence",
+      "listenerMayAdd": true,
+      "identity": {
+        "itemType": "text",
+        "canonicalURL": "https://www.archives.gov/founding-docs/declaration-transcript",
+        "originalURL": "https://www.archives.gov/founding-docs/declaration-transcript",
+        "title": "Declaration of Independence: A Transcription",
+        "publisher": "National Archives",
+        "languageCode": "en"
+      },
+      "source": {
+        "page": "https://www.archives.gov/founding-docs/declaration-transcript",
+        "pageTitle": "Declaration of Independence: A Transcription | National Archives",
+        "license": "Public domain (United States founding document, published by the National Archives)"
+      }
+    }
+  },
+  "packets": [
+    {
+      "file": "kit-1-episode-a",
+      "purpose": "Margins on an item the listener already has. Same file, so every place should match by sound.",
+      "sender": "Ada (synthetic test)",
+      "voice": "Samantha",
+      "item": "episode-a",
+      "evidenceFrom": "episode-a",
+      "margins": [
+        { "id": "a1", "atMs": 30000, "text": "Margin A one. I belong at thirty seconds into the Ethernet episode." },
+        { "id": "a2", "atMs": 120000, "text": "Margin A two. I belong at two minutes." },
+        { "id": "a3", "atMs": 270000, "text": "Margin A three. I belong at four minutes and thirty seconds." },
+        { "id": "a4", "atMs": 420000, "spoken": false, "text": "Margin A four. This one has no voice, only text. I belong at seven minutes." }
+      ]
+    },
+    {
+      "file": "kit-2-episode-b",
+      "purpose": "Margins on a different episode of the same show that the listener does not have. Its first seconds match episode A.",
+      "sender": "Ben (synthetic test)",
+      "voice": "Daniel",
+      "item": "episode-b",
+      "evidenceFrom": "episode-b",
+      "margins": [
+        { "id": "b1", "atMs": 4000, "text": "Margin B one. I belong at four seconds, inside the intro that both episodes share." },
+        { "id": "b2", "atMs": 60000, "text": "Margin B two. I belong at one minute into the key fob episode." },
+        { "id": "b3", "atMs": 240000, "text": "Margin B three. I belong at four minutes." }
+      ]
+    },
+    {
+      "file": "kit-3-wrong-cut",
+      "purpose": "Margins that claim to be on episode A but were placed by listening to episode B. No Margin should be called a sound match.",
+      "sender": "Cy (synthetic test, wrong cut)",
+      "voice": "Karen",
+      "item": "episode-a",
+      "evidenceFrom": "episode-b",
+      "wrongCut": true,
+      "margins": [
+        { "id": "c1", "atMs": 4000, "text": "Margin C one. I was made on the key fob episode, at four seconds, in the shared intro." },
+        { "id": "c2", "atMs": 60000, "text": "Margin C two. I was made on the key fob episode, at one minute." },
+        { "id": "c3", "atMs": 120000, "text": "Margin C three. I was made on the key fob episode, at two minutes." },
+        { "id": "c4", "atMs": 240000, "text": "Margin C four. I was made on the key fob episode, at four minutes." }
+      ]
+    },
+    {
+      "file": "kit-4-article",
+      "purpose": "Margins on a web article the listener does not have yet. Each is tied to the words it quotes.",
+      "sender": "Dee (synthetic test)",
+      "voice": "Moira",
+      "item": "article-w",
+      "margins": [
+        { "id": "d1", "quote": "We hold these truths to be self-evident", "text": "Margin D one. I am attached to the sentence that begins, we hold these truths." },
+        { "id": "d2", "quote": "Life, Liberty and the pursuit of Happiness", "text": "Margin D two. I am attached to the words, life, liberty and the pursuit of happiness." },
+        { "id": "d3", "quote": "a long train of abuses and usurpations", "spoken": false, "text": "Margin D three. This one has no voice, only text. I am attached to a long train of abuses and usurpations." }
+      ]
+    }
+  ]
+}

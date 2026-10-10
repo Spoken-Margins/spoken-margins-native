@@ -28,8 +28,8 @@ struct ExperienceTimelineRailScreen: View {
                                 systemImage: "list.bullet.rectangle",
                                 title: "This session is just beginning",
                                 detail: "Source positions, Margins, and reflections will appear here in listening order.",
-                                actionTitle: "Return to Now Playing",
-                                action: model.openPlayback
+                                actionTitle: "Return to \(model.timelineExitTitle)",
+                                action: model.leaveTimeline
                             )
                         } else {
                             timelineRail
@@ -85,7 +85,7 @@ struct ExperienceTimelineRailScreen: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: returnToPlayback) {
-                        Label("Now Playing", systemImage: "arrow.left")
+                        Label(model.timelineExitTitle, systemImage: "arrow.left")
                     }
                     .accessibilityIdentifier("timeline.nowPlaying.button")
                 }
@@ -143,8 +143,7 @@ struct ExperienceTimelineRailScreen: View {
                     if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                     if model.canSummarizeInterjections {
                         Button(model.canRetryLocalSummary ? "Retry summary" : "Summarize", action: model.summarize)
-                            .buttonStyle(.borderedProminent)
-                            .tint(AppColors.plum)
+                            .filledActionButton(tint: AppColors.plum)
                             .accessibilityIdentifier("timeline.summary.button")
                     }
                 }
@@ -152,9 +151,7 @@ struct ExperienceTimelineRailScreen: View {
                     responseEditorFocused = false
                     model.importPastedAssistantResponse()
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(AppColors.plum)
-                .foregroundStyle(AppColors.onEvergreen)
+                .filledActionButton(tint: AppColors.plum)
                 .disabled(model.pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("timeline.reflection.import.button")
                 TextEditor(text: $model.pastedAssistantResponse)
@@ -240,8 +237,9 @@ struct ExperienceTimelineRailScreen: View {
 
         for layer in item.importedCommentaryLayers where layer.deletedAt == nil {
             for margin in item.importedCommentaryInterjections[layer.id, default: []] {
-                let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title)
-                let position = margin.resolution.localMediaTimeMs.map {
+                let row = SharedMarginRow(interjection: margin, layer: layer, itemTitle: item.title, placement: item.sharedMarginPlacement)
+                // A Margin being placed again stays at its old position until the pass writes the new one (#872).
+                let position = (margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs).map {
                     max(0, min(100, Int((Double($0) / Double(duration) * 100).rounded())))
                 } ?? margin.anchorEvidence.roughPercent ?? 100
                 result.append(TimelineRailEntry(
@@ -422,7 +420,7 @@ struct ExperienceTimelineRailScreen: View {
     private func returnToPlayback() {
         responseEditorFocused = false
         withAnimation(.snappy(duration: 0.34)) {
-            model.openPlayback()
+            model.leaveTimeline()
         }
     }
 
