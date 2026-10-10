@@ -74,17 +74,13 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         model.startItem(id: item.id)
         XCTAssertFalse(model.isTermsOfUsePresented, "the first-use voice choice must not hold playback (#286)")
         // Exercise the real source adapter: nativeMediaId is an asset ID, not a URL.
-        for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 200 {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 100, "Source audio must actually advance before Skim")
+        let started = try await waitForSourceProgress(model: model, player: sourcePlayer, toMs: 200)
+        XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 100, "Source audio must actually advance before Skim: \(started)")
         model.pause()
         let pausedTime = sourcePlayer.currentMediaTimeMs() ?? 0
         model.resumePlayback()
-        for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < pausedTime + 200 {
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, pausedTime + 100)
+        let resumed = try await waitForSourceProgress(model: model, player: sourcePlayer, toMs: pausedTime + 200)
+        XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, pausedTime + 100, "Resume must play on: \(resumed)")
         XCTAssertTrue(model.snapshot.canSkimForward)
         XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
         XCTAssertEqual(model.skimForwardTitle, "Skim to 0:05")
@@ -116,13 +112,10 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertNil(model.snapshot.skimBridgeState, "Second Skim tap exits instead of restarting or chaining a summary")
         for _ in 0..<500 where model.snapshot.skimBridgeState != nil { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertNil(model.snapshot.skimBridgeState)
-        for _ in 0..<150 where (sourcePlayer.currentMediaTimeMs() ?? 0) < 5_200 {
-            // Crossing the test Margin opens Companion's intentional pause.
-            // Dismiss it just as the listener would before expecting progress.
-            if model.pendingImportedCommentary != nil { model.dismissPendingImportedCommentary() }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 5_100, "Skim must return to progressing source audio: status=\(model.snapshot.status), failure=\(model.snapshot.lastFailure ?? "none"), pending=\(model.pendingImportedCommentary != nil)")
+        // Crossing the test Margin opens Companion's intentional pause.
+        // The wait dismisses it just as the listener would before expecting progress.
+        let returned = try await waitForSourceProgress(model: model, player: sourcePlayer, toMs: 5_200)
+        XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 5_100, "Skim must return to progressing source audio: status=\(model.snapshot.status), failure=\(model.snapshot.lastFailure ?? "none"), pending=\(model.pendingImportedCommentary != nil), \(returned)")
         model.pause()
         // While paused, a map change can move where Skim Back lands without flipping availability.
         // The Lock Screen must show the new time, not the one from before the change (#115).
@@ -157,11 +150,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(reconstructed.selectedItem.listeningMapScenes.count, 2)
         reconstructed.startItem(id: item.id)
         let resumedAt = reconstructed.snapshot.currentMediaTimeMs ?? 0
-        for _ in 0..<150 where (resumedPlayer.currentMediaTimeMs() ?? 0) < resumedAt + 200 {
-            if reconstructed.pendingImportedCommentary != nil { reconstructed.dismissPendingImportedCommentary() }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        XCTAssertGreaterThan(resumedPlayer.currentMediaTimeMs() ?? 0, resumedAt + 100, "Saved-session playback must survive container relocation")
+        let relocated = try await waitForSourceProgress(model: reconstructed, player: resumedPlayer, toMs: resumedAt + 200)
+        XCTAssertGreaterThan(resumedPlayer.currentMediaTimeMs() ?? 0, resumedAt + 100, "Saved-session playback must survive container relocation: \(relocated)")
         reconstructed.pause()
         // The supplied voice survives a user voice preference change.
         model.ttsVoiceSelection = .james
@@ -206,8 +196,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertEqual(bridgeCount(), 2, "One summary per eligible scene")
         model.startItem(id: fixture.itemId)
         let player = try XCTUnwrap(fixture.sourcePlayer)
-        for _ in 0..<150 where (player.currentMediaTimeMs() ?? 0) < 200 { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertGreaterThan(player.currentMediaTimeMs() ?? 0, 100, "The downloaded copy must actually play before Skim")
+        let started = try await waitForSourceProgress(model: model, player: player, toMs: 200)
+        XCTAssertGreaterThan(player.currentMediaTimeMs() ?? 0, 100, "The downloaded copy must actually play before Skim: \(started)")
         for _ in 0..<150 where !model.snapshot.canSkimForward { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(model.snapshot.canSkimForward, "Skim uses the friend's map and its summaries")
         XCTAssertEqual(model.skimForwardDestinationMs, 5_000)
@@ -246,6 +236,54 @@ final class LocalAudioListeningPackageTests: XCTestCase {
                        "The shared map has no audio to match near scene 1 (Opening).", "The reason survives a restart")
         XCTAssertNil(try fixture.store.loadResolvedListeningMapProjection(itemId: fixture.itemId)?.proposalId,
                      "A refused map is never activated")
+    }
+
+    /// Waits for the source to play on to `toMs` the way a listener waits: on the player, not on a fixed time (#835).
+    ///
+    /// A fixed 3 s window failed under load: the source sat at exactly its start or Skim destination with the
+    /// session playing. AVPlayer reports playing before its clock moves, because the audio output takes time to
+    /// start (about 0.4–0.7 s on the Mac host, measured for #835; `StreamSeekLifecycleTests` prints it).
+    /// A loaded simulator, whose audio I/O logs "skipping cycle due to overload", stretched that past the window. After Skim the window also held the
+    /// summary player's stop, the resume, and possibly Companion's pause and its dismissal.
+    ///
+    /// So the clock's allowance starts only once the session is playing again (no Skim summary, no Companion pause
+    /// waiting) and the player itself reports playing, with no seek pending. Companion's pause is dismissed as the
+    /// listener would. A source that never gets back to playing, or whose clock never moves once it does, still fails.
+    /// Returns what was observed, for assertion messages.
+    private func waitForSourceProgress(
+        model: Gate1AppModel,
+        player: AVPlayerStreamPlaybackClient,
+        toMs target: Int,
+        toStartPlaying: Duration = .seconds(15),
+        toAdvanceOncePlaying: Duration = .seconds(10)
+    ) async throws -> String {
+        let clock = ContinuousClock()
+        let began = clock.now
+        var playingSince: ContinuousClock.Instant?
+        var lastState = "not sampled"
+        while (player.currentMediaTimeMs() ?? 0) < target {
+            if model.pendingImportedCommentary != nil { model.dismissPendingImportedCommentary() }
+            let transport = model.snapshot.targetId.flatMap { player.playbackTransportState(targetId: $0) }
+            let playing = model.snapshot.skimBridgeState == nil
+                && model.pendingImportedCommentary == nil
+                && model.snapshot.status.isPlaybackActive
+                && transport == .playing
+            let now = clock.now
+            lastState = "session \(model.snapshot.status), player \(transport.map { "\($0)" } ?? "none"), skim \(model.snapshot.skimBridgeState == nil ? "off" : "on")"
+            if playing {
+                let since = playingSince ?? now
+                playingSince = since
+                if now - since > toAdvanceOncePlaying { break }
+            } else {
+                playingSince = nil
+                if now - began > toStartPlaying { break }
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let waited = clock.now - began
+        let playedFor = playingSince.map { clock.now - $0 }
+        return "clock \(player.currentMediaTimeMs() ?? -1) ms after \(waited.formatted(.units(allowed: [.milliseconds]))); "
+            + "player reported playing for \(playedFor?.formatted(.units(allowed: [.milliseconds])) ?? "none"); last \(lastState)"
     }
 
     private enum SenderEdition { case sameAsRecipient, differentWithoutEvidence }
