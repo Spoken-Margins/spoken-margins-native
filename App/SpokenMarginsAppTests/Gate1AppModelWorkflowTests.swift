@@ -878,17 +878,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: .nan), 1)
     }
 
+    /// #1043 APM-08: the test asserted straight after Cancel, so the render still in flight never came back, and
+    /// the guard that stops a stale render writing onto the cancelled draft never ran. Here the render ignores the
+    /// cancel (as an export already under way does), finishes afterwards and writes its file. The draft must stay
+    /// as Cancel left it, and the stale cleaned copy must be deleted.
     func testCancellingBulkSharePreparationMakesInFlightMarginEligibleAgain() async throws {
         let sourceURL = FileManager.default.temporaryDirectory
             .appending(path: "bulk-margin-cancel-\(UUID().uuidString).m4a")
         try Data([0x01]).write(to: sourceURL)
         defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let render = HeldCleanupRender()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             shareMarginSilenceAnalysisHandler: { _, _ in [] },
-            shareMarginAudioCleanupHandler: { _, _, _ in
-                try await Task.sleep(for: .seconds(5))
-                return 625
+            shareMarginAudioCleanupHandler: { _, destinationURL, _ in
+                try await render.render(destinationURL: destinationURL)
             }
         )
         model.resetAndSeed()
@@ -905,14 +909,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("bulk render to begin") {
             model.sharingState.drafts.first?.isPreparingCleanup == true
         }
+        var heldDestination: URL?
+        for _ in 0..<200 where heldDestination == nil {
+            heldDestination = await render.heldDestination
+            if heldDestination == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let destination = try XCTUnwrap(heldDestination, "the renderer was handed its destination")
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
 
         model.cancelBulkSharePreparation()
 
         XCTAssertFalse(model.sharingState.isBulkPreparing)
         XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 0)
         XCTAssertEqual(model.bulkSharePreparationEligibleCount, 1)
-        XCTAssertFalse(try XCTUnwrap(model.sharingState.drafts.first).currentEditState.automaticCleanupEnabled)
-        XCTAssertNil(model.sharingState.drafts.first?.cleanup)
+        let cancelled = try XCTUnwrap(model.sharingState.drafts.first)
+        XCTAssertFalse(cancelled.currentEditState.automaticCleanupEnabled)
+        XCTAssertNil(cancelled.cleanup)
+
+        await render.finish()
+        var returned = false
+        for _ in 0..<200 where !returned {
+            returned = await render.hasReturned
+            if !returned { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        XCTAssertTrue(returned, "the stale render came back after Cancel")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path), "it wrote its cleaned copy")
+        // Let the cancelled preparation come back to the main actor and unwind past its guard.
+        try await Task.sleep(for: .milliseconds(300))
+
+        let draft = try XCTUnwrap(model.sharingState.drafts.first)
+        XCTAssertNil(draft.cleanedAudioURL, "a cancelled render must not attach its copy")
+        XCTAssertNil(draft.cleanedAudioDurationMs)
+        XCTAssertEqual(draft.representationChoice, cancelled.representationChoice)
+        XCTAssertNil(draft.preparationMessage)
+        XCTAssertFalse(draft.isPreparingCleanup)
+        XCTAssertFalse(draft.currentEditState.automaticCleanupEnabled)
+        XCTAssertNil(draft.cleanup)
+        XCTAssertFalse(model.sharingState.isBulkPreparing)
+        XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 0)
+        XCTAssertEqual(model.bulkSharePreparationEligibleCount, 1, "the Margin is still eligible for the next run")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path), "the stale cleaned copy is deleted")
     }
 
     func testBulkSharePreparationFallsBackToOriginalVoiceWhenRenderingFails() async throws {
@@ -4990,6 +5026,30 @@ private actor BulkSharePreparationProbe {
 
     func snapshot() -> (renderCount: Int, maximumConcurrentRenders: Int) {
         (renderCount, maximumConcurrentRenders)
+    }
+}
+
+/// A cleanup render that finishes only when the test lets it, and ignores cancellation, as an export already
+/// under way does. It then writes its copy at the destination it was given (#1043 APM-08).
+private actor HeldCleanupRender {
+    private var release: CheckedContinuation<Void, Never>?
+    private(set) var heldDestination: URL?
+    private(set) var hasReturned = false
+
+    func render(destinationURL: URL) async throws -> Int {
+        await withCheckedContinuation { continuation in
+            release = continuation
+            heldDestination = destinationURL
+        }
+        try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try BulkSharePreparationProbe.cleanedBytes.write(to: destinationURL)
+        hasReturned = true
+        return 625
+    }
+
+    func finish() {
+        release?.resume()
+        release = nil
     }
 }
 
