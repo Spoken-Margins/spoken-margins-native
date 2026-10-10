@@ -136,10 +136,12 @@ public struct HeardAudioWindowRecorder: Sendable {
     }
 
     /// Called when a Margin finishes, before playback resumes: snapshots the minute before its anchor and starts
-    /// collecting what plays next.
+    /// collecting what plays next. The snapshot keeps the whole rolling minute, including the half second or so
+    /// the player decoded past the anchor before it paused: the rejoin replays that audio, and leaving it out
+    /// left a hole right after the Margin (#1133).
     public mutating func begin(_ request: PostResumeAudioSampleRequest) {
         let key = Self.key(request)
-        let before = ring.filter { $0.startMediaTimeMs < request.anchorMediaTimeMs }
+        let before = ring
         collecting[key] = Collecting(
             request: request,
             before: before,
