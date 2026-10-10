@@ -1,7 +1,8 @@
 import Foundation
 
 /// Where stored Margin audio and other Application Support assets live now. Moved out of
-/// Gate1AppModel.swift unchanged (#483 made room for its call sites under the hot-file ratchet).
+/// Gate1AppModel.swift unchanged (#483 made room for its call sites under the hot-file ratchet; the two
+/// instance lookups followed in #467).
 extension Gate1AppModel {
     /// Stored Margin audio paths may be absolute paths from an earlier app container
     /// (container UUIDs change on reinstall, restore, and some updates). Rebase them onto
@@ -40,5 +41,24 @@ extension Gate1AppModel {
         let relativePath = path.hasPrefix("/") ? String(path.dropFirst()) : path
         let relativeURL = applicationSupportDirectory.appending(path: relativePath)
         return fileManager.fileExists(atPath: relativeURL.path) ? relativeURL : nil
+    }
+
+    func resolvedInterjectionAudioURL(for path: String) -> URL? {
+        Self.resolvedInterjectionAudioURL(
+            for: path,
+            applicationSupportDirectory: try? FileManager.default.url(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: false
+            )
+        )
+    }
+
+    func resolvedApplicationSupportAssetURL(for path: String) -> URL? {
+        Self.resolvedApplicationSupportAssetURL(
+            for: path,
+            applicationSupportDirectory: try? applicationSupportDirectory()
+        )
     }
 }
