@@ -670,6 +670,23 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
+    /// Stores a community map's proposal and projection together, only if the item still has no
+    /// proposal and no projection (#553). Both records or neither: a proposal without its projection
+    /// would stop the episode asking again and give Skim nothing. Existing record kinds only.
+    /// Returns false, and writes nothing, when the item got a map of its own meanwhile.
+    public func saveCommunityMap(
+        proposal: PortableListeningMapProposalArtifact,
+        projection: ResolvedListeningMapProjection
+    ) throws -> Bool {
+        try withTransaction {
+            guard try loadPortableListeningMapProposals(itemId: projection.itemId).isEmpty,
+                  try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil else { return false }
+            try savePortableListeningMapProposal(proposal, itemId: projection.itemId)
+            try saveResolvedListeningMapProjection(projection)
+            return true
+        }
+    }
+
     public func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection? {
         let values: [ResolvedListeningMapProjection] = try loadByItem(kind: "resolved_listening_map_projection", itemId: itemId)
         return values.last

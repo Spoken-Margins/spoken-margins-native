@@ -12,6 +12,8 @@ struct ItemDetailState {
     var chapters: [Chapter] = []
     var mediaChapters: [MediaTimelineChapter] = []
     var listeningMapScenes: [MediaTimelineChapter] = []
+    /// The scenes came from the server's community map (#553), not this phone or the publisher.
+    var listeningMapIsCommunity = false
     var mediaDurationMs: Int?
     var isNativeAudio = false
     var documentStructure: PDFDocumentStructure?

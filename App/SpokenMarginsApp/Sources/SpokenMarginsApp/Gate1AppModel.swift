@@ -1049,7 +1049,10 @@ final class Gate1AppModel: ObservableObject {
 
     var listeningMapGenerationAvailabilityDescription: String {
         if !selectedItem.listeningMapScenes.isEmpty {
-            return "This item has a private Listening Map with \(selectedItem.listeningMapScenes.count) scene\(selectedItem.listeningMapScenes.count == 1 ? "" : "s")."
+            let scenes = "\(selectedItem.listeningMapScenes.count) scene\(selectedItem.listeningMapScenes.count == 1 ? "" : "s")"
+            return selectedItem.listeningMapIsCommunity
+                ? "This item has a community map with \(scenes)."
+                : "This item has a private Listening Map with \(scenes)."
         }
         if !selectedItem.mediaChapters.isEmpty {
             return "This podcast already includes publisher chapters. A generated Listening Map is unnecessary."
@@ -3761,6 +3764,24 @@ final class Gate1AppModel: ObservableObject {
         return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
     }
 
+    /// A podcast episode with no chapters and no map of its own asks the server for a community map (#553).
+    private func fetchCommunityMapIfNeeded(itemId: String) {
+        guard let store else { return }
+        CommunityMapFetchService.shared.episodeOpened(
+            itemId: itemId, store: store,
+            localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) },
+            didStore: { [weak self] in self?.communityMapStored(itemId: itemId) },
+            report: { [weak self] in self?.diagnostics["communityMapFetch"] = $0 }
+        )
+    }
+
+    /// The scenes show on the item page now, and Skim's summaries are rendered like any stored map's.
+    private func communityMapStored(itemId: String) {
+        if itemId == activeItemId { refreshSelectedItem() }
+        prepareImportedLocalAudioBridges(itemId: itemId)
+        if itemId == activeItemId { updateSkimAvailability() }
+    }
+
     private func prepareSummaryBridgeAsset(
         itemId: String,
         proposalId: String,
@@ -4502,6 +4523,7 @@ final class Gate1AppModel: ObservableObject {
             selectedItem = try loadItemDetail(id: id, store: store)
             prepareImportedLocalAudioBridges(itemId: id)
             scheduleTextAudioPrewarmIfNeeded(itemId: id); PublisherAudioTextMapper.resume(itemId: id, store: store, transcriber: sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(id): \($0)" }
+            fetchCommunityMapIfNeeded(itemId: id)
             listeningMapJSON = ""
             screen = .item
             discoverFollowOfferIfEligible(itemId: id, store: store)
@@ -4515,6 +4537,7 @@ final class Gate1AppModel: ObservableObject {
     func startItem(id: String) {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_item") else { return }
         prepareImportedLocalAudioBridges(itemId: id)
+        fetchCommunityMapIfNeeded(itemId: id)
         if [.waiting, .preparing].contains(libraryItems.first(where: { $0.id == id })?.startupAudioState) {
             scheduleStartupAudioPreparationIfNeeded(itemId: id)
             diagnostics["startupAudioPlayback:\(id)"] = "started_without_waiting_for_opening_buffer"
@@ -11836,6 +11859,7 @@ final class Gate1AppModel: ObservableObject {
             chapters: map?.chapters ?? [],
             mediaChapters: mediaChapters,
             listeningMapScenes: listeningMapScenes,
+            listeningMapIsCommunity: proposal.map { CommunityMapConverter.isCommunityProposal(id: $0.id) } ?? false,
             mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
             isNativeAudio: isNativeAudio,
             documentStructure: item.documentStructure,
