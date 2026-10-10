@@ -6,6 +6,9 @@ public enum ShareSheetCandidateOutcome<Import: Sendable>: Sendable {
     case content(Import)
     /// A web link the app would download again. It waits while a non-link candidate is untried (#271).
     case link(Import)
+    /// Plain text another app shared (#662). The first one is kept until every other candidate, links
+    /// included, has been tried, and is handed off only when nothing else was found.
+    case sharedText(Import)
     /// Nothing usable here; the next candidate is tried.
     case nothing
     /// The share can't be handed off (a package that could not be saved, say).
@@ -13,7 +16,8 @@ public enum ShareSheetCandidateOutcome<Import: Sendable>: Sendable {
 }
 
 /// Tries a share's candidates in order, one at a time, and decides what the share hands off: the first
-/// content any candidate yields, or else the first link, once nothing else is left to try (#271).
+/// content any candidate yields, or else the first link, or else the first shared text, once nothing
+/// else is left to try (#271, #662).
 ///
 /// The share extension runs this with loaders that read its `NSItemProvider`s, and the app's tests run the
 /// same walk with real providers, so the tests prove the extension's own decision rather than a copy of it.
@@ -34,7 +38,7 @@ public enum ShareSheetCandidateWalk {
 
         @Sendable func step(_ index: Int) {
             guard index < candidates.count else {
-                completion(walk.linkFallback.deferredLink.map { .success($0) })
+                completion((walk.linkFallback.deferredLink ?? walk.textFallback).map { .success($0) })
                 return
             }
             load(candidates[index]) { outcome in
@@ -45,6 +49,9 @@ public enum ShareSheetCandidateWalk {
                     case .failed(let error):
                         completion(.failure(error))
                     case .nothing:
+                        step(index + 1)
+                    case .sharedText(let text):
+                        if walk.textFallback == nil { walk.textFallback = text }
                         step(index + 1)
                     case .link(let link):
                         if let accepted = walk.linkFallback.accept(link, isLink: true, at: index, in: identifiers) {
@@ -62,5 +69,6 @@ public enum ShareSheetCandidateWalk {
     /// The walk's state. Steps run one at a time, each after the previous load reported.
     private final class Walk<Import: Sendable>: @unchecked Sendable {
         var linkFallback = ShareSheetLinkFallback<Import>()
+        var textFallback: Import?
     }
 }

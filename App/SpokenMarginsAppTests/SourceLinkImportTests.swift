@@ -601,6 +601,37 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: "not base64"]))
     }
 
+    func testSharedTextIsHandedOffOnlyWhenNothingElseYieldsAndALinkBeatsIt() {
+        // Plain text another app shared waits behind every other candidate, links included (#662).
+        let textThenNothing: [ShareSheetCandidateOutcome<String>] = [.sharedText("text"), .nothing]
+        XCTAssertEqual(walkedShare(textThenNothing), "text", "text is used once nothing else yields")
+
+        let textLinkThenText: [ShareSheetCandidateOutcome<String>] = [.sharedText("first text"), .link("link"), .sharedText("second text")]
+        XCTAssertEqual(walkedShare(textLinkThenText), "link", "a link found in the share beats its text")
+
+        let textThenContent: [ShareSheetCandidateOutcome<String>] = [.sharedText("text"), .content("file")]
+        XCTAssertEqual(walkedShare(textThenContent), "file", "content found after the text still wins")
+
+        let twoTexts: [ShareSheetCandidateOutcome<String>] = [.sharedText("first text"), .sharedText("second text")]
+        XCTAssertEqual(walkedShare(twoTexts), "first text", "the first text is the one kept")
+
+        XCTAssertNil(walkedShare([.nothing, .nothing]), "nothing yielded means nothing is handed off")
+    }
+
+    /// Runs the share walk over canned outcomes, one per candidate, and returns what it handed off.
+    private func walkedShare(_ outcomes: [ShareSheetCandidateOutcome<String>]) -> String? {
+        let handedOff = WalkedShare()
+        ShareSheetCandidateWalk.run(
+            Array(outcomes.indices),
+            identifier: { outcomes[$0].isLinkOutcome ? ShareSheetRepresentationOrder.urlIdentifier : "public.plain-text" },
+            load: { index, report in report(outcomes[index]) },
+            completion: { result in
+                if case .success(let value)? = result { handedOff.value = value }
+            }
+        )
+        return handedOff.value
+    }
+
     private static let pmcPDFURL = URL(string: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-157633.pdf")!
 
     private func makeSharedPDFProvider(url: URL?) -> NSItemProvider {
@@ -2290,5 +2321,17 @@ private final class ShareWalkResult: @unchecked Sendable {
 
     var result: Result<(url: URL, surface: String), Error>? {
         lock.withLock { stored ?? nil }
+    }
+}
+
+/// What a canned share walk handed off. The walk runs its steps inline, so no lock is needed.
+private final class WalkedShare: @unchecked Sendable {
+    var value: String?
+}
+
+private extension ShareSheetCandidateOutcome {
+    var isLinkOutcome: Bool {
+        if case .link = self { return true }
+        return false
     }
 }
