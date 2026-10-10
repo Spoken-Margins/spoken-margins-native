@@ -851,6 +851,46 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         }
     }
 
+    /// APA-04: the older test delivered the old task's callbacks after the replacement had finished, where the record
+    /// state alone rejects them. The cancelled old task really reports while the replacement is still downloading.
+    func testACancelledOldAttemptCannotFailAReplacementThatIsStillDownloading() async throws {
+        let fixture = try makeFixture()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        var started: [PodcastDownloadAttempt] = []
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in 8 }, startDownload: { _, description in
+                started.append(PodcastDownloadAttempt.decode(description)!)
+            })
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
+        try await waitForStarts(1, starts: { started.count })
+        let old = started[0]
+        coordinator.removeItem("episode")
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/new-audio")!)
+        try await waitForStarts(2, starts: { started.count })
+        let current = started[1]
+        XCTAssertNotEqual(old.generation, current.generation)
+
+        coordinator.completeDownload(old, error: URLError(.cancelled))
+        let oldFile = fixture.root.appending(path: "old.mp3")
+        try Data([9]).write(to: oldFile)
+        await coordinator.finishDownload(old, stagedURL: oldFile, responseOK: true)
+
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading, "the replacement is still downloading")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
+        XCTAssertEqual(try fixture.store.loadOfflineStorageReservations().map(\.id), [current.reservationId],
+                       "only the replacement's reservation is held")
+        XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "the old bytes were not adopted")
+
+        let newFile = fixture.root.appending(path: "new.mp3")
+        try Data([4, 5, 6]).write(to: newFile)
+        await coordinator.finishDownload(current, stagedURL: newFile, responseOK: true)
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(coordinator.validatedLocalURL(for: "episode"))), Data([4, 5, 6]))
+        coordinator.shutdown()
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
