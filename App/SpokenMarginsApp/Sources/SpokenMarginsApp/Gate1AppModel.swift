@@ -11703,7 +11703,7 @@ final class Gate1AppModel: ObservableObject {
         feedbackEvent = event
     }
 
-    private func refreshSelectedItem() {
+    func refreshSelectedItem() {
         guard let store, !activeItemId.isEmpty else { return }
         if let detail = try? loadItemDetail(id: activeItemId, store: store) {
             selectedItem = detail
