@@ -12142,6 +12142,7 @@ final class Gate1AppModel: ObservableObject {
                 return try hasMoreMatchingJobs()
             }
             guard gate == .render else { diagnostics["backgroundAudioPreparation"] = gate.rawValue; return false }
+            manifest = try await coordinator.droppingMissingChunks(manifestId: manifest.id) ?? manifest // a lost chunk is rendered again, not assembled (#645)
             let completedIndexes = PreparedAudioCoordinator.completedIndexes(manifest, plan: plan, sourceText: sourceText, retryingStandInsFor: job)
             guard let next = eligiblePlan.first(where: { !completedIndexes.contains($0.index) }) else {
                 // All chunks are intact but nothing is assembled (#278): assemble now, because it
@@ -12158,7 +12159,8 @@ final class Gate1AppModel: ObservableObject {
             }
             let reservation = try await ledger.reserve(
                 ownerId: "prepared-chunk-\(manifest.id)-\(next.index)",
-                byteCount: 64 * 1_024 * 1_024
+                byteCount: 64 * 1_024 * 1_024,
+                pinning: PreparedAudioCoordinator.ledgerPaths(ofChunksIn: manifest) // never evicts this article's own chunks (#645)
             )
             // Paced per render, not through the shared lifecycle flag (#377).
             let pacedRenderer: any SupertonicRendering = try preparationSeams.renderer?() ?? BackgroundPreparationRenderer(base: makeSupertonicRenderer())
@@ -12195,18 +12197,7 @@ final class Gate1AppModel: ObservableObject {
                 try? await ledger.release(reservationId: reservation.id)
                 return !foregroundDemandOnly
             }
-            try await ledger.commit(
-                reservationId: reservation.id,
-                asset: OwnedOfflineAsset(
-                    id: committed.id,
-                    itemId: item.id,
-                    category: .preparedChunk,
-                    relativePath: "PreparedAudio/\(committed.relativePath)",
-                    byteCount: committed.byteCount,
-                    checksumSHA256: committed.checksumSHA256,
-                    isReproducible: true
-                )
-            )
+            try await ledger.commit(reservationId: reservation.id, asset: PreparedAudioCoordinator.ledgerAsset(for: committed, itemId: item.id))
             job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
             recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
                                                                 "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
@@ -12312,7 +12303,8 @@ final class Gate1AppModel: ObservableObject {
         )
         let assemblyReservation = try await ledger.reserve(
             ownerId: "prepared-artifact-\(manifest.id)",
-            byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount })
+            byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount }),
+            pinning: PreparedAudioCoordinator.ledgerPaths(ofChunksIn: manifest) // its inputs stay until assembled (#645)
         )
         do {
             let prepared = try await SupertonicPreparedAudioAssembler.assemble(
@@ -12395,7 +12387,7 @@ final class Gate1AppModel: ObservableObject {
                 self?.diagnostics["offlineResidualOverageBytes"] = "\(residualOverage ?? 0)"
                 self?.tryRefreshOfflineStorageUsage()
             }
-            await self.refreshFollowedSources(force: false)
+            await self.performFollowedSourceRefresh(force: false)
             await self.refreshGuidedOnboardingContent()
         }
     }
@@ -12472,7 +12464,7 @@ final class Gate1AppModel: ObservableObject {
                 _ = try await coordinator.follow(candidate: candidate)
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
@@ -12498,7 +12490,7 @@ final class Gate1AppModel: ObservableObject {
         followedSourceCoordinator = coordinator
         let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
         diagnostics["followSourceFailure"] = nil
-        if refreshAfter { await refreshFollowedSources(force: false) }
+        if refreshAfter { await performFollowedSourceRefresh(force: false) }
         return sourceId
     }
 
@@ -12515,7 +12507,7 @@ final class Gate1AppModel: ObservableObject {
                 _ = try await coordinator.follow(candidate: candidate)
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
             } catch {
@@ -12645,7 +12637,7 @@ final class Gate1AppModel: ObservableObject {
                     try self.refreshLibraryRows(store: store)
                 }
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -12760,7 +12752,7 @@ final class Gate1AppModel: ObservableObject {
                 self.feedSubscriptions = try store.loadFeedSubscriptions()
                 try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
                 self.storedSourceFollowSuggestionCandidates = []
-                await self.refreshFollowedSources(force: true)
+                await self.performFollowedSourceRefresh(force: true)
                 self.diagnostics["followSourceFailure"] = nil
                 self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
             } catch {
@@ -12789,10 +12781,10 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func refreshFollowedSources(force: Bool = true) {
-        Task { [weak self] in await self?.refreshFollowedSources(force: force) }
+        Task { [weak self] in await self?.performFollowedSourceRefresh(force: force) }
     }
 
-    private func refreshFollowedSources(force: Bool) async {
+    func performFollowedSourceRefresh(force: Bool) async {
         guard !isRefreshingFollowedSources else { return }
         isRefreshingFollowedSources = true
         defer { isRefreshingFollowedSources = false }
@@ -12815,7 +12807,7 @@ final class Gate1AppModel: ObservableObject {
         listeningSignals.dismiss(entryId: id)
         Task { [weak self] in
             try? await coordinator.setEntryState(id: id, state: .dismissed)
-            await self?.refreshFollowedSources(force: false)
+            await self?.performFollowedSourceRefresh(force: false)
         }
     }
 
@@ -12860,7 +12852,7 @@ final class Gate1AppModel: ObservableObject {
                 }
                 guard imported else { return }
                 try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
-                await self.refreshFollowedSources(force: false)
+                await self.performFollowedSourceRefresh(force: false)
                 self.reportConfirmation("Imported \(entry.title) into the library.")
             } catch {
                 self.reportFailure(error, context: "Source entry import failed")
@@ -12872,7 +12864,7 @@ final class Gate1AppModel: ObservableObject {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.unfollow(subscriptionId: id)
-            await self?.refreshFollowedSources(force: false)
+            await self?.performFollowedSourceRefresh(force: false)
         }
     }
 
