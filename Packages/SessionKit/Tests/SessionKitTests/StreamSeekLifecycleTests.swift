@@ -75,6 +75,60 @@ final class StreamSeekLifecycleTests: XCTestCase {
                       "a real AVPlayer seek jump must record landing even with its completion withheld and watchdog stopped")
     }
 
+    /// #835: Skim's return seeks the paused source to the scene, then resumes it at once, reusing that seek.
+    /// The player reports playing while its clock still reads the destination, because the audio output takes
+    /// time to start (0.6–0.75 s on this Mac, and longer on a loaded simulator). That is the normal start, not a
+    /// hang: the clock never falls back to where Skim began, and it moves on from the destination.
+    func testResumeRightAfterANavigationSeekPlaysOnFromTheDestination() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-seek-resume-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 10, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 10_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        let trace = TraceLines()
+        client.playbackStartTraceHandler = { fields in trace.append(fields) }
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        let readyDeadline = Date().addingTimeInterval(10)
+        while Date() < readyDeadline, (client.currentMediaTimeMs() ?? 0) < 300 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        let origin = try XCTUnwrap(client.currentMediaTimeMs())
+        XCTAssertGreaterThanOrEqual(origin, 300, "precondition: the source played before Skim")
+        try client.pause()
+
+        // completeSkimBridge: seekMedia, then resumePlayback straight away.
+        _ = try client.requestMediaSeek(toMediaTimeMs: 5_000)
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 5_000)
+        var heldAtDestinationWhilePlaying = false
+        var lowest = Int.max
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, (client.currentMediaTimeMs() ?? 0) <= 5_100 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            let clock = client.currentMediaTimeMs() ?? 0
+            lowest = min(lowest, clock)
+            if clock == 5_000, client.playbackTransportState(targetId: "episode-target") == .playing {
+                heldAtDestinationWhilePlaying = true
+            }
+        }
+
+        XCTAssertGreaterThan(client.currentMediaTimeMs() ?? 0, 5_100, "the source plays on from Skim's destination")
+        XCTAssertGreaterThanOrEqual(lowest, 5_000, "the clock never shows the place Skim left")
+        XCTAssertEqual(trace.lines.last?["seek"], "reused", "the resume rides Skim's seek instead of issuing another")
+        // Not a requirement, a record of what the app test has to wait through: on this Mac the player
+        // reports playing before its clock leaves the destination.
+        if !heldAtDestinationWhilePlaying {
+            print("note: the clock left 5000 ms before the player reported playing on this run")
+        }
+    }
+
     private static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
         let sampleRate = 44_100.0
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
