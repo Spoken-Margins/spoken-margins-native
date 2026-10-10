@@ -32,6 +32,9 @@ struct ExperienceSourcesScreen: View {
     @State private var focusFeedURLOnManage = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
+    /// The swipe hint shows once, ever (#478); a per-viewer flag. It stays up for the rest of that visit.
+    @AppStorage("following.swipeHintSeen") private var swipeHintSeen = false
+    @State private var swipeHintShownThisVisit = false
     /// The place in the list, kept by the root view because opening an entry destroys this screen (#479).
     @Binding var scrollMemory: FollowingScrollMemory
     /// Follows the top entry without redrawing the screen on every row that scrolls by (#479).
@@ -217,6 +220,10 @@ struct ExperienceSourcesScreen: View {
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
+                if showsSwipeHint {
+                    swipeHint
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
                 ForEach(orderedCandidates) { row in
                     SourceInboxRow(candidate: row.candidate, artwork: artwork, reason: row.reason?.text, mark: mark(of: row.candidate)) { mark in
                         if let sourceID = sourceID(of: row.candidate) { ranking.setMark(mark, for: sourceID) }
@@ -303,6 +310,21 @@ struct ExperienceSourcesScreen: View {
             default: false
             }
         }
+    }
+
+    /// Shown the first time Following lists entries, and for the rest of that visit (#478).
+    private var showsSwipeHint: Bool { !swipeHintSeen || swipeHintShownThisVisit }
+
+    private var swipeHint: some View {
+        Label(FollowingRowActions.swipeHint, systemImage: "hand.draw")
+            .font(.footnote)
+            .foregroundStyle(AppColors.secondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("sources.swipeHint")
+            .onAppear {
+                swipeHintShownThisVisit = true
+                swipeHintSeen = true
+            }
     }
 
     private var isNarrowed: Bool { kind != nil || subject != nil }
@@ -404,6 +426,9 @@ private struct ManageFeedsScreen: View {
     /// Following's empty state found no link on the clipboard, so the field opens ready for typing.
     let focusFeedURLOnAppear: Bool
     @State private var pendingUnfollowID: String?
+    private var pendingUnfollowTitle: String? {
+        model.feedSubscriptions.first { $0.id == pendingUnfollowID }.map { $0.source.title ?? $0.source.host }
+    }
     @State private var didFocusOnAppear = false
     @FocusState private var feedURLIsFocused: Bool
 
@@ -440,13 +465,13 @@ private struct ManageFeedsScreen: View {
         .accessibilityIdentifier("sources.manageFeeds.screen")
         .navigationTitle("Manage Feeds")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Unfollow this feed?", isPresented: Binding(
+        .confirmationDialog(FollowingRowActions.unfollowQuestion(showTitle: pendingUnfollowTitle), isPresented: Binding(
             get: { pendingUnfollowID != nil },
             set: { if !$0 { pendingUnfollowID = nil } }
         ), titleVisibility: .visible) {
             Button("Unfollow", role: .destructive) {
+                // The dialog clears pendingUnfollowID as it closes, so its title keeps the show's name.
                 if let id = pendingUnfollowID { model.unfollowSource(id: id) }
-                pendingUnfollowID = nil
             }
         } message: {
             Text("Items already in your Library will be kept.")
@@ -576,6 +601,7 @@ private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     let candidate: QuickAddCandidate
     let artwork: FollowingArtworkCache
+    @State private var confirmsUnfollow = false
     /// Why the entry is here, shown under Top (#484).
     var reason: String?
     var mark: FollowingPreferences.Mark?
@@ -638,12 +664,63 @@ private struct SourceInboxRow: View {
                 Label("Dismiss", systemImage: "xmark")
             }
             .tint(AppColors.plum)
+            // Second and not a full swipe: the first button above is the one a long swipe takes.
+            if subscription != nil {
+                Button { confirmsUnfollow = true } label: {
+                    Label("Unfollow", systemImage: "minus.circle")
+                }
+                .tint(AppColors.secondaryText)
+            }
             if isFeedEntry { lessButton.tint(AppColors.secondaryText) }
         }
-        .contextMenu { showMenu }
+        .contextMenu {
+            Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
+            if isFeedEntry {
+                Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
+            }
+            Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+            if let subscription {
+                Button { model.toggleMuteSource(id: subscription.id) } label: {
+                    Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
+                }
+                Button(role: .destructive) { confirmsUnfollow = true } label: {
+                    Label(FollowingRowActions.unfollowTitle(showTitle: subscriptionTitle), systemImage: "minus.circle")
+                }
+            }
+            showMenu
+        }
+        .confirmationDialog(
+            FollowingRowActions.unfollowQuestion(showTitle: subscriptionTitle),
+            isPresented: $confirmsUnfollow,
+            titleVisibility: .visible
+        ) {
+            Button("Unfollow", role: .destructive) {
+                if let subscription { model.unfollowSource(id: subscription.id) }
+            }
+        } message: {
+            Text("Items already in your Library will be kept.")
+        }
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
-        .accessibilityActions { showMenu }
+        .accessibilityActions {
+            // A Quick Folder file has no show to play from, mute or unfollow.
+            if let subscription {
+                Button("Play now", action: playNow)
+                Button("Mute this show") { model.toggleMuteSource(id: subscription.id) }
+                Button("Unfollow this show") { confirmsUnfollow = true }
+            }
+            showMenu
+        }
+    }
+
+    /// The followed show this entry came from; nil for a Quick Folder file.
+    private var subscription: FeedSubscription? {
+        guard case .followedSource(let entry) = candidate else { return nil }
+        return model.feedSubscriptions.first { $0.id == entry.subscriptionId }
+    }
+
+    private var subscriptionTitle: String? {
+        subscription.map { $0.source.title ?? $0.source.host }
     }
 
     /// Pin and "Less of this show" (#484), each undone from the same menu. Feed entries only.
@@ -782,6 +859,12 @@ private struct SourceInboxRow: View {
         case .localFile(let file): model.importQuickAccessFile(file, openWhenFinished: true)
         case .followedSource(let entry): model.importFollowedSourceEntry(entry, openWhenFinished: true)
         }
+    }
+
+    /// Adds the entry and starts it, landing on the playback screen (#478).
+    private func playNow() {
+        guard case .followedSource(let entry) = candidate else { return }
+        model.importFollowedSourceEntry(entry, playWhenFinished: true)
     }
 
     private func addInPlace() {

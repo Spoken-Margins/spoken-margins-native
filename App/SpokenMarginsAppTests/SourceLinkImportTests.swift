@@ -160,6 +160,35 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.id, "item-pill")
     }
 
+    /// #478: "Play now" on a Following entry adds it and starts it, so the listener hears audio after
+    /// two taps (long-press, Play now). Adding alone starts nothing.
+    func testPlayNowAddsAFollowedEpisodeAndStartsItButAddingAloneDoesNot() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        temporaryDirectories.append(root)
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audioURL = "https://audio.example/play-now.mp3"
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(requestId: "ignored", status: .playable, originalLink: SourceLink(url: audioURL, role: "discovery"), selectedCandidate: LinkResolutionCandidate(sourceLink: SourceLink(url: audioURL, role: "media"), title: "audio", durationMs: 300_000, audioURL: audioURL, confidence: 1)))
+        let model = Gate1AppModel(sourceLinkResolver: resolver, audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let subscription = FeedSubscription(id: "subscription", source: SourceIdentity(id: "source", kind: .podcastFeed, canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Actual Publisher"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        let added = FeedEntry(id: "added-entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/added", audioURL: audioURL, title: "Added only", bodyWordCount: 900, fullBody: String(repeating: "Podcast transcript. ", count: 450), episodeGUID: "added-1")
+        let played = FeedEntry(id: "played-entry", subscriptionId: subscription.id, canonicalURL: "https://publisher.example/played", audioURL: audioURL, title: "Play now entry", bodyWordCount: 900, fullBody: String(repeating: "Podcast transcript. ", count: 450), episodeGUID: "played-1")
+        try store.saveFeedEntry(added)
+        try store.saveFeedEntry(played)
+
+        model.importFollowedSourceEntry(added)
+        try await waitFor("added entry import") { model.libraryItems.contains { $0.title == added.title } }
+        XCTAssertNil(model.snapshot.sessionId, "adding alone starts nothing")
+
+        model.importFollowedSourceEntry(played, playWhenFinished: true)
+        try await waitFor("play now import", timeoutNanoseconds: 3_000_000_000) { model.snapshot.sessionId != nil }
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == played.title })
+        XCTAssertEqual(model.snapshot.itemId, row.id, "the entry that was imported is the one playing")
+    }
+
     func testRedirectedFollowedArticleAddAndOpenKeepTheirSignalEntry() async throws {
         for openWhenFinished in [false, true] {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
