@@ -523,17 +523,7 @@ final class SourceLinkImportTests: XCTestCase {
         )
         let store = makePayloadStore()
 
-        let handoff = try firstShareHandoff(candidates) { candidate in
-            if candidate.provider === bytesPage {
-                let pagePDF = try XCTUnwrap(SourceLinkShareRepresentation.pagePDF(fromPageResults: [
-                    "documentURL": Self.pmcPDFURL.absoluteString,
-                    SourceLinkShareRepresentation.pagePDFKey: pdf.base64EncodedString()
-                ]))
-                let copied = try store.savePDF(data: pagePDF.data, suggestedFilename: pagePDF.suggestedFilename)
-                return (copied, "share_sheet_pdf_file")
-            }
-            return (Self.pmcPDFURL, "share_sheet_pdf")
-        }
+        let handoff = try firstShareHandoff(candidates, store: store)
 
         XCTAssertEqual(handoff.surface, "share_sheet_pdf_file")
         XCTAssertTrue(store.isManagedPDFURL(handoff.url))
@@ -549,7 +539,30 @@ final class SourceLinkImportTests: XCTestCase {
             additionalIdentifiers: { _, _ in [] }
         )
 
-        let handoff = try firstShareHandoff(candidates) { _ in (Self.pmcPDFURL, "share_sheet_pdf") }
+        let handoff = try firstShareHandoff(candidates, store: makePayloadStore())
+
+        XCTAssertEqual(handoff.surface, "share_sheet_pdf")
+        XCTAssertEqual(handoff.url, Self.pmcPDFURL)
+    }
+
+    func testLinkFoundBeforeAnAttachmentThatYieldsNothingIsStillHandedOff() throws {
+        // The link waits while the second attachment is tried; when that yields nothing, the kept
+        // link is what the share hands off, not a failure (#271, #1049).
+        let linkOnlyPage = makePageResultsProvider(pdf: nil)
+        let emptyPage = NSItemProvider()
+        emptyPage.registerItem(forTypeIdentifier: ShareSheetRepresentationOrder.propertyListIdentifier) { completion, _, _ in
+            completion?([:] as NSDictionary, nil)
+        }
+        let candidates = ShareSheetRepresentationOrder.candidates(
+            from: [linkOnlyPage, emptyPage],
+            conforms: { $0.hasItemConformingToTypeIdentifier($1) },
+            additionalIdentifiers: { _, _ in [] }
+        )
+        XCTAssertEqual(candidates.map(\.identifier), [
+            ShareSheetRepresentationOrder.propertyListIdentifier, ShareSheetRepresentationOrder.propertyListIdentifier
+        ])
+
+        let handoff = try firstShareHandoff(candidates, store: makePayloadStore())
 
         XCTAssertEqual(handoff.surface, "share_sheet_pdf")
         XCTAssertEqual(handoff.url, Self.pmcPDFURL)
@@ -574,7 +587,7 @@ final class SourceLinkImportTests: XCTestCase {
         )
         XCTAssertEqual(candidates.map(\.identifier), [ShareSheetRepresentationOrder.pdfIdentifier])
 
-        let handoff = try firstShareHandoff(candidates) { _ in (Self.pmcPDFURL, "share_sheet_pdf") }
+        let handoff = try firstShareHandoff(candidates, store: makePayloadStore())
 
         XCTAssertEqual(handoff.surface, "share_sheet_pdf")
         XCTAssertEqual(handoff.url, Self.pmcPDFURL)
@@ -586,6 +599,37 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: ["documentURL": Self.pmcPDFURL.absoluteString]))
         XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: html]))
         XCTAssertNil(SourceLinkShareRepresentation.pagePDF(fromPageResults: [SourceLinkShareRepresentation.pagePDFKey: "not base64"]))
+    }
+
+    func testSharedTextIsHandedOffOnlyWhenNothingElseYieldsAndALinkBeatsIt() {
+        // Plain text another app shared waits behind every other candidate, links included (#662).
+        let textThenNothing: [ShareSheetCandidateOutcome<String>] = [.sharedText("text"), .nothing]
+        XCTAssertEqual(walkedShare(textThenNothing), "text", "text is used once nothing else yields")
+
+        let textLinkThenText: [ShareSheetCandidateOutcome<String>] = [.sharedText("first text"), .link("link"), .sharedText("second text")]
+        XCTAssertEqual(walkedShare(textLinkThenText), "link", "a link found in the share beats its text")
+
+        let textThenContent: [ShareSheetCandidateOutcome<String>] = [.sharedText("text"), .content("file")]
+        XCTAssertEqual(walkedShare(textThenContent), "file", "content found after the text still wins")
+
+        let twoTexts: [ShareSheetCandidateOutcome<String>] = [.sharedText("first text"), .sharedText("second text")]
+        XCTAssertEqual(walkedShare(twoTexts), "first text", "the first text is the one kept")
+
+        XCTAssertNil(walkedShare([.nothing, .nothing]), "nothing yielded means nothing is handed off")
+    }
+
+    /// Runs the share walk over canned outcomes, one per candidate, and returns what it handed off.
+    private func walkedShare(_ outcomes: [ShareSheetCandidateOutcome<String>]) -> String? {
+        let handedOff = WalkedShare()
+        ShareSheetCandidateWalk.run(
+            Array(outcomes.indices),
+            identifier: { outcomes[$0].isLinkOutcome ? ShareSheetRepresentationOrder.urlIdentifier : "public.plain-text" },
+            load: { index, report in report(outcomes[index]) },
+            completion: { result in
+                if case .success(let value)? = result { handedOff.value = value }
+            }
+        )
+        return handedOff.value
     }
 
     private static let pmcPDFURL = URL(string: "https://pmc.ncbi.nlm.nih.gov/articles/PMC13305550/pdf/f1000research-12-157633.pdf")!
@@ -613,23 +657,56 @@ final class SourceLinkImportTests: XCTestCase {
         return provider
     }
 
-    /// Walks the candidates the way the share extension does: a link waits in
-    /// `ShareSheetLinkFallback` while non-link candidates remain. `handoff` returns the
-    /// URL and handoff surface a candidate yields; `share_sheet_pdf_file` is a local copy.
+    /// Runs the share extension's own walk (`ShareSheetCandidateWalk`, #1049) over the candidates, loading
+    /// each real provider and reading what it carries the way the extension reads the same items: page
+    /// results with the PDF's bytes become a local copy (`share_sheet_pdf_file`), and a web URL, page results
+    /// without bytes, or a PDF representation that loads as a URL become a link (`share_sheet_pdf`). The walk,
+    /// not this helper, decides which one is handed off.
     private func firstShareHandoff(
         _ candidates: [ShareSheetRepresentationOrder.Candidate<NSItemProvider>],
-        handoff: (ShareSheetRepresentationOrder.Candidate<NSItemProvider>) throws -> (URL, String)
+        store: SourceLinkHandoffStore
     ) throws -> (url: URL, surface: String) {
-        var fallback = ShareSheetLinkFallback<(url: URL, surface: String)>()
-        let identifiers = candidates.map(\.identifier)
-        for (index, candidate) in candidates.enumerated() {
-            let found = try handoff(candidate)
-            let isLink = found.1 != "share_sheet_pdf_file"
-            if let accepted = fallback.accept((found.0, found.1), isLink: isLink, at: index, in: identifiers) {
-                return accepted
+        let loaded = expectation(description: "share walk finished")
+        let outcome = ShareWalkResult()
+        let store = SharedPDFStore(store: store)
+        ShareSheetCandidateWalk.run(
+            candidates.map { SharedCandidate(provider: $0.provider, identifier: $0.identifier) },
+            identifier: \.identifier,
+            load: { candidate, report in
+                candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, _ in
+                    report(Self.shareOutcome(of: item, identifier: candidate.identifier, store: store))
+                }
+            },
+            resume: { next in DispatchQueue.main.async(execute: next) },
+            completion: { result in
+                outcome.set(result)
+                loaded.fulfill()
             }
+        )
+        wait(for: [loaded], timeout: 5)
+        return try XCTUnwrap(outcome.result, "no candidate was handed off").get()
+    }
+
+    nonisolated private static func shareOutcome(
+        of item: NSSecureCoding?,
+        identifier: String,
+        store: SharedPDFStore
+    ) -> ShareSheetCandidateOutcome<(url: URL, surface: String)> {
+        if identifier == ShareSheetRepresentationOrder.pdfIdentifier {
+            return SourceLinkShareRepresentation.pdfFallbackLink(from: item).map { .link(($0, "share_sheet_pdf")) } ?? .nothing
         }
-        return try XCTUnwrap(fallback.deferredLink)
+        if let page = (item as? NSDictionary)?["NSExtensionJavaScriptPreprocessingResultsKey"] as? [String: Any] {
+            if let pagePDF = SourceLinkShareRepresentation.pagePDF(fromPageResults: page) {
+                do {
+                    return .content((try store.store.savePDF(data: pagePDF.data, suggestedFilename: pagePDF.suggestedFilename), "share_sheet_pdf_file"))
+                } catch {
+                    return .failed(error)
+                }
+            }
+            let link = (page["documentURL"] as? String).flatMap(URL.init(string:))
+            return link.map { .link(($0, "share_sheet_pdf")) } ?? .nothing
+        }
+        return SourceLinkShareRepresentation.url(from: item).map { .link(($0, "share_sheet_pdf")) } ?? .nothing
     }
 
     private func rankedShareIdentifiers(_ providers: [NSItemProvider]) -> [String] {
@@ -2219,5 +2296,42 @@ private final class RefusingPublisherPageExtractor: ReadablePageExtracting {
         calls += 1
         if let result { return result }
         throw URLError(.userAuthenticationRequired)
+    }
+}
+
+/// A share candidate the walk can carry across queues, as the extension's own `ProviderCandidate` is.
+private struct SharedCandidate: @unchecked Sendable {
+    let provider: NSItemProvider
+    let identifier: String
+}
+
+/// The test's handoff store, which the walk's loaders use from the providers' queues.
+private struct SharedPDFStore: @unchecked Sendable {
+    let store: SourceLinkHandoffStore
+}
+
+/// What the share walk handed off, set once from its completion.
+private final class ShareWalkResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Result<(url: URL, surface: String), Error>??
+
+    func set(_ result: Result<(url: URL, surface: String), Error>?) {
+        lock.withLock { stored = .some(result) }
+    }
+
+    var result: Result<(url: URL, surface: String), Error>? {
+        lock.withLock { stored ?? nil }
+    }
+}
+
+/// What a canned share walk handed off. The walk runs its steps inline, so no lock is needed.
+private final class WalkedShare: @unchecked Sendable {
+    var value: String?
+}
+
+private extension ShareSheetCandidateOutcome {
+    var isLinkOutcome: Bool {
+        if case .link = self { return true }
+        return false
     }
 }
