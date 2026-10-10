@@ -1528,8 +1528,10 @@ final class SupertonicSpeechTests: XCTestCase {
     /// a semaphore inside TextToSpeech while `axassetsd` loaded the synthesis provider. That is the
     /// simulator starting its speech service, not what these tests check, and it always landed on
     /// whichever stand-in test ran first. So each stand-in test first waits, once per run, for one
-    /// write to finish, with the longest allowance the plan permits. If the service never starts,
-    /// that test fails and says so; the others then run on as before.
+    /// write to finish, with the longest allowance the plan permits (180 s). The 100 s budget
+    /// leaves room for that test's own renders, which queue behind a stuck write and time out at
+    /// 30 s each, so a service that never starts fails the test with this message, not the clock.
+    /// The later stand-in tests then fail on their own 30 s timeouts.
     private func warmUpTheIOSVoice() async throws {
         guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
         executionTimeAllowance = 180
@@ -1540,11 +1542,11 @@ final class SupertonicSpeechTests: XCTestCase {
         do {
             _ = try await SystemVoiceChunkRenderer().render(
                 text: "The iOS voice is ready.", voiceIdentifier: nil,
-                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: 150
+                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: 100
             )
             print("#1230 iOS voice warm-up took \(Date().timeIntervalSince(started)) s")
         } catch {
-            XCTFail("the simulator's speech service did not finish a first iOS-voice write in 150 s: \(error)")
+            XCTFail("the simulator's speech service did not finish a first iOS-voice write in 100 s: \(error)")
         }
     }
 
