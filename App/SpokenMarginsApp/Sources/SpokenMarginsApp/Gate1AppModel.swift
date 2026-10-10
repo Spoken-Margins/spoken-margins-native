@@ -579,7 +579,7 @@ final class Gate1AppModel: ObservableObject {
     private var preparingLocalAudioMapItems = Set<String>()
     private var commentaryCuePlayer: AVAudioPlayer?
     #endif
-    private var announcedImportedInterjectionIDs: Set<String> = []
+    private var sharedMarginOffers = SharedMarginOfferQueue()
     private var sourceShouldResumeAfterImportedCommentary = false
     private var sourcePausedForImportedCommentaryPrompt = false
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
@@ -1717,7 +1717,7 @@ final class Gate1AppModel: ObservableObject {
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
         guard snapshot.itemId == itemID else { return }
         // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.
-        announcedImportedInterjectionIDs.insert(row.interjection.id)
+        sharedMarginOffers.markAnnounced(row.interjection.id)
         let targetID = "shared::\(row.layer.id)::\(row.interjection.id)"
         startMarginMoment(
             itemId: itemID,
@@ -4594,7 +4594,7 @@ final class Gate1AppModel: ObservableObject {
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
-        announcedImportedInterjectionIDs.removeAll()
+        sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
@@ -4619,7 +4619,7 @@ final class Gate1AppModel: ObservableObject {
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
         resetMixWithOtherAudioForNewSession()
-        announcedImportedInterjectionIDs.removeAll()
+        sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
         stopSpeechPreviews()
         do {
@@ -4649,7 +4649,7 @@ final class Gate1AppModel: ObservableObject {
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
-        announcedImportedInterjectionIDs.removeAll()
+        sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
         guard !requireTermsDecisionBeforePlayback(.resumeSession(session.id)) else { return }
         stopSpeechPreviews()
@@ -5284,7 +5284,7 @@ final class Gate1AppModel: ObservableObject {
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
             handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
-            announcedImportedInterjectionIDs.insert(prompt.id) // the rejoin mustn't offer it again
+            sharedMarginOffers.markAnnounced(prompt.id) // the rejoin mustn't offer it again
             stopImportedCommentaryPlayback(resumeSource: false)
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)
@@ -6151,6 +6151,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
+        sharedMarginOffers.remove(id: prompt.id)
         #if canImport(AVFoundation)
         guard let audioPath = prompt.interjection.audioPath,
               let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
@@ -6244,14 +6245,12 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
-        guard pendingImportedCommentary == nil,
-              playingImportedCommentary == nil,
-              current.itemId == selectedItem.id else { return }
-        let prompts = importedCommentaryPrompts(includeAnnounced: false)
-        let crossed = SharedMarginPrompts.crossed(prompts: prompts, previous: previous, current: current)
-        guard let prompt = crossed.first else { return }
-        crossed.forEach { announcedImportedInterjectionIDs.insert($0.id) }
-        guard prompt.layer.revealMode != .fresh else { return }
+        // Margins crossed together are offered one after another (#918).
+        guard let prompt = sharedMarginOffers.nextOffer(
+            previous: previous, current: current, selectedItemID: selectedItem.id,
+            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil,
+            prompts: importedCommentaryPrompts(includeAnnounced: true)
+        ) else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
     }
 
@@ -6259,7 +6258,7 @@ final class Gate1AppModel: ObservableObject {
         SharedMarginPrompts.prompts(
             layers: selectedItem.importedCommentaryLayers,
             recordsByLayerID: selectedItem.importedCommentaryInterjections,
-            announcedIDs: announcedImportedInterjectionIDs,
+            announcedIDs: includeAnnounced ? [] : sharedMarginOffers.announcedIDs, // nextOffer's autoclosure runs inside its modify of sharedMarginOffers
             includeAnnounced: includeAnnounced
         )
     }
@@ -6290,7 +6289,7 @@ final class Gate1AppModel: ObservableObject {
             return false
         }
         let sourceWasPlaying = snapshot.status.isPlaybackActive
-        announcedImportedInterjectionIDs.insert(prompt.id)
+        sharedMarginOffers.markAnnounced(prompt.id)
         if sourceWasPlaying { pause() }
         if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs {
             seekMedia(toMediaTimeMs: mediaTimeMs)
@@ -13293,12 +13292,8 @@ final class Gate1AppModel: ObservableObject {
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
         // Persisted transcripts have no byte-edition binding. Only this pass's
         // transient transcript is evidence for the supplied recipient file.
-        let work = layers.compactMap { layer -> (ImportedCommentaryLayer, [ImportedCommentaryInterjection])? in
-            guard layer.deletedAt == nil,
-                  layer.itemIdentity.itemType == .podcast,
-                  let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id),
-                  !records.isEmpty || ImportedMarginResends.hasLayerArtifacts(layer) else { return nil }
-            return (layer, records)
+        let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
+            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
         }
         guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
         if recipientTranscriptOverride == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
@@ -13351,57 +13346,12 @@ final class Gate1AppModel: ObservableObject {
                         )
                     )) ?? [:]
                     try Task.checkCancellation()
-                    let monotonicResolutions = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
-                        queries: queries,
-                        resolutions: Dictionary(uniqueKeysWithValues: records.map { record in
-                            let transcriptResolution = recipientTranscript.map {
-                                PodcastTranscriptAnchorResolver.resolve(
-                                    anchor: record.anchorEvidence,
-                                    recipientTimeline: $0
-                                )
-                            } ?? ImportedAnchorResolution(
-                                evidenceClass: .unresolved,
-                                algorithmVersion: "podcast-transcript-anchor.v1"
-                            )
-                            let acousticResolution = resolutions[record.packageScopedId]
-                                ?? ImportedAnchorResolution(evidenceClass: .unresolved)
-                            return (
-                                record.packageScopedId,
-                                PodcastAnchorFusionResolver.fuse(
-                                    transcript: transcriptResolution,
-                                    acoustic: acousticResolution
-                                )
-                            )
-                        })
-                    )
-                    let projectedResolutions = PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors(
-                        queries: queries,
-                        resolutions: monotonicResolutions
-                    )
-                    let fusedResolutions = PodcastAnchorFusionResolver.enforcingEditionRejection(
-                        acoustic: resolutions,
-                        resolutions: PodcastAnchorFusionResolver.enforcingMonotonicOrder(queries: queries, resolutions: projectedResolutions)
-                    )
-                    var updated = records
-                    for index in updated.indices {
-                        if let resolution = fusedResolutions[updated[index].packageScopedId] {
-                            updated[index].resolution = Self.podcastResolution(
-                                previous: updated[index].resolution, proposed: resolution,
-                                previousEdition: layer.resolvedRecipientEditionSHA256,
-                                currentEdition: recipientDigest, hasTranscript: recipientTranscript != nil)
-                        }
-                    }
-                    layer.resolvedRecipientEditionSHA256 = recipientDigest
-                    let resolutionValues = updated.map(\.resolution)
-                    if resolutionValues.allSatisfy(Self.isInlinePodcastResolution) {
-                        layer.sourceResolutionStatus = .resolved
-                    } else if resolutionValues.contains(where: { $0.evidenceClass == .ambiguous }) {
-                        layer.sourceResolutionStatus = .ambiguous
-                    } else if resolutionValues.allSatisfy({ $0.evidenceClass == .absentFromRecipientEdition }) {
-                        layer.sourceResolutionStatus = .unavailable
-                    } else {
-                        layer.sourceResolutionStatus = .contextOnly
-                    }
+                    let fusedResolutions = ImportedPodcastPlacement.fuse(
+                        queries: queries, records: records, acoustic: resolutions,
+                        recipientTranscript: recipientTranscript)
+                    let updated = ImportedPodcastPlacement.apply(
+                        fusedResolutions, to: records, layer: &layer,
+                        recipientDigest: recipientDigest, hasTranscript: recipientTranscript != nil)
                     var mapOutcome: SharedListeningMapPlacement.Outcome?
                     if layer.listeningMapProposals?.first != nil, layer.editionFingerprintSpines?.first == nil {
                         mapOutcome = .notPlaced(.init(sceneId: nil, sceneLabel: nil, reason: .noEvidence))
@@ -13491,21 +13441,9 @@ final class Gate1AppModel: ObservableObject {
         store: SQLiteSessionStore
     ) -> Bool {
         guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
-        return layers.contains { layer in
-            guard layer.deletedAt == nil,
-                  layer.itemIdentity.itemType == .podcast,
-                  let records = try? store.loadImportedCommentaryInterjections(layerId: layer.id) else {
-                return false
-            }
-            return records.contains { record in
-                !Self.isInlinePodcastResolution(record.resolution)
-                    && PodcastTranscriptAnchorResolver.hasUsableContext(record.anchorEvidence)
-            }
-        }
-    }
-
-    private nonisolated static func isInlinePodcastResolution(_ resolution: ImportedAnchorResolution) -> Bool {
-        PodcastAnchorFusionResolver.isInlinePlacement(resolution)
+        return ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
+            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
+        }.contains { $0.1.contains(where: ImportedPodcastPlacement.recordNeedsTranscript) }
     }
 
     private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {

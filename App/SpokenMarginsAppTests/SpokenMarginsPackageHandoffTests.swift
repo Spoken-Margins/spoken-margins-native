@@ -463,15 +463,15 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         let previous = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 45_000)
         let absent = ImportedAnchorResolution(evidenceClass: .unresolved)
         for (old, current) in [("old", "new"), (nil, "new"), (nil, nil)] as [(String?, String?)] {
-            let result = Gate1AppModel.podcastResolution(previous: previous, proposed: absent,
+            let result = PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: absent,
                 previousEdition: old, currentEdition: current, hasTranscript: false)
             XCTAssertEqual(result.evidenceClass, .unresolved)
             XCTAssertNil(result.localMediaTimeMs)
         }
-        XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: absent,
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: absent,
             previousEdition: "same", currentEdition: "same", hasTranscript: false), previous)
         let moved = ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 65_000)
-        XCTAssertEqual(Gate1AppModel.podcastResolution(previous: previous, proposed: moved,
+        XCTAssertEqual(PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: moved,
             previousEdition: "old", currentEdition: "new", hasTranscript: true), moved)
     }
 
