@@ -23,6 +23,9 @@ struct ExperienceSourcesScreen: View {
     @State private var focusFeedURLOnManage = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
+    /// The swipe hint shows once, ever (#478); a per-viewer flag. It stays up for the rest of that visit.
+    @AppStorage("following.swipeHintSeen") private var swipeHintSeen = false
+    @State private var swipeHintShownThisVisit = false
 
     var body: some View {
         NavigationStack {
@@ -194,6 +197,10 @@ struct ExperienceSourcesScreen: View {
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
+                if showsSwipeHint {
+                    swipeHint
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
                 ForEach(filteredCandidates) { candidate in
                     SourceInboxRow(candidate: candidate, artwork: artwork)
                         .listRowInsets(EdgeInsets(
@@ -230,6 +237,21 @@ struct ExperienceSourcesScreen: View {
             default: false
             }
         }
+    }
+
+    /// Shown the first time Following lists entries, and for the rest of that visit (#478).
+    private var showsSwipeHint: Bool { !swipeHintSeen || swipeHintShownThisVisit }
+
+    private var swipeHint: some View {
+        Label(FollowingRowActions.swipeHint, systemImage: "hand.draw")
+            .font(.footnote)
+            .foregroundStyle(AppColors.secondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("sources.swipeHint")
+            .onAppear {
+                swipeHintShownThisVisit = true
+                swipeHintSeen = true
+            }
     }
 
     private var isNarrowed: Bool { kind != nil || subject != nil }
@@ -303,6 +325,9 @@ private struct ManageFeedsScreen: View {
     /// Following's empty state found no link on the clipboard, so the field opens ready for typing.
     let focusFeedURLOnAppear: Bool
     @State private var pendingUnfollowID: String?
+    private var pendingUnfollowTitle: String? {
+        model.feedSubscriptions.first { $0.id == pendingUnfollowID }.map { $0.source.title ?? $0.source.host }
+    }
     @State private var didFocusOnAppear = false
     @FocusState private var feedURLIsFocused: Bool
 
@@ -339,7 +364,7 @@ private struct ManageFeedsScreen: View {
         .accessibilityIdentifier("sources.manageFeeds.screen")
         .navigationTitle("Manage Feeds")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Unfollow this feed?", isPresented: Binding(
+        .confirmationDialog(FollowingRowActions.unfollowQuestion(showTitle: pendingUnfollowTitle), isPresented: Binding(
             get: { pendingUnfollowID != nil },
             set: { if !$0 { pendingUnfollowID = nil } }
         ), titleVisibility: .visible) {
@@ -475,6 +500,7 @@ private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     let candidate: QuickAddCandidate
     let artwork: FollowingArtworkCache
+    @State private var confirmsUnfollow = false
 
     var body: some View {
         Button(action: addAndOpen) {
@@ -526,9 +552,60 @@ private struct SourceInboxRow: View {
                 Label("Dismiss", systemImage: "xmark")
             }
             .tint(AppColors.plum)
+            // Second and not a full swipe: the first button above is the one a long swipe takes.
+            if subscription != nil {
+                Button { confirmsUnfollow = true } label: {
+                    Label("Unfollow", systemImage: "minus.circle")
+                }
+                .tint(AppColors.secondaryText)
+            }
+        }
+        .contextMenu {
+            Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
+            if isFollowedEntry {
+                Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
+            }
+            Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+            if let subscription {
+                Button { model.toggleMuteSource(id: subscription.id) } label: {
+                    Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
+                }
+                Button(role: .destructive) { confirmsUnfollow = true } label: {
+                    Label(FollowingRowActions.unfollowTitle(showTitle: subscriptionTitle), systemImage: "minus.circle")
+                }
+            }
+        }
+        .confirmationDialog(
+            FollowingRowActions.unfollowQuestion(showTitle: subscriptionTitle),
+            isPresented: $confirmsUnfollow,
+            titleVisibility: .visible
+        ) {
+            Button("Unfollow", role: .destructive) {
+                if let subscription { model.unfollowSource(id: subscription.id) }
+            }
+        } message: {
+            Text("Items already in your Library will be kept.")
         }
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
+        .accessibilityAction(named: "Play now") { if isFollowedEntry { playNow() } }
+        .accessibilityAction(named: "Mute this show") { if let subscription { model.toggleMuteSource(id: subscription.id) } }
+        .accessibilityAction(named: "Unfollow") { if subscription != nil { confirmsUnfollow = true } }
+    }
+
+    private var isFollowedEntry: Bool {
+        if case .followedSource = candidate { return true }
+        return false
+    }
+
+    /// The followed show this entry came from; nil for a Quick Folder file.
+    private var subscription: FeedSubscription? {
+        guard case .followedSource(let entry) = candidate else { return nil }
+        return model.feedSubscriptions.first { $0.id == entry.subscriptionId }
+    }
+
+    private var subscriptionTitle: String? {
+        subscription.map { $0.source.title ?? $0.source.host }
     }
 
     private var title: String {
@@ -633,6 +710,12 @@ private struct SourceInboxRow: View {
         case .localFile(let file): model.importQuickAccessFile(file, openWhenFinished: true)
         case .followedSource(let entry): model.importFollowedSourceEntry(entry, openWhenFinished: true)
         }
+    }
+
+    /// Adds the entry and starts it, landing on the playback screen (#478).
+    private func playNow() {
+        guard case .followedSource(let entry) = candidate else { return }
+        model.importFollowedSourceEntry(entry, playWhenFinished: true)
     }
 
     private func addInPlace() {
