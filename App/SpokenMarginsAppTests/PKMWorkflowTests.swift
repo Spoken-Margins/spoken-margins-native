@@ -116,6 +116,26 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.filter { $0.id == edition.itemID }.count, 1)
     }
 
+    func testShortcutIntentImportsFromJSONTextWithNoFile() async throws {
+        // #574: the share-sheet shortcut passes the edition's JSON, with no file picker.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        let priorModel = ListeningEditionShortcutBridge.model
+        ListeningEditionShortcutBridge.model = model
+        defer { ListeningEditionShortcutBridge.model = priorModel }
+        let edition = ListeningEdition(title: "Shortcut text article", text: "Source " + UUID().uuidString,
+            generator: "Ask ChatGPT", overview: "Overview", scenes: [.init(title: "One", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        defer { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(edition.itemID)) }
+        let intent = ImportListeningEditionIntent()
+        intent.json = String(decoding: try edition.encoded(), as: UTF8.self)
+        _ = try await intent.perform()
+        XCTAssertEqual(model.selectedItem.id, edition.itemID)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID), edition)
+        let empty = ImportListeningEditionIntent()
+        do { _ = try await empty.perform(); XCTFail("an import with no file and no text must fail") }
+        catch { XCTAssertTrue((error as? EditionError)?.errorDescription?.contains("Assemble Listening Edition") == true) }
+    }
+
     // MARK: - Every spoken Margin reaches the notes folder (#171)
 
     private func spokenMargin(id: String, sessionId: String, itemId: String, transcript: String?) -> Interjection {
