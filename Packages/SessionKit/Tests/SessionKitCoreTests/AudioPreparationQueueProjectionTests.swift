@@ -134,6 +134,43 @@ final class AudioPreparationQueueProjectionTests: XCTestCase {
         XCTAssertEqual(withoutManifest.plannedChunkCount, 2)
     }
 
+    func testARowShowsTheJobsFailureBeforeTheManifestsAndFallsBackToTheRequestTime() throws {
+        var failed = job("a", requestedAt: 7)
+        failed.lastFailureCode = "job_failure"
+        var broken = manifest("a", state: .failed, updatedAt: 40)
+        broken.failureCode = "manifest_failure"
+        let both = try XCTUnwrap(AudioPreparationQueueProjection.queueRows(
+            jobs: [failed], manifestsById: ["manifest-a": broken], titlesByItemId: [:], activeItemId: nil).first)
+        XCTAssertEqual(both.failureCode, "job_failure")
+        XCTAssertEqual(both.updatedAt, date(40))
+
+        failed.lastFailureCode = nil
+        let manifestOnly = try XCTUnwrap(AudioPreparationQueueProjection.queueRows(
+            jobs: [failed], manifestsById: ["manifest-a": broken], titlesByItemId: [:], activeItemId: nil).first)
+        XCTAssertEqual(manifestOnly.failureCode, "manifest_failure")
+
+        let neither = try XCTUnwrap(AudioPreparationQueueProjection.queueRows(
+            jobs: [failed], manifestsById: [:], titlesByItemId: [:], activeItemId: nil).first)
+        XCTAssertEqual(neither.updatedAt, date(7), "no manifest: the request time")
+        XCTAssertNil(neither.failureCode)
+    }
+
+    func testAProgressUpdateDropsCancelledJobsAndShowsTheCurrentJobsFailure() throws {
+        var current = job("a", requestedAt: 3)
+        current.lastFailureCode = "paused"
+        let other = job("b", requestedAt: 2)
+        var cancelled = other
+        cancelled.isCancelled = true
+        let shown = rows([current, other])
+        let updated = AudioPreparationQueueProjection.rows(
+            shown, afterProgressOn: manifest("a", state: .preparing), currentJob: current,
+            remainingJobs: [current, cancelled], activeItemId: nil)
+        XCTAssertEqual(updated.map(\.itemId), ["a"], "a cancelled job leaves the queue")
+        XCTAssertEqual(updated.first?.failureCode, "paused")
+        XCTAssertEqual(updated.first?.title, shown.first?.title)
+        XCTAssertEqual(updated.first?.requestedAt, shown.first?.requestedAt)
+    }
+
     func testAProgressUpdateKeepsOnlyRemainingJobsAndUpdatesTheOneBeingPrepared() throws {
         let first = job("a", requestedAt: 3)
         let second = job("b", requestedAt: 2)
