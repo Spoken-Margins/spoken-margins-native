@@ -8825,7 +8825,7 @@ final class Gate1AppModel: ObservableObject {
                     }
                 },
                 onGenerationProgress: { [weak self] progress in Task { @MainActor [weak self] in self?.updateOnDeviceSpeechGenerationProgress(progress) } },
-                onChunkHandOverGap: { [weak self] gap in Task { @MainActor [weak self] in self?.diagnostics["longestChunkHandOverGap"] = gap.summary } },
+                onChunkHandOverGap: { [weak self] gap in Task { @MainActor [weak self] in self?.runtimeDiagnostics.recordChunkHandOverGap(gap) } },
                 onPreparationPlan: { await hooks.planned(itemId: $0, articleIdentity: $1, plan: $2) },
                 onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
                 articleText: { hooks.articleText(itemId: $0) },

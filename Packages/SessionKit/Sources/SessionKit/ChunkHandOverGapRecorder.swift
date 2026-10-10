@@ -76,3 +76,23 @@ public struct ChunkHandOverGapRecorder: Sendable {
         pending = nil
     }
 }
+
+/// The longest hand-over gap of a run, across every `ChunkHandOverGapRecorder` (#586).
+///
+/// A recorder lives in one playback client, and the app builds a new client when the listener
+/// changes the voice or a provider setting. Each new recorder starts empty, so the gap shown in
+/// diagnostics has to be compared with the one already shown, or a 0.30 s seam on the new client
+/// would replace a 2.4 s stall from before the change.
+public struct LongestChunkHandOverGap: Sendable {
+    public private(set) var gap: ChunkHandOverGapRecorder.Gap?
+
+    public init() {}
+
+    /// Keeps `candidate` when it is longer than every gap kept so far. Returns whether it was kept.
+    @discardableResult
+    public mutating func keep(_ candidate: ChunkHandOverGapRecorder.Gap) -> Bool {
+        guard candidate.seconds > (gap?.seconds ?? -1) else { return false }
+        gap = candidate
+        return true
+    }
+}
