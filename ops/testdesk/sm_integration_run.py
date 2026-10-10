@@ -457,7 +457,7 @@ class Ops:
         cmd = ['.venv/bin/python', 'scripts/verify-tests.py', '--plan', plan,
                '--output', str(output), '--simulator-slot-fd', str(fds[0])]
         cmd += [arg for test in only for arg in ('--only-testing', test)]
-        env = {k: v for k, v in os.environ.items() if k not in ('CODEX_SANDBOX', lane_slots.BUILD_NEEDS_ROOM_ENV)}
+        env = {k: v for k, v in os.environ.items() if k != 'CODEX_SANDBOX'}
         output.parent.mkdir(parents=True, exist_ok=True)
         # verify-tests owns timeouts, crash handling and shutdown; no outer timeout may cut its cleanup.
         with (output.parent / f'{output.name}-runner.log').open('w') as log:
