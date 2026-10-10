@@ -112,6 +112,16 @@ final class MixedPlaybackAudioSessionTests: XCTestCase {
         try PlaybackAudioSessionPolicy.releaseDucking()
         XCTAssertEqual(session.category, .playAndRecord)
         XCTAssertFalse(session.categoryOptions.contains(.mixWithOthers))
+
+        // APA-07 (#1042): a release only ever acts on a session that lowers other audio, so the
+        // recording session above returns early whatever its category. A Margin recording session
+        // that lowers other audio is the case the category check protects: a stray release must
+        // leave it recording, with its options as they were.
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.duckOthers, .mixWithOthers])
+        XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "precondition: the recording session lowers other audio")
+        try PlaybackAudioSessionPolicy.releaseDucking()
+        XCTAssertEqual(session.category, .playAndRecord, "a release must not turn the recording session into playback")
+        XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "a release leaves a recording session's options alone")
     }
 
     private func exercisePolicy(_ client: AudioPlaybackClient, targetId: String) throws {
