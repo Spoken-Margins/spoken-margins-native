@@ -289,6 +289,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.exportShareCandidates.isEmpty)
     }
 
+    /// #1043 APM-12: the Margins tab's "export this item" was tested with one session, so any pick of session
+    /// passed. After "play again" the newest session is empty; the export must still open the session that
+    /// holds the Margins.
+    func testItemMarginsExportUsesTheSessionWithMarginsWhenTheNewestHasNone() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "item-export-session-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "First private thought")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second selected thought")
+        let withMargins = try XCTUnwrap(model.snapshot.sessionId)
+        model.startNewSession(id: "item-pill")
+        let newest = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(newest, withMargins)
+        // Both sessions are saved within the same second, so make the empty one sort first for certain.
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        var newer = try XCTUnwrap(store.loadSession(id: newest))
+        newer.updatedAt = Date().addingTimeInterval(60)
+        try store.saveSession(newer)
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
+        XCTAssertEqual(try store.loadSessions(itemId: "item-pill").first?.id, newest, "the newest session has no Margins")
+
+        model.openMarginItemExport(itemID: row.interjection.itemId)
+
+        XCTAssertEqual(model.screen, .export)
+        XCTAssertEqual(model.exportSessionId, withMargins)
+        XCTAssertEqual(Set(model.exportShareCandidates.map(\.sessionId)), [withMargins])
+        XCTAssertEqual(model.exportShareCandidates.count, 2)
+        model.prepareExportShareInterjections()
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+        XCTAssertEqual(model.snapshot.sessionId, newest, "opening the export leaves the playing session alone")
+    }
+
     func testChapterFromCompletedSessionStartsReplayWithoutChangingCompletedHistory() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
