@@ -27,6 +27,11 @@ actor OfflineStorageLedger {
     private(set) var lastReconciliation: OfflineLedgerReconciliation?
     /// The render signature prepared chunks are current for; the rest are stale (#281).
     private var currentPreparedChunkDigest: String?
+    /// Files a writer still has to read, as paths under the root, by the reservation it holds (#645):
+    /// a prepared article's committed chunks while its next chunk renders or while they're assembled.
+    /// Eviction skips them until that reservation is committed, released or expires. By path, so a
+    /// row adopted for the same file is spared too. Kept in memory only: a relaunch ends every writer.
+    private var pinnedPaths: [String: Set<String>] = [:]
 
     init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
         self.repository = repository
@@ -34,10 +39,16 @@ actor OfflineStorageLedger {
         self.fileManager = fileManager
     }
 
-    func reserve(ownerId: String, byteCount: Int64, lifetime: TimeInterval = 60 * 60) throws -> OfflineStorageReservation {
+    /// `pinning` names files (paths under the root) the writer reads before it commits. They're
+    /// never evicted to make room, for this reservation or any other, while it's held; if the room
+    /// can't be found elsewhere the reservation is refused and the files stay (#645).
+    func reserve(
+        ownerId: String, byteCount: Int64, lifetime: TimeInterval = 60 * 60, pinning: Set<String> = []
+    ) throws -> OfflineStorageReservation {
         let now = Date()
         for expired in try repository.loadOfflineStorageReservations() where expired.expiresAt <= now {
             try repository.deleteOfflineStorageReservation(id: expired.id)
+            pinnedPaths[expired.id] = nil
         }
         let budget = try repository.loadOfflineStorageBudget()
         var assets = try repository.loadOwnedOfflineAssets()
@@ -55,7 +66,7 @@ actor OfflineStorageLedger {
             }
         }
         if deficit > 0 {
-            var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets)
+            var (plan, references) = try evictionPlan(requiredBytes: deficit, assets: assets, alsoPinning: pinning)
             guard plan.reclaimableBytes >= deficit else {
                 throw OfflineStorageLedgerError.insufficientSpace(
                     requiredBytes: requested,
@@ -86,6 +97,7 @@ actor OfflineStorageLedger {
             expiresAt: now.addingTimeInterval(lifetime)
         )
         try repository.saveOfflineStorageReservation(reservation)
+        if !pinning.isEmpty { pinnedPaths[reservation.id] = pinning }
         return reservation
     }
 
@@ -111,11 +123,13 @@ actor OfflineStorageLedger {
         }
         try repository.saveOwnedOfflineAsset(asset)
         try repository.deleteOfflineStorageReservation(id: reservationId)
+        pinnedPaths[reservationId] = nil
         if let overflowReservationId { try repository.deleteOfflineStorageReservation(id: overflowReservationId) }
     }
 
     func release(reservationId: String) throws {
         try repository.deleteOfflineStorageReservation(id: reservationId)
+        pinnedPaths[reservationId] = nil
     }
 
     func protect(assetId: String, reason: OfflineProtectionReason, enabled: Bool) throws {
@@ -301,14 +315,17 @@ actor OfflineStorageLedger {
     }
 
     /// Eviction never leaves an item pointing at a deleted file (#237), so a file an item plays as
-    /// its only audio isn't a candidate.
+    /// its only audio isn't a candidate. Nor is a file a held reservation pins (#645).
     private func evictionPlan(
-        requiredBytes: Int64, assets: [OwnedOfflineAsset]
+        requiredBytes: Int64, assets: [OwnedOfflineAsset], alsoPinning: Set<String> = []
     ) throws -> (OfflineEvictionPlan, PreparedNarrationFallback.FileReferences) {
         let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
+        let pinned = pinnedPaths.values.reduce(alsoPinning) { $0.union($1) }
         let candidates = assets.filter { asset in
-            !asset.isAutomaticallyEvictable
-                || references.release(rootDirectory.appending(path: asset.relativePath)) != .keep
+            !pinned.contains(asset.relativePath) && (
+                !asset.isAutomaticallyEvictable
+                    || references.release(rootDirectory.appending(path: asset.relativePath)) != .keep
+            )
         }
         return (OfflineStoragePlanner.evictionPlan(requiredBytes: requiredBytes, assets: candidates), references)
     }

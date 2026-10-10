@@ -17,7 +17,13 @@ public enum SharedPacketItemMatcher {
                 localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest(item))
             )
         }
-        return matches.count == 1 ? matches[0].id : nil
+        if matches.count == 1 { return matches[0].id }
+        // The listener linked their own file to this episode, and a streamed copy of it exists too (an earlier
+        // link-shared packet added one). The file they chose wins; any other owned file that matches, or a
+        // second linked file, is still ambiguous (#755).
+        let ownedFiles = matches.filter { $0.mediaType == "audiobook" }
+        if ownedFiles.count == 1, ownedFiles[0].linkedEpisode != nil { return ownedFiles[0].id }
+        return nil
     }
 
     /// How a Library item describes itself when it is compared with a packet's item.
@@ -25,6 +31,43 @@ public enum SharedPacketItemMatcher {
         SharedItemIdentityBuilder.localIdentity(
             for: item, localAudioDigest: item.mediaType == "audiobook" ? ownedAudiobookDigest : nil
         )
+    }
+
+    public static func layerHasValidItemAssociation(
+        _ layer: ImportedCommentaryLayer,
+        item: Item?,
+        ownedAudiobookDigest: String?
+    ) -> Bool {
+        guard layer.sourceResolutionStatus != .wrongSource,
+              layer.itemId != nil,
+              let item else { return false }
+        guard item.deletedAt == nil else { return false }
+        return ImportedItemResolver.canRepresentSameWork(
+            layer.itemIdentity,
+            localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest)
+        )
+    }
+
+    /// The layers that sit on a linked file only because of its episode link (#755): ones the file would no longer
+    /// represent once the link is gone. A layer from a packet that names the exact file by checksum does not
+    /// depend on the link, so it never stops the listener from fixing a wrong one.
+    public static func layersDependingOnEpisodeLink(
+        _ layers: [ImportedCommentaryLayer],
+        item: Item,
+        ownedAudiobookDigest: String?
+    ) -> [ImportedCommentaryLayer] {
+        guard item.linkedEpisode != nil else { return [] }
+        let withoutLink = localIdentity(
+            for: ImportedFileEpisodeLink.unlink(item), ownedAudiobookDigest: ownedAudiobookDigest
+        )
+        return layers.filter { $0.deletedAt == nil && !ImportedItemResolver.canRepresentSameWork($0.itemIdentity, withoutLink) }
+    }
+
+    public static func ownedAudiobookDigest(for item: Item, assets: [OwnedOfflineAsset]) -> String? {
+        guard item.mediaType == "audiobook" else { return nil }
+        return assets.first(where: {
+            $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid
+        })?.checksumSHA256
     }
 
     public static func itemType(for item: Item) -> SharedItemType {

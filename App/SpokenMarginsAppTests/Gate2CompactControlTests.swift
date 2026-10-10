@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import UIKit
 import XCTest
 @testable import SessionKit
@@ -304,6 +305,88 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertNil(state.nextChapterId)
         XCTAssertNil(state.nextNavigationKind)
         XCTAssertNil(state.sharedMarginSenderLabel)
+        // A card published by a build without Skim destinations (#115) still decodes.
+        XCTAssertNil(state.skimForwardDestinationMs)
+        XCTAssertNil(state.skimBackwardDestinationMs)
+    }
+
+    func testLiveActivityContentStateCarriesSkimDestinations() throws {
+        let original = Gate2LiveActivityAttributes.ContentState(
+            title: "Episode",
+            chapterTitle: "Opening",
+            status: "playing",
+            phase: "itemPlayback",
+            progressPercent: 42,
+            isRecording: false,
+            skimForwardDestinationMs: 1_122_000,
+            skimBackwardDestinationMs: 725_000
+        )
+
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(original)
+        )
+
+        XCTAssertEqual(decoded.skimForwardDestinationMs, 1_122_000)
+        XCTAssertEqual(decoded.skimBackwardDestinationMs, 725_000)
+    }
+
+    /// #115: the Lock Screen's Skim buttons say where they land, with the playback screen's times.
+    func testSkimButtonLabelsSayWhereSkimLands() {
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 1_122_000, backward: false), "Skim forward to 18:42")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 725_000, backward: true), "Skim back to 12:05")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: 3_909_000, backward: false), "Skim forward to 1:05:09")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: false), "Skim forward by scene summary")
+        XCTAssertEqual(SkimDestinationLabel.accessibilityLabel(destinationMs: nil, backward: true), "Skim backward by scene summary")
+        // The playback screen keeps its titles, now from the same formatter.
+        XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 1_122_000, backward: false), "Skim to 18:42")
+        XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: 725_000, backward: true), "Back to 12:05")
+        XCTAssertEqual(PlaybackQualityPresentation.skimTitle(destinationMs: nil, backward: false), "Skim Forward")
+    }
+
+    func testLiveActivityContentStateCarriesTheMicrophoneStateAndDefaultsToCapturing() throws {
+        let stopped = Gate2LiveActivityAttributes.ContentState(
+            title: "Pill",
+            chapterTitle: "Opening",
+            status: "recording",
+            phase: "recordingInterjection",
+            progressPercent: 42,
+            isRecording: true,
+            microphone: .stopped
+        )
+        let decoded = try JSONDecoder().decode(
+            Gate2LiveActivityAttributes.ContentState.self,
+            from: JSONEncoder().encode(stopped)
+        )
+        XCTAssertEqual(decoded.microphone, .stopped)
+
+        let legacy = try JSONDecoder().decode(Gate2LiveActivityAttributes.ContentState.self, from: Data("""
+        {"title":"Pill","chapterTitle":"Opening","status":"recording","phase":"recordingInterjection","progressPercent":42,"isRecording":true}
+        """.utf8))
+        XCTAssertEqual(legacy.microphone, .capturing, "a payload from before this field behaves as it did")
+    }
+
+    func testLiveActivityStopsSayingRecordWhenTheMicrophoneStops() {
+        let liveActivity = RecordingLiveActivityController()
+        let controller = Gate2CompactControlController(liveActivity: liveActivity)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient(),
+            gate2CompactControls: controller
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(liveActivity.lastMicrophone, .capturing, "a recorder that can report nothing counts as capturing")
+
+        controller.setMicrophone(.stopped)
+
+        XCTAssertEqual(liveActivity.lastMicrophone, .stopped, "the card is republished at once, not at the next playback tick")
+
+        controller.setMicrophone(.capturing)
+
+        XCTAssertEqual(liveActivity.lastMicrophone, .capturing)
     }
 
     func testLiveActivityContentStateCarriesPendingSharedMargin() throws {
@@ -853,6 +936,34 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true)
         XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipForward) == true)
+
+        // #115: the destinations ride along for the Lock Screen, only for a Skim that is offered.
+        controller.update(snapshot: appSnapshot, skimForwardDestinationMs: 90_000, skimBackwardDestinationMs: 30_000)
+        XCTAssertEqual(controller.snapshot?.skimForwardDestinationMs, 90_000)
+        XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
+        appSnapshot.canSkimForward = false
+        controller.update(snapshot: appSnapshot, skimForwardDestinationMs: 90_000, skimBackwardDestinationMs: 30_000)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+        XCTAssertNil(controller.snapshot?.skimForwardDestinationMs, "a hidden Skim shows no stale time")
+        XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
+
+        // #1044 APO-13: each Skim follows its own readiness, and neither is offered while recording.
+        appSnapshot.canSkimBackward = false
+        appSnapshot.canSkimForward = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered although the app says it can't skim back")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+
+        appSnapshot.canSkimBackward = true
+        appSnapshot.isRecording = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered while a Margin is recording")
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true,
+                       "Skim forward is offered while a Margin is recording")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true,
+                      "the overlay only removes Skim; time skips are not its to change")
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {
@@ -905,7 +1016,7 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lockScreenLifecycleRefresh"], model.snapshot.targetType ?? "none")
     }
 
-    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() {
+    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() throws {
         let profile = RuntimeCapabilityProfile(
             id: "mixing-now-playing",
             displayName: "Mixing Now Playing",
@@ -926,7 +1037,8 @@ final class Gate2CompactControlTests: XCTestCase {
             )
         ])
         let engine = SessionEngine(profile: profile, repository: repository, audio: NoopAudioPlaybackClient())
-        _ = try? engine.startSession(itemId: "text")
+        let started = try engine.startSession(itemId: "text")
+        let sessionId = try XCTUnwrap(started.sessionId, "the text session did not start")
         let controller = Gate2CompactControlController(liveActivity: RecordingLiveActivityController())
         controller.configure(
             canonicalRuntime: engine,
@@ -941,6 +1053,14 @@ final class Gate2CompactControlTests: XCTestCase {
 
         controller.setNowPlayingEnabled(true)
         XCTAssertEqual(controller.diagnostics()["gate2NowPlayingEnabled"], "true")
+        // #1044 APO-07: turning mixing off again must bring the Lock Screen card back, not just flip the flag.
+        let restored = controller.diagnostics()["gate2NowPlaying"] ?? "missing"
+        XCTAssertTrue(restored.hasPrefix("live_speech_"), "Now Playing was not republished after the restore: \(restored)")
+        XCTAssertEqual(
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyExternalContentIdentifier] as? String,
+            sessionId,
+            "the system Now Playing card does not show this session again"
+        )
     }
 
     func testPeriodicCompactRefreshIgnoresRawElapsedTimeButRetainsMeaningfulChanges() {
@@ -1015,14 +1135,17 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
     private(set) var lastStaleDate: Date?
     private(set) var lastSharedMarginPrompt: Gate2SharedMarginActivityPrompt?
     private(set) var lastUpcomingSharedMargins: [Gate2LiveActivityNavigationEntry] = []
+    private(set) var lastMicrophone = Gate2LiveActivityMicrophone.capturing
 
     func publish(
         _ snapshot: CompactControlSnapshot,
         staleDate: Date?,
         sharedMarginPrompt: Gate2SharedMarginActivityPrompt?,
-        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry]
+        upcomingSharedMargins: [Gate2LiveActivityNavigationEntry],
+        microphone: Gate2LiveActivityMicrophone
     ) {
         publishCallCount += 1
+        lastMicrophone = microphone
         lastStaleDate = staleDate
         lastSharedMarginPrompt = sharedMarginPrompt
         lastUpcomingSharedMargins = upcomingSharedMargins

@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitSharing
 import UniformTypeIdentifiers
 #if canImport(UIKit)
 import UIKit
@@ -32,7 +33,8 @@ struct ExportScreen: View {
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(PrimaryButtonStyle())
-                            .disabled(shareableMarginCount == 0)
+                            // Stay tappable while Margins exist but lack words: the sheet says why they're left out.
+                            .disabled(model.exportShareCandidates.isEmpty)
                         }
                     }
                     Text("Export listening session")
@@ -181,7 +183,9 @@ struct ExportScreen: View {
     }
 
     private var shareableMarginCount: Int {
-        model.exportShareCandidates.count
+        SharedMarginTextRequirement.initiallyIncluded(model.exportShareCandidates).filter {
+            SharedMarginTextRequirement.hasReviewedText(SharedMarginTextRequirement.initialReviewedText(for: $0))
+        }.count
     }
 
     #if canImport(UIKit)
@@ -195,6 +199,22 @@ struct ExportScreen: View {
 }
 
 #if canImport(UIKit)
+extension View {
+    /// The share sheet for a file while `url` is set; closing it clears `url` (#493).
+    func fileShareSheet(_ url: Binding<URL?>) -> some View {
+        sheet(isPresented: Binding(get: { url.wrappedValue != nil }, set: {
+            guard !$0 else { return }
+            // The share sheet has closed: its file is no longer needed.
+            if let file = url.wrappedValue { MarginMarkdownShare.discardShare(file) }
+            url.wrappedValue = nil
+        })) {
+            if let file = url.wrappedValue {
+                SessionActivityView(activityItems: [file], onSuccessfulCompletion: {})
+            }
+        }
+    }
+}
+
 private struct SessionActivityView: UIViewControllerRepresentable {
     @Environment(\.dismiss) private var dismiss
     let activityItems: [Any]

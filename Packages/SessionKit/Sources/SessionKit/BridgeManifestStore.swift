@@ -109,6 +109,20 @@ public actor BridgeManifestStore {
         return BridgeSnapshot(state: state, manifest: state.isOn ? manifest : nil)
     }
 
+    /// Whether another server feature, such as `ServerService.maps`, may be used now. The
+    /// config is the same document for every feature; this store is where the app caches it.
+    public func state(of service: String, now: Date = Date()) -> ServerFeatureState {
+        loadCache()
+        return ServerFeatureGate.state(of: service, cached: config, now: now, appBuild: appBuild, maximumAge: policy.maximumConfigAge)
+    }
+
+    /// Fetches only the config, for a feature that needs a fresh switch but not the manifest.
+    /// Never throws; the gate decides what a failure means.
+    public func refreshConfigOnly(now: Date = Date()) async {
+        loadCache()
+        await refreshConfig(now: now)
+    }
+
     /// Fetches the config, then the manifest only if the bridge is on. Never throws:
     /// on any failure the app keeps what it had, and the gate decides what that means.
     @discardableResult

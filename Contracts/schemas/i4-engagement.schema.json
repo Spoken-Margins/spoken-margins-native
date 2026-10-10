@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spokenmargins.app/schemas/i4-engagement.schema.json",
+  "title": "I4 engagement signal (one line of the on-device listening log)",
+  "description": "One JSON object per line of the UTF-8 JSON Lines file the app appends to in Application Support and exports from Settings (#483). Rows carry opaque ids, display titles, kinds, times and counts only: never Margin text, transcripts, audio, packet payloads or feed URLs. Timestamps are UTC RFC 3339. Readers should skip unknown fields; D3's research evaluator rejects unknown events on purpose.",
+  "type": "object",
+  "required": ["schema_version", "event", "at", "source", "item"],
+  "properties": {
+    "schema_version": { "const": "i4-engagement.1" },
+    "event": {
+      "enum": ["item_published", "listened", "margin", "share", "export", "packet_import", "dismiss", "finish"]
+    },
+    "at": {
+      "description": "When the action happened. For listened, when the interval started.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "source": {
+      "description": "The followed source the item belongs to.",
+      "type": "object",
+      "required": ["id", "title", "subscription_kind", "content_kind", "categories"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "pattern": "^[^/:]+$" },
+        "title": { "type": "string", "minLength": 1 },
+        "subscription_kind": { "enum": ["podcast_feed", "article_feed", "website", "bridged_site"] },
+        "content_kind": { "type": "string", "minLength": 1 },
+        "categories": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "item": {
+      "description": "The item acted on. Null only for a packet_import that matched no local item.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["id", "title", "published_at", "duration_seconds"],
+          "properties": {
+            "id": {
+              "description": "The feed entry id when the item came from one (joins item_published rows), else library-<Library item id>.",
+              "type": "string",
+              "minLength": 1
+            },
+            "title": { "type": "string", "minLength": 1 },
+            "published_at": { "type": "string", "format": "date-time" },
+            "duration_seconds": { "type": ["number", "null"], "minimum": 0 }
+          }
+        }
+      ]
+    },
+    "seconds": { "description": "listened: wall-clock seconds of one coalesced interval.", "type": "number", "exclusiveMinimum": 0 },
+    "margin_kind": { "enum": ["spoken", "written"] },
+    "length": { "type": "integer", "minimum": 0 },
+    "length_unit": { "enum": ["seconds", "characters"] },
+    "margin_count": { "type": "integer", "minimum": 0 },
+    "packet_id": { "type": "string", "minLength": 1 },
+    "from_other": { "description": "packet_import: false when this device exported the same packet.", "type": "boolean" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "event": { "const": "listened" } } },
+      "then": { "required": ["seconds"], "properties": { "item": { "type": "object" } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "margin" } } },
+      "then": {
+        "required": ["margin_kind", "length", "length_unit"],
+        "properties": { "item": { "type": "object" } },
+        "oneOf": [
+          { "properties": { "margin_kind": { "const": "spoken" }, "length_unit": { "const": "seconds" } } },
+          { "properties": { "margin_kind": { "const": "written" }, "length_unit": { "const": "characters" } } }
+        ]
+      }
+    },
+    {
+      "if": { "properties": { "event": { "const": "export" } } },
+      "then": { "required": ["margin_count"], "properties": { "item": { "type": "object" } } }
+    },
+    {
+      "if": { "properties": { "event": { "const": "packet_import" } } },
+      "then": { "required": ["packet_id", "from_other", "margin_count"] }
+    },
+    {
+      "if": { "properties": { "event": { "enum": ["item_published", "share", "dismiss", "finish"] } } },
+      "then": { "properties": { "item": { "type": "object" } } }
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "id": "proposal-exact-edition-podcast",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "on-device-scene-map.v1",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Cold open",
+      "summaryText": "The hosts tease a story about a lost lighthouse keeper.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 0,
+        "transcriptSegmentId": "segment-0001",
+        "chapterTitle": "Cold open",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 95000,
+        "transcriptSegmentId": "segment-0019",
+        "chapterTitle": "Cold open",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "The keeper's log",
+      "summaryText": "Entries from an old logbook trace the last winter before the light went dark.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 95000,
+        "transcriptSegmentId": "segment-0019",
+        "chapterTitle": "The keeper's log",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 1260000,
+        "transcriptSegmentId": "segment-0240",
+        "chapterTitle": "The keeper's log",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

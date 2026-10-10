@@ -11,6 +11,9 @@ import UIKit
 /// transcript is saved, and once more under a background task when the app leaves the foreground, so a
 /// Margin recorded just before switching apps still arrives. Passes never overlap; one asked for during a
 /// pass runs right after it. The writer only rewrites its own unedited files, so repeated passes are safe.
+///
+/// A pass rebuilds only the notes whose sessions changed, and does nothing when none did; every 30 minutes, on the
+/// first pass and when the folder changes it rebuilds all of them (#1192, `MarginNotePassPlanner`).
 @MainActor
 final class MarginNotesDelivery {
     /// What a pass writes to, read at the start of each pass.
@@ -29,7 +32,7 @@ final class MarginNotesDelivery {
     private let isRecording: @MainActor () -> Bool
     /// Resolves the folder; throws a message for the listener when it can't.
     private let target: @MainActor () throws -> Target
-    private let report: @MainActor (String) -> Void
+    private let report: @MainActor (MarginOutputStatus) -> Void
     private let recordGather: @MainActor (_ ms: Int, _ sessions: Int, _ notes: Int) -> Void
     private let journalURL: () throws -> URL
 
@@ -38,12 +41,14 @@ final class MarginNotesDelivery {
     private var isDelivering = false
     private var passRequestedDuringPass = false
     private var writer: AutomaticMarginWriter?
+    /// What the last finished pass left to do next time (#1192).
+    private var planner = MarginNotePassPlanner()
 
     init(
         isEnabled: @escaping @MainActor () -> Bool,
         isRecording: @escaping @MainActor () -> Bool,
         target: @escaping @MainActor () throws -> Target,
-        report: @escaping @MainActor (String) -> Void,
+        report: @escaping @MainActor (MarginOutputStatus) -> Void,
         recordGather: @escaping @MainActor (_ ms: Int, _ sessions: Int, _ notes: Int) -> Void = { _, _, _ in },
         journalURL: @escaping () throws -> URL = MarginNotesDelivery.defaultJournalURL
     ) {
@@ -119,29 +124,37 @@ final class MarginNotesDelivery {
     }
 
     /// Sends a sample note so the listener can check the folder before turning delivery on.
-    func sendTestNote(to folder: URL, destinationID: String) async throws -> String {
+    func sendTestNote(to folder: URL, destinationID: String) async throws -> MarginOutputStatus {
         let summary = try await currentWriter().deliver(
             [.init(id: "sample-margin", markdown: "# Spoken Margins test\n\nYour thoughts will arrive here as Markdown, with source context and anchors.\n")],
             to: folder, destinationID: destinationID
         )
         let file = "Margin-\(ListeningEdition.digest("sample-margin")).md"
-        if summary.keptEdits > 0 { return "The test note \(file) is already in this folder and you edited it, so it was left as is." }
-        return "Test note saved. Open \(file) in your notes app."
+        if summary.keptEdits > 0 { return MarginOutputStatus("The test note \(file) is already in this folder and you edited it, so it was left as is.") }
+        return MarginOutputStatus("Test note saved. Open \(file) in your notes app.")
     }
 
     private func deliverOnce() async {
         do {
             let target = try target()
-            // Built on a background task (#161); the main actor only waits.
-            let gathered = try await AutomaticMarginNoteGatherer.gather(store: target.store)
-            recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
-            let summary = try await currentWriter().deliver(gathered.notes, to: target.folder, destinationID: target.destinationID)
-            report(MarginNoteDelivery.statusLine(
-                summary, folderName: target.folder.lastPathComponent,
+            let pass = try planner.plan(store: target.store, targetKey: target.destinationID + "|" + target.folder.path)
+            var delivered: (noteIDs: [String], keptEditIDs: Set<String>) = ([], [])
+            if pass.scope != .nothing {
+                var sessionIds: Set<String>?
+                if case .sessions(let changed) = pass.scope { sessionIds = changed }
+                // Built on a background task (#161); the main actor only waits.
+                let gathered = try await AutomaticMarginNoteGatherer.gather(store: target.store, sessionIds: sessionIds)
+                recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
+                let result = try await currentWriter().deliverReportingKeptEdits(gathered.notes, to: target.folder, destinationID: target.destinationID)
+                delivered = (gathered.notes.map(\.id), result.keptEditIDs)
+            }
+            planner.commit(pass, noteIDs: delivered.noteIDs, keptEditIDs: delivered.keptEditIDs)
+            report(MarginOutputStatus(MarginNoteDelivery.statusLine(
+                planner.folderSummary, folderName: target.folder.lastPathComponent,
                 checkedAt: Date().formatted(date: .omitted, time: .shortened)
-            ))
+            )))
         } catch {
-            report("Delivery needs attention: \(error.localizedDescription)")
+            report(.failure("Delivery needs attention: \(error.localizedDescription)"))
         }
     }
 

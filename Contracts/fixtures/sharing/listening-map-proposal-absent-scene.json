@@ -1,0 +1,50 @@
+{
+  "id": "proposal-absent-scene",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "on-device-scene-map.v1",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Episode",
+      "summaryText": "The hosts review a season of local football.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 0,
+        "transcriptSegmentId": "segment-0001",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "mediaTimeMs": 1200000,
+        "transcriptSegmentId": "segment-0240",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "Bonus: outtakes",
+      "summaryText": "Mistakes and laughter left over from recording.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "eligibilityReason": "Present only in the sender's edition; carries no locating evidence.",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "roughPercent": 97,
+        "chapterTitle": "Bonus: outtakes",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "roughPercent": 100,
+        "chapterTitle": "Bonus: outtakes",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}

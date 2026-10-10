@@ -162,10 +162,10 @@ public enum SpokenMarginsPackageArchive {
         )
         defer { try? FileManager.default.removeItem(at: stagedURL) }
         let archive = try Archive(url: stagedURL, accessMode: .create)
-        try add(manifestData, path: "manifest.json", to: archive, compression: .deflate)
-        try add(previewData, path: "preview.md", to: archive, compression: .deflate)
+        try addDeflatedWithinReaderLimit(manifestData, path: "manifest.json", to: archive)
+        try addDeflatedWithinReaderLimit(previewData, path: "preview.md", to: archive)
         for path in prepared.artifactData.keys.sorted() {
-            try add(prepared.artifactData[path]!, path: path, to: archive, compression: .deflate)
+            try addDeflatedWithinReaderLimit(prepared.artifactData[path]!, path: path, to: archive)
         }
         for path in assetData.keys.sorted() {
             try add(assetData[path]!, path: path, to: archive, compression: .none)
@@ -220,8 +220,9 @@ public enum SpokenMarginsPackageArchive {
             if entry.path.hasPrefix("assets/evidence/"), entry.uncompressedSize > maximumEvidenceBytes {
                 throw SpokenMarginsPackageArchiveError.invalidAsset(entry.path)
             }
-            if entry.compressedSize > 0,
-               entry.uncompressedSize / max(1, entry.compressedSize) > maximumCompressionRatio {
+            if exceedsCompressionRatioLimit(
+                uncompressedSize: entry.uncompressedSize, compressedSize: entry.compressedSize
+            ) {
                 throw SpokenMarginsPackageArchiveError.excessiveCompression(entry.path)
             }
             var data = Data()
@@ -246,6 +247,7 @@ public enum SpokenMarginsPackageArchive {
         } catch {
             throw SpokenMarginsPackageArchiveError.invalidManifest(String(describing: error))
         }
+        try requireDistinctDescriptors(manifest)
         let expectedPaths = Set(["manifest.json", "preview.md"] + manifest.artifacts.map(\.path) + manifest.assets.map(\.path))
         guard expectedPaths == Set(entryData.keys) else {
             throw SpokenMarginsPackageArchiveError.invalidManifest("declared entries do not match archive")
@@ -258,10 +260,14 @@ public enum SpokenMarginsPackageArchive {
         })
         try verifyDescriptors(manifest: manifest, artifactData: artifactData, assetData: assetData)
         let decoded = try decodeKnownArtifacts(manifest: manifest, artifactData: artifactData)
+        // Export refuses a proposal that breaks the scene rules. Build 29 senders could include one (every
+        // scene of theirs carries a summary), so import leaves it out rather than refusing their Margins (#480).
+        let proposals = PortableListeningMapContract.forSharing(
+            decoded.proposals, itemText: decoded.embeddedTextItems.first?.text)
         try validateManifestBoundary(
             manifest,
             commentaryLayers: decoded.commentary,
-            proposals: decoded.proposals,
+            proposals: proposals,
             fingerprintSpines: decoded.fingerprintSpines,
             phraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
@@ -301,10 +307,7 @@ public enum SpokenMarginsPackageArchive {
         var stagedURLs: [String: URL] = [:]
         for descriptor in manifest.assets {
             guard let data = assetData[descriptor.path] else { continue }
-            let extensionName = URL(fileURLWithPath: descriptor.path).pathExtension
-            let stagedURL = stagedDirectory.appendingPathComponent(
-                safeComponent(descriptor.id) + (extensionName.isEmpty ? "" : ".\(extensionName)")
-            )
+            let stagedURL = stagedDirectory.appendingPathComponent(stagedFileName(for: descriptor))
             try data.write(to: stagedURL, options: Data.WritingOptions.atomic)
             try validateExtractedAsset(descriptor, at: stagedURL)
             stagedURLs[descriptor.id] = stagedURL
@@ -316,7 +319,7 @@ public enum SpokenMarginsPackageArchive {
         return VerifiedSpokenMarginsPackage(
             manifest: manifest,
             commentaryLayers: decoded.commentary,
-            listeningMapProposals: decoded.proposals,
+            listeningMapProposals: proposals,
             editionFingerprintSpines: decoded.fingerprintSpines,
             transcriptPhraseSketches: decoded.phraseSketches,
             embeddedTextItems: decoded.embeddedTextItems,
@@ -557,14 +560,7 @@ public enum SpokenMarginsPackageArchive {
         }
         try validateItem(manifest.item)
 
-        let artifactIDs = manifest.artifacts.map(\.id)
-        let assetIDs = manifest.assets.map(\.id)
-        guard Set(artifactIDs).count == artifactIDs.count,
-              Set(assetIDs).count == assetIDs.count,
-              Set(manifest.artifacts.map(\.path)).count == manifest.artifacts.count,
-              Set(manifest.assets.map(\.path)).count == manifest.assets.count else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("descriptor identities are not unique")
-        }
+        try requireDistinctDescriptors(manifest)
         for descriptor in manifest.artifacts {
             guard validArtifactPath(descriptor.path),
                   (descriptor.byteCount.map { (0...Int(maximumArtifactBytes)).contains($0) } ?? !requireDigest),
@@ -629,7 +625,9 @@ public enum SpokenMarginsPackageArchive {
             throw SpokenMarginsPackageArchiveError.invalidManifest("package-scoped Margin IDs are not unique")
         }
         for record in layer.interjections { try validate(record, assetsByID: assetsByID) }
-        for proposal in proposals { try validate(proposal, assetsByID: assetsByID) }
+        for proposal in proposals {
+            try validate(proposal, assetsByID: assetsByID, itemText: embeddedTextItems.first?.text)
+        }
         for spine in fingerprintSpines { try validate(spine, assetsByID: assetsByID, item: manifest.item) }
         for sketch in phraseSketches { try validate(sketch, item: manifest.item) }
         guard conversations.count <= 1 else {
@@ -679,29 +677,37 @@ public enum SpokenMarginsPackageArchive {
         assetsByID: [String: SpokenMarginsAssetDescriptor],
         item: SharedItemIdentity
     ) throws {
-        guard (1...500).contains(spine.itemId.count),
-              spine.landmarks.count <= 500,
-              spine.generatorVersion.count <= 200,
-              spine.canonicalURL.map(validHTTPSURL) ?? true,
-              spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true,
-              spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true,
-              spine.producingEditionSHA256.map(isSHA256) ?? true,
-              Set(spine.landmarks.map(\.id)).count == spine.landmarks.count,
-              spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count) else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine is out of bounds")
+        // #536: name the rule that failed, so diagnostics say which one. Rules run in order and stop at
+        // the first failure, so a later rule can rely on the earlier ones having held.
+        let rules: [(String, () -> Bool)] = [
+            ("item_id", { (1...500).contains(spine.itemId.count) }),
+            ("landmark_count", { spine.landmarks.count <= 500 }),
+            ("generator_version", { spine.generatorVersion.count <= 200 }),
+            ("canonical_url", { spine.canonicalURL.map(validHTTPSURL) ?? true }),
+            ("episode_guid", { spine.episodeGUID.map({ $0.count <= 1_000 }) ?? true }),
+            ("duration", { spine.producingEditionDurationMs.map({ $0 >= 0 }) ?? true }),
+            ("edition_sha256", { spine.producingEditionSHA256.map(isSHA256) ?? true }),
+            ("landmark_ids", { Set(spine.landmarks.map(\.id)).count == spine.landmarks.count }),
+            ("landmark_order", { spine.landmarks.map(\.order) == Array(0..<spine.landmarks.count) }),
+        ]
+        if let failed = rules.first(where: { !$0.1() })?.0 {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine is out of bounds: \(failed)")
         }
         if let expected = item.episodeGUID, let actual = spine.episodeGUID, expected != actual {
             throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint spine identity conflicts with the item")
         }
         for landmark in spine.landmarks {
-            guard landmark.sourceMediaStartMs >= 0,
-                  landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs,
-                  landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000,
-                  landmark.anchorMediaTimeMs >= 0,
-                  landmark.continuityEpoch >= 0,
-                  landmark.generatorVersion.count <= 200,
-                  assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature else {
-                throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint landmark is invalid")
+            // "duration" subtracts, which only can't overflow once "source_range" has held.
+            let rules: [(String, () -> Bool)] = [
+                ("source_range", { landmark.sourceMediaStartMs >= 0 && landmark.sourceMediaEndMs >= landmark.sourceMediaStartMs }),
+                ("duration", { landmark.sourceMediaEndMs - landmark.sourceMediaStartMs <= 30_000 }),
+                ("anchor_time", { landmark.anchorMediaTimeMs >= 0 }),
+                ("continuity_epoch", { landmark.continuityEpoch >= 0 }),
+                ("generator_version", { landmark.generatorVersion.count <= 200 }),
+                ("signature_asset", { assetsByID[landmark.signatureAssetId]?.role == SpokenMarginsAssetRole.acousticSignature }),
+            ]
+            if let failed = rules.first(where: { !$0.1() })?.0 {
+                throw SpokenMarginsPackageArchiveError.invalidManifest("episode fingerprint landmark is invalid: \(failed)")
             }
         }
     }
@@ -777,7 +783,8 @@ public enum SpokenMarginsPackageArchive {
 
     private static func validate(
         _ proposal: PortableListeningMapProposalArtifact,
-        assetsByID: [String: SpokenMarginsAssetDescriptor]
+        assetsByID: [String: SpokenMarginsAssetDescriptor],
+        itemText: String?
     ) throws {
         guard !proposal.scenes.isEmpty, proposal.generator.count <= 200,
               Set(proposal.scenes.map(\.id)).count == proposal.scenes.count,
@@ -790,14 +797,12 @@ public enum SpokenMarginsPackageArchive {
                   scene.eligibilityReason.map({ $0.count <= 500 }) ?? true else {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("Listening Map scene is out of bounds")
             }
-            if scene.eligibility == .eligible {
-                guard scene.summaryText?.isEmpty == false, scene.summaryProvenance != nil else {
-                    throw SpokenMarginsPackageArchiveError.invalidManifest("eligible scene lacks a grounded summary")
-                }
-            }
             if let assetID = scene.summaryAssetId, assetsByID[assetID]?.role != SpokenMarginsAssetRole.summaryVoice {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("scene summary asset is absent or has the wrong role")
             }
+        }
+        if let violation = PortableListeningMapContract.violations(in: proposal, itemText: itemText).first {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Listening Map \(violation)")
         }
     }
 
@@ -986,6 +991,23 @@ public enum SpokenMarginsPackageArchive {
         }
     }
 
+    /// The reader's zip-bomb check, shared with the writer so the two cannot drift apart (#946).
+    private static func exceedsCompressionRatioLimit(uncompressedSize: UInt64, compressedSize: UInt64) -> Bool {
+        compressedSize > 0 && uncompressedSize / max(1, compressedSize) > maximumCompressionRatio
+    }
+
+    /// Deflates the entry, unless it squeezes past the ratio our own reader (and Build 29's) refuses.
+    /// Highly repetitive text can; such an entry is stored uncompressed, which both readers accept.
+    private static func addDeflatedWithinReaderLimit(_ data: Data, path: String, to archive: Archive) throws {
+        try add(data, path: path, to: archive, compression: .deflate)
+        guard let written = archive[path],
+              exceedsCompressionRatioLimit(
+                  uncompressedSize: written.uncompressedSize, compressedSize: written.compressedSize
+              ) else { return }
+        try archive.remove(written)
+        try add(data, path: path, to: archive, compression: .none)
+    }
+
     private static func add(_ data: Data, path: String, to archive: Archive, compression: CompressionMethod) throws {
         try archive.addEntry(
             with: path, type: .file, uncompressedSize: Int64(data.count), modificationDate: fixedArchiveDate,
@@ -1017,7 +1039,7 @@ public enum SpokenMarginsPackageArchive {
         return component.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || "._-".unicodeScalars.contains($0) }
     }
 
-    private static func validHTTPSURL(_ value: String) -> Bool {
+    static func validHTTPSURL(_ value: String) -> Bool {
         guard let components = URLComponents(string: value) else { return false }
         return components.scheme?.lowercased() == "https" && !(components.host?.isEmpty ?? true)
             && components.user == nil && components.password == nil
@@ -1031,13 +1053,37 @@ public enum SpokenMarginsPackageArchive {
         guard let start, let end else { return true }
         return end >= start
     }
-    private static func isSHA256(_ value: String?) -> Bool {
+    static func isSHA256(_ value: String?) -> Bool {
         guard let value, value.count == 64 else { return false }
         return value.allSatisfy { $0.isHexDigit && !$0.isUppercase }
     }
     private static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
+    /// What an asset is called on disk once extracted. Anything outside letters, digits and `._-` in its id becomes `-`.
+    private static func stagedFileName(for descriptor: SpokenMarginsAssetDescriptor) -> String {
+        let extensionName = URL(fileURLWithPath: descriptor.path).pathExtension
+        return safeComponent(descriptor.id) + (extensionName.isEmpty ? "" : ".\(extensionName)")
+    }
+
+    /// A manifest must not name one id or path twice, and two assets must not extract to the same file name
+    /// (ids `voice/a` and `voice?a` both become `voice-a`, and a case-insensitive disk also merges `A` and `a`).
+    /// Runs before anything builds a dictionary from the descriptors, because a repeated key traps (#913).
+    private static func requireDistinctDescriptors(_ manifest: SpokenMarginsPackageManifest) throws {
+        let artifactIDs = manifest.artifacts.map(\.id)
+        let assetIDs = manifest.assets.map(\.id)
+        guard Set(artifactIDs).count == artifactIDs.count,
+              Set(assetIDs).count == assetIDs.count,
+              Set(manifest.artifacts.map(\.path)).count == manifest.artifacts.count,
+              Set(manifest.assets.map(\.path)).count == manifest.assets.count else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("descriptor identities are not unique")
+        }
+        let fileNames = manifest.assets.map { stagedFileName(for: $0).lowercased() }
+        guard Set(fileNames).count == fileNames.count else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("asset ids would extract to the same file")
+        }
+    }
+
     private static func safeComponent(_ value: String) -> String {
         let mapped = value.unicodeScalars.map { scalar -> Character in
             if CharacterSet.alphanumerics.contains(scalar) || "._-".unicodeScalars.contains(scalar) { return Character(String(scalar)) }

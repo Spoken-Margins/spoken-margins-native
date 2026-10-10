@@ -10,7 +10,7 @@
 2. **The app never shows its best trick.** You can talk back to anything you're hearing, and your voice stays pinned to that exact moment. A new listener never hears that happen.
 3. **My pick: "A Margin is waiting."** The first thing you hear is the app's voice, chosen by ear. Then you hear a short welcome piece with a real Margin already in it, left by Cole. At that moment it asks you to answer with one of your own. Then it plays your voice back in place.
 4. **That gives sound in one tap, and your first Margin in about five.** Today it's about four taps to sound, sometimes with a 15 second wait, and nobody is guided to a Margin unless they find the tour card.
-5. **It needs three things from Cole.** A 20 second Margin recorded in his own voice. A yes or no on a plain-language Terms summary, which is a legal question that goes with #455. And a yes on about 5 MB of bundled audio.
+5. **Cole's answers (5 October):** yes to recording his own Margin, yes to first-run choices playing right away, and the bundled audio cut to about 1 MB (it was 5 MB). Still open: a plain-language Terms summary, which is a legal question that goes with #455.
 
 ---
 
@@ -161,7 +161,7 @@ Choosing James or Lily brings up the Terms, as a short card rather than a full p
 
 Three large doors, stacked in the bottom half of the screen so the thumb reaches them:
 
-1. **"Start with ours, 3 minutes"**: the welcome piece. Marked as the suggestion.
+1. **"Start with ours, 2 minutes"**: the welcome piece. Marked as the suggestion.
 2. **"Something I copied"**: the existing Paste & go `PasteButton`, so iOS shows no paste prompt. A link becomes a podcast or article, plain text becomes a text item.
 3. **"A podcast I like"**: the existing first-run drawer, shown inside this screen rather than as a separate sheet that covers everything. Search by name joins it when #471 lands.
 
@@ -173,7 +173,7 @@ The drawer stops appearing as a sheet on launch. It lives here, and in Following
 
 ### Screen 4: The welcome piece
 
-**What the piece is.** About three minutes, written for listening, in four short chapters:
+**What the piece is.** About two minutes, written for listening, in four short chapters:
 
 1. "What this is."
 2. "Talking back."
@@ -184,7 +184,7 @@ It's bundled as pre-recorded audio in James's and Lily's voices, plus the plain 
 
 **The player.** It's the normal playback screen, not a tutorial overlay. Once #447's Now view lands, the guidance lives in the top half as one short line under the title. Until then it's a single card in the existing overlay slot, replacing today's five-step tour card.
 
-**The moment.** At about 1:10, in the "Talking back" chapter, the piece reaches Cole's Margin. It's a real shared Margin on the welcome item, imported from a bundled `.spokenmargins` packet through the normal import path, so it shows in the Timeline with the shared style (a hollow diamond, plus the name "Cole").
+**The moment.** At about 0:50, in the "Talking back" chapter, the piece reaches Cole's Margin. It's a real shared Margin on the welcome item, imported from a bundled `.spokenmargins` packet through the normal import path, so it shows in the Timeline with the shared style (a hollow diamond, plus the name "Cole").
 
 1. Just before it, a soft tone, and the line in the top half reads: **"Cole left a Margin here."**
 2. The piece pauses and Cole's Margin plays, through the same "Play this moment" path a shared Margin uses (`MarginMomentConductor`). Roughly:
@@ -240,7 +240,7 @@ The same goes for a share from Safari's share sheet made before the app has ever
 |---|---|
 | No network on first launch | Everything on Screens 1-4 is bundled. The drawer uses its bundled catalog. The "Something I copied" door explains that links need a connection, and text still works. |
 | Low Power Mode or a warm phone | The welcome and samples are pre-recorded, so they sound the same. For the listener's own articles, the existing fallback rules apply, but the voice line says so in words (C2, #183). |
-| Listener skips everything | They land in the Library with one item, "Welcome", and one card at the **top**: "Start with a three-minute welcome". The card goes away after the welcome is finished or dismissed. |
+| Listener skips everything | They land in the Library with one item, "Welcome", and one card at the **top**: "Start with a two-minute welcome". The card goes away after the welcome is finished or dismissed. |
 | Listener taps "Not now" at the waiting Margin | The piece plays on. The card at the finish still offers the first Margin once: "Try a Margin on this piece?" Then never again. |
 | Upgrading from Build 29, or any Library with content | No first run. Nothing is seeded. The Terms change applies (podcasts never blocked). |
 | Reinstall | First run again. That's fine: the Library starts empty after a delete. |
@@ -272,11 +272,16 @@ The same goes for a share from Safari's share sheet made before the app has ever
    - It decides which screen to show and what the guidance line says. It records progress by evidence (a saved Margin, a finished item), like today's onboarding rules in the Recovery MVP doc.
    - It reads today's `onboardingCompletedStepsV1` so someone mid-tour isn't sent back to the start.
    - The views are thin. `Gate1AppModel` gets call sites only, no new state (AGENTS.md rule).
-2. **Bundled audio** in the app, about 5 MB in all:
+2. **Bundled audio** in the app, about 1 MB in all (Cole asked for less than the first 5 MB estimate):
    - the 20 second hello in James and Lily;
-   - a 10 second sample per voice;
-   - the three-minute welcome in James and Lily (AAC at 64 kbps, about 1.5 MB each);
-   - Cole's Margin, inside a bundled `.spokenmargins` packet.
+   - a 10 second sample for James and for Lily (the iPhone voice sample is spoken live, which is instant);
+   - the two-minute welcome in James and Lily;
+   - Cole's Margin, about 20 seconds, inside a bundled `.spokenmargins` packet.
+
+   That's about 320 seconds of speech. Stored as mono HE-AAC at 24 kbps, a speech-quality setting iOS plays natively, it comes to about 3 KB a second, so roughly 1 MB. The first estimate assumed music-quality AAC at 64 kbps and a three-minute welcome.
+   - **If 1 MB is still too much:** bundle the welcome in James only (about 0.6 MB). Listeners who pick Lily then hear the welcome read live, which can stall in Low Power Mode.
+   - **Check by ear first:** slice 7 includes a listen at 24 and 32 kbps on the Mac. If 24 sounds thin, 32 kbps costs about 0.3 MB more.
+
    These are made once on the Mac with the bundled voice and checked in. Cole records his Margin on the phone and sends the packet, which is the J5 path he already knows.
 3. **The welcome item** as a native-audio item with chapters and its text, built from the bundled file for the chosen voice. That makes it instant, scrubbable, and the same on every phone. It replaces both of today's seeds ("Welcome to Spoken Margins" and "Guided Tour") and the remote tour manifest, so first run no longer depends on Cole's site being up.
 4. **Two small views:** `FirstRunHelloView` and `FirstRunDoorsView`. The doors reuse `PasteAndGoBar` and `CatalogDrawerView` as they are.
@@ -326,7 +331,7 @@ Each slice is one PR. They're listed in build order, sized S or M, with where ea
 | 4 | Ask for Speech Recognition after the first Margin plays back, with the #268 wording. | S | Cloud (T3) | 3 |
 | 5 | "Play now" on the import message when nothing is playing. | S | Cloud (T2) | Nothing |
 | 6 | `FirstRunCoordinator` in SessionKit, with host tests for every stage and entry context. | M | Cloud | Nothing |
-| 7 | Record the hello and the voice samples in James and Lily, and bundle them. | S | Mac | Nothing |
+| 7 | Record the hello and the voice samples in James and Lily, compare 24 and 32 kbps HE-AAC by ear, and bundle them. | S | Mac | Nothing |
 | 8 | Hello and voice-pick screens, using 6 and 7, with the Terms moved to the voice pick. | M | Mac | 1, 6, 7, and Cole's Terms decision |
 | 9 | The doors screen: welcome, Paste & go, the drawer. The drawer stops opening on launch. | M | Mac | 6, 8 |
 | 10 | Write and record the welcome piece. Cole records his Margin and sends the packet. Bundle both. | M | Mac, plus Cole (20 seconds) | 7 |
@@ -342,10 +347,10 @@ Slices 1 to 5 are worth doing now whatever Cole decides about the rest. They fix
 
 ## 6. Decisions for Cole
 
-1. **A plain-language Terms summary at the voice pick, with a link to the full text?** This is a legal question, and belongs with the drafts in #455. My pick: yes, if the attorney agrees. If not, the full text stays, but moves to the voice pick. It blocks slice 8.
-2. **Record a 20 second Margin in your own voice for the welcome piece?** My pick: yes. A real person's voice is the whole point of the moment. A James-voiced Margin would work, but it would teach less. It blocks slice 10.
-3. **About 5 MB of bundled audio** for the hello, samples and welcome. My pick: yes. The app already carries 148 MB of voice models, and this makes first run work offline and never stall.
-4. **Doors in first run start playing right away.** That's a small change to the product rule ("imports never replace what's playing"), and only applies when nothing is playing. My pick: yes.
+1. **Open: a plain-language Terms summary at the voice pick, with a link to the full text?** This is a legal question, and belongs with the drafts in #455. My pick: yes, if the attorney agrees. If not, the full text stays, but moves to the voice pick. It blocks slice 8.
+2. **Answered yes (Cole, 5 October):** Cole records a 20 second Margin in his own voice for the welcome piece. It's needed for slice 10.
+3. **Answered (Cole, 5 October): "that's kinda a lot, can we lower it?"** Cut from about 5 MB to about 1 MB: a two-minute welcome and speech-quality compression, both voices kept. The smaller fallback is about 0.6 MB, with the welcome in James only. Details in section 4.
+4. **Answered yes (Cole, 5 October):** choices on the first-run screen start playing right away, only when nothing else is playing.
 
 ## Related
 

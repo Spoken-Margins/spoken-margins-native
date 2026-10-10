@@ -187,7 +187,7 @@ My pick is option 1, as a small follow-up. Users can still add any feed they lik
 Test hooks are still compiled into Release, though. None has a button; they can only be reached with a launch argument or environment variable, which Xcode and XCTest can pass and a user or App Review can't. One of them deletes the library, so they should still be compiled out: issue #517.
 
 - `--ui-testing` calls `resetAndSeed()`, which deletes the library and loads a fixture (`M:1830`, `M:2479`). Other `--ui-testing` hooks install fake resolvers and seed data (`M:1041`, `:1288`, `:1304`, `:1341`, `:1349`, `:14877`, `:14900`).
-- `SPOKEN_MARGINS_UI_TEST_RECORDING=1` swaps the microphone for a no-op (`M:564`).
+- `SPOKEN_MARGINS_UI_TEST_RECORDING=1`, with `--ui-testing`, swaps the microphone for a recorder that writes a generated tone, and speech recognition for a fixed transcript (`UITestingLaunchSeedWriter.swift`, #685).
 - A second "Create Recipient Test Session" button with no guard sits in a view nothing opens (`A/SharingExperience.swift:932`).
 - `project.yml:34-37` bundles the test fixtures (about 2 MB) into the app for `resetAndSeed`.
 

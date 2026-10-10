@@ -2,8 +2,9 @@
 
 This is the M2 rehearsal requested in #176: it compares a transparent,
 source-level affinity score with the existing newest-first inbox. It is stdlib
-Python 3.9+ and makes no network requests. The draft input contract is
-[`i4-draft.md`](i4-draft.md); D3 M1, not this experiment, will finalize I4.
+Python 3.9+ and makes no network requests. The input contract is the published
+I4 ([`Contracts/schemas/i4-engagement.schema.json`](../../Contracts/schemas/i4-engagement.schema.json));
+[`i4-draft.md`](i4-draft.md) lists how it differs from the draft the rehearsal was built on.
 
 ## Run the synthetic rehearsal
 
@@ -22,12 +23,12 @@ listening, and engagement several days after publication. Change the seed with
 
 ## Run it on the owner's export later
 
-1. Export the I4 JSON Lines file from the owner's device once M1 offers that
-   operation and at least two weeks have accumulated. Keep the file on the
+1. Export the I4 JSON Lines file from the owner's device (Settings › Support &
+   Privacy › Export Listening Signals) once at least two weeks have accumulated. Keep the file on the
    device or the owner's Mac. Do not upload it or add it to Git; `artifacts/` is
    the intended local location.
-2. Confirm the M1 export format against this draft and adapt the loader if the
-   finalized I4 differs. Do not silently rewrite the evidence.
+2. The loader accepts `i4-engagement.1` as exported. If a later I4 version
+   differs, adapt the loader. Do not silently rewrite the evidence.
 3. Copy `policy.json` to a local file if testing weights, then run:
 
    ```sh

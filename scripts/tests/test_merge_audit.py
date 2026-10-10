@@ -46,6 +46,21 @@ class MergeCheckTests(unittest.TestCase):
                                                       'If the owner merged this directly, remove the label.')
 
 
+class ClaudeAuditTests(unittest.TestCase):
+    def test_claude_audit_counts_only_before_merge(self):
+        clean = '**Claude audit on `92533d3`**\n\nNo blocking findings.'
+        merged = audit.parse_time(MERGED_AT)
+        self.assertEqual(audit.audit_verdict([comment(clean)], HEAD, merged), 'No blocking findings.')
+        self.assertIsNone(audit.audit_verdict([comment(clean, MERGED_AT)], HEAD, merged))
+
+    def test_newest_head_audit_wins_across_reviewers(self):
+        clean = comment('**Claude audit on `92533d3`**\n\nNo blocking findings.')
+        blocked = comment('**Codex audit (Astra) on `92533d3`**\n\n[P1] Broken.')
+        merged = audit.parse_time(MERGED_AT)
+        self.assertEqual(audit.audit_verdict([blocked, clean], HEAD, merged), 'No blocking findings.')
+        self.assertEqual(audit.audit_verdict([clean, blocked], HEAD, merged), '[P1] Broken.')
+
+
 class PushTests(unittest.TestCase):
     """Which merged PRs a push to next brought in, and whether its tip came from no PR."""
 
@@ -71,7 +86,7 @@ class PushTests(unittest.TestCase):
 
 
 class SweepTests(unittest.TestCase):
-    """The hourly sweep: the runner's token-made merges start no push run (decision 3)."""
+    """The sweep after each runner merge: the runner's token-made merges start no push run (decision 3)."""
 
     def test_it_takes_prs_into_next_merged_within_the_window(self):
         import datetime
@@ -125,7 +140,7 @@ class HandMergeTests(unittest.TestCase):
     def test_audits_of_earlier_heads_dont_clear_the_merged_head(self):  # #656
         comments = [codex_audit(verdict='- **[P1] Older PR heads crash on the new import**', sha='fce8210'),
                     codex_audit(sha='ef52c6c')]
-        self.assertEqual(self.gap(comments), 'no lane report on `f41b1de`; no Codex audit of `f41b1de`')
+        self.assertEqual(self.gap(comments), 'no lane report on `f41b1de`; no Codex or Claude audit of `f41b1de`')
 
     def test_a_missing_or_failing_lane_report_fails(self):
         self.assertEqual(self.gap([codex_audit()]), 'no lane report on `f41b1de`')
@@ -148,7 +163,7 @@ class HandMergeTests(unittest.TestCase):
 
     def test_an_audit_with_findings_fails(self):
         self.assertEqual(self.gap([lane_report('PASS'), codex_audit(verdict='- **[P2] Something real**')]),
-                         'the Codex audit of `f41b1de` has blocking findings')
+                         'the Codex or Claude audit of `f41b1de` has blocking findings')
         # The newest audit of the head decides.
         self.assertIsNone(self.gap([lane_report('PASS'), codex_audit(verdict='- **[P2] Something real**'),
                                     codex_audit(created_at='2026-10-01T17:00:00Z')]))
@@ -156,12 +171,12 @@ class HandMergeTests(unittest.TestCase):
     def test_evidence_posted_after_the_merge_doesnt_count(self):  # #610, #615: lane runs after the merge
         self.assertEqual(self.gap([lane_report('PASS', created_at='2026-10-01T17:41:08Z'),
                                    codex_audit(created_at=HAND_MERGED_AT)]),
-                         'no lane report on `f41b1de`; no Codex audit of `f41b1de`')
+                         'no lane report on `f41b1de`; no Codex or Claude audit of `f41b1de`')
 
     def test_the_failure_comment_says_what_was_missing(self):
-        self.assertEqual(audit.failure_comment(HAND_HEAD, 'no Codex audit of `f41b1de`'),
+        self.assertEqual(audit.failure_comment(HAND_HEAD, 'no Codex or Claude audit of `f41b1de`'),
                          'Merged into next without a triage-desk merge check on f41b1de. Hand-merge rule not met '
-                         'before the merge: no Codex audit of `f41b1de`. If the owner merged this directly, remove '
+                         'before the merge: no Codex or Claude audit of `f41b1de`. If the owner merged this directly, remove '
                          'the label.')
 
 
@@ -189,7 +204,7 @@ class AuditPullTests(unittest.TestCase):
     def test_a_hand_merge_without_the_checks_is_flagged_with_the_reason(self):
         github = FakeGitHub([lane_report('PASS')])
         audit.audit_pull(github, self.pull, dry_run=False)
-        self.assertEqual(github.flagged, [(633, 'no Codex audit of `f41b1de`')])
+        self.assertEqual(github.flagged, [(633, 'no Codex or Claude audit of `f41b1de`')])
 
     def test_the_runner_merge_check_still_passes(self):
         check = {'body': CHECK.replace('92533d3', 'f41b1de'), 'created_at': '2026-10-01T17:08:00Z', 'user': BOT}

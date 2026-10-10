@@ -72,6 +72,106 @@ final class NarrationTimelinePiecesTests: XCTestCase {
         }
     }
 
+    /// "Its share of the chunk's time is its share of the chunk's spoken characters." The body's stretch is the 92
+    /// characters before "Appendix" and the appendix's the 46 after, so the cut is 92/138 of 10 s, not the middle.
+    func testTheChunksTimeIsSplitInProportionToEachPiecesSpokenCharacters() throws {
+        let (pieces, itemText) = try wholePaperPieces()
+        let item = Item(id: "item-paper", title: "Paper", mediaType: "pdf", text: itemText, externalReference: nil, status: "ready")
+        let spoken = try XCTUnwrap(PreparedSpeechText(item: item, document: document)).assemblyProjection().text
+        let bodyCharacters = spoken.distance(from: spoken.startIndex, to: try XCTUnwrap(spoken.range(of: "Appendix")).lowerBound)
+        XCTAssertEqual(bodyCharacters, 92, "precondition: the spoken text the proportions come from")
+        XCTAssertEqual(spoken.count, 138, "precondition")
+        let boundary = Int((10_000 * Double(bodyCharacters) / Double(spoken.count)).rounded())
+        XCTAssertEqual(boundary, 6_667)
+
+        XCTAssertEqual(pieces.count, 2)
+        XCTAssertEqual(pieces[0].spokenRange, 0..<bodyCharacters)
+        XCTAssertEqual(pieces[0].endMs, boundary, accuracy: 1, "the body keeps its 92/138 of the time")
+        XCTAssertEqual(pieces[1].startMs, pieces[0].endMs)
+        XCTAssertEqual(pieces[1].spokenRange, bodyCharacters..<spoken.count)
+    }
+
+    /// A Margin made a moment either side of the cut belongs to the passage being spoken at that moment.
+    func testAMarginJustEitherSideOfTheCutOpensOnThePassageBeingSpoken() throws {
+        let (pieces, itemText) = try wholePaperPieces()
+        let skipped = try referencesRange(in: itemText)
+        let timeline = TranscriptTimeline(
+            segments: pieces.enumerated().map { index, piece in
+                MediaTimelineSegment(id: "seg-\(index)", startMs: piece.startMs, endMs: piece.endMs,
+                                     startChar: piece.startChar, endChar: piece.endChar, text: "")
+            },
+            chapters: [], durationMs: 10_000
+        )
+        let cut = 6_667 // 92 of the 138 spoken characters are the body's
+        for early in [cut - 400, cut - 50, cut - 1] {
+            let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: early, timeline: timeline)
+            XCTAssertLessThanOrEqual(offset, skipped.lowerBound, "at \(early) ms the body is still being read, not the appendix at \(offset)")
+        }
+        for late in [cut, cut + 50, cut + 400] {
+            let offset = PreparedNarrationFallback.textOffset(mediaTimeMs: late, timeline: timeline)
+            XCTAssertGreaterThanOrEqual(offset, skipped.upperBound, "at \(late) ms the appendix is being read, not the body at \(offset)")
+        }
+    }
+
+    // MARK: Hand-made projections
+
+    /// A projection that speaks only the given stretches of `source`, as the normalizer does with text it drops.
+    private func makeProjection(of source: String, speaking stretches: [String]) -> (NormalizedSpeechText, [Range<Int>]) {
+        let characters = Array(source)
+        var text = "", offsets: [Int] = [], ranges: [Range<Int>] = []
+        var searchFrom = source.startIndex
+        for stretch in stretches {
+            let found = source.range(of: stretch, range: searchFrom..<source.endIndex)!
+            let lower = source.distance(from: source.startIndex, to: found.lowerBound)
+            let upper = source.distance(from: source.startIndex, to: found.upperBound)
+            ranges.append(lower..<upper)
+            for index in lower..<upper { text.append(characters[index]); offsets.append(index) }
+            searchFrom = found.upperBound
+        }
+        return (NormalizedSpeechText(text: text, sourceOffsets: offsets, sourceLength: characters.count), ranges)
+    }
+
+    func testTwoSkippedStretchesMakeThreePiecesWithTheirOwnShareOfTheTime() {
+        let source = "First part. HIDDEN one words. Second part here. HIDDEN two words. Third."
+        let (projection, stretches) = makeProjection(of: source, speaking: ["First part. ", "Second part here. ", "Third."])
+        XCTAssertEqual(projection.text.count, 36, "precondition: 12 + 18 + 6 spoken characters")
+
+        // 3,600 ms for 36 characters is 100 ms each, after a start of 1,000 ms.
+        let pieces = NarrationTimelinePieces.pieces(
+            spokenRange: 0..<36, startMs: 1_000, endMs: 4_600, projection: projection, source: Array(source)
+        )
+
+        XCTAssertEqual(pieces.map(\.spokenRange), [0..<12, 12..<30, 30..<36])
+        XCTAssertEqual(pieces.map(\.startMs), [1_000, 2_200, 4_000])
+        XCTAssertEqual(pieces.map(\.endMs), [2_200, 4_000, 4_600])
+        XCTAssertEqual(pieces.map(\.startChar), stretches.map(\.lowerBound), "each piece starts where its words do")
+        XCTAssertEqual(pieces.map(\.endChar), [stretches[0].upperBound, stretches[1].upperBound, source.count],
+                       "and stops after its own last word, short of the skipped text")
+    }
+
+    func testARunTooShortForItsOwnMillisecondIsReadWithTheNextPiece() {
+        let source = "A HIDDEN words " + String(repeating: "B", count: 399)
+        let (projection, _) = makeProjection(of: source, speaking: ["A", String(repeating: "B", count: 399)])
+        XCTAssertEqual(projection.text.count, 400, "precondition")
+
+        // 1 of 400 characters of 100 ms is a quarter of a millisecond: it rounds to the chunk's own start.
+        let pieces = NarrationTimelinePieces.pieces(
+            spokenRange: 0..<400, startMs: 0, endMs: 100, projection: projection, source: Array(source)
+        )
+        XCTAssertEqual(pieces.map(\.spokenRange), [0..<400], "one piece, not an empty one followed by the rest")
+        XCTAssertEqual(pieces.map(\.startMs), [0])
+        XCTAssertEqual(pieces.map(\.endMs), [100])
+
+        // The same at the other end: the last run is 1 of 400 characters, a quarter of a millisecond before the end.
+        let tail = "B" + String(repeating: "B", count: 398) + " HIDDEN words C"
+        let (tailProjection, _) = makeProjection(of: tail, speaking: [String(repeating: "B", count: 399), "C"])
+        let tailPieces = NarrationTimelinePieces.pieces(
+            spokenRange: 0..<400, startMs: 0, endMs: 100, projection: tailProjection, source: Array(tail)
+        )
+        XCTAssertEqual(tailPieces.map(\.spokenRange), [0..<400])
+        XCTAssertEqual(tailPieces.map(\.endMs), [100])
+    }
+
     func testAChunkThatReadsOneStretchOfTextIsOneSegmentAsBefore() {
         let text = "First sentence of the article. Second sentence, with a comma; and more.  Third."
         let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)

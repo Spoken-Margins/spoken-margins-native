@@ -16,7 +16,7 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - The newest commit wins: if the PR moved on since this run was queued, a newer run tests it.
 - A request identical to one that already has a PASS or FAIL report (same head merged into the
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
-- T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane.
+- T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane, on an explicit request.
 - T3 runs the named app-hosted tests, plus every app test class the base branch's test-scope.py
   suggests for the PR's diff (#351), through verify-tests.py on a fresh iOS 26 simulator, created
   for the job and deleted afterwards. The report lists the classes it added and how long each plan took. It is booted under the lane's boot rules (scripts/lane_sim.py):
@@ -26,9 +26,10 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 - The automerge label asks for the checks a finished PR needs, with no request comment (the
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
-  committed diff: T0 (docs, research, the server) runs nothing, T1 runs --plan fast, and T2 or
-  higher runs --plan fast and both builds. An explicit request on the PR goes first. Before any of
-  that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
+  committed diff: T0 (docs, research notes) runs nothing, and anything else runs --plan fast only. It
+  builds no app (owner, 2026-10-09: 140 runs in a week built both targets and caught no compile failure):
+  the author builds both targets before pushing, and the integration run on next's tip builds and tests
+  the merged app. An explicit request on the PR goes first. Before any of that, next's scripts/hot_file_ratchet.py fails a PR that grows Gate1AppModel.swift or
   Gate1RootView.swift above its ceiling, unless the PR has the hot-file-ok label.
 - The runner merges what it passes (decision 3, owner-approved). An automerge run tests the exact
   merge commit, with next as its first parent. On PASS it posts a "Merge check (triage desk)"
@@ -36,7 +37,7 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
   it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
-  (test-scope.py's lane_paths) until a Codex audit of its head says "No blocking findings": those pass
+  (test-scope.py's lane_paths) until a Codex or Claude audit of its head says "No blocking findings": those pass
   or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
   wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
   its own workflow and helpers. A PR someone asked T3 for merges only on a
@@ -44,11 +45,14 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
   same job (#421): a label the runner re-added with the workflow's token would start no new run.
-  While the PR's T3 request for its head is still waiting, the automerge run skips its own checks
-  and reports itself held straight away: the T3 PASS's lane job runs them before it merges.
+  While the PR's T3 request for its head is still waiting, the automerge run on the build runner runs its
+  checks anyway and its held report records what passed with which next (#834); the T3 PASS's lane job
+  then merges without repeating them unless next has since moved in ways that matter (untested_moves).
+  Anywhere else, or with no room to build, the automerge run skips its checks and reports itself held
+  straight away, and the T3 PASS's lane job runs them before it merges.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
-- Build folders stay warm between jobs. The checkout wipes the workspace, so the tree's .build (the
+- Build folders stay warm between T2 and T3 jobs. The checkout wipes the workspace, so the tree's .build (the
   app's DerivedData and verify-tests' output) and Packages/SessionKit/.build (SwiftPM) link to a cache
   outside it, keyed by the SessionKit source tree under test: a DerivedData reused after SessionKit
   changes gives false "does not conform" errors (AGENTS.md), so any SessionKit change starts a new
@@ -56,13 +60,22 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   DerivedData and SwiftPM's state record absolute paths, and a cache whose SwiftPM state lists a
   binary artifact that isn't on disk starts again cold (#405). At most WARM_KEEP caches per checkout,
   never below WARM_FREE_FLOOR of free disk; otherwise the job runs cold. A warm rebuild measured 6 to
-  10 s against 90 s cold, per build.
+  10 s against 90 s cold, per build. Automerge runs build no app, so they keep no cache (#1207): their host
+  tests build SessionKit in the workspace, which the job empties when it ends, and each automerge job removes
+  the idle caches with no app build in them that its runner's earlier automerge runs left (host_build_folders).
 - Two runners (item 5). lane.yml's `lane` job answers /lane requests on the main runner (the only
   one that runs simulators); its `automerge` job runs on any runner labelled sm-lane-build. --mode
   keeps each job to its own work. On the build-only runner (SM_LANE_RUNNER_ROLE=build), an
   automerge job first waits for room: no simulator job, normal memory pressure, and enough free disk.
-  Trial (2026-10-01): a host-only job (T0/T1) there may start beside a simulator job while memory
-  pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
+  Trial (2026-10-01): an automerge job, which runs no xcodebuild, may start there beside a simulator job
+  while memory pressure reads normal and BESIDE_SIMULATOR_FREE_DISK is free; each one is logged for the owner.
+  The builds-beside-a-simulator trial ended with the per-PR app builds (#1207): T2 builds take lane_slots'
+  usual build slots wherever they run.
+- The step ledger (#1200, scripts/lane_ledger.py). Each step a job runs (the hot-file ratchet, host tests, app
+  builds, app tests) is noted with its verdict and wall time, and when the job has reported, they go into
+  step-ledger.json in the lane state folder: runs, time, PASS / FAIL / runner faults, and catches. A rule that
+  trips (a step 20 runs without a FAIL at over a minute a run, 3 runner faults in a row, one test failing on
+  two PRs against the same next) posts one "Lane step alarm" comment on #337 at once. Never fails a job.
 - Auto-revert of a lane change that broke the lane (owner rule 2026-10-01, auto_revert). Each job on
   next starts by finding the newest merge into next that touched the lane (test-scope.py's lane
   paths). If the first two lane reports on PRs after it, from jobs that tested a next with it, were
@@ -90,6 +103,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -99,21 +113,22 @@ QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
 FAST_TIMEOUT = 2400
 MERGE_ATTEMPTS = 3
-WARM_KEEP = 2
+# #863: keep more exact-key hits across interleaved PRs. Cloning across SessionKit keys also copies
+# Xcode metadata pointing at the donor cache; retain strict keys to avoid stale modules instead.
+# WARM_FREE_FLOOR still takes precedence over this per-checkout retention limit.
+WARM_KEEP = 4
 BUILD_RUNNER_WAIT = 90 * 60
 BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
-# Read by the tree's lane_slots.py (spelled here so this runner never needs a name from that copy, lane_slots_helper).
-BUILD_NEEDS_ROOM_ENV = 'SM_LANE_BUILD_NEEDS_ROOM'
 WARM_FREE_FLOOR = 15 * 10**9
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
 HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
 NOT_VERIFIED = 'journeys and anything a listener notices (T4), audible content (owner)'
 MERGE_CHECK = '**Merge check (triage desk)'  # the prefix scripts/merge_audit.py requires
-AUDITS = ('**Codex audit (Astra)', '## Codex audit')  # how an audit comment starts: the hourly task's, or an older manual one
+AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
@@ -135,6 +150,7 @@ NOTE = '<!-- lane-note -->'
 REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
 REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
 IDENTICAL = re.compile(r'^Lane: identical (T\d) request for (\w+) already reported \((PASS|FAIL)\)', re.M)
+CHECKS = re.compile(r'^<!-- lane-checks: (\{.*\}) -->$', re.M)  # a held automerge report's passed checks (#834)
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -249,6 +265,79 @@ def report(request_id: str, verdict: str, head: str, base: str, tier: str, where
     return '\n'.join(lines) + f'\n<!-- lane-request: {json.dumps(wanted, sort_keys=True)} -->\n'
 
 
+# ---- Step ledger --------------------------------------------------------------------------------
+
+STEP_RUNS: list[dict] = []  # this job's step runs, for the step ledger once the job has reported (flush_ledger)
+TESTED_BASE = ''  # the next commit the job is testing now (remember_tested)
+
+
+def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False) -> None:
+    STEP_RUNS.append({'step': name, 'verdict': verdict, 'seconds': seconds, 'base': TESTED_BASE,
+                      'failed': list(failed), 'zero_tests': zero_tests})
+
+
+def ledger_step(name: str, read=None):
+    """Note each run of the decorated step for the step ledger: its verdict (the result's first item) and wall
+    time, and through read(args, result) what failed and whether it ran zero tests. A step that raises is a
+    runner fault."""
+    def wrap(function):
+        @functools.wraps(function)
+        def run(*args, **kwargs):
+            started = time.monotonic()
+            try:
+                result = function(*args, **kwargs)
+            except BaseException:
+                note_step(name, 'ERROR', time.monotonic() - started)
+                raise
+            failed, zero = [], False
+            try:
+                failed, zero = read(args, result) if read else ([], False)
+            except Exception:  # noqa: BLE001 - the ledger never changes a step's result
+                pass
+            note_step(name, result[0], time.monotonic() - started, failed, zero)
+            return result
+        return run
+    return wrap
+
+
+def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
+    """(The failed tests, or failed steps when a step names no tests, and whether no test ran) in the
+    verify-tests.py manifests under <outputs>."""
+    failed, counted = [], 0
+    for output in outputs:
+        for step in _read_manifest(output).get('steps', []):
+            tests = step.get('tests') or {}
+            counted += len(tests)
+            failed += [test for test, record in tests.items() if record.get('status') == 'failed']
+            if step.get('exit_code') and not step.get('interrupted') and not tests:
+                failed.append(str(step.get('name')))
+    return failed, counted == 0
+
+
+def flush_ledger(pr: int, head: str, post) -> list[str]:
+    """Put this job's step runs in the step ledger and post each new alarm with post(body). Returns the alarms.
+    Best effort: the job has already reported, and nothing here can fail it."""
+    runs = list(STEP_RUNS)
+    STEP_RUNS.clear()
+    if not runs:
+        return []
+    try:
+        import lane_ledger
+        from lane_slots import state_dir
+        alarms = lane_ledger.record_runs(state_dir(), [
+            dict(run, result=lane_ledger.outcome(run['verdict'], run['zero_tests'])) for run in runs], pr, head)
+    except Exception as error:  # noqa: BLE001
+        print(f'[lane] step ledger not updated: {error!r}')
+        return []
+    for body in alarms:
+        try:
+            post(f'{body}\n_Posted by the lane runner\'s step ledger (scripts/lane_ledger.py, #1200), after PR #{pr}. '
+                 'The numbers are in step-ledger.json in the lane state folder on the Mac._')
+        except Exception as error:  # noqa: BLE001
+            print(f'[lane] could not post the step alarm: {error!r}\n{body}')
+    return alarms
+
+
 # ---- Processes ----------------------------------------------------------------------------------
 
 # The workflow's command files. A step's processes append to them to set its outputs (the verdict the
@@ -260,19 +349,9 @@ WORKFLOW_FILES = ('GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH', 'GITHUB_STATE', 
 def pr_code_env() -> dict:
     """The environment for the PR's own code (builds, tests): without the GitHub token, so nothing the
     PR changes can use the lane's write access, and without the workflow's command files, so it can't set
-    the job's verdict. Nor BUILD_NEEDS_ROOM_ENV: that is for the T2 builds alone (pr_build_env), and host
-    tests that take build slots or test lane_slots mustn't inherit it."""
+    the job's verdict."""
     return {name: value for name, value in os.environ.items()
-            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', BUILD_NEEDS_ROOM_ENV, *WORKFLOW_FILES)}
-
-
-def pr_build_env() -> dict:
-    """pr_code_env for the T2 builds. On the build runner it sets BUILD_NEEDS_ROOM_ENV, so each xcodebuild-lane
-    checks the build runner's rules again as it takes its build slot (lane_slots.py)."""
-    env = pr_code_env()
-    if os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
-        env[BUILD_NEEDS_ROOM_ENV] = '1'
-    return env
+            if name not in ('GH_TOKEN', 'GITHUB_TOKEN', *WORKFLOW_FILES)}
 
 
 def git_with_token(tree: Path) -> list[str]:
@@ -329,8 +408,10 @@ def first_errors(log: Path, limit: int = 5) -> list[str]:
     return list(dict.fromkeys(found))[:limit]
 
 
+@ledger_step('app builds', lambda args, result: (
+    [part.rsplit(' (', 1)[0] for part in result[1].split(', ') if not part.endswith('(pass)')], False))
 def run_t2(evidence: Path, runner=None) -> tuple[str, str, list[str]]:
-    runner = runner or (lambda command, log, timeout: run_bounded(command, log, timeout, env=pr_build_env()))
+    runner = runner or run_bounded
     results, details = [], []
     for name, args in T2_BUILDS:
         log = evidence / f't2-{name}.log'
@@ -385,6 +466,35 @@ def base_policy(tree: Path, base: str, path: str):
     return module
 
 
+def base_scripts_fallback(tree: Path, base: str, into: Path | None = None) -> Path | None:
+    """Put the base branch's copy of each scripts/*.py module the tree lacks at the end of sys.path, and
+    return the folder (None when the tree lacks none).
+
+    The workflow runs next's lane-runner.py, but its helpers (lane_slots and friends) are imported from the
+    tree's scripts/. A PR branched before a helper existed has no copy, so `from lane_slots import ...`
+    raised ModuleNotFoundError before the job could report (#904: #886, about 1,400 commits behind next, on
+    sm-lane-mac-2's wait for room). The tree's own copies still come first.
+    """
+    listed = subprocess.run(['git', '-C', str(tree), 'ls-tree', '--name-only', f'origin/{base}', 'scripts/'],
+                            capture_output=True, text=True)
+    if listed.returncode != 0:
+        raise RuntimeError(f'git ls-tree origin/{base} failed: {listed.stderr.strip()[:200]}')
+    missing = [name for name in (Path(line).name for line in listed.stdout.splitlines())
+               if name.endswith('.py') and name[:-3].isidentifier() and not (tree / 'scripts' / name).exists()]
+    if not missing:
+        return None
+    into = into or Path(tempfile.mkdtemp(prefix='sm-lane-base-scripts-', dir=os.environ.get('RUNNER_TEMP') or None))
+    into.mkdir(parents=True, exist_ok=True)
+    for name in missing:
+        shown = subprocess.run(['git', '-C', str(tree), 'show', f'origin/{base}:scripts/{name}'],
+                               capture_output=True, text=True)
+        if shown.returncode == 0:
+            (into / name).write_text(shown.stdout)
+    if str(into) not in sys.path:
+        sys.path.append(str(into))
+    return into
+
+
 def diff_scope(tree: Path, base: str) -> dict:
     """test-scope.py's answer for the PR, from the base branch's copy of the policy, so a PR can't
     reclassify itself to skip its builds."""
@@ -412,44 +522,101 @@ def hot_file_violations(tree: Path, base: str, labels) -> list[str]:
     return ratchet.violations(tree, f'origin/{base}', 'HEAD', labels) if ratchet else []
 
 
-def run_fast(evidence: Path, runner=run_bounded) -> tuple[str, list[str]]:
-    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details)."""
+def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
+    """Every path the tree changes against origin/<base>, both sides of a rename, for verify-tests.py's
+    --changed-files (#862). None when git can't say, which runs every step."""
+    try:
+        git = ['git', '-C', str(tree)]
+        merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
+        # NUL-delimited: git's default output quotes and escapes a name like scripts/tests/test_café.py, which
+        # then no longer starts with scripts/ and would leave the lane's own tests out.
+        raw = subprocess.check_output(git + ['diff', '--name-only', '--no-renames', '-z', merge_base, 'HEAD'])
+        paths = [path.decode() for path in raw.split(b'\0') if path]
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError):
+        return None
+    # The hand-off is one path per line, so a name that line splitting or trimming would change can't be sent.
+    if any(path.splitlines() != [path] or path != path.strip() for path in paths):
+        return None
+    return sorted(set(paths)) or None
+
+
+@ledger_step('host tests', lambda args, result: (manifest_failures(args[0] / 'fast')[0], False))
+def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
+    """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details).
+
+    changed: the PR's changed paths, so the plan can leave out the lane's own Python tests when nothing they
+    read changed (#862). Without it every step runs."""
     python = ROOT / '.venv/bin/python'
     output, log_path = evidence / 'fast', evidence / 'verify-fast.log'
     command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', 'fast',
                '--output', str(output)]
+    if changed:
+        changed_file = evidence / 'changed-files.txt'
+        changed_file.write_text('\n'.join(changed) + '\n')
+        command += ['--changed-files', str(changed_file)]
     with log_path.open('w') as log:
         code = runner(command, log, FAST_TIMEOUT)
     if code is None:
         return 'INCONCLUSIVE', [f'host tests (--plan fast) — no result after {duration(FAST_TIMEOUT)}; interrupted. '
                                 f'evidence: {log_path}']
-    if code == 0 and _read_manifest(output).get('status') == 'verified':
-        return 'PASS', []
+    manifest = _read_manifest(output)
+    if manifest.get('lane_fault'):  # #909: the Mac, not the PR (its lid is closed, so there is no sound output)
+        return 'INCONCLUSIVE', [f'host tests (--plan fast) — lane fault: {manifest["lane_fault"]}. Ask the owner to open '
+                                f'the lid or connect an audio output, then re-run. evidence: {log_path}']
+    if code == 0 and manifest.get('status') == 'verified':
+        # A suite the Mac could not run (no `go`, say) passed nothing: the report says so (#1033).
+        return 'PASS', [f'{step["name"]} skipped: {reason}' for step in manifest.get('steps', [])
+                        if isinstance(step.get('skipped'), list) for reason in step['skipped']]
     return 'FAIL', [f'host tests (--plan fast) — expected: verified. observed: exit {code}. evidence: {log_path}',
                     *[f'  {line}' for line in first_errors(log_path)]]
 
 
-def run_automerge(scope: dict, evidence: Path, fast=run_fast, t2=run_t2,
-                  ratchet=lambda: []) -> tuple[str, str, str, list[str]]:
-    """Returns verdict, where, ran, details for the checks the PR's diff needs."""
+NO_APP_BUILD_PER_PR = ('no app build per PR (owner, 2026-10-09): the author builds both targets before pushing, '
+                       'and the integration run on next\'s tip builds and tests the merged app')
+
+
+def recheck_on_base(github, base_sha: str):
+    """#1204: a failed --plan fast run's failing tests, re-run on plain <base> at base_sha before the PR is
+    blamed (scripts/lane_next_rerun.py). If they fail there too the verdict is INCONCLUSIVE, not FAIL."""
+    def recheck(evidence: Path, details: list[str]) -> tuple[str, list[str]]:
+        try:
+            import lane_next_rerun
+        except ImportError:  # a tree without the helper, before base_scripts_fallback could supply it
+            return 'FAIL', details
+        python = ROOT / '.venv/bin/python'
+        return lane_next_rerun.recheck(ROOT, base_sha, evidence, details, github.api, github.repo, github.pr,
+                                       runner=run_bounded, python=str(python if python.exists() else sys.executable))
+    return recheck
+
+
+def run_automerge(scope: dict, evidence: Path, fast=run_fast,
+                  ratchet=lambda: [], changed=lambda: None, recheck=None) -> tuple[str, str, str, list[str]]:
+    """Returns verdict, where, ran, details for the checks the PR's diff needs: the hot-file ratchet, then
+    --plan fast unless the diff is T0. Never an app build (NO_APP_BUILD_PER_PR).
+
+    recheck(evidence, details): what a FAIL of the host tests becomes once their failing tests have been
+    re-run on plain next (#1204); None leaves the FAIL as it is."""
     tier = int(scope['tier'][1:])
     details = [f'test-scope: {scope["tier"]} ({"; ".join(scope["why"]) or "no changes"})']
+    started = time.monotonic()
     too_big = ratchet()
+    note_step('hot-file ratchet', 'FAIL' if too_big else 'PASS', time.monotonic() - started)
     if too_big:
         return 'FAIL', 'no build', 'hot-file ratchet: failed', details + [f'hot-file ratchet — {line}'
                                                                           for line in too_big]
     if tier == 0:
         return 'PASS', 'no build', 'nothing to build or test', details + [
-            'nothing here reaches the host tests or the app (docs, research or server only)']
-    verdict, more = fast(evidence)
+            'nothing here reaches the host tests or the app (docs or research notes only)']
+    verdict, more = fast(evidence, changed=changed())
+    if verdict == 'FAIL' and recheck:
+        verdict, more = recheck(evidence, more)
     details += more
     if verdict != 'PASS':
         return verdict, 'host only', 'host tests (--plan fast): ' + verdict.lower(), details
     if tier == 1:
         return 'PASS', 'host only', 'host tests (--plan fast): passed', details + [
             'no app build: nothing in the diff reaches the app (T1)']
-    verdict, builds, more = t2(evidence)
-    return verdict, 'no simulator (compile only)', f'host tests (--plan fast): passed; {builds}', details + more
+    return 'PASS', 'host only', 'host tests (--plan fast): passed', details + [NO_APP_BUILD_PER_PR]
 
 
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
@@ -457,7 +624,7 @@ CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)  # how the audit ta
 
 
 def audit_blocker(comments: list[dict], head: str) -> str | None:
-    """Why the Codex audits on the PR don't clear its head, or None when the newest audit of the head is clean.
+    """Why the Codex or Claude audits on the PR don't clear its head, or None when the newest audit of the head is clean.
 
     #441: any audit comment used to clear the PR, whatever commit it covered or what it found. An audit
     counts only if its heading names the head commit (the hourly task's says "on `<sha7>`"), and it clears
@@ -467,24 +634,25 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
     audits = []
     for comment in comments:
         body = (comment.get('body') or '').lstrip()
-        if body.startswith(AUDITS):
+        if (body.startswith(AUDITS[:2]) or
+                re.fullmatch(r'\*\*Claude audit on `[0-9a-f]{7,40}`\*\*', body.partition('\n')[0].rstrip())):
             heading, _, rest = body.partition('\n')
             verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
             audits.append((AUDIT_SHA.findall(heading), verdict))
     if not audits:
-        return 'has no "Codex audit (Astra)" comment yet'
+        return 'has no Codex or Claude audit comment yet'
     on_head = [verdict for shas, verdict in audits if any(head.startswith(sha) for sha in shas)]
     if not on_head:
         audited = next((shas[0] for shas, _ in reversed(audits) if shas), None)
-        return (f'has no Codex audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
-                else f'has no Codex audit naming its head `{head[:7]}`')
+        return (f'has no Codex or Claude audit of its head: the audit is on `{audited}`, the head is `{head[:7]}`' if audited
+                else f'has no Codex or Claude audit naming its head `{head[:7]}`')
     if not CLEAN_AUDIT.match(on_head[-1]):
-        return f'the Codex audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
+        return f'the Codex or Claude audit on the head `{head[:7]}` has blocking findings (it doesn\'t say "No blocking findings")'
     return None
 
 
 def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
-    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex
+    """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex or Claude
     audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
     2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges."""
     reasons = []
@@ -523,7 +691,8 @@ def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
                 asked = index
     if asked < 0:
         return None
-    again = 'the lane job that reports a T3 PASS on this head runs the merge checks again itself'
+    again = ('the lane job that reports a T3 PASS on this head merges it, testing again only if next has since '
+             'moved in ways that matter (#834)')
     if latest is None or latest[0] < asked:
         return 'INCONCLUSIVE', f'held for T3: this PR\'s newest /lane T3 request has no lane report yet; {again}'
     _, verdict, commit, url = latest
@@ -547,12 +716,52 @@ def held_for_t3(comments: list[dict], head: str) -> bool:
     return False
 
 
+def checks_note(head: str, tested_base: str, ran: str, where: str) -> str:
+    """The line a held automerge report carries when its checks passed: what held_checks reads."""
+    return '<!-- lane-checks: ' + json.dumps({'commit': head, 'next': tested_base, 'ran': ran, 'where': where},
+                                             sort_keys=True) + ' -->'
+
+
+def held_checks(comments: list[dict], head: str) -> dict | None:
+    """The checks the automerge run held for T3 on <head> passed: {'next', 'ran', 'where'}, or None.
+
+    #834: the lane job that reported a T3 PASS ran --plan fast and both builds on sm-lane-mac, the one runner
+    that runs T3s, 7 to 39 minutes a PR (2026-10-04), while the build runner could have run them as the T3
+    waited. Now the build runner's automerge run does, and its held report says what passed with which next
+    (checks_note). Only the newest automerge report counts, and only when it is the runner's own (posted
+    with the workflow's token), on <head>, held for T3, and names the head and a full next commit.
+    The checks line and the hold must each be a whole line of their own: the PR's own test output appears in
+    a report only indented (first_errors), so it can't pass for either. The last checks line counts.
+    """
+    for comment in reversed(comments):
+        body = comment.get('body') or ''
+        wanted = report_identity(body)
+        if not (wanted and wanted.get('tier') == 'auto' and REPORT.search(body)):
+            continue
+        found = CHECKS.findall(body)
+        if wanted.get('commit') != head or (comment.get('user') or {}).get('login') != BOT[0] \
+                or not PENDING_T3_HOLD.search(body) or not found:
+            return None
+        try:
+            checked = json.loads(found[-1])
+        except ValueError:
+            return None
+        if not isinstance(checked, dict) or checked.get('commit') != head \
+                or not re.fullmatch(r'[0-9a-f]{40}', str(checked.get('next') or '')):
+            return None
+        return {'next': checked['next'], 'ran': str(checked.get('ran') or 'host tests'),
+                'where': str(checked.get('where') or 'no simulator (compile only)')}
+    return None
+
+
 def t3_request_for_head(comments: list[dict], labels, head: str) -> str | None:
     """The link to a /lane T3 request for <head> that the lane job has still to answer, or None.
 
     An automerge run on such a PR can't merge: the T3 gate holds it until the T3 reports, and the lane
-    job that reports a T3 PASS runs the host tests and both builds on the merge commit itself (#421).
-    Running them here first only to be held cost 20 runs in two days. It counts only when lane:queued or
+    job that reports a T3 PASS merges it (#421). On the build runner the automerge run still runs its host
+    tests, and that lane job merges without them when next hasn't moved in ways that matter
+    (#834, held_checks). Anywhere else it skips them: running them first only to be held cost 20 runs in
+    two days, and on the simulator runner they'd take a T3's time. It counts only when lane:queued or
     lane:running says a lane job will answer it, when it is the newest unanswered T2/T3 request, and when
     its `commit:` names <head>: a request for an older head may be running on that head, and then nothing
     else would test this one.
@@ -601,8 +810,7 @@ def push_merge(tree: Path, sha: str, base: str) -> tuple[bool, str]:
 
 def sweep_merge_audit(tree: Path, base: str) -> None:
     """Pushes made with the workflow token start no workflow, so merge-audit's push run never sees the
-    runner's merges, and its hourly schedule runs only once merge-audit.yml is on the default branch.
-    After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
+    runner's merges. After each merge, run next's audit over the last two hours instead. Best effort: never fails a job."""
     try:
         audit = base_policy(tree, base, 'scripts/merge_audit.py')
         if audit:
@@ -665,10 +873,12 @@ def merge_check_untested(head: str, merge_sha: str, base: str, base_sha: str, te
     scripts/phone-build reads that as "the runner tested this exact commit"."""
     shown = ', '.join(f'`{c}`' for c in commits[:SKIPPED_SHOWN]) + \
         (f' and {len(commits) - SKIPPED_SHOWN} more' if len(commits) > SKIPPED_SHOWN else '')
+    moved = (f'- {base} has since moved to `{base_sha[:7]}`, and its commits touch none of this PR\'s files and no '
+             f'build inputs: {shown}.\n' if commits else
+             f'- {base} hasn\'t moved since (the test ran in the automerge run held for T3).\n')
     return (f'{MERGE_CHECK} on `{head[:7]}`: PASS, re-merged onto the newest {base} without re-testing.**\n'
             f'- Tested this PR merged with {base} at `{tested_base[:7]}`. Ran: {ran}.\n'
-            f'- {base} has since moved to `{base_sha[:7]}`, and its commits touch none of this PR\'s files and no '
-            f'build inputs: {shown}.\n'
+            + moved +
             f'- So the re-merge `{merge_sha[:7]}` goes to {base} not re-tested. The Test Desk tests {base}\'s merged '
             'tip end to end.\n'
             '_Posted by the lane runner (scripts/lane-runner.py)._')
@@ -692,14 +902,30 @@ class AutoRunContext:
 
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
-             room_for_builds=None, context: AutoRunContext | None = None) -> tuple[str, str, str, list[str]]:
+             context: AutoRunContext | None = None,
+             checked: dict | None = None) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
-    room_for_builds: for a job that started as host-only beside a simulator job. If the merge commit needs
-    the app builds after all, they wait for it first.
+    checked: the checks the automerge run held for T3 on this head passed (held_checks). They stand, as after
+    a refused push, when next's commits since touch none of the PR's files and no build inputs (#834);
+    otherwise this run tests again.
     """
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
+    scope, tested, checks = None, '', []
+    if checked:
+        try:
+            skipped, why = untested_moves(ROOT, checked['next'], base_sha, head)
+        except (OSError, subprocess.SubprocessError) as error:  # can't tell: test again
+            skipped, why = None, f'the runner could not compare the commits ({error!r})'
+        held_run = f'the automerge run held for T3 passed its checks with {base} at {checked["next"][:7]}'
+        if skipped is None:
+            notes.append(f'{held_run}; tested again on {base_sha[:7]}, because {why}')
+        else:
+            tested_base, ran, where, verdict = checked['next'], checked['ran'], checked['where'], 'PASS'
+            tested = (f'not re-tested: {held_run}, and ' + (
+                f'{base}\'s {len(skipped)} commit{"s" if len(skipped) != 1 else ""} since touch none of this PR\'s '
+                'files and no build inputs' if skipped else f'{base} hasn\'t moved since'))
     for attempt in range(1, attempts + 1):
         if context is not None:
             context.tested_base = base_sha
@@ -713,27 +939,33 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 f'Merge {base} into your branch and push; the automerge label runs it again.']
         if skipped is None:
             tried.mkdir(parents=True, exist_ok=True)
-            warm = warm_build_folders(ROOT)
+            warm = host_build_folders(ROOT)
             scope = diff_scope(ROOT, base)
             (tried / 'scope.json').write_text(json.dumps(scope, indent=2))
-            no_room = room_for_builds() if room_for_builds and int(scope['tier'][1:]) >= 2 else None
-            if no_room:
-                return 'INCONCLUSIVE', 'no build', 'nothing', notes + [
-                    f'{no_room}. Push again, or remove and re-add automerge, to try again.']
             verdict, where, ran, checks = run_automerge(
-                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)))
+                scope, tried, ratchet=lambda: hot_file_violations(ROOT, base, set(labels)),
+                changed=lambda: changed_paths_for_tests(ROOT, base),
+                recheck=recheck_on_base(github, base_sha))
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
             tested_base = base_sha
+        elif scope is None:  # the held run's checks stand; the audit hold still reads the diff's scope
+            scope = diff_scope(ROOT, base)
+            # The ratchet reads the labels, which may have changed since: hot-file-ok taken off (#926 audit).
+            too_big = hot_file_violations(ROOT, base, set(labels))
+            if too_big:
+                return 'FAIL', 'no build', 'hot-file ratchet: failed', [tested] + notes + [
+                    f'hot-file ratchet — {line}' for line in too_big]
         details = [tested] + notes + checks
         latest = github.comments()  # read now: a T3 report or an audit may have landed while this ran
         held = t3_gate(latest)
-        if held:
-            return held[0], where, ran, details + [f'not merged: {held[1]}.']
+        if held:  # what passed, for the lane job that reports the T3 PASS (#834)
+            return held[0], where, ran, details + [checks_note(head, tested_base, ran, where),
+                                                   f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
         if blockers:
-            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex audit '
+            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
                                                    'of its head says "No blocking findings".' for b in blockers]
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
@@ -776,6 +1008,9 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
                    why: str) -> str | None:
     """After a T3 PASS on <head>: the automerge run the T3 gate held, run here in the lane job (#421).
 
+    When that held run passed its host tests (held_checks), they aren't run again here unless next
+    has since moved in ways that matter (#834): the merge takes seconds instead of minutes on sm-lane-mac.
+
     Only for a PR that is still open on <head> with the automerge label, whose newest automerge report
     was held by the T3 gate, and that the gate no longer holds. It runs here rather than by re-adding the
     label: a label change made with the workflow's GITHUB_TOKEN starts no workflow run. Returns the report
@@ -789,6 +1024,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     if pull.get('state', 'open') != 'open' or pull['head']['sha'] != head or AUTOMERGE not in labels \
             or not held_for_t3(comments, head) or t3_gate(comments):
         return None
+    checked = held_checks(comments, head)  # the build runner's held run passed its checks: no need to repeat
     evidence.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     started_by = [f'{why}; the automerge run on {head[:7]} was held for T3']
@@ -798,7 +1034,7 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         base_sha = fetch_base(ROOT, base)
         remember_tested(base, base_sha)
         verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels,
-                                               context=context)
+                                               context=context, checked=checked)
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
@@ -927,42 +1163,90 @@ def _cache_busy(cache: Path) -> bool:
         return False
 
 
+
+# ---- No cache for automerge runs (#1207) ---------------------------------------------------------
+
+def host_build_folders(tree: Path, root: Path | None = None) -> str:
+    """The build folders for an automerge run, which builds no app (NO_APP_BUILD_PER_PR); returns a line for the report.
+
+    It links no warm cache: the host tests build SessionKit in the workspace (Packages/SessionKit/.build),
+    and main() empties that when the job ends (drop_workspace_builds). A warm SwiftPM cache saved about 50 s of
+    a 5-minute run on the 48% of runs whose SessionKit key it had, and the build runners kept four of them
+    each, 1.3 GB apiece: about 9 GB, which held automerge runs at the 20 GB disk floor (#1207).
+
+    A T3 earlier in the same job linked the tree's folders to its cache: those links are undone (the cache
+    stays, still locked by this job), so the host tests don't add a SwiftPM build to a T3 cache. Then the
+    idle caches with no app build in them that this checkout's earlier automerge runs left are removed.
+    """
+    for link in (tree / '.build', tree / 'Packages/SessionKit/.build'):
+        if link.is_symlink():
+            link.unlink()
+    removed, freed = sweep_host_test_caches(tree, root)
+    line = 'build folders: in the workspace, no cache kept (automerge runs build no app)'
+    if removed:
+        line += (f'; removed {removed} idle host-test cache{"s" if removed != 1 else ""} ({freed / 10**9:.1f} GB) '
+                 'that earlier automerge runs on this runner kept')
+    return line
+
+
+def holds_app_build(cache: Path) -> bool:
+    """Whether a warm cache holds an app build: a T2's DerivedData (root/dd-simulator, root/dd-device) or a T3's
+    (root/verification/<plan>). A cache with neither was made by an automerge run, for its SwiftPM build."""
+    try:
+        for child in (cache / 'root').iterdir():
+            if child.is_dir() and (child.name.startswith('dd') or
+                                   (child.name == 'verification' and any(child.iterdir()))):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def folder_size(folder: Path) -> int:
+    """Bytes on disk under folder, links not followed."""
+    total = 0
+    for parent, _, files in os.walk(folder):
+        for name in files:
+            try:
+                total += os.lstat(os.path.join(parent, name)).st_blocks * 512
+            except OSError:
+                pass
+    return total
+
+
+def sweep_host_test_caches(tree: Path, root: Path | None = None) -> tuple[int, int]:
+    """Remove this checkout's idle warm caches that hold no app build; returns (how many, bytes freed).
+
+    Only this checkout's folder (one per runner, checkout_folder), never another runner's, and never a cache a
+    job holds (_cache_busy) or one with a T2 or T3 build in it (holds_app_build): those are the T3 runner's to
+    keep, under warm_build_folders' limits. Nothing is created: a checkout with no folder has nothing to sweep.
+    """
+    folder = (root or warm_root()) / checkout_folder(tree)
+    if not folder.is_dir():
+        return 0, 0
+    removed, freed = 0, 0
+    for cache in sorted(folder.glob('sk-*')):
+        if not cache.is_dir() or cache.is_symlink() or holds_app_build(cache) or _cache_busy(cache):
+            continue
+        size = folder_size(cache)
+        shutil.rmtree(cache, ignore_errors=True)
+        if not cache.exists():
+            removed, freed = removed + 1, freed + size
+    return removed, freed
+
+
+def drop_workspace_builds(tree: Path) -> None:
+    """At the end of a job, empty the build folders it kept in the workspace rather than in a warm cache: an
+    automerge run's SwiftPM build (1.3 GB), or a cold T2 or T3's DerivedData. Links to a warm cache stay."""
+    if not (tree / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
+        for derived in (tree / '.build').glob('dd*'):
+            shutil.rmtree(derived, ignore_errors=True)
+        shutil.rmtree(tree / '.build/verification', ignore_errors=True)
+    swiftpm = tree / 'Packages/SessionKit/.build'
+    if swiftpm.is_dir() and not swiftpm.is_symlink():
+        shutil.rmtree(swiftpm, ignore_errors=True)
+
 # ---- The build-only runner ----------------------------------------------------------------------
-
-def wait_for_room_to_build(out=sys.stdout, max_wait: float = BUILD_RUNNER_WAIT, poll: float = 30,
-                           clock=time.monotonic, sleep=time.sleep, simulator_jobs=None, pressure=None,
-                           free=lambda: shutil.disk_usage(Path.home()).free, builds=None, note=None) -> str | None:
-    """The second runner builds only while the Mac has room: normal memory pressure and BUILD_RUNNER_FREE_DISK
-    free. Returns None when there's room, or why it gave up waiting.
-
-    Trial, extended 2026-10-01: sm-lane-mac-2 spent 6.9 of its 12.7 busy hours in a day waiting here for a
-    simulator job (mostly the Test Desk's) while the Mac was ~60% idle, and the host-only trial covered few
-    jobs because most automerge jobs build. A build may now start beside one simulator job on the host-only
-    terms (pressure read as normal now, BESIDE_SIMULATOR_FREE_DISK free) while the one build slot lane_slots
-    leaves during a simulator job is free; note(text) is called when it does. Never beside two. This is the
-    check when the job starts; each build checks again as it takes its slot (BUILD_NEEDS_ROOM_ENV).
-    """
-    from lane_slots import memory_pressure_level, simulator_jobs_running
-    builds = builds or lane_slots_helper('build_jobs_running', lambda: None)
-    problem, beside = wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
-                                    pressure or memory_pressure_level, free, builds)
-    if beside and note:
-        note(beside)
-    return problem
-
-
-def lane_slots_helper(name: str, fallback):
-    """lane_slots.<name>, or fallback when the tree's copy of lane_slots.py predates it.
-
-    The workflow runs next's lane-runner.py, but lane_slots comes from the PR's checkout (main() puts the
-    tree's scripts/ first on sys.path, and the module stays loaded after the merge commit is checked out).
-    A branch that hasn't merged next since a helper landed lacks it, and a plain import raised ImportError
-    before the job could report (#656 audit). Every lane_slots name newer than #656 is looked up here, with
-    a fallback that keeps the older, more careful behaviour.
-    """
-    import lane_slots
-    return getattr(lane_slots, name, fallback)
-
 
 def pressure_is_normal(level) -> bool:
     """Only a level read as normal (1) counts: running beside a simulator needs to know, not guess."""
@@ -978,17 +1262,15 @@ def wait_for_room_to_test_on_host(out=sys.stdout, max_wait: float = BUILD_RUNNER
     Trial (2026-10-01): the build runner sat idle whenever any simulator job ran, the Test Desk's included
     (394 minutes in a day). A host-only job may now start beside one while the kernel reads memory pressure
     as normal and more than BESIDE_SIMULATOR_FREE_DISK is free. With no simulator job, the build runner's
-    usual rules hold. Builds wait in wait_for_room_to_build.
+    usual rules hold.
     """
     from lane_slots import memory_pressure_level, simulator_jobs_running
     return wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs or simulator_jobs_running,
                          pressure or memory_pressure_level, free)
 
 
-def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free, builds=None) -> tuple:
-    """(None or why it gave up, a note when there's room beside a simulator job). builds, for a job that builds:
-    how many build slots are held (None: can't tell, so it doesn't build beside a simulator job); beside a
-    simulator job, it needs the one slot left then, and one simulator."""
+def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, free) -> tuple:
+    """(None or why it gave up, a note when there's room beside a simulator job)."""
     started, last_note = clock(), None
     while True:
         jobs, level, room = simulator_jobs(), pressure(), free()
@@ -1000,21 +1282,13 @@ def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, f
             if room < BESIDE_SIMULATOR_FREE_DISK:
                 busy.append(f'a simulator job is running and less than {BESIDE_SIMULATOR_FREE_DISK // 2**30} GiB '
                             'of disk is free')
-            held = builds() if builds and jobs == 1 else 0
-            if builds and jobs > 1:
-                busy.append('two simulator jobs are running')
-            elif held is None:
-                busy.append('a simulator job is running, and this checkout\'s lane_slots.py can\'t count build '
-                            'slots (merge next into the branch to build beside one)')
-            elif held:
-                busy.append('a simulator job is running and the one build slot it leaves is taken')
         else:
             if level not in (1, None):
                 busy.append('memory pressure is above normal')
             if room < BUILD_RUNNER_FREE_DISK:
                 busy.append(f'less than {BUILD_RUNNER_FREE_DISK // 10**9} GB of disk is free')
         if not busy:
-            return None, (f'{"built" if builds else "ran"} beside a simulator job (trial): memory pressure normal, '
+            return None, (f'ran beside a simulator job (trial): memory pressure normal, '
                           f'{room // 2**30} GiB free' if jobs else None)
         waited = clock() - started
         if waited >= max_wait:
@@ -1023,14 +1297,6 @@ def wait_for_room(out, max_wait, poll, clock, sleep, simulator_jobs, pressure, f
             print(f'[lane] build runner waiting ({duration(waited)} so far): {"; ".join(busy)}', file=out, flush=True)
             last_note = clock()
         sleep(poll)
-
-
-def host_only_scope(tree: Path, base: str) -> bool:
-    """Whether the PR's diff needs no app build (T0 or T1), by the base branch's policy. Unsure means no."""
-    try:
-        return int(diff_scope(tree, base)['tier'][1:]) <= 1
-    except Exception:  # noqa: BLE001 - a job that can't tell waits like a build
-        return False
 
 
 def note_beside_simulator(request_id: str, pr: int, note: str) -> None:
@@ -1213,6 +1479,7 @@ def first_boot(udid: str, log) -> tuple:
     return None, info
 
 
+@ledger_step('app tests (T3)', lambda args, result: manifest_failures(*sorted(args[2].glob('verify-*'))))
 def run_t3(tests: list[str], request_id: str, evidence: Path,
            classes: list[str] = ()) -> tuple[str, str, str, list[str], str, str]:
     """Returns verdict, where, ran, details, crashes, cc.
@@ -1383,7 +1650,9 @@ TESTED_ON = re.compile(r'\(tested merged with (\S+) at ([0-9a-f]{7,40})\)')
 REVERTS = re.compile(r'^This reverts commit ([0-9a-f]{40})', re.M)  # git revert's own line
 # INCONCLUSIVE reports that are the PR's or the request's own doing, not the lane's.
 NOT_LANE_FAULTS = (('does not merge cleanly', 'a merge conflict'),
-                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'))
+                   ('names no tests', 'a T3 request with no tests'), ('Nothing to run.', 'nothing to run'),
+                   ('lane fault: no audio output', "the Mac's sound output, not a lane change (#909)"),
+                   ('too: not this PR', 'a test broken on the base too, filed as its own issue (#1204)'))
 PENDING_T3_HOLD = re.compile(r'^not merged: held for T3:', re.M)
 LANE_MERGE_LOOKBACK = 300
 
@@ -1702,6 +1971,8 @@ TESTED_RECORD: Path | None = None  # main() sets it to a file in this job's RUNN
 def remember_tested(base: str, sha: str) -> None:
     """Note which base this job is testing, so cleanup() can name it if the job stops before its report:
     the auto-revert counts a stopped job only against a lane change that the tested base contained."""
+    global TESTED_BASE
+    TESTED_BASE = sha  # the step ledger's shared-failure rule compares failures on the same next
     if TESTED_RECORD is None:
         return
     try:
@@ -1799,6 +2070,13 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
     ROOT = args.tree.resolve()
     sys.path.insert(0, str(ROOT / 'scripts'))
+    try:
+        fallback = base_scripts_fallback(ROOT, args.base)
+        if fallback:
+            print(f'Lane helpers this branch predates come from origin/{args.base}: '
+                  + ', '.join(sorted(p.stem for p in fallback.glob('*.py'))))
+    except Exception as error:  # noqa: BLE001 - without it a stale branch fails as before; a fresh one is fine
+        print(f'Lane helper fallback skipped: {error!r}')
     repo = os.environ['GH_REPO']
     github = GitHub(repo, args.pr)
     run_url = f'{os.environ.get("GITHUB_SERVER_URL", "https://github.com")}/{repo}/actions/runs/{args.run_id}'
@@ -1807,6 +2085,7 @@ def main(argv=None) -> int:
             f'sm-lane-tested-{args.run_id}-{os.environ.get("GITHUB_RUN_ATTEMPT") or "1"}.json'
     if args.cleanup:
         return cleanup(github, run_url, args.mode)
+    STEP_RUNS.clear()
     if args.base == 'next':  # lane-check/** bases test lane changes; only next gets reverted
         try:
             print(f'Lane auto-revert check: {auto_revert(ROOT, args.base, Repo(repo))}')
@@ -1819,6 +2098,9 @@ def main(argv=None) -> int:
     automerge = AUTOMERGE in labels
     if head != args.event_head:
         print(f'The PR moved on to {head[:7]} since this run was queued; the newer run tests it.')
+        return 0
+    if pull.get('state', 'open') != 'open':  # merged or closed while queued: don't spend a test cycle on it (#860)
+        print(f'PR #{args.pr} is {pull["state"]}; nothing to test.')
         return 0
     comments = github.comments()
     request, desk_waiting = pending_requests(comments)
@@ -1872,6 +2154,7 @@ def main(argv=None) -> int:
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
         if request['tier'] == 'T3' and earlier_verdict == 'PASS':
             after_t3_pass(f'started by the T3 PASS ({url}) in the same lane job')
+        flush_ledger(args.pr, head, lambda body: Repo(repo).comment(OPS_ISSUE, body))
         return 0
     evidence.mkdir(parents=True, exist_ok=True)
     (evidence / 'request.json').write_text(json.dumps(dict(request, head=head, base=args.base, base_sha=base_sha),
@@ -1881,18 +2164,14 @@ def main(argv=None) -> int:
             github.relabel(DONE, None)
         github.relabel(QUEUED, RUNNING)
     link_tools(tools_source())
-    # A pending T3 for this head: the lane job that reports its PASS runs these checks and merges.
+    # A pending T3 for this head: the lane job that reports its PASS merges. The build runner runs the checks
+    # meanwhile, so that job needn't (#834); any other runner leaves them to it, as a simulator runner's time
+    # is the T3s'.
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
-    no_room, beside, room_for_builds = None, None, None
-    if request['tier'] == 'auto' and not t3_first and os.environ.get('SM_LANE_RUNNER_ROLE') == 'build':
-        if host_only_scope(ROOT, args.base):  # the trial: work may run beside a simulator job, builds too
-            no_room, beside = wait_for_room_to_test_on_host()
-            room_for_builds = functools.partial(wait_for_room_to_build, note=lambda text: (
-                print(f'[lane] {text}', flush=True), note_beside_simulator(request_id, args.pr, text)))
-        else:
-            noted = []
-            no_room = wait_for_room_to_build(note=noted.append)
-            beside = noted[0] if noted else None
+    on_build_runner = os.environ.get('SM_LANE_RUNNER_ROLE') == 'build'
+    no_room, beside = None, None
+    if request['tier'] == 'auto' and on_build_runner:  # host tests only (NO_APP_BUILD_PER_PR): the host rules
+        no_room, beside = wait_for_room_to_test_on_host()
         if beside:
             print(f'[lane] {beside}', flush=True)
             note_beside_simulator(request_id, args.pr, beside)
@@ -1904,19 +2183,18 @@ def main(argv=None) -> int:
     context = AutoRunContext(base_sha)
     try:
         conflicts = [] if request['tier'] == 'auto' else merge_base_branch(ROOT, args.base)
-        if t3_first:
+        if t3_first and not on_build_runner:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
             details = [f'{HELD_FOR_T3[0]}: the /lane T3 request for this head ({t3_first}) has no lane report yet, '
-                       'so this run skipped its own host tests and builds. The lane job that reports a T3 PASS on '
-                       'this head runs them on the merge commit itself and merges on PASS; nobody needs to push or '
-                       're-label.']
+                       'and this is not the build runner, so this run skipped its own host tests. The lane '
+                       'job that reports a T3 PASS on this head runs them on the merge commit itself and merges on '
+                       'PASS; nobody needs to push or re-label.']
         elif no_room:
             verdict, where, ran, crashes = 'INCONCLUSIVE', 'no build', 'nothing', 'none'
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
-                                                    comments, labels, room_for_builds=room_for_builds,
-                                                    context=context)
+                                                    comments, labels, context=context)
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
@@ -1935,6 +2213,13 @@ def main(argv=None) -> int:
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran, crashes = 'INCONCLUSIVE', 'lane error', 'nothing', 'unknown'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}']
+    if t3_first and verdict == 'INCONCLUSIVE' and not any(line.startswith(HELD_FOR_T3[0]) for line in details):
+        # The build runner's checks didn't finish (no room, a timeout, a lane error) while the T3 waits: the T3
+        # PASS still releases the run, and tests it. Not at a line's start, so the auto-revert still counts the
+        # report as a runner fault (PENDING_T3_HOLD), while held_for_t3 finds it.
+        details.append(f'The checks did not finish, so: {HELD_FOR_T3[0]} until the /lane T3 request for this head '
+                       f'({t3_first}) reports. The lane job that reports a T3 PASS on this head runs the host tests on the '
+                       'merge commit itself and merges on PASS.')
     if request['tier'] == 'auto':
         base_sha = context.tested_base
         wanted = identity('auto', head, base_sha, request['tests'])
@@ -1960,10 +2245,8 @@ def main(argv=None) -> int:
         # Remove, then add: adding a label the PR already has is no `labeled` event, and the Hourly dispatch
         # wakes on lane:done's. The lane and automerge jobs run side by side, so the other may have added it.
         github.relabel(DONE, DONE)
-    if not (ROOT / '.build').is_symlink():  # a cold job (disk floor, busy cache) built in the workspace
-        for derived in (ROOT / '.build').glob('dd*'):
-            shutil.rmtree(derived, ignore_errors=True)
-        shutil.rmtree(ROOT / '.build/verification', ignore_errors=True)
+    flush_ledger(args.pr, head, lambda body: Repo(repo).comment(OPS_ISSUE, body))
+    drop_workspace_builds(ROOT)
     return 0
 
 

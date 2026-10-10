@@ -3,7 +3,9 @@
 # here; the real one holds a basic-auth hash and never leaves the box).
 #   CADDY=/path/to/caddy research/B4/deploy/test-edit-caddyfile.sh
 # With CADDY set it also runs `caddy validate` on every candidate and serves
-# the candidate locally in front of a real smserver to check the routes.
+# the candidate locally in front of a real smserver to check the routes. With
+# neither set those parts are skipped, and the last line says so. What stays
+# checked without Caddy: the text of the privacy log filter in the candidate.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -42,15 +44,27 @@ CADDY
 
 edit() { "${here}/edit-caddyfile.sh" "$1" "$2" 8795 /srv/www/spokenmargins-server; }
 validate() {
-  [[ -n "${CADDY:-}" ]] || return 0
+  [[ -n "${CADDY:-}" ]] || return 0 # reported as skipped at the end
   "${CADDY}" validate --adapter caddyfile --config "$1" >"${work}/validate.log" 2>&1 || { cat "${work}/validate.log"; die "caddy validate $1"; }
 }
 
 edit "${work}/live" "${work}/c1" || die "plain block refused"
 grep -q '^{$' <(head -1 "${work}/c1") || die "global block not first"
-grep -q 'wrap json' "${work}/c1" || die "log filter missing"
+# The privacy filter: without Caddy to run it, check that the candidate's
+# global block (up to its closing brace) still names every field it must
+# strip, so deleting one is noticed even where Caddy isn't installed.
+global_block="$(sed -n '1,/^}$/p' "${work}/c1" | sed 's/^[[:space:]]*//')"
+for filter_line in \
+  'log default {' 'format filter {' 'wrap json' \
+  'request>remote_ip delete' 'request>remote_port delete' 'request>client_ip delete' \
+  'request>headers delete' 'request>tls delete' \
+  'request>uri regexp ^/api/v1/maps/.* /api/v1/maps/*'; do
+  grep -qxF -e "${filter_line}" <<<"${global_block}" || die "log filter line missing from the global block: ${filter_line}"
+done
 grep -q 'reverse_proxy 127.0.0.1:8795' "${work}/c1" || die "port not rendered"
 grep -q 'root \* /srv/www/spokenmargins-server' "${work}/c1" || die "server root not rendered"
+grep -q 'handle /l/\*' "${work}/c1" || die "share link routing missing"
+grep -Fq 'request>uri regexp ^(/api/v1/maps|/l)/.* $1/*' "${work}/c1" || die "share link privacy filter missing"
 # Everything outside the two managed blocks is byte-for-byte unchanged.
 diff <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/live") \
   <(sed -n '/^proximitytoprogress.com {/,/^}/p;/^other.proximitytoprogress.com {/,/^}/p' "${work}/c1") >/dev/null ||
@@ -66,10 +80,15 @@ ok "rerun on its own output changes nothing"
 grep -q '127.0.0.1:8796' "${work}/c3" && ! grep -q '127.0.0.1:8795' "${work}/c3" || die "port change not applied"
 ok "rerun with another port replaces the managed blocks"
 
+# A refusal is exit status 2 with the "refusing:" message and no candidate
+# file; a crash (any other status) or a half-written candidate is a failure.
 expect_refusal() {
-  local name="$1" file="$2"
-  if edit "${file}" "${work}/out" 2>"${work}/err"; then die "${name}: not refused"; fi
-  [[ ! -s "${work}/out" ]] || [[ ! -e "${work}/out" ]] || true
+  local name="$1" file="$2" status=0
+  rm -f "${work}/out"
+  edit "${file}" "${work}/out" 2>"${work}/err" || status=$?
+  [[ "${status}" -eq 2 ]] || die "${name}: exit status ${status}, want 2 (refused): $(cat "${work}/err")"
+  grep -q '^edit-caddyfile: refusing: ' "${work}/err" || die "${name}: no refusal message: $(cat "${work}/err")"
+  [[ ! -e "${work}/out" ]] || die "${name}: refused, but a candidate file was written"
   ok "refuses: ${name} ($(sed 's/^edit-caddyfile: refusing: //' "${work}/err"))"
 }
 sed 's|^  file_server$|  file_server\n  header X-Extra 1|' "${work}/live" >"${work}/extra"
@@ -80,8 +99,15 @@ grep -v '^spokenmargins' "${work}/live" | sed '/^  root \* \/srv\/www\/spokenmar
 expect_refusal "no site block" "${work}/nosite"
 { cat "${work}/live"; printf '\nspokenmargins.proximitytoprogress.com {\n  file_server\n}\n'; } >"${work}/twice"
 expect_refusal "two site blocks" "${work}/twice"
-if "${here}/edit-caddyfile.sh" "${work}/live" "${work}/out" '8795; rm -rf /' /srv/x 2>/dev/null; then die "bad port accepted"; fi
+rm -f "${work}/out"
+status=0
+"${here}/edit-caddyfile.sh" "${work}/live" "${work}/out" '8795; rm -rf /' /srv/x 2>"${work}/err" || status=$?
+[[ "${status}" -eq 2 ]] && grep -q '^edit-caddyfile: refusing: port' "${work}/err" && [[ ! -e "${work}/out" ]] || die "bad port: exit ${status}: $(cat "${work}/err")"
 ok "refuses: a port that isn't a number"
+status=0
+"${here}/edit-caddyfile.sh" "${work}/live" "${work}/out" 8795 '/srv/x; rm -rf /' 2>"${work}/err" || status=$?
+[[ "${status}" -eq 2 ]] && grep -q '^edit-caddyfile: refusing: server root' "${work}/err" && [[ ! -e "${work}/out" ]] || die "bad server root: exit ${status}: $(cat "${work}/err")"
+ok "refuses: a server root that isn't a plain absolute path"
 
 if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   # Serve the candidate on loopback: same blocks, site address swapped.
@@ -99,6 +125,8 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   [[ "$(code http://127.0.0.1:18443/api/v1/config.json)" == 200 ]] || die "config.json not served while smserver is down"
   [[ "$(code http://127.0.0.1:18443/)" == 200 ]] || die "site root not served"
   curl -s -X POST -H 'X-SM-Key-Id: SECRETKEYID' http://127.0.0.1:18443/api/v1/ping >/dev/null
+  linkid=8badf00d8badf00d8badf00d8badf00d
+  [[ "$(code http://127.0.0.1:18443/l/${linkid})" == 502 ]] || die "link should 502 with smserver down"
   mapkey=5ec2e7a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1
   [[ "$(code http://127.0.0.1:18443/api/v1/maps/${mapkey})" == 502 ]] || die "map fetch should 502 with smserver down"
   [[ "$(code http://127.0.0.1:18443/api/v1/health)" == 502 ]] || die "api should 502 with smserver down"
@@ -108,9 +136,19 @@ if [[ -n "${CADDY:-}" && -n "${SMSERVER:-}" ]]; then
   sleep 0.5
   grep -q 'http.log.error' "${work}/caddy.log" || die "expected a 502 error line to inspect"
   ! grep -qE 'SECRETKEYID|remote_ip|client_ip|"headers"' "${work}/caddy.log" || die "Caddy error log leaked IP or headers"
+  ! grep -q "${linkid}" "${work}/caddy.log" || die "Caddy error log leaked a share link id"
+  grep -q '"uri":"/l/\*"' "${work}/caddy.log" || die "share link not logged as /l/*"
   ! grep -q "${mapkey}" "${work}/caddy.log" || die "Caddy error log leaked an episode key"
   grep -q '"uri":"/api/v1/maps/\*"' "${work}/caddy.log" || die "map fetch not logged as /api/v1/maps/*"
   grep 'http.log.error' "${work}/caddy.log" | head -1 | grep -q '^{' || die "error log is not JSON"
   ok "served locally: config.json with smserver down, site, /api proxied, error log JSON without IP, headers or episode keys"
 fi
-echo "${pass} checks passed"
+if [[ -z "${CADDY:-}" ]]; then
+  echo "SKIPPED caddy validate of every candidate (set CADDY)"
+fi
+if [[ -z "${CADDY:-}" || -z "${SMSERVER:-}" ]]; then
+  echo "SKIPPED serving the candidate locally: routes, and the error log's lack of IPs, headers and episode keys (set CADDY and SMSERVER)"
+  echo "${pass} checks passed, but not the Caddy ones above"
+else
+  echo "${pass} checks passed"
+fi

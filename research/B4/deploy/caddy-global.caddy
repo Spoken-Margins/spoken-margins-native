@@ -16,7 +16,8 @@
 				request>headers delete
 				request>tls delete
 				# A listening-map path names an episode (#551).
-				request>uri regexp ^/api/v1/maps/.* /api/v1/maps/*
+				# Never log episode keys or share link ids, even on proxy failures.
+				request>uri regexp ^(/api/v1/maps|/l)/.* $1/*
 			}
 		}
 	}

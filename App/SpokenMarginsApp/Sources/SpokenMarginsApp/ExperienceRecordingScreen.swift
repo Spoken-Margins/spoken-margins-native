@@ -11,6 +11,23 @@ struct ExperienceRecordingView: View {
         model.isRequestingRecordingPermission && !model.snapshot.isRecording
     }
 
+    /// #937: whether audio is really arriving. Before the recording starts there is nothing to judge.
+    private var captureHealth: MarginCaptureSupervisor.Health {
+        model.snapshot.isRecording ? model.recordingCaptureHealth : .capturing
+    }
+
+    private var isStartingCapture: Bool { captureHealth == .starting }
+
+    private var isNotCapturing: Bool {
+        if case .notCapturing = captureHealth { return true }
+        return false
+    }
+
+    /// #783: the line before iOS's first microphone prompt is on screen, waiting for Continue.
+    private var showsMicrophonePrimer: Bool {
+        isPreparing && model.microphonePrimer.isShowing
+    }
+
     var body: some View {
         ZStack {
             AppColors.listeningBackground.ignoresSafeArea()
@@ -19,7 +36,7 @@ struct ExperienceRecordingView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     status
                     recordingTime
-                    anchor
+                    if !showsMicrophonePrimer { anchor }
                     feedback
                 }
                 .padding(24)
@@ -27,7 +44,10 @@ struct ExperienceRecordingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) { finishControl.padding(24) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            // While the microphone line is up, VoiceOver goes from the line straight to Continue (#783).
+            finishControl.padding(24).accessibilityHidden(showsMicrophonePrimer)
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
@@ -48,30 +68,66 @@ struct ExperienceRecordingView: View {
         }
     }
 
+    /// The words and the icon carry the state together, never colour alone (#937).
+    private var statusTitle: String {
+        if model.isFinishingInterjection { return "Saving Margin…" }
+        if isPreparing { return "Preparing microphone" }
+        if isStartingCapture { return "Starting microphone" }
+        if isNotCapturing { return "Microphone isn't recording" }
+        return "Recording Margin"
+    }
+
+    private var statusIcon: String {
+        if isPreparing || isStartingCapture { return "mic.badge.plus" }
+        if isNotCapturing { return "exclamationmark.triangle.fill" }
+        return "record.circle.fill"
+    }
+
     private var status: some View {
-        Label(
-            model.isFinishingInterjection ? "Saving Margin…" : (isPreparing ? "Preparing microphone" : "Recording Margin"),
-            systemImage: isPreparing ? "mic.badge.plus" : "record.circle.fill"
-        )
-        .font(.headline)
-        .foregroundStyle(AppColors.listeningAccent)
+        Label(statusTitle, systemImage: statusIcon)
+            .font(.headline)
+            .foregroundStyle(AppColors.listeningAccent)
+            .accessibilityIdentifier("recording.status.label")
     }
 
     @ViewBuilder
     private var recordingTime: some View {
-        if isPreparing {
+        if showsMicrophonePrimer {
+            Text(MicrophonePrimer.message)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recording.microphonePrimer.text")
+        } else if isPreparing {
             HStack(spacing: 12) {
                 ProgressView().tint(AppColors.listeningAccent)
                 Text("Waiting for microphone access")
                     .font(.body)
                     .foregroundStyle(.white)
             }
+        } else if isStartingCapture {
+            HStack(spacing: 12) {
+                ProgressView().tint(AppColors.listeningAccent)
+                Text("Waiting for sound from the microphone")
+                    .font(.body)
+                    .foregroundStyle(.white)
+            }
+            .accessibilityIdentifier("recording.starting.label")
+        } else if isNotCapturing {
+            Text(model.recordingHasKeepableAudio
+                ? "The microphone stopped. What you said so far is kept if you tap Save."
+                : "Nothing is being recorded right now.")
+                .font(.title3)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recording.notCapturing.label")
         } else {
             TimelineView(.periodic(from: context.startedAt, by: 1)) { timeline in
                 Text(elapsedDescription(at: timeline.date))
                     .font(.system(.largeTitle, design: .monospaced).weight(.semibold))
                     .foregroundStyle(.white)
                     .accessibilityLabel("Recording duration \(elapsedDescription(at: timeline.date))")
+                    .accessibilityIdentifier("recording.duration.label")
             }
         }
     }
@@ -116,12 +172,37 @@ struct ExperienceRecordingView: View {
         .buttonStyle(.borderedProminent)
         .tint(AppColors.captureBackground)
         .foregroundStyle(AppColors.listeningBackground)
-        .disabled(isPreparing || model.isFinishingInterjection)
+        .disabled(isPreparing || isStartingCapture || model.isFinishingInterjection)
         .accessibilityIdentifier("recording.finish.button")
     }
 
     private var actionDock: some View {
         VStack(spacing: 8) {
+            if showsMicrophonePrimer {
+                Button {
+                    // The second tap of a double tap on Add a Margin must not skip the line (#148).
+                    guard saveTapGuard.accepts(tapAt: Date()) else { return }
+                    model.continueMicrophonePrimer()
+                } label: {
+                    Text("Continue")
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.captureBackground)
+                .foregroundStyle(AppColors.listeningBackground)
+                .accessibilityIdentifier("recording.microphonePrimer.continue")
+            }
+            if isNotCapturing, model.canRetryMicrophone {
+                Button(action: model.retryMicrophone) {
+                    Label("Try again", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.captureBackground)
+                .foregroundStyle(AppColors.listeningBackground)
+                .disabled(model.isFinishingInterjection)
+                .accessibilityIdentifier("recording.retryMicrophone.button")
+            }
             if isPreparing {
                 Button("Write instead", systemImage: "square.and.pencil", action: model.switchPendingVoiceCaptureToWrittenMargin)
                     .foregroundStyle(.white)

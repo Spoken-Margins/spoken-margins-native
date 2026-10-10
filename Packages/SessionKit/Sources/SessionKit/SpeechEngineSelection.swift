@@ -53,6 +53,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     /// The on-device voice couldn't render the next passage in time.
     case renderTooSlow = "render_too_slow"
     case playbackFailed = "playback_failed"
+    /// The on-device player stopped making sound and starting it again didn't help (#540).
+    case playerStalled = "player_stalled"
     case listenerStoppedGeneration = "listener_stopped_generation"
 
     /// Maps the Supertonic client's failure codes. `resourceBlock` is the policy's answer at
@@ -61,14 +63,16 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
         switch supertonicCode {
         case "supertonic_resource_pressure": self = resourceBlock ?? .deviceTooWarm
         case "supertonic_render_timeout": self = .renderTooSlow
+        case "supertonic_player_stalled": self = .playerStalled
         default: self = .playbackFailed
         }
     }
 
     /// Heat and memory pressure pass; the chosen voice comes back by itself once they clear.
+    /// A stalled player was a hiccup, not a condition: the chosen voice gets another try at the next play.
     /// A slow or failed render would likely fail again, so it waits for the listener's Retry.
     public var returnsAutomatically: Bool {
-        self == .deviceTooWarm || self == .memoryWarning
+        self == .deviceTooWarm || self == .memoryWarning || self == .playerStalled
     }
 
     /// One line for the player, saying why and what happens next.
@@ -82,6 +86,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
             "Using the iOS voice because the on-device voice couldn't keep up. Tap Retry to try it again."
         case .playbackFailed:
             "Using the iOS voice because the on-device voice hit a playback problem. Tap Retry to try it again."
+        case .playerStalled:
+            "Using the iOS voice because the on-device voice stopped playing. Your voice comes back the next time you press play."
         case .listenerStoppedGeneration:
             "Generation stopped · using the iOS system voice"
         }
@@ -123,7 +129,7 @@ public enum SpeechGenerationStopReason {
             return "The on-device voice stopped preparing because it couldn't keep up. Tap Retry to try again."
         case .deviceTooWarm, .memoryWarning:
             return "The on-device voice stopped preparing while this iPhone was too warm or low on memory. Tap Retry to try again."
-        case .playbackFailed, .listenerStoppedGeneration:
+        case .playbackFailed, .playerStalled, .listenerStoppedGeneration:
             return "The on-device voice stopped preparing after a rendering problem. Tap Retry to try again."
         }
     }
@@ -167,6 +173,26 @@ public enum SpeechRateRule {
     public static func clampedMultiplier(_ multiplier: Double) -> Double {
         guard multiplier.isFinite else { return 1 }
         return min(multiplierRange.upperBound, max(multiplierRange.lowerBound, multiplier))
+    }
+
+    /// The speeds the speed button offers, slowest first: quarter steps from 0.5× to 2×. Each one is
+    /// also a row of `systemRateTable`.
+    public static let supportedMultipliers: [Double] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2]
+
+    /// A speed read from storage or a control, rounded to the nearest quarter step (ties go up) and
+    /// held inside `multiplierRange`.
+    ///
+    /// Unlike `clampedMultiplier`, a value that is not a number lands on a bound instead of 1: NaN and
+    /// +∞ give 2×, −∞ gives 0.5×. The app has always done this, so the saved speeds it reads back
+    /// stay the same; changing it would need its own issue.
+    public static func quarterStepMultiplier(_ multiplier: Double) -> Double {
+        max(multiplierRange.lowerBound, min(multiplierRange.upperBound, (multiplier * 4).rounded() / 4))
+    }
+
+    /// The speed the speed button moves to from `current`: the next one up, wrapping from the top to
+    /// the bottom. A speed within 0.001 of a step counts as that step.
+    public static func next(after current: Double) -> Double {
+        supportedMultipliers.first(where: { $0 > current + 0.001 }) ?? supportedMultipliers[0]
     }
 
     /// The `AVSpeechUtterance.rate` that speaks at `multiplier` times normal speed.

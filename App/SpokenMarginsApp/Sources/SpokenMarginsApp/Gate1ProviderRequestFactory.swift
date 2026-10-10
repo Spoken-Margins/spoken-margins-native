@@ -10,32 +10,6 @@ struct PendingProviderJob {
 }
 
 struct Gate1ProviderRequestFactory {
-    static func makeChatCompletionsRequest(
-        baseURL: String,
-        apiKey: String,
-        messages: [String],
-        model: String,
-        systemPrompt: String
-    ) -> URLRequest? {
-        let trimmed = baseURL
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(trimmed)/chat/completions") else { return nil }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 30
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        let payload = RequestPayload(
-            model: model,
-            messages: [Message(role: "system", content: systemPrompt)] +
-                messages.map { Message(role: "user", content: $0) },
-            temperature: 0.2
-        )
-        request.httpBody = try? JSONEncoder().encode(payload)
-        return request
-    }
-
     static func modelForAIJob(
         kind: String,
         listeningMapModel: String,
@@ -90,16 +64,5 @@ struct Gate1ProviderRequestFactory {
         If the primaryUserIntent asks for a specific deliverable, provide that deliverable directly before any optional commentary.
         \(contextJSON)
         """
-    }
-
-    private struct RequestPayload: Encodable {
-        let model: String
-        let messages: [Message]
-        let temperature: Double
-    }
-
-    private struct Message: Encodable {
-        let role: String
-        let content: String
     }
 }

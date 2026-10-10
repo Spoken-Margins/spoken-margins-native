@@ -204,6 +204,133 @@ final class PrivacyPassTokenTests: XCTestCase {
         }
     }
 
+    // MARK: Key selection and parse guards
+
+    /// The key document lists keys newest first. The phone blinds against the first whose month has
+    /// begun and not ended. A key that is not yet valid must never be used: every phone is handed the
+    /// same document, and a phone that blinded against a key of its own choosing would let the server
+    /// link its tokens to it.
+    func testSigningKeyIsTheFirstWhoseMonthHasBegunAndNotEnded() throws {
+        let october = PrivacyPassVectors.tokenType2[0]
+        let keyOctober = try PrivacyPassToken.PublicKey(spki: bytes(october.publicKey))
+        let vector = PrivacyPassVectors.blindRSA[1]
+        let keyNovember = try PrivacyPassToken.PublicKey(modulus: bytes(vector.n), exponent: bytes(vector.e))
+        func keyID(_ key: PrivacyPassToken.PublicKey) -> String { key.id.map { String(format: "%02x", $0) }.joined() }
+        let document = Data("""
+        {"issuer":"\(PrivacyPassToken.issuerName)","keys":[\
+        {"notAfter":"2027-01-01T00:00:00Z","notBefore":"2026-11-01T00:00:00Z",\
+        "publicKey":"\(keyNovember.spki.base64EncodedString())","tokenKeyId":"\(keyID(keyNovember))"},\
+        {"notAfter":"2026-12-01T00:00:00Z","notBefore":"2026-10-01T00:00:00Z",\
+        "publicKey":"\(keyOctober.spki.base64EncodedString())","tokenKeyId":"\(keyID(keyOctober))"}],\
+        "schema":"spokenmargins.token-keys.v1","tokenType":2}
+        """.utf8)
+        let keys = try PrivacyPassToken.Keys(document: document)
+        XCTAssertEqual(keys.entries.count, 2)
+        func signing(at time: String) -> Data? {
+            ISO8601DateFormatter().date(from: time).flatMap { keys.signingKey(at: $0)?.spki }
+        }
+        XCTAssertNil(signing(at: "2026-09-30T23:59:59Z"), "before every key's month")
+        XCTAssertEqual(signing(at: "2026-10-03T18:00:00Z"), keyOctober.spki, "November's key has not begun, so it must not sign")
+        XCTAssertEqual(signing(at: "2026-11-01T00:00:00Z"), keyNovember.spki, "a month begins at its notBefore instant")
+        XCTAssertEqual(signing(at: "2026-11-20T00:00:00Z"), keyNovember.spki, "both are valid: the first listed (newest) signs")
+        XCTAssertEqual(signing(at: "2026-12-15T00:00:00Z"), keyNovember.spki, "October's key has ended")
+        XCTAssertNil(signing(at: "2027-01-01T00:00:00Z"), "a month ends at its notAfter instant")
+    }
+
+    /// A document for another schema or another token type is not this issuer's key list, even when
+    /// everything else in it is valid.
+    func testKeysDocumentOfAnotherSchemaOrTokenTypeIsRefused() throws {
+        let spki = bytes(PrivacyPassVectors.tokenType2[0].publicKey)
+        let id = Data(SHA256.hash(data: spki)).map { String(format: "%02x", $0) }.joined()
+        func document(schema: String = PrivacyPassToken.keysSchema, tokenType: Int = Int(PrivacyPassToken.tokenType)) -> Data {
+            Data("""
+            {"issuer":"\(PrivacyPassToken.issuerName)","keys":[{"notAfter":"2026-12-01T00:00:00Z","notBefore":"2026-10-01T00:00:00Z",\
+            "publicKey":"\(spki.base64EncodedString())","tokenKeyId":"\(id)"}],\
+            "schema":"\(schema)","tokenType":\(tokenType)}
+            """.utf8)
+        }
+        XCTAssertNoThrow(try PrivacyPassToken.Keys(document: document()), "the unmodified document is accepted")
+        for (name, bad) in [
+            ("schema", document(schema: "spokenmargins.token-keys.v2")),
+            ("token type", document(tokenType: 3))
+        ] {
+            XCTAssertThrowsError(try PrivacyPassToken.Keys(document: bad), name) {
+                XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedResponse, name)
+            }
+        }
+    }
+
+    /// RFC 9578 gives one encoding of a key, so a key that decodes to the same numbers with a padded
+    /// integer is refused: the phone compares key ids, and two spellings of one key would have two ids.
+    func testKeyWithAPaddedExponentIsRefusedButTheSameKeyInItsMinimalFormIsAccepted() throws {
+        let vector = PrivacyPassVectors.blindRSA[1]
+        let modulus = bytes(vector.n)
+        let reference = try PrivacyPassToken.PublicKey(modulus: modulus, exponent: bytes(vector.e))
+
+        func der(_ tag: UInt8, _ body: Data) -> Data {
+            let length = body.count < 0x80 ? Data([UInt8(body.count)])
+                : body.count < 0x100 ? Data([0x81, UInt8(body.count)])
+                : Data([0x82, UInt8(body.count >> 8), UInt8(body.count & 0xff)])
+            return Data([tag]) + length + body
+        }
+        func spki(exponent: [UInt8]) -> Data {
+            // SubjectPublicKeyInfo { rsaEncryption-PSS algorithm, BIT STRING { RSAPublicKey { n, e } } }
+            let rsaKey = der(0x30, der(0x02, Data([0]) + modulus) + der(0x02, Data(exponent)))
+            return der(0x30, PrivacyPassToken.PublicKey.algorithmIdentifier + der(0x03, Data([0]) + rsaKey))
+        }
+
+        let minimal = spki(exponent: [0x01, 0x00, 0x01])
+        XCTAssertEqual(minimal, reference.spki, "the byte-built key is the library's own encoding")
+        XCTAssertEqual(try PrivacyPassToken.PublicKey(spki: minimal), reference)
+
+        XCTAssertThrowsError(try PrivacyPassToken.PublicKey(spki: spki(exponent: [0x00, 0x01, 0x00, 0x01]))) {
+            XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedKey)
+        }
+    }
+
+    /// The public exponent must be an odd number above 1 that fits 32 bits, which keeps out a key
+    /// whose "encryption" is the identity (e = 1) and an exponent built to make verification slow.
+    func testPublicExponentOfOneOrMoreThan32BitsIsRefused() throws {
+        let vector = PrivacyPassVectors.blindRSA[1]
+        let modulus = bytes(vector.n)
+        XCTAssertNoThrow(try PrivacyPassToken.PublicKey(modulus: modulus, exponent: Data([1, 0, 1])))
+        for (name, exponent) in [("e = 1", Data([1])), ("e = 0", Data([0])), ("a 40-bit exponent", Data([1, 0, 0, 0, 1]))] {
+            XCTAssertThrowsError(try PrivacyPassToken.PublicKey(modulus: modulus, exponent: exponent), name) {
+                XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedKey, name)
+            }
+        }
+    }
+
+    /// The server answers with one blind signature per blinded message. An answer with a different
+    /// count is refused whole. Zipping would instead hand back fewer tokens than were asked for, or
+    /// ignore the extra, and the shortfall would go unnoticed until a spend failed.
+    func testIssuanceAnswerWithTheWrongNumberOfSignaturesIsRefused() throws {
+        let vector = PrivacyPassVectors.tokenType2[0]
+        let key = try PrivacyPassToken.PublicKey(spki: bytes(vector.publicKey))
+        let token = bytes(vector.token)
+        // The RFC's own token: its blinding values are known, so its server answer is a valid signature.
+        let known = try PrivacyPassToken.prepare(
+            key: key, nonce: token.subdata(in: 2..<34), challengeDigest: token.subdata(in: 34..<66),
+            salt: bytes(vector.salt), blind: BlindRSAInteger(bigEndian: bytes(vector.blind)))
+        let other = try PrivacyPassToken.prepare(key: key, purpose: PrivacyPassToken.mapsPurpose)
+        let answer = bytes(vector.tokenResponse).base64EncodedString()
+        func response(_ signatures: [String]) -> Data {
+            let id = key.id.map { String(format: "%02x", $0) }.joined()
+            return Data(#"{"tokenKeyId":"\#(id)","blindSignatures":[\#(signatures.map { "\"\($0)\"" }.joined(separator: ","))]}"#.utf8)
+        }
+
+        XCTAssertEqual(try PrivacyPassToken.finish([known], response: response([answer])), [token], "one signature for one request")
+        for (name, pending, signatures) in [
+            ("fewer signatures than requests", [known, other], [answer]),
+            ("more signatures than requests", [known], [answer, answer]),
+            ("no signatures", [known], [])
+        ] {
+            XCTAssertThrowsError(try PrivacyPassToken.finish(pending, response: response(signatures)), name) {
+                XCTAssertEqual($0 as? PrivacyPassToken.Failure, .malformedResponse, name)
+            }
+        }
+    }
+
     func testAuthorizationHeader() {
         let token = Data([0xfb, 0xff, 0x00, 0x3e])
         XCTAssertEqual(PrivacyPassToken.authorizationHeader(token: token), #"PrivateToken token="-_8APg""#)

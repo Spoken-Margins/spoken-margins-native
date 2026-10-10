@@ -16,7 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"errors"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
 )
 
@@ -182,5 +184,35 @@ func TestTakedownMapCommand(t *testing.T) {
 	}
 	if err := takedownMap([]string{"-state", state, "nope"}); err == nil {
 		t.Fatal("takedown-map accepted a bad key")
+	}
+}
+
+func TestLinkTakedownCommand(t *testing.T) {
+	dir := t.TempDir()
+	st, err := links.OpenStore(filepath.Join(dir, "links"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	id, _, err := st.Put([]byte("opaque packet"), []byte(`{"source":{"title":"Title","show":"Show","url":"https://example.org"},"margins":[{"text":"Margin","before":"Before","after":"After"}]}`), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := takedownLink([]string{"-state", dir, id}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Packet(id, now); !errors.Is(err, links.ErrGone) {
+		t.Fatal("CLI did not delete link")
+	}
+	for _, name := range []string{"packet", "preview.json"} {
+		if _, err := os.Stat(filepath.Join(dir, "links", id, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("CLI left content")
+		}
+	}
+	if err := takedownLink([]string{"-state", dir, "../"}); err == nil {
+		t.Fatal("invalid id")
+	}
+	if err := takedownLink([]string{"-state", dir}); err == nil {
+		t.Fatal("missing id")
 	}
 }

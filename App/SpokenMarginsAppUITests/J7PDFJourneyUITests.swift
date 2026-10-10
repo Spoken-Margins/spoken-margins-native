@@ -41,7 +41,7 @@ final class J7PDFJourneyUITests: XCTestCase {
             XCTAssertTrue(start.waitForExistence(timeout: 5), "The PDF's start control is missing")
             start.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            let title = app.buttons["playback.itemTitle.button"].label
+            let title = app.buttons["playback.title"].firstMatch.label
             XCTAssertTrue(title.contains("Walking Notes"), "A different item is playing: \(title)")
             try waitUntilPlaying("The PDF never reached the playing state")
             let first = try percent()
@@ -51,11 +51,22 @@ final class J7PDFJourneyUITests: XCTestCase {
         }
 
         try XCTContext.runActivity(named: "J7 step 2a: Write a Margin at the current passage") { _ in
+            // Move well into the document first, so a Margin anchored at the start can't pass for one
+            // anchored at the passage being heard (#1044 APO-02).
+            let scrubber = element("playback.scrubber")
+            XCTAssertTrue(scrubber.waitForExistence(timeout: 5), "No scrubber to move into the PDF with")
+            scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
+            waitUntil("Scrubbing did not move into the PDF", timeout: 10) {
+                self.currentPercent().map { $0 >= 25 } ?? false
+            }
+            let playingPercent = try percent()
             tap("playback.write.button")
             XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 5), "Write a Margin did not open")
             let anchor = element("writtenMargin.anchor")
             XCTAssertTrue(anchor.waitForExistence(timeout: 5), "The Margin's saved position is missing")
             marginPercent = try XCTUnwrap(trailingPercent(anchor.label), "Saved position has no percentage: \(anchor.label)")
+            XCTAssertLessThanOrEqual(abs(marginPercent - playingPercent), 3,
+                                     "The Margin was placed at \(marginPercent)%, not at the passage playing (\(playingPercent)%)")
             let field = element("writtenMargin.text")
             field.tap()
             field.typeText(note)

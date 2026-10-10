@@ -1,0 +1,225 @@
+// Package links stores share packets without interpreting or changing their bytes.
+package links
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+const (
+	MaxPacketBytes  = 20 << 20
+	MaxPreviewBytes = 16 << 10
+	Lifetime        = 30 * 24 * time.Hour
+)
+
+var (
+	ErrNotFound = errors.New("links: not found")
+	ErrGone     = errors.New("links: gone")
+	ErrTooLarge = errors.New("links: too large")
+)
+
+// Only expiry metadata survives deletion, so previously issued links still
+// answer 410 after a sweep or takedown. No content or client address survives.
+type Store struct {
+	dir string
+	mu  sync.RWMutex
+}
+type metadata struct {
+	ExpiresAt time.Time `json:"expiresAt"`
+}
+
+func OpenStore(dir string) (*Store, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	return &Store{dir: dir}, nil
+}
+
+func ValidID(id string) bool {
+	if len(id) != 32 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// Put publishes a complete directory atomically. A failed upload leaves no link.
+func (s *Store) Put(packet []byte, preview []byte, now time.Time) (string, time.Time, error) {
+	if len(packet) == 0 {
+		return "", time.Time{}, errors.New("links: empty packet")
+	}
+	if len(packet) > MaxPacketBytes || len(preview) > MaxPreviewBytes {
+		return "", time.Time{}, ErrTooLarge
+	}
+	if _, err := ParsePreview(preview); err != nil {
+		return "", time.Time{}, err
+	}
+	idBytes := make([]byte, 16)
+	if _, err := rand.Read(idBytes); err != nil {
+		return "", time.Time{}, err
+	}
+	id := hex.EncodeToString(idBytes)
+	expires := now.UTC().Add(Lifetime)
+	dir, err := os.MkdirTemp(s.dir, ".upload-")
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	defer os.RemoveAll(dir)
+	meta, _ := json.Marshal(metadata{ExpiresAt: expires})
+	for name, data := range map[string][]byte{"meta.json": meta, "packet": packet, "preview.json": preview} {
+		if err := os.WriteFile(filepath.Join(dir, name), data, 0o600); err != nil {
+			return "", time.Time{}, err
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Do not overwrite an existing id, even in the extraordinarily unlikely
+	// event of a random collision.
+	if _, err := os.Stat(filepath.Join(s.dir, id)); !errors.Is(err, os.ErrNotExist) {
+		return "", time.Time{}, errors.New("links: id collision")
+	}
+	if err := os.Rename(dir, filepath.Join(s.dir, id)); err != nil {
+		return "", time.Time{}, err
+	}
+	return id, expires, nil
+}
+
+func (s *Store) live(id string, now time.Time) error {
+	if !ValidID(id) {
+		return ErrNotFound
+	}
+	data, err := os.ReadFile(filepath.Join(s.dir, id, "meta.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var meta metadata
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return err
+	}
+	if !now.Before(meta.ExpiresAt) {
+		return ErrGone
+	}
+	return nil
+}
+
+func (s *Store) Preview(id string, now time.Time) (Preview, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if err := s.live(id, now); err != nil {
+		return Preview{}, err
+	}
+	data, err := os.ReadFile(filepath.Join(s.dir, id, "preview.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return Preview{}, ErrGone
+	}
+	if err != nil {
+		return Preview{}, err
+	}
+	return ParsePreview(data)
+}
+
+// Packet opens a real file so serving a download does not buffer another 20 MB.
+func (s *Store) Packet(id string, now time.Time) (*os.File, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if err := s.live(id, now); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(filepath.Join(s.dir, id, "packet"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrGone
+	}
+	return f, err
+}
+
+func (s *Store) deleteContent(id string) error {
+	for _, name := range []string{"packet", "preview.json"} {
+		if err := os.Remove(filepath.Join(s.dir, id, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+// Sweep uses the stored deadline, not access or modification times. Tombstones
+// remain so an expired id cannot turn into a misleading 404 after the sweep.
+func (s *Store) Sweep(now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if !ValidID(e.Name()) {
+			// An interrupted upload may leave a temporary directory. Avoid active writes.
+			if info, err := e.Info(); err == nil && now.Sub(info.ModTime()) >= time.Hour {
+				if err := os.RemoveAll(filepath.Join(s.dir, e.Name())); err != nil {
+					return n, err
+				}
+			}
+			continue
+		}
+		if err := s.live(e.Name(), now); errors.Is(err, ErrGone) {
+			_, packetErr := os.Stat(filepath.Join(s.dir, e.Name(), "packet"))
+			_, previewErr := os.Stat(filepath.Join(s.dir, e.Name(), "preview.json"))
+			if err := s.deleteContent(e.Name()); err != nil {
+				return n, err
+			}
+			if packetErr == nil || previewErr == nil {
+				n++
+			}
+		} else if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+// Takedown works from a separate CLI process too: publish the tombstone before
+// deleting content, so every subsequent request is refused immediately.
+func (s *Store) Takedown(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !ValidID(id) {
+		return ErrNotFound
+	}
+	dir := filepath.Join(s.dir, id)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(dir, ".meta-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	data, _ := json.Marshal(metadata{ExpiresAt: time.Unix(0, 0).UTC()})
+	_, err = f.Write(data)
+	closeErr := f.Close()
+	if err != nil {
+		return err
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	if err := os.Rename(f.Name(), filepath.Join(dir, "meta.json")); err != nil {
+		return err
+	}
+	return s.deleteContent(id)
+}

@@ -8,12 +8,25 @@ import SessionKitAudio
 /// recorded responses (PasteAndGoURLProtocol); WebKit can't be stubbed, so the article extractor is.
 @MainActor
 final class PasteAndGoTests: XCTestCase {
+    /// Gate1AppModel's `guidedOnboardingTombstoneKey`, which is private. While it is unset, every model fetches the
+    /// guided tour in the background and adds its row to the library mid-test. A test that started the tour earlier
+    /// in the same run clears it, so "creates nothing" saw `[guided-onboarding, item-pill]` (#878).
+    private static let guidedTourTombstoneKey = "guidedOnboardingTombstone"
+    private var priorGuidedTourTombstone: Any?
+
     override func setUp() {
         super.setUp()
         URLProtocol.registerClass(PasteAndGoURLProtocol.self)
+        priorGuidedTourTombstone = UserDefaults.standard.object(forKey: Self.guidedTourTombstoneKey)
+        UserDefaults.standard.set(true, forKey: Self.guidedTourTombstoneKey)
     }
 
     override func tearDown() {
+        if let priorGuidedTourTombstone {
+            UserDefaults.standard.set(priorGuidedTourTombstone, forKey: Self.guidedTourTombstoneKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: Self.guidedTourTombstoneKey)
+        }
         URLProtocol.unregisterClass(PasteAndGoURLProtocol.self)
         super.tearDown()
     }
@@ -86,6 +99,38 @@ final class PasteAndGoTests: XCTestCase {
         XCTAssertEqual(model.sourceLinkImportState, "success", model.sourceLinkImportMessage ?? "")
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == "A recorded article" })
         XCTAssertEqual(row.mediaType, "text")
+    }
+
+    /// #828: an article added with nothing in Now Playing gets the same "Added <title> to Library." and
+    /// Play now as other adds, stays on the screen it was added from, and doesn't play by itself.
+    func testARecordedArticleOffersPlayNowAndStaysOnTheScreenItWasAddedFrom() async throws {
+        let model = makeModel()
+        model.declineCurrentTerms()
+        let articleURL = try XCTUnwrap(URL(string: PasteAndGoURLProtocol.articleURL))
+        model.readablePageExtractor = PasteAndGoPageExtractor(.success(BrowserTextHandoff(
+            itemId: "item-browser-paste-and-go-play-now",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: articleURL.absoluteString, title: "A recorded article"),
+            text: "# A recorded article\n\nThe article's first paragraph.",
+            contentFormat: .markdown
+        )))
+        model.openHome()
+        model.dismissFeedback()
+
+        XCTAssertEqual(model.pasteAndGo(PasteAndGoURLProtocol.articleURL), .resolvingLink)
+        try await waitFor("article link import") { model.sourceLinkImportState != "resolving" }
+
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertNil(model.snapshot.sessionId, "Nothing plays by itself")
+        let event = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertEqual(event.message, "Added A recorded article to Library.")
+        let action = try XCTUnwrap(event.action, "Play now must be offered when Now Playing is empty")
+        XCTAssertEqual(action.title, "Play now")
+
+        action.perform()
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == "A recorded article" })
+        XCTAssertEqual(model.snapshot.itemId, row.id)
+        XCTAssertEqual(model.screen, .playback)
     }
 
     func testAnArticlePageThatAnswers403OffersSafariAndCreatesNothing() async throws {

@@ -1,0 +1,54 @@
+{
+  "id": "proposal-unresolved-cross-edition",
+  "schemaVersion": "spoken-margins.listening-map-proposal.v2",
+  "languageCode": "en",
+  "createdAt": "2026-09-30T12:00:00Z",
+  "generator": "on-device-scene-map.v1",
+  "scenes": [
+    {
+      "id": "scene-001",
+      "order": 0,
+      "title": "Intro",
+      "summaryText": "The hosts introduce the week's theme.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "exactText": "welcome back to the show",
+        "roughPercent": 0,
+        "chapterTitle": "Intro",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "exactText": "let's get into it",
+        "roughPercent": 4,
+        "chapterTitle": "Intro",
+        "machineEvidenceAssetIds": []
+      }
+    },
+    {
+      "id": "scene-002",
+      "order": 1,
+      "title": "Main story",
+      "summaryText": "A reporter follows a recall from factory floor to kitchen table.",
+      "summaryProvenance": "model_generated",
+      "eligibility": "eligible",
+      "startAnchor": {
+        "anchorType": "transcript",
+        "exactText": "so the first thing",
+        "prefix": "let's get into it",
+        "roughPercent": 4,
+        "chapterTitle": "Main story",
+        "machineEvidenceAssetIds": []
+      },
+      "endAnchor": {
+        "anchorType": "transcript",
+        "exactText": "and that's the story",
+        "roughPercent": 90,
+        "chapterTitle": "Main story",
+        "machineEvidenceAssetIds": []
+      }
+    }
+  ]
+}
