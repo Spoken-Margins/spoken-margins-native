@@ -166,6 +166,7 @@ class HeldChecksStandAfterTheT3PassTests(unittest.TestCase):
         for patch in (mock.patch.object(lane, 'ROOT', self.tree), mock.patch.dict(os.environ, {'GH_TOKEN': ''}),
                       mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T2', 'why': ['app'], 'files': []}),
                       mock.patch.object(lane, 'warm_build_folders', return_value='build folders: cold'),
+                      mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace'),
                       mock.patch.object(lane, 'TESTED_RECORD', None), mock.patch('builtins.print')):
             patch.start()
             self.addCleanup(patch.stop)
