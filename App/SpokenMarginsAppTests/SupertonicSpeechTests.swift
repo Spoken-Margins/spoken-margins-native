@@ -3518,14 +3518,14 @@ final class SupertonicSpeechTests: XCTestCase {
         try secondClient.stop()
     }
 
+    // APA-15 (#1042): the app always bundles the model (project.yml), so a missing folder is a broken build,
+    // not a reason to skip the only test that runs it inside the app. A peak of 0.000001 also accepted
+    // near-silence; 0.01 is quiet speech. Whether each voice loads its own style is checked on the host, by
+    // pitch (SupertonicVoiceSelectionTests): renders start from random noise, so samples can't be compared.
     func testBundledRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {
-        guard let resourceURL = Bundle.main.resourceURL else {
-            throw XCTSkip("Hosted app resources unavailable")
-        }
+        let resourceURL = try XCTUnwrap(Bundle.main.resourceURL, "Hosted app resources unavailable")
         let root = resourceURL.appending(path: "Supertonic", directoryHint: .isDirectory)
-        guard FileManager.default.fileExists(atPath: root.path) else {
-            throw XCTSkip("Supertonic assets are not present in this test host")
-        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path), "the app bundles the Supertonic model")
         let output = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-integration-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
@@ -3541,8 +3541,8 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(lily.sampleRate, 44_100)
         XCTAssertGreaterThan(james.duration, 0)
         XCTAssertGreaterThan(lily.duration, 0)
-        XCTAssertGreaterThan(try audioPeak(at: james.audioURL), 0.000_001)
-        XCTAssertGreaterThan(try audioPeak(at: lily.audioURL), 0.000_001)
+        XCTAssertGreaterThan(try audioPeak(at: james.audioURL), 0.01, "James is audible, not near-silence")
+        XCTAssertGreaterThan(try audioPeak(at: lily.audioURL), 0.01, "Lily is audible, not near-silence")
         XCTAssertEqual(james.sessionLoadCount, 1)
         XCTAssertEqual(lily.sessionLoadCount, 1)
         let diagnostics = await renderer.diagnostics()
