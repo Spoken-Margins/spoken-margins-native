@@ -3,7 +3,7 @@ import SwiftUI
 /// The banners above the app's content.
 ///
 /// Anything the listener can't miss keeps its place and moves the content below it: an error that
-/// stays until they act on it (#310), the Library reset notice, an import in progress, and the Undo
+/// stays until they act on it (#310), an import in progress, and the Undo
 /// for a deleted item. A confirmation or warning dismisses itself, so it floats over the content
 /// instead. Rows under a thumb must not move when it appears, goes away or is undone (#1149).
 struct StickyTopBanners: View {
@@ -16,11 +16,8 @@ struct StickyTopBanners: View {
 
     var body: some View {
         if !model.recordingNavigationIsLocked,
-           errorFeedback != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil || model.legacyLibraryResetNotice != nil {
+           errorFeedback != nil || model.trashUndo != nil || model.sourceImportProgressMessage != nil {
             VStack(spacing: 8) {
-                if let resetNotice = model.legacyLibraryResetNotice {
-                    LegacyLibraryResetBanner(message: resetNotice)
-                }
                 if let progressMessage = model.sourceImportProgressMessage {
                     SourceOperationBanner(message: progressMessage)
                 }
@@ -47,43 +44,6 @@ struct FloatingFeedbackBanner: View {
             UserFeedbackBanner(feedback: feedback)
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
-        }
-    }
-}
-
-struct LegacyLibraryResetBanner: View {
-    @EnvironmentObject private var model: Gate1AppModel
-    let message: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "archivebox")
-                .foregroundStyle(AppColors.secondaryText)
-            Text(message)
-                .font(.subheadline.weight(.semibold))
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            Button(action: model.dismissLegacyLibraryResetNotice) {
-                Image(systemName: "xmark")
-                    .frame(width: 32, height: 32)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss library notice")
-        }
-        .padding(12)
-        .foregroundStyle(AppColors.text)
-        .background(.regularMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
-        .accessibilityIdentifier("libraryReset.notice.banner")
-        .task {
-            do {
-                try await Task.sleep(for: .seconds(8))
-                guard model.legacyLibraryResetNotice == message else { return }
-                model.dismissLegacyLibraryResetNotice()
-            } catch {
-                // The banner disappeared or changed before its auto-dismiss timer fired.
-            }
         }
     }
 }
