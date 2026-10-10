@@ -19,6 +19,7 @@ ROOT = SCRIPTS.parent
 # repository root's folder of that name (#1328). Each is relative to something else, or isn't a path at all.
 NOT_REPOSITORY_READS = {
     'references': 'a heading word the Obsidian parser drops',
+    'Site': 'a source title in a library-row test; the catalog reads are Site/onboarding/catalog/, which READS covers',
     'scripts/run.sh': 'a zip entry name in a packet-rejection test',
 }
 
@@ -185,7 +186,7 @@ class ReaderGuardTests(unittest.TestCase):
                     continue
                 if any((literal + '/').startswith(read) or literal.startswith(read) for read in sk.READS):
                     continue
-                if any(literal == exempt or literal.startswith(exempt + '/') for exempt in NOT_REPOSITORY_READS):
+                if literal in NOT_REPOSITORY_READS:  # exact literals only, so a path below one still has to be covered
                     continue
                 uncovered.setdefault(literal, path.name)
         self.assertEqual(uncovered, {}, 'the SessionKit tests name repository paths that sessionkit_pass.READS does not '
