@@ -945,6 +945,24 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true)
         XCTAssertNil(controller.snapshot?.skimForwardDestinationMs, "a hidden Skim shows no stale time")
         XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
+
+        // #1044 APO-13: each Skim follows its own readiness, and neither is offered while recording.
+        appSnapshot.canSkimBackward = false
+        appSnapshot.canSkimForward = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered although the app says it can't skim back")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+
+        appSnapshot.canSkimBackward = true
+        appSnapshot.isRecording = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered while a Margin is recording")
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true,
+                       "Skim forward is offered while a Margin is recording")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true,
+                      "the overlay only removes Skim; time skips are not its to change")
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {
