@@ -61,8 +61,8 @@ public struct HeardAudioWindow: Sendable, Equatable {
 
 /// Keeps the last minute of heard audio and, for each Margin, collects up to a minute after playback resumes (#156).
 ///
-/// Runs on the audio tap's thread under the tap's lock, so it only copies samples: no allocation-heavy work beyond
-/// appending, no I/O. The caller downsamples to mono speech rate before appending.
+/// Runs on the tap's worker queue (#457) under the tap's lock, so it only copies samples: no allocation-heavy work
+/// beyond appending, no I/O. The caller downsamples to mono speech rate before appending.
 public struct HeardAudioWindowRecorder: Sendable {
     public static let beforeMs = 60_000
     public static let afterMs = 60_000

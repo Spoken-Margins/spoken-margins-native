@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import UIKit
 import XCTest
 @testable import SessionKit
@@ -945,6 +946,24 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true)
         XCTAssertNil(controller.snapshot?.skimForwardDestinationMs, "a hidden Skim shows no stale time")
         XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
+
+        // #1044 APO-13: each Skim follows its own readiness, and neither is offered while recording.
+        appSnapshot.canSkimBackward = false
+        appSnapshot.canSkimForward = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered although the app says it can't skim back")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+
+        appSnapshot.canSkimBackward = true
+        appSnapshot.isRecording = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered while a Margin is recording")
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true,
+                       "Skim forward is offered while a Margin is recording")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true,
+                      "the overlay only removes Skim; time skips are not its to change")
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {
@@ -997,7 +1016,7 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lockScreenLifecycleRefresh"], model.snapshot.targetType ?? "none")
     }
 
-    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() {
+    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() throws {
         let profile = RuntimeCapabilityProfile(
             id: "mixing-now-playing",
             displayName: "Mixing Now Playing",
@@ -1018,7 +1037,8 @@ final class Gate2CompactControlTests: XCTestCase {
             )
         ])
         let engine = SessionEngine(profile: profile, repository: repository, audio: NoopAudioPlaybackClient())
-        _ = try? engine.startSession(itemId: "text")
+        let started = try engine.startSession(itemId: "text")
+        let sessionId = try XCTUnwrap(started.sessionId, "the text session did not start")
         let controller = Gate2CompactControlController(liveActivity: RecordingLiveActivityController())
         controller.configure(
             canonicalRuntime: engine,
@@ -1033,6 +1053,14 @@ final class Gate2CompactControlTests: XCTestCase {
 
         controller.setNowPlayingEnabled(true)
         XCTAssertEqual(controller.diagnostics()["gate2NowPlayingEnabled"], "true")
+        // #1044 APO-07: turning mixing off again must bring the Lock Screen card back, not just flip the flag.
+        let restored = controller.diagnostics()["gate2NowPlaying"] ?? "missing"
+        XCTAssertTrue(restored.hasPrefix("live_speech_"), "Now Playing was not republished after the restore: \(restored)")
+        XCTAssertEqual(
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyExternalContentIdentifier] as? String,
+            sessionId,
+            "the system Now Playing card does not show this session again"
+        )
     }
 
     func testPeriodicCompactRefreshIgnoresRawElapsedTimeButRetainsMeaningfulChanges() {
