@@ -385,19 +385,6 @@ final class ExperiencePresentationTests: XCTestCase {
         )
     }
 
-    func testCompactItemsRemoveOnlyTheContinueItemIdentity() {
-        let hero = libraryRow(id: "hero", title: "Shared Title", progress: 30)
-        let sameTitle = libraryRow(id: "same-title", title: "Shared Title", progress: 20)
-        let other = libraryRow(id: "other", title: "Other", progress: nil)
-
-        let compact = LibraryPresentation.compactItems(
-            [hero, sameTitle, hero, other],
-            excluding: hero
-        )
-
-        XCTAssertEqual(compact.map(\.id), [sameTitle.id, other.id])
-    }
-
     func testMarkedCompleteItemIsExcludedEvenWhenActiveSessionStillHasProgress() {
         let completed = LibraryItemRow(id: "done", title: "Done", status: "Ready", canDelete: true, hasContinuationSession: true, continuationProgressPercent: 35, isCompleted: true)
         XCTAssertNil(LibraryPresentation.continueItem(in: [completed], activeItemId: completed.id))

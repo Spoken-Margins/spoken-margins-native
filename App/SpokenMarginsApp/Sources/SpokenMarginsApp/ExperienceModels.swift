@@ -203,11 +203,6 @@ enum LibraryPresentation {
             }
             .first
     }
-
-    static func compactItems(_ rows: [LibraryItemRow], excluding continueItem: LibraryItemRow?) -> [LibraryItemRow] {
-        guard let continueItem else { return rows }
-        return rows.filter { $0.id != continueItem.id }
-    }
 }
 
 enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
