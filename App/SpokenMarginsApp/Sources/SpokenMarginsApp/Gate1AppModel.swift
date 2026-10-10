@@ -55,7 +55,7 @@ final class Gate1AppModel: ObservableObject {
     private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     private static let showsMixWithOtherAudioOptionKey = "showsMixWithOtherAudioOption"
     private static let mixedPlaybackVolumeKey = "mixedPlaybackVolume"
-    private static let suppressedAudioPreparationItemIdsKey = "suppressedAudioPreparationItemIdsV1"
+    private static let suppressedAudioPreparationItemIdsKey = AudioPreparationQueueProjection.suppressedItemIdsDefaultsKey
     static let mixedPlaybackVolumeMaximum = 1.0
     static let exportPreviewCharacterLimit = 24_000
     nonisolated static let supportedPlaybackRates: [Double] = SpeechRateRule.supportedMultipliers
@@ -321,8 +321,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
     private var marginMomentConductor: MarginMomentConductor?
-    /// Heard audio around streamed Margins, written to temporary files until transcribed (#156). Keyed by margin identity.
-    private var heardSourceWindows: [String: [(url: URL, startMediaTimeMs: Int, durationMs: Int)]] = [:]
+    /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
+    var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
 
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return importedCommentaryPhase.showsPause }
@@ -618,7 +618,7 @@ final class Gate1AppModel: ObservableObject {
     private static let startupAudioChunkCount = 2
     var preparationSeams = PreparationPassSeams()
     var isWaitingOutPreparationHeat = false // the foreground loop sleeps until the phone cools (#905)
-    private static let lastPreparedAudioNoticeDateKey = "lastPreparedAudioNoticeDateV1"
+    private static let lastPreparedAudioNoticeDateKey = AudioPreparationQueueProjection.lastNoticeDateDefaultsKey
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
@@ -8810,10 +8810,8 @@ final class Gate1AppModel: ObservableObject {
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
                 fallbackRate: Float(speechRate),
                 diskCache: diskCache,
-                preparedAudioDirectory: supportDirectory.appending(
-                    path: "PreparedSupertonicAudio",
-                    directoryHint: .isDirectory
-                ),
+                preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
+                voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
                         self?.handleSpeechPlaybackInterruption(event)
@@ -9227,34 +9225,9 @@ final class Gate1AppModel: ObservableObject {
                 mediaSourceType: item.media?.sourceType, podcastDownloadState: nil)
             if row != libraryItems[index] { libraryItems[index] = row }
         }
-        let jobsByID = Dictionary(uniqueKeysWithValues: remainingJobs.filter { !$0.isCancelled }.map { ($0.id, $0) })
-        let retained = audioPreparationQueue.filter { jobsByID[$0.id] != nil }.sorted {
-            Self.audioPreparationJobPrecedes(jobsByID[$0.id]!, jobsByID[$1.id]!, activeItemId: activePlaybackItemId)
-        }
-        let rows = retained.enumerated().map { index, row in
-            let current = row.id == job?.id
-            let previous = index > 0 ? retained[index - 1] : nil
-            let next = index + 1 < retained.count ? retained[index + 1] : nil
-            let rowJob = jobsByID[row.id]!
-            let pinned = row.itemId == activePlaybackItemId
-            let sharesTier: (AudioPreparationQueueRow?) -> Bool = { neighbor in
-                guard let neighbor, let neighborJob = jobsByID[neighbor.id] else { return false }
-                return neighborJob.policy == rowJob.policy
-                    && (neighborJob.maximumChunkCount != nil) == (rowJob.maximumChunkCount != nil)
-                    && neighbor.itemId != self.activePlaybackItemId
-            }
-            return AudioPreparationQueueRow(
-                id: row.id, itemId: row.itemId, title: row.title,
-                policy: rowJob.policy,
-                state: current ? manifest.state : row.state,
-                completedChunkCount: current ? min(manifest.chunks.count, job?.maximumChunkCount ?? .max) : row.completedChunkCount,
-                plannedChunkCount: current ? min(manifest.plannedChunkCount, job?.maximumChunkCount ?? .max) : row.plannedChunkCount,
-                requestedAt: row.requestedAt, updatedAt: current ? manifest.updatedAt : row.updatedAt,
-                failureCode: current ? job?.lastFailureCode : row.failureCode,
-                isActivePlaybackItem: pinned,
-                canMoveEarlier: !pinned && sharesTier(previous),
-                canMoveLater: !pinned && sharesTier(next))
-        }
+        let rows = AudioPreparationQueueProjection.rows(
+            audioPreparationQueue, afterProgressOn: manifest, currentJob: job,
+            remainingJobs: remainingJobs, activeItemId: activePlaybackItemId)
         if audioPreparationQueue != rows { audioPreparationQueue = rows }
     }
 
@@ -9287,77 +9260,21 @@ final class Gate1AppModel: ObservableObject {
             storedJobs, items: Array(itemsById.values), sessionsByItemId: Dictionary(grouping: try store.loadSessions(), by: \.itemId)
         ))
         try store.deleteAudioPreparationJobs(ids: Array(staleJobIds))
-        let jobs = storedJobs
-            .filter { !$0.isCancelled && !staleJobIds.contains($0.id) }
-            .sorted { lhs, rhs in
-                Self.audioPreparationJobPrecedes(lhs, rhs, activeItemId: activeItemId)
-            }
-
-        audioPreparationQueue = jobs.enumerated().map { index, job in
-            let manifest = manifestsById[job.manifestId]
-            let previous = index > 0 ? jobs[index - 1] : nil
-            let next = jobs.indices.contains(index + 1) ? jobs[index + 1] : nil
-            let isPinnedActive = job.itemId == activeItemId
-            let sharesTier: (AudioPreparationJob?) -> Bool = { neighbor in
-                guard let neighbor else { return false }
-                return neighbor.policy == job.policy
-                    && (neighbor.maximumChunkCount != nil) == (job.maximumChunkCount != nil)
-            }
-            return AudioPreparationQueueRow(
-                id: job.id,
-                itemId: job.itemId,
-                title: itemsById[job.itemId]?.title ?? job.itemId,
-                policy: job.policy,
-                state: manifest?.state ?? .failed,
-                completedChunkCount: min(
-                    manifest?.committedChunkCount ?? job.nextChunkIndex,
-                    job.maximumChunkCount ?? manifest?.plannedChunkCount ?? .max
-                ),
-                plannedChunkCount: min(
-                    manifest?.plannedChunkCount ?? job.maximumChunkCount ?? 0,
-                    job.maximumChunkCount ?? .max
-                ),
-                requestedAt: job.requestedAt,
-                updatedAt: manifest?.updatedAt ?? job.requestedAt,
-                failureCode: job.lastFailureCode ?? manifest?.failureCode,
-                isActivePlaybackItem: isPinnedActive,
-                canMoveEarlier: !isPinnedActive && sharesTier(previous) && previous?.itemId != activeItemId,
-                canMoveLater: !isPinnedActive && sharesTier(next) && next?.itemId != activeItemId
-            )
-        }
-
-        var seenItemIds = Set<String>()
-        recentlyPreparedAudio = manifests
-            .filter { $0.state == .readyOffline && $0.artifact != nil }
-            .sorted { $0.updatedAt > $1.updatedAt }
-            .compactMap { manifest -> RecentlyPreparedAudioRow? in
-                guard seenItemIds.insert(manifest.itemId).inserted else { return nil }
-                return RecentlyPreparedAudioRow(
-                    id: manifest.id,
-                    itemId: manifest.itemId,
-                    title: itemsById[manifest.itemId]?.title ?? manifest.itemId,
-                    completedAt: manifest.updatedAt,
-                    durationMs: manifest.artifact?.durationMs ?? 0
-                )
-            }
-            .prefix(10)
-            .map { $0 }
+        let jobs = AudioPreparationQueueProjection.orderedJobs(storedJobs, staleJobIds: staleJobIds, activeItemId: activeItemId)
+        let titlesByItemId = itemsById.mapValues(\.title)
+        audioPreparationQueue = AudioPreparationQueueProjection.queueRows(
+            jobs: jobs, manifestsById: manifestsById, titlesByItemId: titlesByItemId, activeItemId: activeItemId)
+        recentlyPreparedAudio = AudioPreparationQueueProjection.recentlyPrepared(manifests: manifests, titlesByItemId: titlesByItemId)
 
         guard announceNewCompletions else { return }
         let defaults = UserDefaults.standard
-        let storedTimestamp = defaults.object(forKey: Self.lastPreparedAudioNoticeDateKey) as? Double
-        let noticeBoundary = storedTimestamp.map(Date.init(timeIntervalSince1970:))
-            ?? now.addingTimeInterval(-24 * 60 * 60)
-        let newlyCompleted = recentlyPreparedAudio.filter { $0.completedAt > noticeBoundary }
-        guard let newest = newlyCompleted.first else { return }
-        defaults.set(newest.completedAt.timeIntervalSince1970, forKey: Self.lastPreparedAudioNoticeDateKey)
-        let message: String
-        if newlyCompleted.count == 1 {
-            message = "Ready offline: \(newest.title)."
-        } else {
-            message = "Ready offline: \(newest.title) and \(newlyCompleted.count - 1) more. Review them in Preparing Audio."
-        }
-        reportConfirmation(message)
+        guard let notice = AudioPreparationQueueProjection.preparedAudioNotice(
+            recentlyPrepared: recentlyPreparedAudio,
+            lastNoticeTimestamp: defaults.object(forKey: Self.lastPreparedAudioNoticeDateKey) as? Double,
+            now: now
+        ) else { return }
+        defaults.set(notice.newestCompletedAt.timeIntervalSince1970, forKey: Self.lastPreparedAudioNoticeDateKey)
+        reportConfirmation(notice.message)
     }
 
     func moveAudioPreparationJobEarlier(id: String) {
@@ -9438,7 +9355,7 @@ final class Gate1AppModel: ObservableObject {
             guard var selected = jobs.first(where: { $0.id == id }) else { return }
             // Pin only the selected job. Assigning ranks to the whole queue
             // would demote every future import behind all existing work.
-            selected.userPriority = max(Int.min + 1, jobs.compactMap(\.userPriority).min() ?? 0) - 1
+            selected.userPriority = AudioPreparationQueueProjection.nextUserPriority(among: jobs)
             try store.saveAudioPreparationJob(selected)
             try refreshAudioPreparationPresentation(store: store)
             startForegroundAudioPreparationIfNeeded()
@@ -9451,27 +9368,11 @@ final class Gate1AppModel: ObservableObject {
         guard offset == -1 || offset == 1 else { return }
         do {
             let store = try requireStore()
-            var allJobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            guard let selected = allJobs.first(where: { $0.id == id }),
-                  selected.itemId != activePlaybackItemId else { return }
-            var tier = allJobs
-                .filter {
-                    $0.policy == selected.policy
-                        && ($0.maximumChunkCount != nil) == (selected.maximumChunkCount != nil)
-                        && $0.itemId != activePlaybackItemId
-                }
-                .sorted { Self.audioPreparationJobPrecedes($0, $1, activeItemId: nil) }
-            guard let currentIndex = tier.firstIndex(where: { $0.id == id }) else { return }
-            let destination = currentIndex + offset
-            guard tier.indices.contains(destination) else { return }
-            tier.swapAt(currentIndex, destination)
-            for (priority, var job) in tier.enumerated() {
-                job.userPriority = priority
-                try store.saveAudioPreparationJob(job)
-                if let allIndex = allJobs.firstIndex(where: { $0.id == job.id }) {
-                    allJobs[allIndex] = job
-                }
-            }
+            let allJobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
+            guard let reordered = AudioPreparationQueueProjection.reorderedTier(
+                of: allJobs, moving: id, by: offset, activeItemId: activePlaybackItemId
+            ) else { return }
+            for job in reordered { try store.saveAudioPreparationJob(job) }
             try refreshAudioPreparationPresentation(store: store)
             reportConfirmation("Updated the audio preparation order.")
         } catch {
@@ -10003,45 +9904,22 @@ final class Gate1AppModel: ObservableObject {
     func handleHeardSourceWindow(_ window: HeardAudioWindow) {
         let key = HeardAudioWindowRecorder.key(window.request)
         let diagnosticKey = Self.marginDiagnosticKey("heardSourceWindow", sessionId: window.request.sessionId, interjectionId: window.request.interjectionId)
-        do {
-            let caches = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let directory = caches.appending(path: "HeardSourceWindows/\(UUID().uuidString)", directoryHint: .isDirectory)
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            var files: [(url: URL, startMediaTimeMs: Int, durationMs: Int)] = []
-            for (index, segment) in window.segments.enumerated() where window.durationMs(of: segment) >= 2_000 {
-                let url = directory.appending(path: "segment-\(index).caf")
-                try Self.writeHeardSegment(segment.samples, sampleRate: window.sampleRate, to: url)
-                files.append((url, segment.startMediaTimeMs, window.durationMs(of: segment)))
-            }
-            let totalMs = files.reduce(0) { $0 + $1.durationMs }
-            diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
-            guard !files.isEmpty else {
-                try? FileManager.default.removeItem(at: directory)
-                return
-            }
-            heardSourceWindows[key] = files
-        } catch {
+        let files: [HeardSourceWindowFiles.Segment]
+        do { files = try heardSourceWindows.store(window, key: key) } catch {
             diagnostics[diagnosticKey] = "write_failed:\(error.localizedDescription)"
             return
         }
-        guard let store,
-              let interjection = try? store.loadInterjections(sessionId: window.request.sessionId)
-                .first(where: { $0.id == window.request.interjectionId }) else { return }
-        if interjection.anchorContextStatus != .ready {
-            scheduleSourceWindowContextIfNeeded(for: interjection)
+        let totalMs = files.reduce(0) { $0 + $1.durationMs }
+        diagnostics[diagnosticKey] = "captured:\(totalMs)ms;segments=\(files.count);before=\(window.coversBeforeAnchor ? 1 : 0);after=\(window.coversAfterAnchor ? 1 : 0);end=\(window.endReason)"
+        // #652: drop the files when the Margin is gone or its context is already ready, since nothing would use them.
+        // If the Margins can't be read, keep them: a later schedule may still need them.
+        guard !files.isEmpty, let store, let margins = try? store.loadInterjections(sessionId: window.request.sessionId) else { return }
+        let interjection = margins.first(where: { $0.id == window.request.interjectionId })
+        guard let interjection, HeardSourceWindowFiles.isStillNeeded(by: interjection) else {
+            heardSourceWindows.discard(key)
+            return
         }
-    }
-
-    private nonisolated static func writeHeardSegment(_ samples: [Float], sampleRate: Double, to url: URL) throws {
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count)),
-              let channel = buffer.floatChannelData?[0] else {
-            throw SessionKitError.persistenceFailed("heard_audio_buffer_unavailable")
-        }
-        buffer.frameLength = AVAudioFrameCount(samples.count)
-        samples.withUnsafeBufferPointer { channel.update(from: $0.baseAddress!, count: samples.count) }
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
+        scheduleSourceWindowContextIfNeeded(for: interjection)
     }
 
     /// No heard audio yet: the tap delivers it about a minute after playback resumes. If it never arrives (the
@@ -10051,7 +9929,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "waiting:heard_audio"
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(240))
-            guard let self, self.heardSourceWindows[key] == nil,
+            guard let self, self.heardSourceWindows.segments(for: key) == nil,
                   !self.pendingSourceContextInterjectionIds.contains(key),
                   let store = self.store,
                   let current = try? store.loadInterjections(sessionId: interjection.sessionId).first(where: { $0.id == interjection.id }),
@@ -10064,14 +9942,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func transcribeHeardSourceWindow(
-        _ files: [(url: URL, startMediaTimeMs: Int, durationMs: Int)],
-        for interjection: Interjection,
-        itemId: String,
-        reportsResult: Bool
-    ) {
+    private func transcribeHeardSourceWindow(for interjection: Interjection, itemId: String, reportsResult: Bool) {
         let key = Self.marginIdentity(interjection)
-        guard pendingSourceContextInterjectionIds.insert(key).inserted else { return }
+        guard !pendingSourceContextInterjectionIds.contains(key), let files = heardSourceWindows.take(key) else { return }
+        pendingSourceContextInterjectionIds.insert(key)
         diagnostics[Self.marginDiagnosticKey("sourceWindowTranscription", interjection)] = "scheduled:heard_audio"
         diagnostics[Self.marginDiagnosticKey("sourceWindowContextProvenance", interjection)] = "heard_stream_audio"
         if reportsResult { reportConfirmation("Recovering source context…") }
@@ -10098,11 +9972,8 @@ final class Gate1AppModel: ObservableObject {
                     try? SourceTranscriptionCaches.remove(.windows, itemId: scratchID, cachesDirectory: caches)
                 }
             }
-            if let directory = files.first?.url.deletingLastPathComponent() {
-                try? FileManager.default.removeItem(at: directory)
-            }
+            HeardSourceWindowFiles.delete(files)
             await MainActor.run {
-                self.heardSourceWindows[key] = nil
                 self.pendingSourceContextInterjectionIds.remove(key)
                 let timeline = HeardAudioWindow.episodeTimeline(parts)
                 let transcriptionKey = Self.marginDiagnosticKey("sourceWindowTranscription", interjection)
@@ -10155,6 +10026,7 @@ final class Gate1AppModel: ObservableObject {
            ) {
             run { engine in
                 snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjection.id, sessionId: interjection.sessionId, timeline: window)
+                heardSourceWindows.discard(Self.marginIdentity(interjection)) // #652: the context is ready without it
                 refreshSelectedItem()
                 refreshMarginRows()
                 if reportsResult { reportConfirmation("Source context recovered.") }
@@ -10170,8 +10042,8 @@ final class Gate1AppModel: ObservableObject {
         if !transcriptionURL.isFileURL {
             // #156: a window can't be cut from a stream after the fact (AVFoundation stops the export). Use the
             // minute before and after the Margin that the player's tap kept, once it has been handed over.
-            if let heard = heardSourceWindows[Self.marginIdentity(interjection)] {
-                transcribeHeardSourceWindow(heard, for: interjection, itemId: item.id, reportsResult: reportsResult)
+            if heardSourceWindows.segments(for: Self.marginIdentity(interjection)) != nil {
+                transcribeHeardSourceWindow(for: interjection, itemId: item.id, reportsResult: reportsResult)
             } else if reportsResult {
                 // A manual retry comes long after the heard audio was used or dropped.
                 reportWarning("Context for a streamed episode comes from the audio around the Margin as you heard it, and that's no longer available. Download the episode to recover it.")
@@ -10228,6 +10100,7 @@ final class Gate1AppModel: ObservableObject {
                 )
                 self.run { engine in
                     self.snapshot = try engine.sourceWindowContextCompleted(interjectionId: interjectionId, sessionId: interjection.sessionId, timeline: analysis.timeline)
+                    self.heardSourceWindows.discard(identity) // #652: the context is ready without it
                     if !reference.evidence.isEmpty {
                         try self.persistPodcastAnchorEvidence(
                             request: request,
