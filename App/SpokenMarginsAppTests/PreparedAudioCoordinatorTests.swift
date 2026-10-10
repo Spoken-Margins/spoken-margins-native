@@ -175,6 +175,58 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.state, .needsRepreparation)
     }
 
+    /// APA-09: the old corruption wrote one byte over three, so the size check alone rejected it and the SHA-256
+    /// comparison was never reached. Bit rot, or a file replaced by one of the same length, passes the size check.
+    func testSameLengthCorruptionIsRejectedByTheChecksumAndMarksManifestForRepreparation() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+        let committed = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id)?.chunks.first)
+        let url = fixture.prepared.appending(path: committed.relativePath)
+
+        let intact = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
+        XCTAssertNotNil(intact, "control: the chunk as committed is served")
+
+        try Data([9, 9, 9]).write(to: url, options: .atomic)
+        XCTAssertEqual(try Data(contentsOf: url).count, Int(committed.byteCount), "same length as what was committed")
+        let lookup = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: "First chunk. Second chunk.")
+        XCTAssertNil(lookup)
+        let marked = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: manifest.id))
+        XCTAssertEqual(marked.state, .needsRepreparation)
+        XCTAssertEqual(marked.failureCode, "chunk_checksum_mismatch")
+    }
+
+    /// APA-09: restarting a manifest keeps "only the chunks whose files are still intact". The old test lost a chunk by
+    /// deleting its file; a chunk rewritten at the same length must be dropped too.
+    func testBeginDropsAChunkRewrittenAtTheSameLengthAndKeepsTheIntactOne() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let source = "First chunk. Second chunk."
+        _ = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plans())
+        for plan in plans() {
+            let wav = fixture.root.appending(path: "chunk-\(plan.index).wav")
+            try Data(repeating: UInt8(plan.index + 1), count: 64).write(to: wav)
+            try await coordinator.commit(itemId: "item", signature: signature("one"), plan: plan,
+                                         sourceText: source, audioURL: wav, durationMs: 1_000)
+        }
+        var manifest = try XCTUnwrap(try fixture.store.loadPreparedAudioManifests(itemId: "item").first)
+        manifest.state = .readyOffline
+        try fixture.store.savePreparedAudioManifest(manifest)
+        try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: "item", repository: fixture.store)
+        let rotted = try XCTUnwrap(manifest.chunks.first { $0.index == 1 })
+        try Data(repeating: 0xEE, count: Int(rotted.byteCount)).write(
+            to: fixture.prepared.appending(path: rotted.relativePath), options: .atomic)
+
+        let restarted = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plans())
+
+        XCTAssertEqual(restarted.state, .preparing)
+        XCTAssertEqual(restarted.chunks.map(\.index), [0], "the chunk whose bytes changed is rendered again, the intact one kept")
+    }
+
     // #312: lookups matched a committed chunk by index alone. When the plan for that index covers
     // a different stretch of the text, the saved audio is for other words and must not be played.
     // (A changed article is caught earlier, by the article plan's identity.)
