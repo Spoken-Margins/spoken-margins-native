@@ -3459,18 +3459,27 @@ public final class SystemRecordingClient: RecordingClient {
         #if canImport(AVFoundation)
         guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
         let previousURL = currentURL
-        recorder?.stop()
-        // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
-        // old, so read what the file really holds first and refuse to delete audio worth keeping.
-        // This one read is on the main thread, once, and only for a recorder that is already stopped.
-        switch previousURL.map(RecordedFileDuration.measure) ?? .milliseconds(0) {
-        case .milliseconds(let fileMs):
-            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
-        case .unreadable:
-            // The length is unknown, so the file may hold speech: keep it, never delete on a failed read.
-            throw SessionKitError.persistenceFailed("recording_unreadable")
+        // A restart deletes the file, and the poll that asked for it may be old, so work out what the recorder
+        // really holds first and refuse to delete audio worth keeping. None of this reads the file on the main
+        // thread (#1041). A running recorder says how much it has taken in until the moment it stops. One that
+        // had already stopped has a background measurement the poll started; if that hasn't landed, the length
+        // is unknown, which means keep.
+        let hadStopped = recorder.map { !$0.isRecording } ?? false
+        if let recorder, !hadStopped {
+            capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         }
-        if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
+        recorder?.stop()
+        switch CaptureRestartGuard.verdict(
+            capturedMs: capturedHighWaterMs,
+            recorderHadStopped: hadStopped,
+            measurement: stoppedMeasurement?.outcome
+        ) {
+        case .restart:
+            break
+        case .keepUnknown:
+            // The file may hold speech: keep it, never delete on an unfinished or failed read.
+            throw SessionKitError.persistenceFailed("recording_unreadable")
+        case .keepAudio:
             throw SessionKitError.persistenceFailed("recording_has_audio")
         }
         recorder?.delegate = nil
