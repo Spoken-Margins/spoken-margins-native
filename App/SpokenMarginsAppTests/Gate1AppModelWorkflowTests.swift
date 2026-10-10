@@ -520,6 +520,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     /// #1043 APM-05: the expiry tests ran with nothing playing, so the pause the timer exists for never ran.
     func testTimedSleepTimerExpiryPausesThePlayingSource() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()
@@ -1461,6 +1463,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testFinishAndCancelAreTheOnlyRecordingExits() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let recorder = try CountingToneRecordingClient()
         defer { recorder.removeSavedFiles() }
         let model = Gate1AppModel(
@@ -1510,6 +1514,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// left with when the microphone won't start. The recording screen must close, the source play on, and
     /// nothing be saved; the next tap, with a working microphone, records.
     func testAMicrophoneThatWontStartClosesTheRecordingScreenAndPlaysOn() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let recorder = try CountingToneRecordingClient()
         defer { recorder.removeSavedFiles() }
         recorder.refusesToStart = true
@@ -2153,6 +2159,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// #1043 APM-09: the trash tests ran on a player with no state, and the model resets its own snapshot, so
     /// a trashed item that kept playing with no screen to stop it passed. Here the player says whether it plays.
     func testTrashingThePlayingItemStopsItsAudioAndKeepsItsPlace() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let root = FileManager.default.temporaryDirectory.appending(path: "trash-playing-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -2806,6 +2814,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// same. The player here reports a place two sentences in, and the resume must start there, from memory and
     /// after a relaunch reads the session back from SQLite.
     func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let root = FileManager.default.temporaryDirectory.appending(path: "resume-position-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -3930,6 +3940,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.currentTextStart, "One sentence. ".count)
         XCTAssertEqual(audio.playedOffsets.last, "One sentence. ".count)
+    }
+
+    /// A fresh simulator has never accepted the Terms, so its default bundled voice holds text playback behind the
+    /// Terms sheet and nothing plays. Tests that need a playing text source accept them first, before the model is
+    /// made (it reads them at init), and put the earlier answer back with the returned closure, so they pass in
+    /// any order.
+    private func acceptTerms() -> () -> Void {
+        let keys = [SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
+        let prior = keys.map { UserDefaults.standard.object(forKey: $0) }
+        SpokenMarginsTerms.recordAcceptance()
+        return { zip(keys, prior).forEach { self.restoreUserDefault($1, forKey: $0) } }
     }
 
     private func restoreUserDefault(_ value: Any?, forKey key: String) {
