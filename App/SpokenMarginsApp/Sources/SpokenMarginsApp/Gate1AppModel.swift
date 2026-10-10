@@ -533,8 +533,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
-    let microphonePermissionRequest: (() async -> Bool)?
-    let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
+    let microphoneAccess: MarginMicrophoneAccess
     private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
@@ -812,8 +811,7 @@ final class Gate1AppModel: ObservableObject {
         self.browserTextHandoffStore = browserTextHandoffStore
         self.audioPlaybackClientOverride = audioPlaybackClient
         self.recordingClientOverride = recordingClient
-        self.microphonePermissionRequest = microphonePermissionRequest
-        self.microphonePermissionStatusOverride = microphonePermissionStatus
+        self.microphoneAccess = MarginMicrophoneAccess(recorderInjected: recordingClient != nil, request: microphonePermissionRequest, status: microphonePermissionStatus)
         self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
@@ -5220,23 +5218,13 @@ final class Gate1AppModel: ObservableObject {
             progressPercent: snapshot.currentPlaybackProgressPercent,
             startedAt: requestedAt
         )
-        if recordingClientOverride != nil, microphonePermissionRequest == nil {
-            startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
-            return
-        }
-        #if canImport(AVFoundation) && os(iOS)
-        let recordPermissionIsGranted = AVAudioApplication.shared.recordPermission == .granted
-        if recordPermissionIsGranted, microphonePermissionRequest == nil {
+        let status = microphoneAccess.status()
+        if status == .granted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
-            Task { @MainActor [weak self] in
-                await Task.yield()
-                self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
-            }
+            microphoneAccess.record { [weak self] in self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID) }
             return
         }
-        #endif
-        if let status = microphonePrimerStatus(),
-           microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
+        if let status, microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
             diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
             return
         }
@@ -6482,20 +6470,12 @@ final class Gate1AppModel: ObservableObject {
     ) {
         if command == .beginInterjection {
             guard !recordingNavigationIsLocked else { return }
-            if recordingClientOverride != nil {
-                performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
-                return
-            }
             isRequestingRecordingPermission = true
-            Task {
-                let granted = await SystemRecordingClient.requestRecordPermission()
-                guard granted else {
-                    isRequestingRecordingPermission = false
-                    reportFailure("Microphone access is required to record Margins from compact controls.")
-                    return
-                }
-                performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin)
+            microphoneAccess.recordFromCompactControl(ask: { [weak self] in await self?.requestMicrophonePermission() ?? false }) { [weak self] granted in
+                guard let self else { return }
+                if granted { performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin) }
                 isRequestingRecordingPermission = false
+                if !granted { reportFailure("Microphone access is required to record Margins from compact controls.") }
             }
             return
         }

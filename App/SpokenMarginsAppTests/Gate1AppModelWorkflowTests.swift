@@ -3618,6 +3618,92 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelInterjection()
     }
 
+    /// #1043 APM-02: every Margin after the first starts on the "already granted" path, and no test could reach
+    /// it: a test recorder jumped straight to recording, and the path read iOS's answer rather than the test's.
+    /// With the permission granted, Add Margin must record one turn after the tap, and never ask again.
+    func testAnAlreadyGrantedMicrophoneRecordsAfterTheTapWithoutAskingAgain() async throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .granted }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+
+        model.beginInterjection()
+        XCTAssertEqual(model.statusMessage, "Starting Margin...", "the tap is acknowledged before the recorder starts")
+        XCTAssertTrue(model.isRequestingRecordingPermission)
+        XCTAssertEqual(recorder.beginCount, 0)
+        try await waitFor("the granted path to start recording") { model.snapshot.isRecording }
+
+        XCTAssertEqual(recorder.beginCount, 1)
+        XCTAssertEqual(gate.requests, 0, "a granted microphone is never asked again")
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertNotNil(model.recordingPresentationContext)
+        XCTAssertEqual(model.diagnostics["lastMicrophonePermissionResult"], "granted")
+        model.cancelInterjection()
+        XCTAssertEqual(recorder.cancelCount, 1)
+    }
+
+    /// #1043 APM-02: the compact controls (Live Activity, widget, Lock Screen URL) had their own permission
+    /// wrapper, skipped whenever a test injected a recorder. Granted records without asking; denied asks,
+    /// records nothing and says why.
+    func testCompactControlRecordsWithAGrantedMicrophoneAndRefusesADeniedOne() async throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        let gate = MarginPermissionTestGate()
+        let granted = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .granted }
+        )
+        granted.resetAndSeed()
+        granted.declineCurrentTerms()
+        granted.startItem(id: "item-pill")
+        granted.pause()
+
+        granted.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
+        XCTAssertTrue(granted.isRequestingRecordingPermission, "other compact commands wait while the start is pending")
+        try await waitFor("the compact control to start recording") { granted.snapshot.isRecording }
+        XCTAssertEqual(recorder.beginCount, 1)
+        XCTAssertEqual(gate.requests, 0)
+        XCTAssertFalse(granted.isRequestingRecordingPermission)
+        XCTAssertNil(granted.lastError)
+        granted.dispatchGate2CompactCommand(.cancelInterjection)
+        XCTAssertFalse(granted.snapshot.isRecording)
+
+        let deniedGate = MarginPermissionTestGate()
+        let denied = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            microphonePermissionRequest: { await deniedGate.request() },
+            microphonePermissionStatus: { .denied }
+        )
+        denied.resetAndSeed()
+        denied.declineCurrentTerms()
+        denied.startItem(id: "item-pill")
+        denied.pause()
+
+        denied.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
+        try await waitFor("the compact control to ask") { deniedGate.continuation != nil }
+        XCTAssertEqual(deniedGate.requests, 1, "a microphone that isn't granted is asked")
+        XCTAssertTrue(denied.isRequestingRecordingPermission)
+        deniedGate.finish(false)
+        try await waitFor("the refusal to land") { !denied.isRequestingRecordingPermission }
+        XCTAssertFalse(denied.snapshot.isRecording)
+        XCTAssertEqual(recorder.beginCount, 1, "nothing tried to record")
+        XCTAssertEqual(denied.lastError, "Microphone access is required to record Margins from compact controls.")
+        XCTAssertFalse(denied.recordingNavigationIsLocked)
+    }
+
     /// #783: dismissing the line cancels that Margin like Cancel does; the next try shows it again.
     func testCancellingThePrimerCancelsTheMarginAndShowsItAgainNextTime() async throws {
         let gate = MarginPermissionTestGate()
