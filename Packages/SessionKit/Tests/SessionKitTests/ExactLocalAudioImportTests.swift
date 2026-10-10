@@ -73,6 +73,10 @@ final class ExactLocalAudioImportTests: XCTestCase {
         XCTAssertTrue(ExactLocalAudioImport.matches(identity(digest: digest, duration: 10_250), identity(digest: digest, duration: 10_000)))
         XCTAssertFalse(ExactLocalAudioImport.matches(identity(digest: digest, duration: 10_000), identity(digest: digest, duration: 10_251)))
         XCTAssertFalse(ExactLocalAudioImport.matches(identity(digest: digest, duration: 10_251), identity(digest: digest, duration: 10_000)))
+        // Within 250 ms of each other, but one side has no real duration.
+        for (source, recipient) in [(0, 100), (100, 0), (-100, 100), (100, -100)] {
+            XCTAssertFalse(ExactLocalAudioImport.matches(identity(digest: digest, duration: source), identity(digest: digest, duration: recipient)), "\(source) vs \(recipient)")
+        }
         for unusable: Int? in [nil, 0, -5] {
             XCTAssertFalse(ExactLocalAudioImport.matches(identity(digest: digest, duration: unusable), identity(digest: digest, duration: unusable)), "\(String(describing: unusable))")
             XCTAssertFalse(ExactLocalAudioImport.matches(identity(digest: digest), identity(digest: digest, duration: unusable)), "\(String(describing: unusable))")
