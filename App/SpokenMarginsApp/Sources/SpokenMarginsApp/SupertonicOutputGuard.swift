@@ -38,7 +38,7 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
             text: text, voice: voice, language: language, speed: speed, synthesisSteps: synthesisSteps
         )
         guard let problem = SupertonicOutputCheck.problem(
-            text: text, durationSeconds: rendered.duration, speed: Double(speed)
+            text: text, durationSeconds: rendered.modelDuration, speed: Double(speed)
         ) else { return rendered }
         // A render nobody waits for any more (a timeout handed the text to the live iOS voice, or a
         // stop) must not start another speech synthesizer: writing one while the iOS voice speaks
