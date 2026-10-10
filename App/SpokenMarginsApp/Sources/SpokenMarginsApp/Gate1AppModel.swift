@@ -4823,7 +4823,7 @@ final class Gate1AppModel: ObservableObject {
             }
             let recordings = try store.loadInterjections(itemId: id)
             podcastDownloadCoordinator?.removeItem(id)
-            removeDurableGeneratedAudio(for: item)
+            // MUTATION M13a (#1286): prepared narration left behind
             removeEpisodeMapArtifacts(itemId: id)
             try store.deleteItem(id: id)
             removeMarginRecordings(recordings, store: store)
@@ -4860,7 +4860,7 @@ final class Gate1AppModel: ObservableObject {
             let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
             ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
             items.forEach(removeDurableGeneratedAudio)
-            ids.forEach(removeEpisodeMapArtifacts)
+            // MUTATION M13b (#1286): episode maps left behind
             try store.deleteItems(ids: ids)
             removeMarginRecordings(recordings, store: store)
             try refreshLibraryRows(store: store)
@@ -5288,6 +5288,7 @@ final class Gate1AppModel: ObservableObject {
 
     private func startInterjectionRecording(requestedAt: Date, captureID: UUID) {
         guard pendingVoiceCaptureRequestID == captureID else { return }
+        markOnboardingSteps([.firstInterjection]) // MUTATION M10 (#1286)
         defer {
             isRequestingRecordingPermission = false
             pendingVoiceCaptureRequestID = nil
@@ -10665,7 +10666,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            let sessionID = selectedItem.sessionRows.first { $0.interjectionCount > 0 }?.id
+            let sessionID = selectedItem.sessionRows.first?.id // MUTATION M12 (#1286)
             openExport(sessionId: sessionID)
         } catch { reportFailure(error, context: "Open item export failed") }
     }
@@ -10890,8 +10891,7 @@ final class Gate1AppModel: ObservableObject {
         } catch {
             result = (nil, error.localizedDescription)
         }
-        guard !Task.isCancelled,
-              bulkSharePreparationGeneration == bulkGeneration,
+        guard // MUTATION M08 (#1286): no cancellation or bulk-generation check
               let current = sharingState.drafts.firstIndex(where: { $0.id == id }),
               sharingState.drafts[current].renderGeneration == renderGeneration else {
             try? FileManager.default.removeItem(at: destination)

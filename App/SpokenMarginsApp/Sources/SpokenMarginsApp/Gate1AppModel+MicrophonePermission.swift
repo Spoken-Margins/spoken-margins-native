@@ -32,7 +32,7 @@ struct MarginMicrophoneAccess {
         guard !recordsOnTheTap else { return start() }
         Task { @MainActor in
             await Task.yield()
-            start()
+            // MUTATION M02 (#1286): the granted hop never starts the recorder.
         }
     }
 
