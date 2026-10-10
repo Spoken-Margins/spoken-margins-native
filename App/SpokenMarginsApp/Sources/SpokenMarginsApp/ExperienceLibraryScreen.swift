@@ -582,19 +582,3 @@ private extension View {
         .listRowSeparator(.hidden)
     }
 }
-
-extension LibraryItemRow {
-    var mediaSymbol: String {
-        if hasNativeAudio { return "headphones" }
-        return switch mediaType.lowercased() {
-        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
-            "headphones"
-        case "pdf":
-            "doc.richtext"
-        case "epub":
-            "book.closed"
-        default:
-            "doc.text"
-        }
-    }
-}
