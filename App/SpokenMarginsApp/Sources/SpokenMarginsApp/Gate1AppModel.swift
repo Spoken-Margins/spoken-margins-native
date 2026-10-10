@@ -585,9 +585,7 @@ final class Gate1AppModel: ObservableObject {
     private var importedCommentaryAutoPlayTask: Task<Void, Never>?
     private var bulkSharePreparationTask: Task<Void, Never>?
     private var bulkSharePreparationGeneration = 0
-    private var shouldForceFirstSharedSourceMissForUITesting =
-        CommandLine.arguments.contains("--ui-testing")
-        && ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_FORCE_FIRST_SHARED_SOURCE_MISS"] == "1"
+    private var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     var foregroundAudioPreparationTask: Task<Void, Never>?
     private let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
@@ -694,7 +692,7 @@ final class Gate1AppModel: ObservableObject {
 
     var shouldShowOnboardingCard: Bool {
         onboardingProgress.shouldShowCard(
-            suppressed: Self.isRunningUnitTests || CommandLine.arguments.contains("--ui-testing")
+            suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
         )
     }
 
@@ -824,13 +822,7 @@ final class Gate1AppModel: ObservableObject {
         databaseURLOverride: URL? = nil,
         trashUndoDismissDelay: Duration = .seconds(5)
     ) {
-        if sourceLinkResolver == nil,
-           CommandLine.arguments.contains("--ui-testing"),
-           ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_AMBIGUOUS_SOURCE_LINK"] == "1" {
-            self.sourceLinkResolver = UITestingAmbiguousSourceLinkResolver()
-        } else {
-            self.sourceLinkResolver = sourceLinkResolver
-        }
+        self.sourceLinkResolver = sourceLinkResolver ?? UITestingHooks.ambiguousSourceLinkResolver
         self.sourceLinkHandoffStore = sourceLinkHandoffStore
         self.browserTextHandoffStore = browserTextHandoffStore
         self.audioPlaybackClientOverride = audioPlaybackClient
@@ -841,13 +833,7 @@ final class Gate1AppModel: ObservableObject {
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
         self.featureFlags = featureFlags
-        if CommandLine.arguments.contains("--ui-testing"),
-           let rawMode = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_LOCAL_SUMMARY"],
-           let mode = UITestingLocalFoundationModelClient.Mode(rawValue: rawMode) {
-            self.localFoundationModelClient = UITestingLocalFoundationModelClient(mode: mode)
-        } else {
-            self.localFoundationModelClient = localFoundationModelClient
-        }
+        self.localFoundationModelClient = UITestingHooks.localFoundationModelClient ?? localFoundationModelClient
         self.databaseURLOverride = databaseURLOverride
         self.trashUndoDismissDelay = trashUndoDismissDelay
         if let interjectionTranscriptionHandler {
@@ -878,15 +864,14 @@ final class Gate1AppModel: ObservableObject {
         }
         localFoundationModelAvailability = localFoundationModelClient.availability()
         migrateTTSSettingsIfNeeded()
-        if CommandLine.arguments.contains("--ui-testing") {
+        if UITestingHooks.isActive {
             speechVoiceIdentifier = ""
             UserDefaults.standard.removeObject(forKey: "speechVoiceIdentifier")
-            if let rawRate = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SPEECH_RATE"],
-               let testRate = Double(rawRate) {
+            if let testRate = UITestingHooks.speechRate {
                 speechRate = testRate
                 UserDefaults.standard.set(testRate, forKey: "speechRate")
             }
-            if ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_SUPERTONIC"] == "1" {
+            if UITestingHooks.usesSupertonic {
                 SpokenMarginsTerms.recordAcceptance()
                 ttsVoiceSelection = .james
                 UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
@@ -1349,12 +1334,12 @@ final class Gate1AppModel: ObservableObject {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
-            switch UITestingLaunchSeed.current {
+            switch UITestingHooks.seed {
             case .none, .keepLibrary: break
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
-                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(.current, into: store)); return
+                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(UITestingHooks.seed, into: store)); return
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty
@@ -1364,7 +1349,7 @@ final class Gate1AppModel: ObservableObject {
             if Self.shouldSeedWelcomeSample(
                 libraryIsEmpty: rows.isEmpty,
                 storedVersion: storedWelcomeSampleVersion,
-                isUITesting: CommandLine.arguments.contains("--ui-testing")
+                isUITesting: UITestingHooks.isActive
             ) {
                 let (item, map) = try makeAppOverviewSample()
                 try store.saveItem(item)
@@ -1372,7 +1357,7 @@ final class Gate1AppModel: ObservableObject {
                 rows = try loadLibraryRows(store: store)
                 diagnostics["welcomeSample"] = "seeded:v\(Self.welcomeSampleSeedVersion)"
             }
-            if !CommandLine.arguments.contains("--ui-testing"),
+            if !UITestingHooks.isActive,
                !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
                UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
                !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
@@ -1382,7 +1367,7 @@ final class Gate1AppModel: ObservableObject {
                 rows = try loadLibraryRows(store: store)
                 diagnostics["guidedOnboardingItem"] = "bundled_fallback_seeded"
             }
-            if !CommandLine.arguments.contains("--ui-testing"),
+            if !UITestingHooks.isActive,
                storedWelcomeSampleVersion < Self.welcomeSampleSeedVersion {
                 UserDefaults.standard.set(
                     Self.welcomeSampleSeedVersion,
@@ -1440,7 +1425,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// Finishes a `--ui-testing` launch whose seed writer has reset the store and added `item`.
+    /// Finishes a UI-test launch whose seed writer has reset the store and added `item`.
     private func seedUITesting(store: SQLiteSessionStore, item: Item) throws {
         self.store = store
         try configurePodcastDownloads(store: store)
@@ -12013,7 +11998,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     private func seedUITestingGeneratedTimelineIfNeeded(sessionId: String, engine: SessionEngine, store: SQLiteSessionStore) throws {
-        guard UITestingLaunchSeed.current.seedsGeneratedTimeline,
+        guard UITestingHooks.seed.seedsGeneratedTimeline,
               try store.loadTurns(sessionId: sessionId).isEmpty else {
             return
         }
@@ -12035,8 +12020,7 @@ final class Gate1AppModel: ObservableObject {
         engine: SessionEngine,
         store: SQLiteSessionStore
     ) throws {
-        guard CommandLine.arguments.contains("--ui-testing"),
-              let note = ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TEST_INTERJECTION"],
+        guard let note = UITestingHooks.summaryInterjectionNote,
               try store.loadInterjections(sessionId: sessionId).isEmpty else { return }
         let interjection = Interjection(
             id: "ij-ui-summary",

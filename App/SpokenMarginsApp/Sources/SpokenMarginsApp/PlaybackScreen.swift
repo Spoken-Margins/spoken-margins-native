@@ -189,11 +189,6 @@ struct PlaybackScreen: View {
         }
     }
 
-    private var isUITesting: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-testing")
-            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
-    }
-
     private var playbackControls: some View {
         VStack(spacing: 10) {
             playbackPosition

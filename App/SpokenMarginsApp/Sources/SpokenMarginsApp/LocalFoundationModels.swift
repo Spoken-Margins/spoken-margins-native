@@ -966,9 +966,9 @@ protocol LocalFoundationModelClient: Sendable {
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String
 }
 
-/// Deterministic model seam for end-to-end UI tests. Production construction
-/// never selects this client because it requires both `--ui-testing` and an
-/// explicit launch environment value.
+#if DEBUG
+/// Deterministic model seam for end-to-end UI tests. Release builds do not
+/// compile it (#517); `UITestingHooks` is the only code that creates one.
 final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @unchecked Sendable {
     enum Mode: String {
         case succeed
@@ -1005,6 +1005,7 @@ final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @un
         "A UI testing listening map."
     }
 }
+#endif
 
 struct AppleFoundationModelClient: LocalFoundationModelClient {
     func availability() -> LocalFoundationModelAvailability {
