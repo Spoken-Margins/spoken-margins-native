@@ -388,6 +388,67 @@ test("an ordinary page and a non-HTTPS PDF still go through text capture", () =>
   });
 });
 
+// An ordinary article that embeds a PDF (#689). Safari's viewer is the whole
+// document; here the embed is one element among the prose.
+const MIXED_ARTICLE_URL = "https://example.org/report";
+function articleWithEmbeddedPDF() {
+  const prose = "<p>" + "The report's findings, explained in plain prose. ".repeat(40) + "</p>";
+  return browserLikePage({
+    url: MIXED_ARTICLE_URL,
+    head: "<title>Annual Report</title>",
+    body: `<nav>Home</nav><article><h1>Annual Report</h1>${prose}
+      <embed type="application/pdf" src="/attachment.pdf" width="600" height="800">
+      <div id="annotationContainer"></div>${prose}</article><footer>Footer</footer>`
+  });
+}
+
+test("#689: an article that embeds a PDF goes through text capture, not the PDF import", () => {
+  withInjectedPage(articleWithEmbeddedPDF(), (textCaptures) => {
+    const result = invokeInjectedCapture();
+    assert.equal(result.pdfURL, undefined);
+    assert.equal(result.ok, true);
+    assert.equal(textCaptures(), 1);
+  });
+});
+
+test("#689: a page that is only a PDF embed hands over the embed's own address", () => {
+  const wrapper = browserLikePage({
+    url: "https://example.org/view?doc=7",
+    head: "<style>body { margin: 0 }</style>",
+    body: `<embed type="application/pdf" src="/files/report.pdf?v=2" width="100%" height="100%">`
+  });
+  withInjectedPage(wrapper, (textCaptures) => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://example.org/files/report.pdf?v=2" });
+    assert.equal(textCaptures(), 0);
+  });
+  // A relative src follows the page's <base>, as the browser resolves it.
+  const based = browserLikePage({
+    url: "https://example.org/view?doc=8",
+    head: `<base href="https://files.example.org/reports/">`,
+    body: `<embed type="application/pdf" src="q3.pdf">`
+  });
+  withInjectedPage(based, () => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://files.example.org/reports/q3.pdf" });
+  });
+  // WebKit's own PDF document points its embed at the tab's address.
+  const pluginDocument = browserLikePage({
+    url: "https://example.org/download?id=7",
+    body: `<embed type="application/pdf" name="plugin" src="https://example.org/download?id=7"><div id="annotationContainer"></div>`
+  });
+  withInjectedPage(pluginDocument, () => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://example.org/download?id=7" });
+  });
+  // An embed that points at a non-https address can't go to the PDF import.
+  const insecure = browserLikePage({
+    url: "https://example.org/view",
+    body: `<embed type="application/pdf" src="http://files.example.org/a.pdf">`
+  });
+  withInjectedPage(insecure, (textCaptures) => {
+    assert.equal(invokeInjectedCapture().pdfURL, undefined);
+    assert.equal(textCaptures(), 1);
+  });
+});
+
 test("popup capture passes a PDF address through instead of a text payload", async () => {
   const extensionAPI = {
     tabs: { query: async () => [{ id: 3 }] },
@@ -600,6 +661,55 @@ test("built popup: a refused .pdf tab is handed to the app's PDF import", async 
   assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ action: "storeRemotePDFHandoff", url: "https://www.cam.ac.uk/casp/what-if.pdf" }]);
   assert.deepEqual(opened, [[11, "spokenmargins://source-link?payloadId=abc"]]);
   assert.equal(shown.status, "Opening Spoken Margins.");
+});
+
+// A tab the extension can read. Like Safari, executeScript runs the shipped
+// capture script and then the popup's function, from its source text, in the
+// page's own context, and reports frame 0's result.
+function readableTabAPI(page, url, sent) {
+  const pageContext = vm.createContext({
+    document: page,
+    navigator: { userAgent: "test" },
+    crypto: { randomUUID: () => "test-payload-id" },
+    URL,
+    Date
+  });
+  return {
+    tabs: { query: async () => [{ id: 12, url }], update: async () => {} },
+    scripting: {
+      executeScript: async (request) => {
+        if (request.files) {
+          vm.runInContext(fs.readFileSync("App/SharedResources/browserTextCapture.js", "utf8"), pageContext);
+          return [{ frameId: 0 }];
+        }
+        return [{ frameId: 0, result: vm.runInContext(`(${request.func.toString()})()`, pageContext) }];
+      }
+    },
+    runtime: {
+      sendNativeMessage: async (id, message) => {
+        sent.push(message);
+        return { ok: true, openURL: "spokenmargins://browser-text?payloadId=abc" };
+      }
+    }
+  };
+}
+
+test("#689: built popup sends an article with an embedded PDF as page text, never its address as a PDF", async () => {
+  const sent = [];
+  const shown = await runBuiltPopup(() => readableTabAPI(articleWithEmbeddedPDF(), MIXED_ARTICLE_URL, sent));
+  assert.equal(shown.status, "Opening Spoken Margins.");
+  assert.deepEqual(sent.map((message) => message.action), ["storeBrowserTextPayload"]);
+  assert.match(JSON.stringify(sent[0].payload), /findings, explained in plain prose/);
+});
+
+test("built popup: a PDF tab is still sent to the PDF import", async () => {
+  const sent = [];
+  const pdfTab = "https://example.org/download?id=7";
+  const page = browserLikePage({ url: pdfTab, body: `<embed type="application/pdf" name="plugin" src="${pdfTab}">` });
+  Object.defineProperty(page, "contentType", { value: "application/pdf" });
+  const shown = await runBuiltPopup(() => readableTabAPI(page, pdfTab, sent));
+  assert.equal(shown.status, "Opening Spoken Margins.");
+  assert.deepEqual(JSON.parse(JSON.stringify(sent)), [{ action: "storeRemotePDFHandoff", url: pdfTab }]);
 });
 
 test("built popup: a transient injection failure still offers Try Again", async () => {
