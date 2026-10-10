@@ -5908,14 +5908,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// The one place the app closes the engine's session. A playing Margin moment ends first, before the source is
-    /// stopped, whichever path closes it: the mini player's X, Start New Session, or a chapter action restarting
-    /// a finished session. A new session of the same item would otherwise leave the moment's closures alive (#1036).
-    @discardableResult
-    private func endEngineSession(_ engine: SessionEngine) throws -> SessionSnapshot {
-        try engine.endSession(stoppingInlinePlayback: endMarginMoment)
-    }
-
     private func closeCurrentSession(
         navigateHome: Bool,
         successMessage: String = "Session saved. You can resume it later."
