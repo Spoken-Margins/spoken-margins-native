@@ -12832,6 +12832,12 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
+    /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
+    func reloadFollowedSourceEntries() async {
+        guard let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() else { return }
+        followedSourceEntries = entries
+    }
+
     func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false) {
         guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
         Task { [weak self] in

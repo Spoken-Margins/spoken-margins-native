@@ -7,14 +7,15 @@ extension Gate1AppModel {
     func dismissFollowedSourceEntry(id: String) {
         guard let coordinator = followedSourceCoordinator else { return }
         let title = followedSourceEntries.first { $0.id == id }?.title ?? ""
-        listeningSignals.dismiss(entryId: id)
         Task { [weak self] in
-            let previous = try? await coordinator.dismissEntry(id: id)
-            await self?.performFollowedSourceRefresh(force: false)
-            guard let previous else { return }
+            guard let previous = try? await coordinator.dismissEntry(id: id) else { return }
+            self?.listeningSignals.dismiss(entryId: id)
+            // The banner comes first: the refresh below can wait on the network, past the Undo window.
             self?.presentDismissUndo(title: title) { [weak self] in
                 self?.undoDismissedFollowedSourceEntry(id: id, restoring: previous)
             }
+            await self?.reloadFollowedSourceEntries()
+            await self?.performFollowedSourceRefresh(force: false)
         }
     }
 
@@ -23,6 +24,7 @@ extension Gate1AppModel {
         guard let coordinator = followedSourceCoordinator else { return }
         Task { [weak self] in
             try? await coordinator.undoDismissEntry(id: id, restoring: previous)
+            await self?.reloadFollowedSourceEntries()
             await self?.performFollowedSourceRefresh(force: false)
         }
     }

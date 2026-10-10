@@ -5,7 +5,7 @@ import SessionKit
 /// #477: Dismiss in Following can be undone. Undo restores the entry's previous state through the
 /// existing entry-state path, so the Build 29 database is untouched.
 final class FollowingDismissUndoTests: XCTestCase {
-    private func coordinator(entries: [FeedEntry]) throws -> FollowedSourceCoordinator {
+    private func makeCoordinator(entries: [FeedEntry]) throws -> FollowedSourceCoordinator {
         let repository = InMemorySessionRepository()
         try repository.saveFeedSubscription(FeedSubscription(
             id: "subscription",
@@ -21,7 +21,7 @@ final class FollowingDismissUndoTests: XCTestCase {
     }
 
     func testUndoPutsADismissedEntryBackInTheInbox() async throws {
-        let coordinator = try coordinator(entries: [entry("a"), entry("b")])
+        let coordinator = try makeCoordinator(entries: [entry("a"), entry("b")])
 
         let previous = try await coordinator.dismissEntry(id: "a")
         XCTAssertEqual(previous, .unseen)
@@ -34,7 +34,7 @@ final class FollowingDismissUndoTests: XCTestCase {
     }
 
     func testUndoRestoresTheStateTheEntryHad() async throws {
-        let coordinator = try coordinator(entries: [entry("seen", state: .seen)])
+        let coordinator = try makeCoordinator(entries: [entry("seen", state: .seen)])
         let previous = try await coordinator.dismissEntry(id: "seen")
         XCTAssertEqual(previous, .seen)
         try await coordinator.undoDismissEntry(id: "seen", restoring: .seen)
@@ -44,7 +44,7 @@ final class FollowingDismissUndoTests: XCTestCase {
 
     /// Neighbours of the happy path: nothing to undo, or the entry moved on while the banner showed.
     func testDismissAndUndoLeaveOtherEntriesAndStatesAlone() async throws {
-        let coordinator = try coordinator(entries: [entry("a"), entry("imported", state: .imported)])
+        let coordinator = try makeCoordinator(entries: [entry("a"), entry("imported", state: .imported)])
 
         let unknown = try await coordinator.dismissEntry(id: "missing")
         XCTAssertNil(unknown, "an entry that isn't there has nothing to undo")
