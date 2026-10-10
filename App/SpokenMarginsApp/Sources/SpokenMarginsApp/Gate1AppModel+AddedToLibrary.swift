@@ -22,6 +22,9 @@ extension Gate1AppModel {
     /// #828: Safari shares imported at launch or foreground. One item gets the usual confirmation with Play now;
     /// several share one message with no button. Nothing plays by itself.
     func reportPendingHandoffsAdded(itemIds: [String]) {
+        // The same page shared twice before foreground saves one item twice.
+        var seen = Set<String>()
+        let itemIds = itemIds.filter { seen.insert($0).inserted }
         guard let first = itemIds.first else { return }
         if itemIds.count == 1 {
             let title = libraryItems.first { $0.id == first }?.title ?? "Shared item"

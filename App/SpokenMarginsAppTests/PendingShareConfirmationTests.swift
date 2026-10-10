@@ -78,6 +78,16 @@ final class PendingShareConfirmationTests: XCTestCase {
         XCTAssertEqual(model.snapshot, before)
     }
 
+    func testTheSamePageSharedTwiceIsOneItem() async throws {
+        let model = try makeModel(sharing: ["Twice Shared", "Twice Shared"], sharingOneItem: true)
+
+        model.importPendingSourceLinkHandoffs()
+        try await waitFor("the confirmation") { model.feedbackEvent != nil }
+
+        XCTAssertEqual(model.feedbackEvent?.message, "Added Twice Shared to Library.")
+        XCTAssertEqual(model.feedbackEvent?.action?.title, "Play now")
+    }
+
     func testNoPendingSharesSaysNothing() async throws {
         let model = try makeModel(sharing: [])
 
@@ -87,14 +97,14 @@ final class PendingShareConfirmationTests: XCTestCase {
         XCTAssertNil(model.feedbackEvent)
     }
 
-    private func makeModel(sharing titles: [String]) throws -> Gate1AppModel {
+    private func makeModel(sharing titles: [String], sharingOneItem: Bool = false) throws -> Gate1AppModel {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-pending-share-\(UUID().uuidString)", isDirectory: true)
         temporaryDirectories.append(directory)
         let browserStore = Gate5BrowserTextHandoffStore(baseDirectory: directory)
         for (index, title) in titles.enumerated() {
             try browserStore.save(BrowserTextHandoff(
-                itemId: "item-pending-share-\(index)",
+                itemId: "item-pending-share-\(sharingOneItem ? 0 : index)",
                 captureMode: .readablePage,
                 source: BrowserTextSource(url: "https://example.com/pending-share-\(index)", title: title),
                 text: "# \(title)\n\nThe first paragraph of \(title), long enough to import as an article.",
