@@ -267,6 +267,58 @@ final class PrivateFeedRecoveryTests: XCTestCase {
             id: "page-only", title: "Page only", url: "https://example.com/p", publishedAt: nil, audioURL: nil)))
     }
 
+    // MARK: Recovery adds or reuses only an episode the pending import will accept
+
+    func testAnEpisodeAddedByItsAudioLinkUnderTheFileNameIsNotReusedButTheFeedsEpisodeIsAccepted() throws {
+        let manifest = try senderPacket()
+        let feed = try friendFeed()
+        let episode = try XCTUnwrap(feed.items.first { $0.title.hasPrefix("Episode 12") })
+        let entry = try XCTUnwrap(SharedEpisodeFeedEntry.entry(for: episode))
+        // Pasting the audio link earlier titled the item from the file name, and kept no GUID, show or day.
+        let byAudioLink = Item(
+            id: "by-audio-link", title: "episode", mediaType: "transcript_backed_media", text: nil,
+            externalReference: entry.audioURL, status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: entry.audioURL))
+        XCTAssertFalse(RecoveredEpisodeMatch.accepts(manifest.item, entry: entry, showTitle: feed.title, existing: byAudioLink),
+                       "filling in the feed's identity still leaves the file-name title, so the import would refuse it")
+        XCTAssertTrue(RecoveredEpisodeMatch.accepts(manifest.item, entry: entry, showTitle: feed.title),
+                      "the episode recovery adds under the feed's title is accepted")
+        var titled = byAudioLink
+        titled.title = "Episode 12: The Private One"
+        XCTAssertTrue(RecoveredEpisodeMatch.accepts(manifest.item, entry: entry, showTitle: feed.title, existing: titled))
+        // The identity recovery predicts is the one the pending import later compares.
+        XCTAssertEqual(
+            RecoveredEpisodeMatch.identity(of: entry, showTitle: feed.title),
+            SharedItemIdentityBuilder.localIdentity(for: {
+                var item = try! recoveredItem(from: episode, showTitle: feed.title)
+                item.id = entry.id
+                item.media?.durationMs = entry.audioDurationMs
+                return item
+            }()))
+    }
+
+    func testAnEpisodeTheFeedMatcherFindsByTitleAloneIsNotAcceptedWithoutTheShowOrTheDay() throws {
+        let feed = try friendFeed()
+        let episode = try XCTUnwrap(feed.items.first { $0.title.hasPrefix("Episode 12") })
+        let entry = try XCTUnwrap(SharedEpisodeFeedEntry.entry(for: episode))
+        // A sender who added the episode by its audio link: the packet has a title and a length, no show and no day.
+        let titleOnly = SharedItemIdentity(itemType: .podcast, title: "Episode 12: The Private One", durationMs: 3_780_000)
+        guard case .matched = SharedEpisodeFeedMatcher.match(titleOnly, in: feed) else {
+            return XCTFail("the feed matcher accepts the title alone")
+        }
+        XCTAssertFalse(RecoveredEpisodeMatch.accepts(titleOnly, entry: entry, showTitle: feed.title))
+        // Another subscriber's show title and no day on the packet: also nothing to back the title.
+        let otherShow = SharedItemIdentity(itemType: .podcast, title: "Episode 12: The Private One", showTitle: "Members Only Show (subscriber A)")
+        guard case .matched = SharedEpisodeFeedMatcher.match(otherShow, in: feed) else {
+            return XCTFail("the feed matcher never checks the show")
+        }
+        XCTAssertFalse(RecoveredEpisodeMatch.accepts(otherShow, entry: entry, showTitle: feed.title))
+        let dated = SharedItemIdentity(
+            itemType: .podcast, title: "Episode 12: The Private One", showTitle: "Members Only Show (subscriber A)",
+            publishedAt: "2026-09-01T00:00:00Z")
+        XCTAssertTrue(RecoveredEpisodeMatch.accepts(dated, entry: entry, showTitle: feed.title), "the day backs the title")
+    }
+
     // MARK: The pasted feed link stays out of everything the friend shares
 
     func testNothingTheFriendSharesLaterCarriesTheFeedLinkOrAnyTokenFromIt() throws {

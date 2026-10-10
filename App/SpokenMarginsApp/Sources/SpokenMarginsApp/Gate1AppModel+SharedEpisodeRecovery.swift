@@ -6,9 +6,12 @@ import SessionKitSharing
 /// The Library side of recovering a shared Margin's episode from a feed the listener pasted (#454).
 /// Neither method touches the pasted link: they only see the episode's own entry and the show's title.
 extension Gate1AppModel {
-    /// The Library item that already is `entry`'s episode, if there is one, with the episode identity
-    /// it was added without (GUID, show, publish day) filled in so the pending packet can find it.
-    func libraryItemID(forRecoveredEpisode entry: FeedEntry, showTitle: String?) throws -> String? {
+    /// The Library item that already is `entry`'s episode, if there is one that the pending packet's
+    /// item `shared` will accept, with the episode identity it was added without (GUID, show, publish
+    /// day) filled in so the pending packet can find it. An item the packet would still refuse (one
+    /// added by its audio link and titled from the file name, say) is left alone, and recovery adds
+    /// the feed's episode beside it instead.
+    func libraryItemID(forRecoveredEpisode entry: FeedEntry, showTitle: String?, acceptedBy shared: SharedItemIdentity) throws -> String? {
         let store = try requireStore()
         let audioURL = entry.audioURL
         let guid = entry.episodeGUID
@@ -16,9 +19,15 @@ extension Gate1AppModel {
         // The audio link names the episode. A GUID alone does not (some feeds reuse short ones, and
         // many give every episode the show's page as its link), so it needs the title beside it.
         guard let itemId = try store.listItems().first(where: { item in
-            if let audioURL, item.media?.url == audioURL { return true }
-            guard let guid, item.episodeGUID?.trimmingCharacters(in: .whitespacesAndNewlines) == guid else { return false }
-            return item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == title
+            let sameEpisode: Bool
+            if let audioURL, item.media?.url == audioURL {
+                sameEpisode = true
+            } else if let guid, item.episodeGUID?.trimmingCharacters(in: .whitespacesAndNewlines) == guid {
+                sameEpisode = item.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == title
+            } else {
+                sameEpisode = false
+            }
+            return sameEpisode && RecoveredEpisodeMatch.accepts(shared, entry: entry, showTitle: showTitle, existing: item)
         })?.id else { return nil }
         try completeEpisodeIdentity(itemId: itemId, entry: entry, showTitle: showTitle)
         return itemId

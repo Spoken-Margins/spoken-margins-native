@@ -1977,7 +1977,9 @@ extension SourceLinkImportTests {
 
     /// A recipient whose Library lacks the episode, with a packet from a private feed open for import:
     /// podcast, recipient-supplied, no link and no GUID.
-    private func makePrivateFeedFixture() throws -> PrivateFeedFixture {
+    private func makePrivateFeedFixture(
+        showTitle: String? = "Members Only Show", publishedAt: String? = "2026-09-01T00:00:00Z"
+    ) throws -> PrivateFeedFixture {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         // Model background tasks retain SQLite beyond this test; do not unlink its open WAL.
@@ -1993,8 +1995,8 @@ extension SourceLinkImportTests {
             item: SharedItemIdentity(
                 itemType: .podcast,
                 title: "Episode 12: The Private One",
-                showTitle: "Members Only Show",
-                publishedAt: "2026-09-01T00:00:00Z",
+                showTitle: showTitle,
+                publishedAt: publishedAt,
                 durationMs: 3_780_000
             ),
             itemTransportSelection: .recipientSupplied,
@@ -2137,6 +2139,43 @@ extension SourceLinkImportTests {
         XCTAssertEqual(item.episodeGUID, "ep-12")
         XCTAssertEqual(item.showTitle, "Members Only Show")
         XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, "already-here")
+    }
+
+    func testEpisodeAddedEarlierByItsAudioLinkUnderTheFileNameIsLeftAloneAndTheFeedsEpisodeIsAdded() async throws {
+        let fixture = try makePrivateFeedFixture()
+        let model = fixture.model
+        // Pasting the audio link titles the item from the file name, so the packet's title never matches it.
+        let byAudioLink = Item(
+            id: "by-audio-link", title: "ep12", mediaType: "transcript_backed_media", text: nil,
+            externalReference: Self.episode12Audio, status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: Self.episode12Audio, durationMs: 3_780_000))
+        try fixture.store.saveItem(byAudioLink)
+        let recovery = recovery(for: model, feed: try membersFeed())
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        guard case .added(let itemId) = recovery.phase else { return XCTFail("expected the episode to be added, got \(recovery.phase)") }
+        XCTAssertNotEqual(itemId, "by-audio-link", "reusing it would leave the import refusing it")
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.matchingItemId, itemId, "the pending import is importable")
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.requiresRecipientItem, false)
+        XCTAssertEqual(try fixture.store.loadItem(id: itemId).title, "Episode 12: The Private One")
+        let untouched = try fixture.store.loadItem(id: "by-audio-link")
+        XCTAssertEqual(untouched.title, "ep12", "the listener's own item is left as it was")
+        XCTAssertNil(untouched.episodeGUID)
+        XCTAssertNil(untouched.showTitle)
+    }
+
+    func testEpisodeTheFeedMatchesByTitleAloneIsNotAddedWhenTheImportWouldRefuseIt() async throws {
+        // A sender who added the episode by its audio link: the packet has a title and a length, no show and no day.
+        let fixture = try makePrivateFeedFixture(showTitle: nil, publishedAt: nil)
+        let before = try fixture.store.listItems().count
+        let recovery = recovery(for: fixture.model, feed: try membersFeed())
+
+        await recovery.recover(fixture.manifest.item, feedLink: Self.pastedFeedLink)
+
+        XCTAssertEqual(recovery.phase, .noMatch, "an episode the import can't match is not added")
+        XCTAssertEqual(try fixture.store.listItems().count, before, "no extra episode in the Library")
+        XCTAssertEqual(fixture.model.spokenMarginsPackageImportReview?.requiresRecipientItem, true)
     }
 
     func testPastedFeedWithoutTheEpisodeSaysSoAndAddsNothing() async throws {

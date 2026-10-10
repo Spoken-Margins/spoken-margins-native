@@ -2,6 +2,7 @@ import Combine
 import Foundation
 import SessionKit
 import SessionKitFeeds
+import SessionKitSharing
 
 /// Finds the episode a private-feed packet's Margins belong to, from the feed link the listener
 /// pastes, and adds it to their Library (#454). The packet carries no link, so the listener's own
@@ -30,8 +31,8 @@ final class SharedEpisodeRecovery: ObservableObject {
     /// What the recovery needs from the app. The model's own import path is behind these.
     struct Services {
         var fetchFeed: @Sendable (URL) async throws -> ParsedFeed
-        /// The Library item that already is this episode, if there is one.
-        var existingEpisode: @MainActor (FeedEntry, String?) throws -> String?
+        /// The Library item that already is this episode and that the packet's item will accept, if there is one.
+        var existingEpisode: @MainActor (SharedItemIdentity, FeedEntry, String?) throws -> String?
         var addEpisode: @MainActor (FeedEntry, String?) async throws -> String
         /// Called once the episode is in the Library, so the pending import looks for it again.
         var episodeReady: @MainActor () -> Void
@@ -43,7 +44,7 @@ final class SharedEpisodeRecovery: ObservableObject {
     @Published private(set) var phase: Phase = .idle
 
     private let services: Services
-    private var candidates: [String: (episode: ParsedFeedItem, showTitle: String)] = [:]
+    private var candidates: [String: (shared: SharedItemIdentity, episode: ParsedFeedItem, showTitle: String)] = [:]
     private var generation = 0
 
     init(services: Services) {
@@ -77,14 +78,15 @@ final class SharedEpisodeRecovery: ObservableObject {
             return
         }
         guard current == generation else { return }
-        switch SharedEpisodeFeedMatcher.match(shared, in: feed) {
-        case .none:
+        let episodes = Self.importableEpisodes(for: shared, in: feed)
+        switch episodes.count {
+        case 0:
             phase = .noMatch
-        case .matched(let episode):
-            await add(episode, showTitle: feed.title, generation: current)
-        case .several(let episodes):
+        case 1:
+            await add(episodes[0], for: shared, showTitle: feed.title, generation: current)
+        default:
             for (index, episode) in episodes.enumerated() {
-                candidates["\(index)"] = (episode, feed.title)
+                candidates["\(index)"] = (shared, episode, feed.title)
             }
             phase = .choose(episodes.enumerated().map { Self.candidate(id: "\($0.offset)", for: $0.element) })
         }
@@ -96,17 +98,17 @@ final class SharedEpisodeRecovery: ObservableObject {
         generation += 1
         candidates = [:]
         phase = .checking
-        await add(pick.episode, showTitle: pick.showTitle, generation: generation)
+        await add(pick.episode, for: pick.shared, showTitle: pick.showTitle, generation: generation)
     }
 
-    private func add(_ episode: ParsedFeedItem, showTitle: String, generation current: Int) async {
+    private func add(_ episode: ParsedFeedItem, for shared: SharedItemIdentity, showTitle: String, generation current: Int) async {
         guard let entry = SharedEpisodeFeedEntry.entry(for: episode) else {
             phase = .failed(Self.noAudioMessage)
             return
         }
         do {
             let itemId: String
-            if let existing = try services.existingEpisode(entry, showTitle) {
+            if let existing = try services.existingEpisode(shared, entry, showTitle) {
                 itemId = existing
             } else {
                 itemId = try await services.addEpisode(entry, showTitle)
@@ -121,6 +123,23 @@ final class SharedEpisodeRecovery: ObservableObject {
     }
 
     // MARK: Pure helpers
+
+    /// The feed's episodes that match `shared` and that the pending import will accept once added. The
+    /// feed matcher accepts a title alone; the import also wants the show or the day behind it, so an
+    /// episode only the matcher likes would be added and then refused (#454 audit).
+    static func importableEpisodes(for shared: SharedItemIdentity, in feed: ParsedFeed) -> [ParsedFeedItem] {
+        let matches: [ParsedFeedItem]
+        switch SharedEpisodeFeedMatcher.match(shared, in: feed) {
+        case .none: return []
+        case .matched(let episode): matches = [episode]
+        case .several(let episodes): matches = episodes
+        }
+        return matches.filter { episode in
+            // An episode with nothing to add stays, so the listener hears why it can't be added.
+            guard let entry = SharedEpisodeFeedEntry.entry(for: episode) else { return true }
+            return RecoveredEpisodeMatch.accepts(shared, entry: entry, showTitle: feed.title)
+        }
+    }
 
     /// The https address in what the listener pasted. `feed://` and the podcast-app schemes mean https.
     static func feedURL(from text: String) -> URL? {
@@ -159,8 +178,8 @@ final class SharedEpisodeRecovery: ObservableObject {
     static func services(model: Gate1AppModel) -> Services {
         Services(
             fetchFeed: { try await SharedEpisodeFeedFetcher.fetch($0) },
-            existingEpisode: { [weak model] entry, showTitle in
-                try model?.libraryItemID(forRecoveredEpisode: entry, showTitle: showTitle)
+            existingEpisode: { [weak model] shared, entry, showTitle in
+                try model?.libraryItemID(forRecoveredEpisode: entry, showTitle: showTitle, acceptedBy: shared)
             },
             addEpisode: { [weak model] entry, showTitle in
                 guard let model else { throw CancellationError() }
