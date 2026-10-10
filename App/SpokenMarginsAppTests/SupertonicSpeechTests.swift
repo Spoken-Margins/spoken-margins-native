@@ -1073,7 +1073,7 @@ final class SupertonicSpeechTests: XCTestCase {
         return SupertonicSpeechPlaybackClient(
             renderer: CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1)),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
-            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            audioSessionActivator: { fallback.record("activate") }, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
             fallbackClient: fallback,
             interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
             onFallback: { _, _, _ in log.stall("fallback", [:]) },
@@ -1105,6 +1105,13 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThan(silentAt, 17, "the voice had spoken before it went silent")
         XCTAssertEqual(fallback.playedOffsets, [17, silentAt], "the iOS voice speaks again from where it went silent")
         XCTAssertGreaterThanOrEqual(fallback.pauseCount, 1, "after a pause, as the listener's recovery did")
+        // APA-05 (#1042): the counts above can't see order, so a voice played and then paused (left silent and
+        // paused) passed them. The recovery is the listener's own: the session made active again, a pause,
+        // then a play from the silent place.
+        let events = fallback.events
+        let restart = try XCTUnwrap(events.firstIndex(of: "play:\(silentAt)"), "\(events)")
+        XCTAssertEqual(Array(events[max(0, restart - 2)...restart]), ["activate", "pause", "play:\(silentAt)"],
+                       "session, then pause, then play: \(events)")
 
         for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(log.values.contains("supertonic.stall_paused"), "\(log.values)")
@@ -4140,6 +4147,12 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
     /// What the iOS voice says about having begun: `.pending` is speech queued that never started.
     var startStatus: PlaybackStartStatus = .confirmed
     var stopCount = 0
+    /// Plays ("play:<offset>"), pauses and stops in the order they happened, with anything else the test
+    /// records into it (an audio session activation), so a test can check the order of a recovery (APA-05).
+    var events: [String] { eventLock.withLock { recordedEvents } }
+    private let eventLock = NSLock()
+    private var recordedEvents: [String] = []
+    func record(_ event: String) { eventLock.withLock { recordedEvents.append(event) } }
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedText = text
@@ -4150,7 +4163,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus { startStatus }
 
-    func stop() throws { stopCount += 1 }
+    func stop() throws { stopCount += 1; record("stop") }
 
     func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
@@ -4160,6 +4173,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
         if let playError { throw playError }
         offset = charOffset
         playedOffsets.append(charOffset)
+        record("play:\(charOffset)")
     }
 
     func currentCharOffset() -> Int? {
@@ -4190,6 +4204,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
 
     func pause() throws {
         pauseCount += 1
+        record("pause")
     }
 }
 
