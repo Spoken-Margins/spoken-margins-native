@@ -704,7 +704,7 @@ extension PodcastDownloadCoordinator: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                didFinishDownloadingTo location: URL) {
         guard let attempt = PodcastDownloadAttempt.decode(downloadTask.taskDescription) else { return }
-        let responseOK = (downloadTask.response as? HTTPURLResponse).map { (200..<300).contains($0.statusCode) } ?? false
+        let responseOK = (downloadTask.response as? HTTPURLResponse).map { _ in true } ?? false // M6 APA-10
         // The URLSession temporary file is only valid until this delegate returns.
         let ext = URL(fileURLWithPath: downloadTask.response?.suggestedFilename ?? "episode.audio").pathExtension
         let safeExtension = !ext.isEmpty && ext.count <= 10 && ext.allSatisfy({ $0.isLetter || $0.isNumber }) ? ext : "audio"

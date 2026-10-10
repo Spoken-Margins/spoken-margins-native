@@ -1073,7 +1073,7 @@ final class SupertonicSpeechTests: XCTestCase {
         return SupertonicSpeechPlaybackClient(
             renderer: CountingAudioSupertonicRenderer(templateURL: template, firstRenderDelay: .seconds(1)),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
-            audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
+            audioSessionActivator: { fallback.record("activate") }, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
             fallbackClient: fallback,
             interruptionHandler: { event in log.stall("interruption.\(event)", [:]) },
             onFallback: { _, _, _ in log.stall("fallback", [:]) },
@@ -1105,6 +1105,13 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThan(silentAt, 17, "the voice had spoken before it went silent")
         XCTAssertEqual(fallback.playedOffsets, [17, silentAt], "the iOS voice speaks again from where it went silent")
         XCTAssertGreaterThanOrEqual(fallback.pauseCount, 1, "after a pause, as the listener's recovery did")
+        // APA-05 (#1042): the counts above can't see order, so a voice played and then paused (left silent and
+        // paused) passed them. The recovery is the listener's own: the session made active again, a pause,
+        // then a play from the silent place.
+        let events = fallback.events
+        let restart = try XCTUnwrap(events.firstIndex(of: "play:\(silentAt)"), "\(events)")
+        XCTAssertEqual(Array(events[max(0, restart - 2)...restart]), ["activate", "pause", "play:\(silentAt)"],
+                       "session, then pause, then play: \(events)")
 
         for _ in 0..<150 where !log.values.contains("supertonic.stall_paused") { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertTrue(log.values.contains("supertonic.stall_paused"), "\(log.values)")
@@ -2186,6 +2193,50 @@ final class SupertonicSpeechTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(20))
         }
         XCTAssertEqual(client.playbackStartStatus(targetId: "prefetch"), .confirmed)
+        try client.stop()
+    }
+
+    // APA-01 (#1042): every other test either ends a chunk through `debugFinishActiveChunk()` or never lets
+    // one end, so nothing showed that the player's own end-of-item notice chains the next chunk, or that the
+    // last chunk's end marks the article complete, which autoplay and the next item key off. Here the real
+    // player plays each chunk to its end, with no debug call.
+    func testThePlayersOwnEndChainsTheNextChunkAndCompletesTheArticle() async throws {
+        let template = try makeTestWAV(duration: 0.6)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let source = "The first sentence is long enough to be a chunk. The second sentence ends this short article."
+        let budget = 60
+        let spoken = SpeechTextNormalizer.normalizeWithSourceOffsets(source).text
+        XCTAssertEqual(RenderedSpeechChunker.sourceSlices(from: spoken, maxCharacters: budget).count, 2, "precondition: two chunks")
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let starts = PlaybackStartCapture()
+        let states = GenerationStateCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            maxCharacters: budget,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                starts.record()
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            observesPlayerLifecycle: true,
+            fallbackClient: fallback,
+            onGenerationStateChange: { state, reason in states.record(state, stopReason: reason) }
+        )
+        _ = try client.prepareSpeechText(source)
+        try client.play(targetId: "article")
+
+        for _ in 0..<300 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 2, "the first chunk's own end started the second chunk")
+        for _ in 0..<300 where !client.isPlaybackComplete(targetId: "article") { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "article"), "the last chunk's own end completes the article")
+        XCTAssertEqual(client.playbackTransportState(targetId: "article"), .stopped, "and playback reads stopped, not waiting")
+        XCTAssertEqual(starts.count, 2, "no chunk played twice")
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, "Supertonic read it all; the iOS voice never stood in")
+        XCTAssertEqual(states.values.last, .ready, "the finished article keeps its rendered state: \(states.values)")
+        let renders = await renderer.renderCount
+        XCTAssertEqual(renders, 2)
         try client.stop()
     }
 
@@ -3467,14 +3518,14 @@ final class SupertonicSpeechTests: XCTestCase {
         try secondClient.stop()
     }
 
+    // APA-15 (#1042): the app always bundles the model (project.yml), so a missing folder is a broken build,
+    // not a reason to skip the only test that runs it inside the app. A peak of 0.000001 also accepted
+    // near-silence; 0.01 is quiet speech. Whether each voice loads its own style is checked on the host, by
+    // pitch (SupertonicVoiceSelectionTests): renders start from random noise, so samples can't be compared.
     func testBundledRendererSynthesizesJamesAndLilyAndReusesSessions() async throws {
-        guard let resourceURL = Bundle.main.resourceURL else {
-            throw XCTSkip("Hosted app resources unavailable")
-        }
+        let resourceURL = try XCTUnwrap(Bundle.main.resourceURL, "Hosted app resources unavailable")
         let root = resourceURL.appending(path: "Supertonic", directoryHint: .isDirectory)
-        guard FileManager.default.fileExists(atPath: root.path) else {
-            throw XCTSkip("Supertonic assets are not present in this test host")
-        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.path), "the app bundles the Supertonic model")
         let output = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-integration-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
@@ -3490,8 +3541,8 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(lily.sampleRate, 44_100)
         XCTAssertGreaterThan(james.duration, 0)
         XCTAssertGreaterThan(lily.duration, 0)
-        XCTAssertGreaterThan(try audioPeak(at: james.audioURL), 0.000_001)
-        XCTAssertGreaterThan(try audioPeak(at: lily.audioURL), 0.000_001)
+        XCTAssertGreaterThan(try audioPeak(at: james.audioURL), 0.01, "James is audible, not near-silence")
+        XCTAssertGreaterThan(try audioPeak(at: lily.audioURL), 0.01, "Lily is audible, not near-silence")
         XCTAssertEqual(james.sessionLoadCount, 1)
         XCTAssertEqual(lily.sessionLoadCount, 1)
         let diagnostics = await renderer.diagnostics()
@@ -4096,6 +4147,12 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
     /// What the iOS voice says about having begun: `.pending` is speech queued that never started.
     var startStatus: PlaybackStartStatus = .confirmed
     var stopCount = 0
+    /// Plays ("play:<offset>"), pauses and stops in the order they happened, with anything else the test
+    /// records into it (an audio session activation), so a test can check the order of a recovery (APA-05).
+    var events: [String] { eventLock.withLock { recordedEvents } }
+    private let eventLock = NSLock()
+    private var recordedEvents: [String] = []
+    func record(_ event: String) { eventLock.withLock { recordedEvents.append(event) } }
 
     func prepareSpeechText(_ text: String) throws -> String {
         preparedText = text
@@ -4106,7 +4163,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
 
     func playbackStartStatus(targetId: String) -> PlaybackStartStatus { startStatus }
 
-    func stop() throws { stopCount += 1 }
+    func stop() throws { stopCount += 1; record("stop") }
 
     func play(targetId: String) throws {
         try play(targetId: targetId, from: 0)
@@ -4116,6 +4173,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
         if let playError { throw playError }
         offset = charOffset
         playedOffsets.append(charOffset)
+        record("play:\(charOffset)")
     }
 
     func currentCharOffset() -> Int? {
@@ -4146,6 +4204,7 @@ private final class RecordingFallbackAudioClient: AudioPlaybackClient, SpokenPro
 
     func pause() throws {
         pauseCount += 1
+        record("pause")
     }
 }
 

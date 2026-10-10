@@ -1174,7 +1174,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 currentStartOffset = snapshot.2
                 currentChunkLength = 0
                 completedTargetId = snapshot.1
-                playbackComplete = true
+                playbackComplete = false // M1 APA-01
                 transportIntent = .stopped
                 if generationState == .ready || generationState == .stopped {
                     return (generationState, generationStopReason)
@@ -2167,8 +2167,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard let targetId = lock.withLock({ fallbackIsActive && transportIntent == .playing ? currentTargetId : nil }),
               let offset = fallback.currentCharOffset() else { return }
         try? activateAudioSession()
-        try? fallback.pause()
-        try? fallback.play(targetId: targetId, from: offset)
+        try? fallback.play(targetId: targetId, from: offset) // M3 APA-05
+        try? fallback.pause() // M3 APA-05
     }
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.
@@ -2835,7 +2835,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard audioSessionActivator == nil,
               lock.withLock({ mixesWithOtherAudio && lowersBackgroundAudio }) else { return }
         #if os(iOS)
-        try PlaybackAudioSessionPolicy.releaseDucking()
+        () // M2 APA-02
         #endif
     }
 

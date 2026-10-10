@@ -12,7 +12,7 @@ public enum PlaybackAudioSessionPolicy {
     /// mixing enabled so releasing ducking never interrupts the other app.
     public static func releaseDucking() throws {
         let session = AVAudioSession.sharedInstance()
-        guard session.category == .playback, session.categoryOptions.contains(.duckOthers) else { return }
+        guard /* M5 APA-07 */ session.categoryOptions.contains(.duckOthers) else { return }
         var options = session.categoryOptions
         options.remove(.duckOthers)
         options.insert(.mixWithOthers)
