@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import XCTest
 import SessionKit
@@ -247,6 +248,78 @@ final class PlaybackStartCueTests: XCTestCase {
         cue.observe(snapshot("article", .paused))
 
         XCTAssertFalse(chiming)
+    }
+
+    /// APA-13 (#1042): every test above replaces the chime and its stop, so the real player never ran. Here the cue
+    /// plays its own chime on a `.playback` session, and speech starting stops that player, not a stand-in.
+    func testTheRealChimePlaysOnAPlaybackSessionAndStopsWhenSpeechStarts() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let priorCategory = session.category, priorMode = session.mode, priorOptions = session.categoryOptions
+        defer { try? session.setCategory(priorCategory, mode: priorMode, options: priorOptions) }
+        try session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { recorded["lastPlaybackStartCue"] != nil }
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played", "the real player took the chime")
+        // The test holds the player itself, so letting go of it can't pass for stopping it.
+        let player = try XCTUnwrap(chimePlayer(of: cue), "the cue keeps its chime player while it plays")
+        XCTAssertTrue(player.isPlaying, "the chime is playing")
+        player.volume = 0
+
+        cue.observe(snapshot("article", .playing))
+
+        XCTAssertFalse(player.isPlaying, "speech starting stopped the chime's player")
+        XCTAssertNil(chimePlayer(of: cue), "and the cue let it go")
+    }
+
+    /// The chime never configures the session: on a recording session it stays silent and says why.
+    func testTheRealChimeStaysSilentWhenTheSessionIsNotPlayback() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let priorCategory = session.category, priorMode = session.mode, priorOptions = session.categoryOptions
+        defer { try? session.setCategory(priorCategory, mode: priorMode, options: priorOptions) }
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [])
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { recorded["lastPlaybackStartCue"] != nil }
+
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:skipped:session_not_playback")
+        XCTAssertNil(chimePlayer(of: cue))
+        XCTAssertEqual(session.category, .playAndRecord, "the recording session is left as it was")
+    }
+
+    /// APA-13 (#1042): the app builds its cue with `init(model:pinned:)`, whose check before the chime is one model
+    /// progress tick. No test reached that wiring. Here the model's snapshot says "starting" while its engine has no
+    /// start at all, and the request is already 0.8 s old, so the cue is due at once, before the model's own
+    /// 500 ms tick. Only the cue's check can bring the snapshot up to date in time to skip the chime.
+    func testTheAppsCueChecksTheModelBeforeChiming() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let cue = PlaybackStartCue(model: model, pinned: PinnedDiagnostics(diagnostics: model.runtimeDiagnostics))
+        var stale = snapshot("article", .starting)
+        stale.playbackRequestedAt = Date().addingTimeInterval(-1)
+
+        model.snapshot = stale
+        try await waitUntil { model.snapshot.status != .starting }
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertNotEqual(model.snapshot.status, .starting, "the check brought the snapshot up to date")
+        XCTAssertNil(model.diagnostics["lastPlaybackStartCue"], "so no chime played over a start that had already resolved")
+        withExtendedLifetime(cue) {}
+    }
+
+    /// The cue's own chime player, read the way other app tests read a model's private player.
+    private func chimePlayer(of cue: PlaybackStartCue) -> AVAudioPlayer? {
+        Mirror(reflecting: cue).children.first { $0.label == "player" }?.value as? AVAudioPlayer
     }
 
     /// Waits for the cue's timer on a loaded simulator, where a fixed sleep can end before it fires.
