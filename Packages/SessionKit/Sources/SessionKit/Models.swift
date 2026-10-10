@@ -644,6 +644,12 @@ public struct Item: Codable, Equatable, Sendable {
     public var episodeGUID: String? = nil
     public var showTitle: String? = nil
     public var publishedAt: String? = nil
+    /// The podcast episode the listener said an imported audio file is (#755). Only an audio file the
+    /// listener imported carries it, and only because they chose it, so a link-shared packet for that
+    /// episode can land on the file. Kept apart from `episodeGUID` so nothing that treats a GUID as
+    /// "streamed from a feed" mistakes the file for one. Optional and additive, so Build 29's decoder
+    /// ignores it.
+    public var linkedEpisode: LinkedEpisode? = nil
 
     public init(
         id: String,

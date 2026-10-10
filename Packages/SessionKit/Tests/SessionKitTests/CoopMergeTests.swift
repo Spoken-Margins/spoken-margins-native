@@ -48,32 +48,25 @@ final class CoopMergeTests: XCTestCase {
             let store = try SQLiteSessionStore(path: root.appending(path: "\(name).sqlite").path)
             episodesAdded = 0
             if hasLocalCopy {
-                // The app represents imported local audio as an audiobook, even for an episode.
-                // It can still match Ben/Cleo by the retained discovery link.
-                let item = Item(
-                    id: "local-harbour-lights", title: "Harbour Lights", mediaType: "audiobook",
-                    text: nil, externalReference: Self.episodePage, status: "ready", externalReferenceType: "url",
-                    media: ItemMedia(sourceType: .nativeMediaFile, url: localFile.absoluteString, durationMs: 1_800_000)
-                )
+                // The app represents imported local audio as an audiobook, even for an episode, and the
+                // listener has said which episode it is (#755), so Ben and Cleo's links find it too.
+                let item = try linkedLocalCopy(file: localFile)
                 try store.saveItem(item)
-                try store.saveOwnedOfflineAsset(OwnedOfflineAsset(
-                    id: "local-episode-asset", itemId: item.id, category: .audiobook,
-                    relativePath: localFile.lastPathComponent,
-                    byteCount: Int64(try Data(contentsOf: localFile).count), checksumSHA256: localDigest,
-                    isReproducible: false, integrity: .valid, protections: [.importedAudiobook]
-                ))
+                try store.saveOwnedOfflineAsset(localAsset(for: item, file: localFile, digest: localDigest))
                 let digest = try ownedAudiobookDigest(for: item, in: store)
                 let localIdentity = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: digest)
                 XCTAssertEqual(localIdentity.exactEditionSHA256, packets[0].manifest.item.exactEditionSHA256, name)
                 XCTAssertNotEqual(localIdentity.canonicalURL, packets[0].manifest.item.canonicalURL, name)
-                XCTAssertNil(localIdentity.episodeGUID, name)
-                XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(
-                    for: packets[0].manifest.item, among: [item], ownedAudiobookDigest: { _ in digest }
-                ), item.id, name)
-                // Removing the recipient digest must remove Ana's only match.
-                XCTAssertNil(SharedPacketItemMatcher.matchingItemId(
-                    for: packets[0].manifest.item, among: [item]
-                ), name)
+                XCTAssertEqual(localIdentity.episodeGUID, "harbour-lights", name)
+                for packet in packets {
+                    XCTAssertEqual(SharedPacketItemMatcher.matchingItemId(
+                        for: packet.manifest.item, among: [item], ownedAudiobookDigest: { _ in digest }
+                    ), item.id, name)
+                }
+                // The link claims the item only while its file is intact: no valid owned file, no match.
+                for packet in packets {
+                    XCTAssertNil(SharedPacketItemMatcher.matchingItemId(for: packet.manifest.item, among: [item]), name)
+                }
             }
             for index in order {
                 XCTAssertEqual(try importAsTheAppDoes(packets[index], into: store).isImported, true, name)
@@ -131,6 +124,40 @@ final class CoopMergeTests: XCTestCase {
     }
 
     // MARK: Helpers
+
+    /// The listener's file as the importer writes it (`LocalSourceImporters.importAudiobook`): the
+    /// destination file is both the external reference and the media URL, with no episode page.
+    private func importedLocalCopy(file: URL) -> Item {
+        Item(
+            id: "local-harbour-lights", title: "Harbour Lights", mediaType: "audiobook", text: nil,
+            externalReference: file.absoluteString, status: "ready", externalReferenceType: "audiobook",
+            media: ItemMedia(
+                sourceType: .nativeMediaFile, url: file.absoluteString, durationMs: 1_800_000,
+                nativeMediaId: "audiobook-audio-local-harbour-lights"
+            ),
+            author: "Example Show", sourceTitle: "Harbour Lights"
+        )
+    }
+
+    /// The same file after the listener said which episode it is, from the episode link a friend shared.
+    private func linkedLocalCopy(file: URL) throws -> Item {
+        try ImportedFileEpisodeLink.link(
+            importedLocalCopy(file: file),
+            to: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: Self.episodePage), title: "Harbour Lights", showTitle: "Example Show",
+                durationMs: 1_800_000, episodeGUID: "harbour-lights", audioURL: Self.enclosure, confidence: 1
+            ),
+            pageURL: Self.episodePage
+        )
+    }
+
+    private func localAsset(for item: Item, file: URL, digest: String) throws -> OwnedOfflineAsset {
+        OwnedOfflineAsset(
+            id: "local-episode-asset", itemId: item.id, category: .audiobook,
+            relativePath: file.lastPathComponent, byteCount: Int64(try Data(contentsOf: file).count),
+            checksumSHA256: digest, isReproducible: false, integrity: .valid, protections: [.importedAudiobook]
+        )
+    }
 
     private var episodesAdded = 0
 
