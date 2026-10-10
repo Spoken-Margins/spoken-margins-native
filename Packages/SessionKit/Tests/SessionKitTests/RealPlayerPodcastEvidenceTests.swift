@@ -156,6 +156,7 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/episode.caf"))
 
         let client = AVPlayerStreamPlaybackClient()
+        defer { try? client.stop() }
         try client.setPlaybackVolume(0)
         let heard = HeardWindows()
         client.heardSourceWindowHandler = { heard.append($0) }
