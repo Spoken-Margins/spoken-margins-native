@@ -54,10 +54,6 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
     private var didProcess = false
     /// Each attachment's registered types, for the share diagnostics (#271).
     private var sharedAttachmentTypes: [[String]] = []
-    /// A link found while files, PDFs or page results were still untried (#271).
-    private var linkFallback = ShareSheetLinkFallback<SharedImport>()
-    /// The first plain text found, kept until every other representation has been tried (#662).
-    private var textFallback: SharedImport?
     private var didCompleteRequest = false
     private typealias ExtractionCompletion = @Sendable (Result<SharedImport, Error>) -> Void
     private let cardView = UIView()
@@ -116,33 +112,34 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 && !SharedTextIntake.namesTextFile(candidate.provider.suggestedName)
         }
         let ordered = candidates.filter { !isSharedText($0) } + candidates.filter(isSharedText)
-        loadFirstSharedImport(ordered, index: 0, completion: completion)
+        // The walk is shared with the app's tests (#1049): it hands off the first content any candidate
+        // yields, a link only once no file, PDF or page result is left to try (#271), and shared text
+        // only once nothing else is left (#662).
+        ShareSheetCandidateWalk.run(
+            ordered,
+            identifier: \.identifier,
+            load: { candidate, report in Self.loadCandidate(candidate, report: report) },
+            resume: { next in DispatchQueue.main.async(execute: next) },
+            completion: { result in
+                guard let result else {
+                    let identifiers = Array(Set(ordered.map(\.identifier))).sorted().joined(separator: ", ")
+                    completion(.failure(SourceLinkShareError.unsupportedInput(identifiers)))
+                    return
+                }
+                completion(result)
+            }
+        )
     }
 
-    private func loadFirstSharedImport(
-        _ candidates: [ProviderCandidate],
-        index: Int,
-        completion: @escaping ExtractionCompletion
-    ) {
-        guard index < candidates.count else {
-            if let deferredLink = linkFallback.deferredLink {
-                completion(.success(deferredLink))
-                return
-            }
-            if let textFallback {
-                completion(.success(textFallback))
-                return
-            }
-            let identifiers = Array(Set(candidates.map(\.identifier))).sorted().joined(separator: ", ")
-            completion(.failure(SourceLinkShareError.unsupportedInput(identifiers)))
-            return
-        }
-        let candidate = candidates[index]
+    private typealias CandidateReport = @Sendable (ShareSheetCandidateOutcome<SharedImport>) -> Void
+
+    /// Loads one candidate and reports what it yielded, once.
+    nonisolated private static func loadCandidate(_ candidate: ProviderCandidate, report: @escaping CandidateReport) {
         let candidateType = UTType(candidate.identifier)
-        if Self.isSpokenMarginsPackage(candidate) {
+        if isSpokenMarginsPackage(candidate) {
             candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, error in
                 guard let url else {
-                    completion(.failure(error ?? SourceLinkShareError.unsupportedInput()))
+                    report(.failed(error ?? SourceLinkShareError.unsupportedInput()))
                     return
                 }
                 do {
@@ -150,34 +147,30 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                         from: url,
                         suggestedFilename: candidate.provider.suggestedName
                     )
-                    completion(.success(.spokenMarginsPackage))
+                    report(.content(.spokenMarginsPackage))
                 } catch {
-                    completion(.failure(error))
+                    report(.failed(error))
                 }
             }
             return
         }
         if candidateType?.conforms(to: .pdf) == true {
-            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
+            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, _ in
                 if let url {
-                    if let sharedImport = Self.persistedPDFImport(
+                    if let sharedImport = persistedPDFImport(
                         from: url,
                         suggestedName: candidate.provider.suggestedName
                     ) {
-                        completion(.success(sharedImport))
+                        report(.content(sharedImport))
                     } else {
                         // The file exists but couldn't be copied (over the
                         // size limit, say). Loading the same bytes into the
                         // extension's memory won't help, so fall back to the
                         // next representation, such as the URL.
-                        DispatchQueue.main.async {
-                            self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
-                        }
+                        report(.nothing)
                     }
                 } else {
-                    DispatchQueue.main.async {
-                        self?.loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
-                    }
+                    loadCandidateItem(candidate, report: report)
                 }
             }
             return
@@ -185,32 +178,25 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
         // A named Markdown or text file is read as a file. Plain text with no file name is loaded
         // as a string below, so its title comes from its first words, not a temporary file name.
         if candidateType?.conforms(to: .text) == true, SharedTextIntake.namesTextFile(candidate.provider.suggestedName) {
-            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { [weak self] url, _ in
+            candidate.provider.loadFileRepresentation(forTypeIdentifier: candidate.identifier) { url, _ in
                 if let url,
-                   let payload = Self.browserPayloadFromFile(
+                   let payload = browserPayloadFromFile(
                        url,
                        identifier: candidate.identifier,
                        suggestedName: candidate.provider.suggestedName
                    ) {
-                    completion(.success(.browserText(payload)))
+                    report(.content(.browserText(payload)))
                 } else {
-                    DispatchQueue.main.async {
-                        self?.loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
-                    }
+                    loadCandidateItem(candidate, report: report)
                 }
             }
             return
         }
-        loadCandidateItem(candidate, candidates: candidates, index: index, completion: completion)
+        loadCandidateItem(candidate, report: report)
     }
 
-    private func loadCandidateItem(
-        _ candidate: ProviderCandidate,
-        candidates: [ProviderCandidate],
-        index: Int,
-        completion: @escaping ExtractionCompletion
-    ) {
-        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { [weak self] item, _ in
+    nonisolated private static func loadCandidateItem(_ candidate: ProviderCandidate, report: @escaping CandidateReport) {
+        candidate.provider.loadItem(forTypeIdentifier: candidate.identifier, options: nil) { item, _ in
             let presentsPDF = candidate.provider.hasItemConformingToTypeIdentifier(UTType.pdf.identifier)
             // A PDF representation that loads as a web URL would send the link again (#271),
             // so for those only a file or bytes count; otherwise try the data representation.
@@ -220,64 +206,35 @@ final class SourceLinkShareViewController: UIViewController, @unchecked Sendable
                 ? SourceLinkShareRepresentation.pdfFallbackLink(from: item).map { SharedImport.remotePDF($0.absoluteString) }
                 : nil
             let sharedImport = isPDFCandidate
-                ? Self.sharedPDFImport(from: item, suggestedName: candidate.provider.suggestedName)
+                ? sharedPDFImport(from: item, suggestedName: candidate.provider.suggestedName)
                 : Self.sharedImport(
                     from: item,
                     identifier: candidate.identifier,
                     presentsPDF: presentsPDF,
                     suggestedName: candidate.provider.suggestedName
                 )
-            if case .sharedText = sharedImport {
+            if let sharedImport, case .sharedText = sharedImport {
                 // A file, PDF, page or link elsewhere in the share wins over its text (#662).
-                DispatchQueue.main.async {
-                    if self?.textFallback == nil { self?.textFallback = sharedImport }
-                    self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
-                }
+                report(.sharedText(sharedImport))
             } else if let sharedImport {
-                guard sharedImport.isLink else {
-                    completion(.success(sharedImport))
-                    return
-                }
-                DispatchQueue.main.async {
-                    self?.acceptLink(sharedImport, candidates: candidates, index: index, completion: completion)
-                }
+                report(sharedImport.isLink ? .link(sharedImport) : .content(sharedImport))
             } else if presentsPDF {
                 candidate.provider.loadDataRepresentation(forTypeIdentifier: candidate.identifier) { data, _ in
                     if let data,
-                       let sharedImport = Self.persistedPDFImport(
+                       let sharedImport = persistedPDFImport(
                            from: data,
                            suggestedName: candidate.provider.suggestedName
                        ) {
-                        completion(.success(sharedImport))
+                        report(.content(sharedImport))
                     } else if let pdfFallbackLink {
-                        DispatchQueue.main.async {
-                            self?.acceptLink(pdfFallbackLink, candidates: candidates, index: index, completion: completion)
-                        }
+                        report(.link(pdfFallbackLink))
                     } else {
-                        DispatchQueue.main.async {
-                            self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
-                        }
+                        report(.nothing)
                     }
                 }
             } else {
-                DispatchQueue.main.async {
-                    self?.loadFirstSharedImport(candidates, index: index + 1, completion: completion)
-                }
+                report(.nothing)
             }
-        }
-    }
-
-    /// Hands off a link only once no file, PDF or page result is left to try (#271).
-    private func acceptLink(
-        _ link: SharedImport,
-        candidates: [ProviderCandidate],
-        index: Int,
-        completion: @escaping ExtractionCompletion
-    ) {
-        if let accepted = linkFallback.accept(link, isLink: true, at: index, in: candidates.map(\.identifier)) {
-            completion(.success(accepted))
-        } else {
-            loadFirstSharedImport(candidates, index: index + 1, completion: completion)
         }
     }
 

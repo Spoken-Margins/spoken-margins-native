@@ -134,4 +134,14 @@ public struct Gate2LiveActivityAttributes: ActivityAttributes {
         self.sessionId = sessionId
     }
 }
+
+public extension Gate2LiveActivityAttributes.ContentState {
+    /// A start the engine has accepted but not yet confirmed: the stream is still opening or the
+    /// voice is still rendering. The card says "Loading", not "Playing" (#943). The status strings
+    /// are `PlaybackStatus` raw values.
+    var isLoadingAudio: Bool { status == "starting" && !isRecording }
+
+    /// Audio is confirmed to be running.
+    var isAudioRunning: Bool { status == "playing" }
+}
 #endif
