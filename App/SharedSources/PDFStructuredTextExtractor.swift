@@ -735,7 +735,7 @@ enum PDFStructuredTextExtractor {
         let titleCandidates = display.contains(where: { wordCount($0) >= 4 }) ? display.filter { wordCount($0) >= 4 } : display
         if let titleSize = titleCandidates.map({ lines[$0].pointSize }).max(),
            let first = titleCandidates.first(where: { abs(lines[$0].pointSize - titleSize) < 0.3 }) {
-            var index = first
+            var index = titleRunStart(in: lines, from: first, titleSize: titleSize, display: Set(display))
             while index < abstract, roles[index] == nil, abs(lines[index].pointSize - titleSize) < 0.3 {
                 roles[index] = .title
                 index += 1
@@ -761,6 +761,27 @@ enum PDFStructuredTextExtractor {
             }
         }
         return roles
+    }
+
+    /// Where the title starts, given the first title line of four or more words (#692).
+    /// A short opening line ("Understanding uncertainty" above "in modern machine
+    /// learning systems") isn't a candidate, so the title also takes the display lines
+    /// directly above it in the same type: same size and weight, and no more than a
+    /// line of that type above. A badge set apart from the title, or an article-type
+    /// label ("Research Article"), stays out.
+    private static func titleRunStart(in lines: [TextLine], from first: Int, titleSize: CGFloat, display: Set<Int>) -> Int {
+        let articleType = #"(?i)^(?:(?:original|research|review|brief|short|mini|technical|full|regular|invited|systematic)\s+)*(?:article|paper|report|communication|letter|review|note|perspective|commentary|editorial|preprint|research|opinion|methods?)$"#
+        var start = first
+        while start > 0, display.contains(start - 1) {
+            let above = lines[start - 1], line = lines[start]
+            // Against the title size, as the forward run checks, so the run still starts there.
+            guard abs(above.pointSize - titleSize) < 0.3, above.isBold == line.isBold,
+                  let upper = above.bounds, let lower = line.bounds,
+                  upper.minY >= lower.midY, upper.minY - lower.maxY <= line.pointSize,
+                  above.text.range(of: articleType, options: .regularExpression) == nil else { break }
+            start -= 1
+        }
+        return start
     }
 
     /// "1 Introduction", "2.1 Methods", "Background": a section heading that can sit
