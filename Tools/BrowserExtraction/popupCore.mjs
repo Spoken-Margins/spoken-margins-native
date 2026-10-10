@@ -31,7 +31,8 @@ export function invokeInjectedCapture() {
         || (node.nodeType === 3 && !String(node.textContent || "").trim()));
       if (isViewerOnly) {
         const source = viewers.find((node) => /^embed$/i.test(String(node.tagName || "")))?.getAttribute?.("src");
-        try { pdfURL = source ? new URL(source, href).href : href; } catch { pdfURL = ""; }
+        const base = /^https?:/i.test(String(documentRef?.baseURI || "")) ? String(documentRef.baseURI) : href;
+        try { pdfURL = source ? new URL(source, base).href : href; } catch { pdfURL = ""; }
       }
     }
     if (/^https:\/\//i.test(pdfURL)) {

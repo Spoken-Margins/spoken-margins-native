@@ -421,6 +421,15 @@ test("#689: a page that is only a PDF embed hands over the embed's own address",
     assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://example.org/files/report.pdf?v=2" });
     assert.equal(textCaptures(), 0);
   });
+  // A relative src follows the page's <base>, as the browser resolves it.
+  const based = browserLikePage({
+    url: "https://example.org/view?doc=8",
+    head: `<base href="https://files.example.org/reports/">`,
+    body: `<embed type="application/pdf" src="q3.pdf">`
+  });
+  withInjectedPage(based, () => {
+    assert.deepEqual(invokeInjectedCapture(), { ok: true, pdfURL: "https://files.example.org/reports/q3.pdf" });
+  });
   // WebKit's own PDF document points its embed at the tab's address.
   const pluginDocument = browserLikePage({
     url: "https://example.org/download?id=7",
