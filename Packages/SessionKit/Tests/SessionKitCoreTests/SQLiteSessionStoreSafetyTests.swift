@@ -211,6 +211,26 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
     }
 
+    /// The app no longer moves a version 1 file aside before opening it (#1004), so the store
+    /// upgrades it in place. The tables are the ones version 1 wrote: no quarantine table yet.
+    func testVersionOneDatabaseUpgradesInPlaceWithoutLosingItsRecords() throws {
+        let path = temporaryDatabasePath()
+        try createVersionOneLibraryDatabase(path: path)
+
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), SQLiteSessionStore.currentSchemaVersion)
+        XCTAssertEqual(try store.listItems().map(\.id), ["item-v1"], "the item survives the upgrade")
+        let session = try XCTUnwrap(store.loadSessions(itemId: "item-v1").first)
+        let legacyUpdatedAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-19T08:00:00Z"))
+        XCTAssertEqual(session.id, "session-v1")
+        XCTAssertEqual(session.createdAt, legacyUpdatedAt)
+        XCTAssertEqual(session.updatedAt, legacyUpdatedAt)
+        XCTAssertEqual(session.position.charOffset, 40, "the listener's place is kept")
+        XCTAssertEqual(session.completionPercent, 50)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 0)
+    }
+
     func testSessionScopedLogicalIDsDoNotOverwriteRecordsFromAnotherSession() throws {
         let path = temporaryDatabasePath()
         let store = try SQLiteSessionStore(path: path)
@@ -355,6 +375,26 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         for sql in statements {
             guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
                 throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 4)
+            }
+        }
+    }
+
+    private func createVersionOneLibraryDatabase(path: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 11)
+        }
+        defer { sqlite3_close(database) }
+        let statements = [
+            "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            "INSERT INTO metadata(key,value) VALUES('schema_version','1');",
+            "CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT, item_id TEXT, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
+            "INSERT INTO records(kind,id,item_id,payload) VALUES('item','item-v1','item-v1','{\"id\":\"item-v1\",\"title\":\"Version One Item\",\"mediaType\":\"text\",\"text\":\"Still here.\",\"status\":\"ready\"}');",
+            "INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES('session','session-v1','session-v1','item-v1','{\"id\":\"session-v1\",\"itemId\":\"item-v1\",\"status\":\"in_progress\",\"phase\":\"item_playback\",\"currentTargetType\":\"item_text_tts\",\"currentTargetId\":\"item-v1\",\"position\":{\"charOffset\":40},\"completionPercent\":50,\"playbackRate\":1}','2026-07-19 08:00:00');"
+        ]
+        for sql in statements {
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 12)
             }
         }
     }

@@ -139,7 +139,7 @@ class RunAutoAfterNextMovedTests(RealGit):
                 mock.patch.object(lane, 'ROOT', self.tree), \
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (test)'), \
+                mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=self.SCOPE), \
                 mock.patch.object(lane, 'run_automerge',
                                   return_value=('PASS', 'no simulator (compile only)', 'host tests; builds', [])) as tests:

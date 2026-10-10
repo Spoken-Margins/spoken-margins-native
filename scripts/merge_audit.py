@@ -6,7 +6,7 @@ push, it passes when the PR has an issue comment that starts with "**Merge check
 contains the first 7 characters of the merged head commit, and was posted before the merge.
 A hand merge without that comment also passes when, before the merge, the head had what the owner's
 hand-merge rule asks for (#742): the newest lane report the runner posted on the head says PASS, so does
-the newest T3 report on the head if there is one, and the newest Codex audit naming the head says "No
+the newest T3 report on the head if there is one, and the newest Codex or Claude audit naming the head says "No
 blocking findings". Otherwise it adds the `merge-audit` label and says on the PR what was missing.
 Commits pushed to next without any pull request get a `merge-audit` issue. It never reverts anything.
 
@@ -42,7 +42,7 @@ ZERO = '0' * 40
 LANE_BOT = 'github-actions[bot]'
 REPORT = re.compile(r'Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)')
 MARKER = re.compile(r'<!-- lane-request: (\{.*?\}) -->')
-AUDITS = ('**Codex audit (Astra)', '## Codex audit')
+AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDIT_SHA = re.compile(r'`([0-9a-f]{7,40})`')
 CLEAN_AUDIT = re.compile(r'no (blocking )?findings\b', re.I)
 
@@ -83,13 +83,15 @@ def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime)
 
 
 def audit_verdict(comments: list[dict], head_sha: str, merged: datetime.datetime) -> str | None:
-    """The verdict line of the newest Codex audit naming this head posted before the merge, if any."""
+    """The verdict line of the newest Codex or Claude audit naming this head posted before the merge, if any."""
     verdict = None
     for comment in comments:
         body = (comment.get('body') or '').lstrip()
-        if not body.startswith(AUDITS) or parse_time(comment['created_at']) >= merged:
-            continue
         heading, _, rest = body.partition('\n')
+        is_audit = (body.startswith(AUDITS[:2]) or
+                    re.fullmatch(r'\*\*Claude audit on `[0-9a-f]{7,40}`\*\*', heading.rstrip()))
+        if not is_audit or parse_time(comment['created_at']) >= merged:
+            continue
         if any(same_commit(sha, head_sha) for sha in AUDIT_SHA.findall(heading)):
             verdict = next((line.strip() for line in rest.splitlines() if line.strip()), '')
     return verdict
@@ -98,7 +100,7 @@ def audit_verdict(comments: list[dict], head_sha: str, merged: datetime.datetime
 def hand_merge_gap(comments: list[dict], head_sha: str, merged_at: str) -> str | None:
     """What the owner's hand-merge rule missed on this head before the merge, or None when it was all there.
 
-    The rule (owner, 2026-10-01; #742): a lane PASS and a clean Codex audit on the head being merged. Lane
+    The rule (owner, 2026-10-01; #742): a lane PASS and a clean Codex or Claude audit on the head being merged. Lane
     changes the runner can't merge (`.github/`, `scripts/lane*`) are merged by hand this way.
     """
     sha7, merged = head_sha[:7], parse_time(merged_at)
@@ -113,9 +115,9 @@ def hand_merge_gap(comments: list[dict], head_sha: str, merged_at: str) -> str |
         missing.append(f'the newest T3 lane report on `{sha7}` is {t3[-1]}')
     verdict = audit_verdict(comments, head_sha, merged)
     if verdict is None:
-        missing.append(f'no Codex audit of `{sha7}`')
+        missing.append(f'no Codex or Claude audit of `{sha7}`')
     elif not CLEAN_AUDIT.match(verdict):
-        missing.append(f'the Codex audit of `{sha7}` has blocking findings')
+        missing.append(f'the Codex or Claude audit of `{sha7}` has blocking findings')
     return '; '.join(missing) or None
 
 
@@ -204,7 +206,7 @@ def audit_pull(github: 'GitHub', pull: dict, dry_run: bool) -> None:
         return
     gap = hand_merge_gap(comments, head, pull['merged_at'])
     if gap is None:
-        print(f'#{number} ({head[:7]}): merged by hand after a lane PASS and a clean Codex audit of the head')
+        print(f'#{number} ({head[:7]}): merged by hand after a lane PASS and a clean Codex or Claude audit of the head')
         return
     print(f'#{number} ({head[:7]}): no triage-desk merge check before the merge ({gap}); flagged')
     if not dry_run:

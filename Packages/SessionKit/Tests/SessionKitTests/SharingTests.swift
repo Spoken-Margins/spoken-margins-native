@@ -1027,6 +1027,47 @@ final class SharingTests: XCTestCase {
         XCTAssertEqual(guarded["one"]?.evidenceClass, .ambiguous)
         XCTAssertEqual(guarded["two"]?.evidenceClass, .ambiguous)
 
+        // #917: Margins at the same moment (or whose sender times tie) are not a contradiction.
+        let sameMomentQueries = [
+            PodcastPortableAnchorQuery(packageScopedId: "a", senderMediaTimeMs: 10_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "b", senderMediaTimeMs: 10_000, evidence: []),
+            PodcastPortableAnchorQuery(packageScopedId: "c", senderMediaTimeMs: 20_000, evidence: [])
+        ]
+        let sameRecipientTime = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+            queries: sameMomentQueries,
+            resolutions: [
+                "a": .init(evidenceClass: .exactEdition, localMediaTimeMs: 12_000),
+                "b": .init(evidenceClass: .exactEdition, localMediaTimeMs: 12_000),
+                "c": .init(evidenceClass: .exactEdition, localMediaTimeMs: 22_000)
+            ]
+        )
+        for id in ["a", "b", "c"] {
+            XCTAssertEqual(sameRecipientTime[id]?.evidenceClass, .exactEdition, id)
+        }
+        let tiedSenderTimesSwapped = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+            queries: sameMomentQueries,
+            resolutions: [
+                "a": .init(evidenceClass: .acousticVerified, localMediaTimeMs: 12_400),
+                "b": .init(evidenceClass: .transcriptVerified, localMediaTimeMs: 12_000),
+                "c": .init(evidenceClass: .exactEdition, localMediaTimeMs: 22_000)
+            ]
+        )
+        XCTAssertEqual(tiedSenderTimesSwapped["a"]?.evidenceClass, .acousticVerified)
+        XCTAssertEqual(tiedSenderTimesSwapped["b"]?.evidenceClass, .transcriptVerified)
+        XCTAssertEqual(tiedSenderTimesSwapped["c"]?.evidenceClass, .exactEdition)
+        // A genuinely reversed pair (both ties against the earlier c) is still questioned.
+        let reversedAmongTies = PodcastAnchorFusionResolver.enforcingMonotonicOrder(
+            queries: sameMomentQueries,
+            resolutions: [
+                "a": .init(evidenceClass: .exactEdition, localMediaTimeMs: 12_000),
+                "b": .init(evidenceClass: .exactEdition, localMediaTimeMs: 12_000),
+                "c": .init(evidenceClass: .exactEdition, localMediaTimeMs: 11_000)
+            ]
+        )
+        for id in ["a", "b", "c"] {
+            XCTAssertEqual(reversedAmongTies[id]?.evidenceClass, .ambiguous, id)
+        }
+
         let interpolationQueries = [
             PodcastPortableAnchorQuery(packageScopedId: "start", senderMediaTimeMs: 171_225, evidence: []),
             PodcastPortableAnchorQuery(packageScopedId: "middle-one", senderMediaTimeMs: 286_515, evidence: []),

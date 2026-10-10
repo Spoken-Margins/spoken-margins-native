@@ -89,8 +89,7 @@ class LaneSimTests(unittest.TestCase):
         gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh),
-                    'SM_LANE_BUILD_NEEDS_ROOM': ''}  # not the build runner's slot rules (#656)
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                    mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:

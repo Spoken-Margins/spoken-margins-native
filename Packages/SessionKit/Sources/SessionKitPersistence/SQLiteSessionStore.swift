@@ -169,6 +169,78 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return live + quarantined
     }
 
+    /// Which sessions have Margins or AI turns saved after `after` (#1192), for the notes folder to rebuild their notes.
+    /// `after` is a `settledThrough` from an earlier call, or nil for "everything", which names no sessions.
+    ///
+    /// It reads only Margin and turn rows. Their payloads are small, so the check is one short scan; an item's
+    /// payload holds the whole article, and reading its `updated_at` would mean reading all of it.
+    ///
+    /// `updated_at` is whole seconds, so a row saved in the same second as a read could carry the read's own
+    /// timestamp. `settledThrough` is therefore two seconds behind the database clock: the next call starts there
+    /// and sees such a row again, and a write after the read can never land at or before it.
+    public func marginNoteChanges(after: String?) throws -> MarginNoteChanges {
+        try withConnectionLock {
+            var settled = ""
+            try readTexts("SELECT strftime('%Y-%m-%d %H:%M:%S', 'now', '-2 seconds');", [], name: "margin_note_clock") { settled = $0 }
+            guard let after else { return MarginNoteChanges(sessionIds: [], settledThrough: settled) }
+            var sessionIds: Set<String> = []
+            try readTexts(
+                "SELECT DISTINCT session_id FROM records WHERE kind IN ('interjection', 'turn') AND updated_at > ?1 AND session_id IS NOT NULL;",
+                [after], name: "margin_note_changes"
+            ) { sessionIds.insert($0) }
+            return MarginNoteChanges(sessionIds: sessionIds, settledThrough: settled)
+        }
+    }
+
+    /// How many bytes of source transcript each item has, to see a transcript arrive or change without reading it.
+    /// An item can hold a chapters-only timeline first (publisher chapters) and its real transcript later, under the same
+    /// row, so the size, not the presence, is what changes. `octet_length` (SQLite 3.43) reads the length from the row
+    /// header; older SQLite falls back to `length`, which reads the whole payload.
+    public func sourceTranscriptSizes() throws -> [String: Int] {
+        func read(_ function: String) throws -> [String: Int] {
+            var sizes: [String: Int] = [:]
+            try readPairs(
+                "SELECT item_id, \(function)(payload) FROM records WHERE kind = 'source_transcript_timeline' AND item_id IS NOT NULL;",
+                name: "source_transcript_sizes"
+            ) { sizes[$0, default: 0] += $1 }
+            return sizes
+        }
+        do { return try read("octet_length") } catch { return try read("length") }
+    }
+
+    private func readPairs(_ sql: String, name: String, _ body: (String, Int) -> Void) throws {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_\(name)")
+            }
+            defer { sqlite3_finalize(statement) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_\(name)") }
+                if let raw = sqlite3_column_text(statement, 0) { body(String(cString: raw), Int(sqlite3_column_int64(statement, 1))) }
+            }
+        }
+    }
+
+    private func readTexts(_ sql: String, _ values: [String], name: String, _ body: (String) -> Void) throws {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_\(name)")
+            }
+            defer { sqlite3_finalize(statement) }
+            for (index, value) in values.enumerated() { bind(statement, index: Int32(index + 1), value: value) }
+            while true {
+                let step = sqlite3_step(statement)
+                if step == SQLITE_DONE { return }
+                guard step == SQLITE_ROW else { throw SessionKitError.persistenceFailed("step_\(name)") }
+                if let raw = sqlite3_column_text(statement, 0) { body(String(cString: raw)) }
+            }
+        }
+    }
+
     private func marginAudioPaths(sql: String) throws -> [String] {
         try withConnectionLock {
             var statement: OpaquePointer?
@@ -317,6 +389,34 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             itemId: layer.itemId,
             value: layer
         )
+    }
+
+    /// Saves what a placement pass worked out (the edition it placed against, the placement status and any
+    /// map refusal) onto the layer as it is stored now. A pass starts from a copy of the layer and can end
+    /// minutes later; saving that whole copy undid anything the listener changed meanwhile, and could bring
+    /// back a layer they deleted (#915). Only the pass's own fields are written; a layer that is gone or
+    /// deleted is left alone and `false` is returned, so the caller skips that layer's Margins too.
+    /// Whether the layer is still stored and not deleted: a layer the listener deleted while a pass ran takes no
+    /// part in its result (#915).
+    public func isLiveImportedCommentaryLayer(id: String) throws -> Bool {
+        try loadImportedCommentaryLayer(id: id).map { $0.deletedAt == nil } ?? false
+    }
+
+    /// `records` are the layer's Margins as the pass resolved them; they are saved only when the layer is.
+    @discardableResult
+    public func savePlacementResult(
+        of layer: ImportedCommentaryLayer,
+        records: [ImportedCommentaryInterjection] = []
+    ) throws -> Bool {
+        try withConnectionLock {
+            guard var stored = try loadImportedCommentaryLayer(id: layer.id), stored.deletedAt == nil else { return false }
+            stored.resolvedRecipientEditionSHA256 = layer.resolvedRecipientEditionSHA256
+            stored.sourceResolutionStatus = layer.sourceResolutionStatus
+            stored.sharedMapRefusalReason = layer.sharedMapRefusalReason
+            try saveImportedCommentaryLayer(stored)
+            for record in records { try saveImportedCommentaryInterjection(record) }
+            return true
+        }
     }
 
     public func saveImportedCommentaryInterjection(_ interjection: ImportedCommentaryInterjection) throws {
@@ -737,29 +837,40 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func deleteItem(id: String) throws {
-        try withConnectionLock {
-            var statement: OpaquePointer?
-            // Turns are saved with a session id and no item id, so they are found through the
-            // item's session rows. One statement: SQLite reads the session rows before it
-            // deletes any, and a failure leaves the item whole.
-            let sql = """
-            DELETE FROM records
-            WHERE item_id = ?
-               OR (kind = 'item' AND id = ?)
-               OR (kind = 'turn' AND session_id IN (
-                    SELECT id FROM records WHERE kind = 'session' AND item_id = ?
-               ));
-            """
-            guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
-                throw SessionKitError.persistenceFailed("prepare_delete_item")
+        // Turns are saved with a session id and no item id, so they are found through the item's
+        // session rows. They go first, as their own statement: a single DELETE that also removed the
+        // session rows could evaluate its subquery after those rows were gone and keep the turns
+        // (SQLite 3.37 on Linux did, #1219). One transaction, so a failure leaves the item whole.
+        try withTransaction {
+            try withConnectionLock {
+                try runDelete(
+                    """
+                    DELETE FROM records
+                    WHERE kind = 'turn' AND session_id IN (
+                        SELECT id FROM records WHERE kind = 'session' AND item_id = ?
+                    );
+                    """, prepareError: "prepare_delete_item_turns", stepError: "step_delete_item_turns", ids: [id])
+                try runDelete(
+                    """
+                    DELETE FROM records
+                    WHERE item_id = ?
+                       OR (kind = 'item' AND id = ?);
+                    """, prepareError: "prepare_delete_item", stepError: "step_delete_item", ids: [id, id])
             }
-            defer { if statement != nil { sqlite3_finalize(statement) } }
-            bind(statement, index: 1, value: id)
-            bind(statement, index: 2, value: id)
-            bind(statement, index: 3, value: id)
-            guard sqlite3_step(statement) == SQLITE_DONE else {
-                throw SessionKitError.persistenceFailed("step_delete_item")
-            }
+        }
+    }
+
+    private func runDelete(_ sql: String, prepareError: String, stepError: String, ids: [String]) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed(prepareError)
+        }
+        defer { if statement != nil { sqlite3_finalize(statement) } }
+        for (offset, value) in ids.enumerated() {
+            bind(statement, index: Int32(offset + 1), value: value)
+        }
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed(stepError)
         }
     }
 
@@ -1133,6 +1244,18 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             return
         }
         sqlite3_bind_text(statement, index, value, -1, SQLITE_TRANSIENT)
+    }
+}
+
+/// What `SQLiteSessionStore.marginNoteChanges(after:)` found.
+public struct MarginNoteChanges: Equatable, Sendable {
+    public var sessionIds: Set<String>
+    /// Pass this as `after` next time; everything up to it has been seen.
+    public var settledThrough: String
+
+    public init(sessionIds: Set<String>, settledThrough: String) {
+        self.sessionIds = sessionIds
+        self.settledThrough = settledThrough
     }
 }
 

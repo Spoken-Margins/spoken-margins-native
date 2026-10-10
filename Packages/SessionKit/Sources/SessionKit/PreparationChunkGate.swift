@@ -81,7 +81,7 @@ public enum PreparationChunkGate {
         }
     }
 
-    static func isTooWarm(_ thermal: SpeechThermalLevel) -> Bool {
+    public static func isTooWarm(_ thermal: SpeechThermalLevel) -> Bool {
         thermal == .serious || thermal == .critical
     }
 }

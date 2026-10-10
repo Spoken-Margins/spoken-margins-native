@@ -84,6 +84,8 @@ enum TimelineTextPresentation {
 
         let boundary = normalized.index(normalized.startIndex, offsetBy: characterLimit)
         let prefix = normalized[..<boundary]
+        // The limit lands exactly after a word: it fits whole, so keep it.
+        if normalized[boundary] == " " { return String(prefix) + "…" }
         if let wordBoundary = prefix.lastIndex(of: " ") {
             return String(prefix[..<wordBoundary]) + "…"
         }
@@ -200,11 +202,6 @@ enum LibraryPresentation {
                 return lhs == rhs ? $0.id < $1.id : lhs > rhs
             }
             .first
-    }
-
-    static func compactItems(_ rows: [LibraryItemRow], excluding continueItem: LibraryItemRow?) -> [LibraryItemRow] {
-        guard let continueItem else { return rows }
-        return rows.filter { $0.id != continueItem.id }
     }
 }
 

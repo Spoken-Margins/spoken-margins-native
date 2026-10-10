@@ -187,6 +187,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
     }
 
+    /// #1191: Share Diagnostics builds the file off the main actor so the button can show a spinner. The file
+    /// carries the same safe payload as the synchronous export.
+    func testPrepareDiagnosticsExportFileURLBuildsTheSafeFile() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.diagnostics = [
+            "runtimeProfile": "test-profile",
+            "lastBrowserTextSource": "private source content"
+        ]
+        let exported = await model.prepareDiagnosticsExportFileURL()
+        let file = try XCTUnwrap(exported)
+        defer { try? FileManager.default.removeItem(at: file) }
+        let text = try String(contentsOf: file, encoding: .utf8)
+        let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: String])
+        XCTAssertEqual(payload["schemaVersion"], "spoken-margins.diagnostics.v1")
+        XCTAssertEqual(payload["runtimeProfile"], "test-profile")
+        XCTAssertNil(payload["lastBrowserTextSource"])
+        XCTAssertNotEqual(model.feedbackEvent?.kind, .error)
+    }
+
     /// #1109 (Codex audit): every switch to the iOS voice records its own event, the memory-warning stop
     /// included, with the reason shown to the listener and what the resource policy reads.
     func testFallbackEventCarriesTheReasonAndWhatThePolicyReads() throws {

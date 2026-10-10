@@ -236,23 +236,34 @@ func transcribeLongFormSpeechFile(at url: URL) async throws -> [LongFormSpeechPa
         throw SessionKitError.persistenceFailed("long_form_audio_file_unreadable")
     }
 
-    async let passages = collectLongFormSpeechPassages(from: transcriber)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
-    do {
-        if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
-            try await analyzer.finalizeAndFinish(through: lastSample)
-        } else {
+    // A cancelled task must stop the analyzer however far it got: the queue's timeout cancels this task, and the slot
+    // comes back only once this function returns (#1037). `analyzeSequence` can return while recognition still runs,
+    // so the handler covers finalization and the wait for results too. `downloadAndInstall()` above relies on Swift
+    // cancellation alone.
+    return try await withTaskCancellationHandler {
+        async let passages = collectLongFormSpeechPassages(from: transcriber)
+        do {
+            let analyzedThrough = try await analyzer.analyzeSequence(from: audioFile)
+            try Task.checkCancellation()
+            if let lastSample = analyzedThrough {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            let completed = try await passages
+            try Task.checkCancellation()
+            guard !completed.isEmpty else {
+                throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
+            }
+            return completed
+        } catch {
             await analyzer.cancelAndFinishNow()
+            _ = try? await passages
+            throw error
         }
-        let completed = try await passages
-        guard !completed.isEmpty else {
-            throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
-        }
-        return completed
-    } catch {
-        await analyzer.cancelAndFinishNow()
-        _ = try? await passages
-        throw error
+    } onCancel: {
+        Task { await analyzer.cancelAndFinishNow() }
     }
 }
 
@@ -835,6 +846,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     private weak var activeUtterance: AVSpeechUtterance?
     private var chunksByUtteranceId: [ObjectIdentifier: SpeechPlaybackChunk] = [:]
     private var finalUtteranceId: ObjectIdentifier?
+    /// Hands a narration utterance to the synthesizer. Tests replace it to keep the synthesizer and
+    /// the utterance, then deliver the delegate callbacks themselves (#1129).
+    var speakNarration: (AVSpeechSynthesizer, AVSpeechUtterance) -> Void = { $0.speak($1) }
     #endif
 
     public override init() {
@@ -954,7 +968,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             let identifier = ObjectIdentifier(utterance)
             chunksByUtteranceId[identifier] = chunk
             finalUtteranceId = identifier
-            synthesizer.speak(utterance)
+            speakNarration(synthesizer, utterance)
         }
         #else
         if preparedSpeechText.isEmpty {
@@ -3702,12 +3716,9 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         recognizer: SFSpeechRecognizer
     ) async throws -> AlignedInterjectionTranscript? {
         let request = makeOnDeviceSpeechRecognitionRequest(url: url)
-        return try await withCheckedThrowingContinuation { continuation in
-            var didFinish = false
-            recognizer.recognitionTask(with: request) { result, error in
-                guard !didFinish else { return }
+        return try await CancellableRecognition.run { finish in
+            let task = recognizer.recognitionTask(with: request) { result, error in
                 if let result, result.isFinal {
-                    didFinish = true
                     let transcript = result.bestTranscription.formattedString
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     let segments = result.bestTranscription.segments.enumerated().compactMap { index, segment -> AlignedTranscriptSegment? in
@@ -3723,18 +3734,18 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
                             confidence: Double(segment.confidence)
                         )
                     }
-                    continuation.resume(returning: transcript.isEmpty ? nil : AlignedInterjectionTranscript(
+                    finish(.success(transcript.isEmpty ? nil : AlignedInterjectionTranscript(
                         text: transcript,
                         localeIdentifier: recognizer.locale.identifier,
                         segments: segments
-                    ))
+                    )))
                     return
                 }
                 if let error {
-                    didFinish = true
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                 }
             }
+            return RecognitionHandle { task.cancel() }
         }
     }
 
@@ -4105,24 +4116,22 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         sourceDurationMs: Int?
     ) async throws -> TranscriptTimeline {
         let request = makeOnDeviceSpeechRecognitionRequest(url: chunk.url)
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptTimeline, Error>) in
-            var didFinish = false
-            recognizer.recognitionTask(with: request) { result, error in
-                guard !didFinish else { return }
+        // A cancelled task (the job queue's timeout, #1037) must stop the recognizer, or the stuck chunk keeps its slot.
+        return try await CancellableRecognition.run { finish in
+            let task = recognizer.recognitionTask(with: request) { result, error in
                 if let result, result.isFinal {
-                    didFinish = true
-                    continuation.resume(returning: Self.timeline(
+                    finish(.success(Self.timeline(
                         from: result.bestTranscription,
                         itemId: itemId,
                         durationMs: sourceDurationMs
-                    ))
+                    )))
                     return
                 }
                 if let error {
-                    didFinish = true
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                 }
             }
+            return RecognitionHandle { task.cancel() }
         }
     }
 

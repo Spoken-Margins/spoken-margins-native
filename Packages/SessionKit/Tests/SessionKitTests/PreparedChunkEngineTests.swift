@@ -21,7 +21,7 @@ final class PreparedChunkEngineTests: XCTestCase {
         )
     }
 
-    func testChunkEngineSurvivesTheStoreAndOlderChunksReadAsTheManifestsEngine() throws {
+    func testChunkEngineSurvivesTheStoreAndAChunkWithoutOneReadsAsNil() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "chunk-engine-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -29,7 +29,9 @@ final class PreparedChunkEngineTests: XCTestCase {
         try store.savePreparedAudioManifest(manifest(chunkEngine: "system_voice"))
         XCTAssertEqual(try store.loadPreparedAudioManifest(id: "prepared-item-engine")?.chunks.first?.engine, "system_voice")
 
-        // A chunk written by an earlier build has no engine field.
+        // A chunk with no engine field reads as nil. This is this build's own encoding with the key removed, not
+        // a Build 29 chunk (PreparedAudioBuild29Tests reads those with Build 29's frozen model), and "the
+        // manifest's engine" is chosen where the chunk is used, not here.
         let encoded = try JSONEncoder().encode(manifest(chunkEngine: nil).chunks[0])
         var object = try XCTUnwrap(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         XCTAssertNil(object["engine"], "nil isn't written, so the stored shape is unchanged for Supertonic chunks")
