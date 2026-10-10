@@ -33,6 +33,32 @@ final class ListeningMapPacketTests: XCTestCase {
         }
     }
 
+    /// A community map (#553) is stored as an ordinary proposal, so a packet from an item that has
+    /// one still imports into the shipped Build 29 reader and carries the same scenes back.
+    func testACommunityMapTravelsInAPacketThatBuild29Imports() throws {
+        let root = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let key = String(repeating: "ab", count: 32)
+        let response = CommunityMapResponse(
+            episodeKey: key, durationMs: 3_600_000, generator: "claude-haiku-4-5", createdAt: "2026-10-10T12:00:00Z",
+            scenes: [
+                .init(startMs: 0, endMs: 600_000, title: "Cold open", summary: "The hosts introduce the guest and the topic."),
+                .init(startMs: 600_000, endMs: 2_400_000, title: "The interview", summary: "The guest describes how the project began."),
+                .init(startMs: 2_400_000, endMs: 3_600_000, title: "Listener questions", summary: "Questions from listeners about the next steps."),
+            ]
+        )
+        let map = try CommunityMapConverter.make(
+            response: response, episodeKey: key, itemId: "item-1", itemDurationMs: 3_600_000, createdAt: fixedDate
+        ).get()
+        let prepared = try package(item: podcastItem, proposals: [map.proposal])
+        let url = root.appending(path: "community.spokenmargins")
+        // exportPacket also imports the packet with Build 29's frozen reader and fails if it refuses.
+        _ = try exportPacket(prepared, to: url)
+        XCTAssertEqual(try ShippedPacketReader.importPacket(at: url), ["margin-001"])
+        let verified = try SpokenMarginsPackageArchive.read(from: url, extractingAssetsTo: root.appending(path: "assets"))
+        XCTAssertEqual(verified.listeningMapProposals, [map.proposal])
+    }
+
     // MARK: Scene rules in packet validation (Done when 3)
 
     func testPacketRejectsEligibleSceneWithoutSummaryOrProvenance() throws {
