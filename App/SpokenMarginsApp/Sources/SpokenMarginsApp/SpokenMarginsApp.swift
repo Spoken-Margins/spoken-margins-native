@@ -81,7 +81,7 @@ struct SpokenMarginsApp: App {
         #endif
         #if canImport(BackgroundTasks) && canImport(UIKit)
         // The same refresh as in the foreground, with the same six-hour staleness (#170).
-        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.refreshFollowedSources(force: false) }
+        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
         #endif
         _model = StateObject(wrappedValue: model)
         _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
