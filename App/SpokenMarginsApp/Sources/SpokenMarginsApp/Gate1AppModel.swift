@@ -8810,10 +8810,8 @@ final class Gate1AppModel: ObservableObject {
                 fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
                 fallbackRate: Float(speechRate),
                 diskCache: diskCache,
-                preparedAudioDirectory: supportDirectory.appending(
-                    path: "PreparedSupertonicAudio",
-                    directoryHint: .isDirectory
-                ),
+                preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
+                voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
                         self?.handleSpeechPlaybackInterruption(event)
