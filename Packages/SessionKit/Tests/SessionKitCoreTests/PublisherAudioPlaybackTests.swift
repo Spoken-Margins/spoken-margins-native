@@ -340,6 +340,114 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertEqual(try repository.loadItem(id: "item-post").media, narration, "a failed recording is not a reason to touch the narration")
     }
 
+    // MARK: Chapters, places the map doesn't cover, and retries
+
+    func testAChapterJumpFindsItsTimeInTheRecording() throws {
+        let repository = repository(map: map())
+        let second = sentences[0].count + 1
+        let third = second + sentences[1].count + 1
+        try repository.saveListeningMap(ListeningMap(id: "map", itemId: "item-post", overview: "", chapters: [
+            Chapter(id: "c1", title: "Harbour", startChar: 0, endChar: second, percent: 0),
+            Chapter(id: "c2", title: "Fog", startChar: third, endChar: text.count, percent: 66)
+        ]))
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+
+        let jumped = try engine.jumpToChapter(chapterId: "c2")
+
+        XCTAssertEqual(jumped.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 9_000, "the start of the third sentence in the recording")
+        XCTAssertEqual(engine.currentSession?.position.chapterId, "c2")
+        XCTAssertNil(try repository.loadItem(id: "item-post").media)
+    }
+
+    /// The map keeps only 80% of the article, so its last sentence can be missing.
+    private func mapWithoutTheLastSentence() -> TranscriptTimeline {
+        let full = map()
+        return TranscriptTimeline(segments: Array(full.segments.dropLast()), chapters: [], durationMs: full.durationMs)
+    }
+
+    func testAMarginInAPlaceTheRecordingDoesntReachIsHeardWithOnDeviceSpeech() throws {
+        let repository = repository(map: mapWithoutTheLastSentence())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        let third = sentences[0].count + sentences[1].count + 2
+        let margin = Interjection(
+            id: "ij-001", itemId: "item-post", sessionId: try XCTUnwrap(engine.currentSession?.id), targetType: .item, targetId: "item-post",
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 70,
+            anchor: Anchor(anchorType: .text, startChar: third + 3, endChar: third + 8, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A note", status: "active")
+        try repository.saveInterjection(margin)
+
+        let played = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(played.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, third + 3)
+    }
+
+    func testASeekToAPlaceTheRecordingDoesntReachReadsOnWithOnDeviceSpeech() throws {
+        let repository = repository(map: mapWithoutTheLastSentence())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        let third = sentences[0].count + sentences[1].count + 2
+
+        let seeked = try engine.seekText(toCharOffset: third + 5)
+
+        XCTAssertEqual(seeked.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, third + 5)
+        XCTAssertEqual(audio.textPlays.last, "item-post")
+        XCTAssertNil(try repository.loadItem(id: "item-post").media)
+    }
+
+    func testAMarginHearsTheRecordingEvenWhenOldNarrationOfADifferentLengthIsStored() throws {
+        let repository = repository(map: map())
+        try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "old-narration", itemId: "item-post", createdAt: Date(timeIntervalSince1970: 1),
+            timeline: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "n1", startMs: 0, endMs: 5_000, startChar: 0, endChar: text.count, text: text)
+            ], chapters: [], durationMs: 5_000)))
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        audio.mediaTimeMs = 10_500
+        let capture = try engine.beginWrittenInterjection()
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "On the fog")
+        let margin = try XCTUnwrap(try repository.loadInterjections(sessionId: try XCTUnwrap(engine.currentSession?.id)).first)
+
+        let played = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(played.targetType, TargetType.transcriptBackedMedia.rawValue)
+        assertClose(audio.mediaPlays.last?.timeMs, 10_500, within: 400)
+    }
+
+    func testAFailedRecordingIsTriedAgainLaterOrWhenTheRecordChanges() throws {
+        let repository = repository(map: map())
+        let audio = FakePublisherAudioClient()
+        audio.startStatusByTarget[recordingURL] = .failed("offline")
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio, now: { clock })
+        _ = try engine.startSession(itemId: "item-post")
+        XCTAssertEqual(engine.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+
+        audio.startStatusByTarget[recordingURL] = nil // back online
+        clock = clock.addingTimeInterval(60)
+        XCTAssertEqual(try engine.startSession(itemId: "item-post").targetType, TargetType.itemTextTTS.rawValue, "not straight away")
+
+        clock = clock.addingTimeInterval(11 * 60)
+        XCTAssertEqual(try engine.startSession(itemId: "item-post").targetType, TargetType.transcriptBackedMedia.rawValue, "later")
+
+        audio.startStatusByTarget[recordingURL] = .failed("offline")
+        _ = try engine.startSession(itemId: "item-post")
+        XCTAssertEqual(engine.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        audio.startStatusByTarget["https://publisher.example/post/new-voiceover.mp3"] = nil
+        repository.publisherAudio["item-post"] = record(map: map(), url: "https://publisher.example/post/new-voiceover.mp3")
+        XCTAssertEqual(try engine.startSession(itemId: "item-post").targetType, TargetType.transcriptBackedMedia.rawValue, "another recording")
+    }
+
     // MARK: What is stored
 
     func testAFreshAppResumesTheStoredArticleOnTheRecordingAtTheSamePlace() throws {

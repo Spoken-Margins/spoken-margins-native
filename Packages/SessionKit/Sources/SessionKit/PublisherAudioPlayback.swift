@@ -49,6 +49,12 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
         )
     }
 
+    /// The same plan with `timeline` as the map the engine plays through. The engine adds the article's
+    /// Listening Map chapters, as it does for generated narration, so chapter jumps find their time.
+    public func with(timeline: TranscriptTimeline) -> PublisherAudioPlayback {
+        PublisherAudioPlayback(recording: recording, timeline: timeline, playingMedia: playingMedia, storedMedia: storedMedia)
+    }
+
     /// `item` as the engine plays it: its audio is the recording.
     public func playing(_ item: Item) -> Item {
         guard item.media != playingMedia else { return item }

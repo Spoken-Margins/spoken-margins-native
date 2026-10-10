@@ -38,9 +38,11 @@ public final class SessionEngine {
     /// Articles playing their publisher's recording right now, by item id (#547). The Library keeps
     /// the plain article; the engine plays a copy whose audio is the recording.
     private var publisherPlayback: [String: PublisherAudioPlayback] = [:]
-    /// Articles whose recording failed to play since the app opened. They keep their on-device voice
-    /// instead of waiting for the same failure again.
-    private var publisherAudioUnavailable: Set<String> = []
+    /// Recordings that failed to play, by item id: the address and when. The article keeps its on-device
+    /// voice for a while instead of waiting out the same failure at every start, and tries again after
+    /// `publisherAudioRetryInterval` (the network may be back) or when the record names another recording.
+    private var publisherAudioUnavailable: [String: (audioURL: String, failedAt: Date)] = [:]
+    private static let publisherAudioRetryInterval: TimeInterval = 10 * 60
     private let audio: AudioPlaybackClient
     private let recorder: RecordingClient
     private let transcriber: TranscriptionClient
@@ -777,6 +779,16 @@ public final class SessionEngine {
                 // A restored, paused session has no player yet: the next start opens the narration there.
                 return try stagePausedMediaPosition(toMediaTimeMs: mediaTimeMs)
             }
+        }
+        // The recording doesn't reach this place (a sentence the map couldn't place), so the article reads on
+        // from here with on-device speech, as it did before the recording (#547).
+        if let session = currentSession, isPlayingPublisherAudio(session),
+           let item = try? repository.loadItem(id: session.itemId) {
+            try audio.stop()
+            publisherPlayback[item.id] = nil
+            currentItem = item
+            let reading = PreparedNarrationFallback.liveSpeechSession(from: session, item: item, timeline: nil)
+            currentSession = reading
         }
         guard var session = currentSession,
               session.currentTargetType == .itemTextTTS,
@@ -1596,8 +1608,11 @@ public final class SessionEngine {
         }
 
         // An article playing its publisher's recording hears the Margin there too (#547).
-        let publisher = publisherPlayback[originalSession.itemId]
         let item = try repository.loadItem(id: originalSession.itemId)
+        // A place the recording doesn't reach (a sentence the map couldn't place) is heard with on-device speech.
+        let publisher = publisherPlayback[originalSession.itemId].flatMap {
+            PreparedNarrationFallback.mediaTimeMs(textOffset: stored.anchor.startChar, timeline: $0.timeline) == nil ? nil : $0
+        }
         let playingItem = publisher?.playing(item) ?? item
         let map = try repository.loadListeningMap(itemId: item.id)
         var session = originalSession
@@ -1618,7 +1633,7 @@ public final class SessionEngine {
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
                 }
-                let durableDurationMs = (try repository.loadTranscriptTimeline(itemId: item.id))?.timeline.durationMs
+                let durableDurationMs = try (publisher?.timeline ?? repository.loadTranscriptTimeline(itemId: item.id)?.timeline)?.durationMs
                     ?? playingItem.media?.durationMs
                 guard durableDurationMs.map({ mediaTimeMs <= $0 }) ?? true else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
@@ -2552,6 +2567,7 @@ public final class SessionEngine {
         currentSession = session
         try persistSession(session)
         currentSession = nil
+        publisherPlayback.removeAll()
         currentItem = nil
         currentMap = nil
         recordingAnchor = nil
@@ -3118,10 +3134,17 @@ public final class SessionEngine {
 
     /// The publisher recording `item` plays instead of on-device speech, if it has one that can be used.
     private func publisherAudioPlan(for item: Item) -> PublisherAudioPlayback? {
-        guard !publisherAudioUnavailable.contains(item.id),
-              let store = repository as? any PublisherAudioRepository,
-              let record = try? store.loadPublisherAudio(itemId: item.id) else { return nil }
-        return PublisherAudioPlayback.plan(for: item, record: record)
+        guard let store = repository as? any PublisherAudioRepository,
+              let record = try? store.loadPublisherAudio(itemId: item.id),
+              let plan = PublisherAudioPlayback.plan(for: item, record: record) else { return nil }
+        if let failure = publisherAudioUnavailable[item.id] {
+            if failure.audioURL == record.audioURL, now().timeIntervalSince(failure.failedAt) < Self.publisherAudioRetryInterval {
+                return nil
+            }
+            publisherAudioUnavailable[item.id] = nil
+        }
+        // The map carries the article's chapters too, as generated narration's does.
+        return plan.with(timeline: generatedTextTimeline(plan.timeline, using: try? repository.loadListeningMap(itemId: item.id)))
     }
 
     /// `item`, a stored article, as a new session plays it: with its publisher's recording as its
@@ -3496,8 +3519,8 @@ public final class SessionEngine {
         // The cached item can be older than storage; don't write stale fields back.
         var detached = (try? repository.loadItem(id: item.id)) ?? item
         let publisher = publisherPlayback[item.id].flatMap { $0.plays(targetId: session.currentTargetId) ? $0 : nil }
-        if publisher != nil {
-            publisherAudioUnavailable.insert(item.id)
+        if let publisher {
+            publisherAudioUnavailable[item.id] = (publisher.recording.audioURL, now())
         }
         let publisherTimeline = publisher?.timeline
         if publisher != nil {
