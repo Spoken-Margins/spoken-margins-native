@@ -107,9 +107,14 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "Margin did not open")
             tap("marginDetail.playMoment.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
-            waitUntil("Play this moment did not land at the Margin (\(marginPosition) s)", timeout: 10) {
+            // The moment starts 30 s before the Margin (its lead-in); "Play it now" skips to the Margin itself.
+            tap("marginMoment.playNow")
+            waitUntil("Play it now did not land at the Margin (\(marginPosition) s)", timeout: 10) {
                 self.currentPosition().map { abs($0 - marginPosition) <= 10 } ?? false
             }
+            // The Margin's voice plays with the source paused, then the source carries on; pause it for the force-quit.
+            _ = XCTWaiter().wait(for: [XCTNSPredicateExpectation(
+                predicate: NSPredicate { _, _ in self.playPause.label == "Pause" }, object: nil)], timeout: 30)
             if playPause.label == "Pause" { playPause.tap() }
             waitUntil("Podcast did not pause before the force-quit") { self.playPause.label == "Play" }
         }
