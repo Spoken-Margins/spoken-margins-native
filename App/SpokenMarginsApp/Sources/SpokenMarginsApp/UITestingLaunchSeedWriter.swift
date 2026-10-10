@@ -5,22 +5,12 @@ import SessionKitAudio
 import SessionKitPersistence
 import UIKit
 
-extension UITestingLaunchSeed {
-    /// This process's seed. `.none` unless the app was launched with `--ui-testing`.
-    static let current = UITestingLaunchSeed(
-        arguments: CommandLine.arguments,
-        environment: ProcessInfo.processInfo.environment
-    )
-}
-
 extension Gate1AppModel {
     /// The app's model. A UI-test launch that asks for stand-in audio services
     /// records a generated tone and gets a fixed Margin transcript, so it never
     /// meets a microphone or Speech Recognition prompt.
     static func makeApplicationModel() -> Gate1AppModel {
-        guard UITestingLaunchSeed.usesStandInAudioServices(
-            arguments: CommandLine.arguments, environment: ProcessInfo.processInfo.environment
-        ), let support = try? FileManager.default.url(
+        guard UITestingHooks.usesStandInAudioServices, let support = try? FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         ) else { return Gate1AppModel() }
         return Gate1AppModel(

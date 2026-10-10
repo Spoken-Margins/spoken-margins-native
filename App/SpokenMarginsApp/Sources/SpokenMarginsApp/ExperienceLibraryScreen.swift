@@ -13,26 +13,9 @@ struct ExperienceLibraryScreen: View {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
     }
 
-    private var compactItems: [LibraryItemRow] {
-        LibraryPresentation.compactItems(model.visibleLibraryItems, excluding: continueItem)
-    }
-
-    private var visibleContinueItem: LibraryItemRow? {
-        guard let continueItem,
-              model.visibleLibraryItems.contains(where: { $0.id == continueItem.id }) else {
-            return nil
-        }
-        return continueItem
-    }
-
-    private var completionUndoActions: some View {
-        HStack {
-            Button("Undo Mark Complete", action: model.undoMarkedCompletion)
-                .accessibilityIdentifier("completion.undo.button")
-            Button { model.completionUndo = nil } label: { Image(systemName: "xmark") }
-                .accessibilityLabel("Dismiss completion notification")
-        }
-        .buttonStyle(.borderless)
+    /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
+    private var listEntries: [LibraryListEntry<LibraryItemRow>] {
+        LibraryListRows.entries(visible: model.visibleLibraryItems, currentId: continueItem?.id)
     }
 
     var body: some View {
@@ -40,39 +23,6 @@ struct ExperienceLibraryScreen: View {
             List {
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-
-                if let undo = model.completionUndo {
-                        ViewThatFits(in: .horizontal) {
-                            HStack {
-                                Text("Marked \(undo.title) complete.").lineLimit(2)
-                                completionUndoActions
-                            }
-                            VStack(alignment: .leading) {
-                                Text("Marked \(undo.title) complete.")
-                                completionUndoActions
-                            }
-                        }
-                        .font(.subheadline)
-                        .padding(12)
-                        .background(AppColors.panel, in: RoundedRectangle(cornerRadius: 12))
-                        .accessibilityElement(children: .contain)
-                        .accessibilityIdentifier("completion.undo.banner")
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                    }
-
-                if let continueItem = visibleContinueItem {
-                    ExperienceLibraryCompactRow(
-                        row: continueItem,
-                        isCurrentItem: true,
-                        onOpen: { model.openItem(id: continueItem.id) },
-                        onPlay: { model.startItem(id: continueItem.id) },
-                        onComplete: { model.markItemCompleted(id: continueItem.id) },
-                        onMarkUnfinished: { model.markItemUnfinished(id: continueItem.id) },
-                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: continueItem.id) },
-                        onDelete: { model.moveItemToTrash(id: continueItem.id) }
-                    )
-                    .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
-                }
 
                 items
 
@@ -89,7 +39,7 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
-            .animation(.smooth(duration: 0.24), value: compactItems.map(\.id))
+            .animation(.smooth(duration: 0.24), value: listEntries.map(\.id))
             .accessibilityIdentifier("home.screen")
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
@@ -159,7 +109,7 @@ struct ExperienceLibraryScreen: View {
     }
 
     private var preparationSummaryDetail: String {
-        let queued = model.audioPreparationQueue.count
+        let queued = Set(model.audioPreparationQueue.map(\.itemId)).count // items, not jobs (#883)
         let recent = model.recentlyPreparedAudio.count
         if queued > 0, recent > 0 {
             return "\(queued) queued · \(recent) recently ready"
@@ -368,9 +318,12 @@ struct ExperienceLibraryScreen: View {
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         } else {
-            ForEach(compactItems) { row in
+            ForEach(listEntries) { entry in
+                let row = entry.row
                 ExperienceLibraryCompactRow(
                     row: row,
+                    isCurrentItem: entry.isCurrent,
+                    playbackSpeed: model.speechPlaybackRateMultiplier,
                     onOpen: { model.openItem(id: row.id) },
                     onPlay: { model.startItem(id: row.id) },
                     onComplete: { model.markItemCompleted(id: row.id) },
@@ -393,6 +346,8 @@ private struct ExperienceLibraryCompactRow: View {
 
     let row: LibraryItemRow
     var isCurrentItem = false
+    /// The listener's speech speed, for a text item's estimated length (#305).
+    var playbackSpeed: Double = 1
     let onOpen: () -> Void
     let onPlay: () -> Void
     let onComplete: () -> Void
@@ -420,11 +375,10 @@ private struct ExperienceLibraryCompactRow: View {
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
                         .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
-                    Text(detailLine)
+                    detailLineView
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -524,13 +478,23 @@ private struct ExperienceLibraryCompactRow: View {
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }
 
-    private var detailLine: String {
-        [sourceByline, mediaLabel, listeningLabel, statusDetail]
-            .compactMap { value in
-                guard let value, !value.isEmpty else { return nil }
-                return value
+    private var detail: LibraryRowDetail {
+        LibraryRowDetail(byline: sourceByline, kind: mediaLabel, length: lengthLabel, listening: listeningLabel, status: statusDetail)
+    }
+
+    /// The length keeps its room on the line; a long byline or status truncates instead (#305).
+    @ViewBuilder private var detailLineView: some View {
+        let detail = detail
+        if dynamicTypeSize.isAccessibilitySize {
+            Text(detail.fullLine)
+        } else if let length = detail.length {
+            HStack(spacing: 0) {
+                Text(length).fixedSize().layoutPriority(1)
+                Text(detail.restAfterLength).lineLimit(1)
             }
-            .joined(separator: " · ")
+        } else {
+            Text(detail.rest).lineLimit(1)
+        }
     }
 
     private var sourceByline: String? {
@@ -548,6 +512,11 @@ private struct ExperienceLibraryCompactRow: View {
     }
 
     private var mediaSymbol: String { row.mediaSymbol }
+
+    /// "about 25 min" for a text item at the listener's speed (#305); podcasts show none.
+    private var lengthLabel: String? {
+        ListeningTimeEstimator.libraryTotalText(textCharacterCount: row.textCharacterCount, playbackSpeed: playbackSpeed)
+    }
 
     private var listeningLabel: String? {
         if row.isCompleted {
@@ -611,5 +580,21 @@ private extension View {
         ))
         .listRowBackground(AppColors.bone)
         .listRowSeparator(.hidden)
+    }
+}
+
+extension LibraryItemRow {
+    var mediaSymbol: String {
+        if hasNativeAudio { return "headphones" }
+        return switch mediaType.lowercased() {
+        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
+            "headphones"
+        case "pdf":
+            "doc.richtext"
+        case "epub":
+            "book.closed"
+        default:
+            "doc.text"
+        }
     }
 }

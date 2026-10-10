@@ -5,6 +5,37 @@ import FoundationNetworking
 #endif
 
 final class ListeningEditionTests: XCTestCase {
+    func testShortcutImportAcceptsAFileOrJSONTextThroughOneDecodePath() throws {
+        // #574: Import Listening Edition stopped at a file picker on every run. A file (Assemble's output
+        // or a saved one) and the JSON as text must reach the same decoder.
+        var root = URL(fileURLWithPath: #filePath)
+        for _ in 0..<5 { root.deleteLastPathComponent() }
+        let data = try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/listening-editions/article.json"))
+        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+        let expected = try ListeningEdition.decode(data)
+        for (name, file, json) in [("file", data as Data?, nil as String?), ("text", nil, text),
+                                   ("text with surrounding whitespace", nil, "\n  " + text + "\n"),
+                                   ("an empty file and text", Data(), text), ("both: the file wins", data, "not json")] {
+            XCTAssertEqual(try ListeningEdition.decode(ListeningEdition.shortcutInput(file: file, text: json)), expected, name)
+        }
+    }
+
+    func testShortcutImportWithNothingOrABadEditionSaysWhatToDo() throws {
+        for (name, file, json) in [("nothing", nil as Data?, nil as String?), ("empty file and empty text", Data(), ""),
+                                   ("whitespace text", nil, " \n\t ")] {
+            XCTAssertThrowsError(try ListeningEdition.shortcutInput(file: file, text: json), name) {
+                XCTAssertTrue(($0 as? EditionError)?.errorDescription?.contains("Assemble Listening Edition") == true, name)
+            }
+        }
+        // The existing readable errors still come from decode, for text and for files alike.
+        let notJSON = try ListeningEdition.shortcutInput(file: nil, text: "not json at all")
+        XCTAssertThrowsError(try ListeningEdition.decode(notJSON))
+        let mapOnly = try ListeningEdition.shortcutInput(file: nil, text: #"{"overview":"o","scenes":[]}"#)
+        XCTAssertThrowsError(try ListeningEdition.decode(mapOnly)) {
+            XCTAssertTrue(($0 as? EditionError)?.errorDescription?.contains("Listening Map response") == true)
+        }
+    }
+
     func testPublishedFixtureDecodesThroughRuntimeContract() throws {
         var root = URL(fileURLWithPath: #filePath)
         for _ in 0..<5 { root.deleteLastPathComponent() }

@@ -18,11 +18,16 @@ final class StructuredDocumentStoreTests: XCTestCase {
         let store = try SQLiteSessionStore(path: path)
         let item = Item(id: "item-paper", title: "Paper", mediaType: "pdf", text: "Body two.", externalReference: nil, status: "ready")
         try store.saveItem(item)
-        try store.saveStructuredDocument(document(version: 2, text: "Body two."), itemId: item.id)
+        // Saved newest first, and with a version whose id sorts before the others as text
+        // ("#v10" < "#v2"), so only comparing versions finds the newest, not the save order.
         try store.saveStructuredDocument(document(version: 3, text: "Body three."), itemId: item.id)
+        try store.saveStructuredDocument(document(version: 2, text: "Body two."), itemId: item.id)
+        try store.saveStructuredDocument(document(version: 10, text: "Body ten."), itemId: item.id)
 
         let reopened = try SQLiteSessionStore(path: path)
-        XCTAssertEqual(try reopened.loadStructuredDocument(itemId: item.id)?.extraction.version, 3)
+        let newest = try XCTUnwrap(reopened.loadStructuredDocument(itemId: item.id))
+        XCTAssertEqual(newest.extraction.version, 10)
+        XCTAssertEqual(newest.text, "Body ten.")
         XCTAssertNil(try reopened.loadStructuredDocument(itemId: "item-other"))
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5, "no schema change for Build 29 to check")
 

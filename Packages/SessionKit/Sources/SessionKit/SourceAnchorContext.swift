@@ -36,6 +36,25 @@ public enum SourceAnchorContextResolver {
     /// proportionally so that the passage still corresponds to the requested media time.
     private static let indivisibleSegmentDurationMs = 30_000
 
+    public static func sourceContextWindow(
+        from timeline: TranscriptTimeline,
+        anchorMediaTimeMs: Int,
+        windowBeforeMs: Int = 90_000,
+        windowAfterMs: Int = 120_000
+    ) -> TranscriptTimeline? {
+        let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
+        let endMs = min(timeline.durationMs ?? Int.max, anchorMediaTimeMs + windowAfterMs)
+        let segments = timeline.segments.filter { segment in
+            segment.endMs >= startMs && segment.startMs <= endMs
+        }
+        guard !segments.isEmpty else { return nil }
+        return TranscriptTimeline(
+            segments: segments,
+            chapters: timeline.chapters.filter { $0.startMs >= startMs && $0.startMs <= endMs },
+            durationMs: timeline.durationMs
+        )
+    }
+
     public static func resolve(
         mediaTimeMs: Int,
         timeline: TranscriptTimeline,

@@ -19,6 +19,10 @@ enum SharedMarginsImportMessage {
                 return "These Margins don’t say which episode they belong to, so they can’t be placed. Add the episode to your Library, then open them again."
             case "shared_podcast_item_not_created":
                 return "Couldn’t add the episode these Margins belong to. Check your connection and try again."
+            case "shared_article_unreadable":
+                return "Couldn’t read the article these Margins belong to. Open it in Safari and share it to Spoken Margins, then open the Margins again."
+            case "shared_item_not_in_library":
+                return "These Margins belong to an item that isn’t in your Library. Add it, then open the Margins again."
             case "shared_embedded_item_is_unavailable", "shared_package_repair_item_is_unavailable":
                 return "The item these Margins belong to isn’t available. Add it to your Library, then open the Margins again."
             case "shared_package_repair_source_did_not_match":

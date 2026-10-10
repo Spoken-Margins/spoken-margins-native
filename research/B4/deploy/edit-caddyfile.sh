@@ -20,7 +20,11 @@ refuse() { echo "edit-caddyfile: refusing: $*" >&2; exit 2; }
 [[ "${port}" =~ ^[0-9]{2,5}$ ]] || refuse "port '${port}' is not a number"
 [[ "${server_root}" =~ ^/[A-Za-z0-9/._-]+$ ]] || refuse "server root '${server_root}' is not a plain absolute path"
 
-mapfile -t lines <"${live}"
+# Keep the local deployment check usable with macOS's Bash 3.2 too.
+lines=()
+while IFS= read -r line || [[ -n "${line}" ]]; do
+  lines+=("${line}")
+done <"${live}"
 n=${#lines[@]}
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
 

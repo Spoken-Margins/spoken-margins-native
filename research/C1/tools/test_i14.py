@@ -9,6 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import i14  # noqa: E402
 import score  # noqa: E402
+import regex  # noqa: E402
 
 FIXTURE = json.loads((Path(__file__).resolve().parents[1] / "I13" / "fixture.json").read_text())
 
@@ -45,6 +46,49 @@ class ProjectionTests(unittest.TestCase):
     def test_body_math_and_headings_are_read(self):
         self.assertIn("1 Introduction", self.lines)
         self.assertTrue(any("E = mc²" in line for line in self.lines))
+
+
+def make_doc(*parts, markers=()):
+    """An I13 document from (role, text) parts; ranges count Characters (grapheme clusters)."""
+    text, segments = "", []
+    for role, part in parts:
+        if text:
+            text += "\n\n"
+        start = len(regex.findall(r"\X", text))
+        segments.append({"role": role, "range": {"start": start, "length": len(regex.findall(r"\X", part))}})
+        text += part
+    return {"text": text, "segments": segments, "markers": list(markers)}
+
+
+class ProjectionRulesOnSmallDocuments(unittest.TestCase):
+    """Cases the paper fixture can't tell apart: it has one reference segment, no back
+    matter, no equation and no figure text, and only ASCII."""
+
+    def project(self, *parts, **kwargs):
+        return i14.project(make_doc(*parts, **kwargs)).split("\n")
+
+    def test_a_run_of_references_is_announced_once_and_each_new_run_again(self):
+        lines = self.project(("body", "First."), ("reference", "Ref one."), ("reference", "Ref two."),
+                             ("reference", "Ref three."), ("body", "Second."), ("reference", "Ref four."))
+        self.assertEqual(["First.", i14.REFERENCES_SKIPPED, "Second.", i14.REFERENCES_SKIPPED], lines)
+
+    def test_a_run_of_back_matter_is_announced_once(self):
+        lines = self.project(("body", "First."), ("back_matter", "Acknowledgements."), ("back_matter", "Funding."),
+                             ("body", "Second."), ("back_matter", "Appendix."))
+        self.assertEqual(["First.", i14.BACK_MATTER_SKIPPED, "Second.", i14.BACK_MATTER_SKIPPED], lines)
+
+    def test_every_equation_is_announced_and_figure_text_is_silent(self):
+        lines = self.project(("body", "Before."), ("equation", "E = mc^2"), ("figure_text", "axis label 0 5 10"),
+                             ("equation", "a^2 + b^2 = c^2"), ("page_header", "Running head"), ("front_matter", "Dept."),
+                             ("body", "After."))
+        self.assertEqual(["Before.", i14.EQUATION, i14.EQUATION, "After."], lines)
+
+    def test_ranges_and_markers_count_characters_not_code_points(self):
+        # "Cafe" + combining acute is four Characters (five code points); the flag is one Character.
+        cafe, flag = "Cafe\u0301", "\U0001F1FA\U0001F1F8"
+        markers = [{"kind": "citation", "range": {"start": 5, "length": 3}}]  # "[3]" after "Café "
+        lines = self.project(("body", f"{cafe} [3] ok {flag}."), ("body", f"{flag} tail"), markers=markers)
+        self.assertEqual([f"{cafe} ok {flag}.", f"{flag} tail"], lines)
 
 
 class AnnouncementScoringTests(unittest.TestCase):

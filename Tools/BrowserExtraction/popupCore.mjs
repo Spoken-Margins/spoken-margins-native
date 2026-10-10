@@ -9,17 +9,34 @@ export async function activeTab(extensionAPI) {
 // Runs in the page, so it must not reference anything outside its own body.
 // On a PDF, Safari's tab document is its built-in PDF viewer, whose only text
 // is the viewer's own CSS (#658). Hand back the PDF's address instead.
+// The viewer markup counts only when it is the whole page: an article that
+// embeds a PDF among its prose is read as a page, and a page that is nothing
+// but a PDF embed hands over the embed's address, not its own (#689).
 export function invokeInjectedCapture() {
   try {
     const documentRef = globalThis.document;
     const href = String(documentRef?.location?.href || documentRef?.URL || "");
     let path = "";
     try { path = new URL(href).pathname; } catch { path = ""; }
-    const isPDF = String(documentRef?.contentType || "").toLowerCase() === "application/pdf"
-      || /\.pdf$/i.test(path)
-      || Boolean(documentRef?.querySelector?.('embed[type="application/pdf"], #annotationContainer'));
-    if (isPDF && /^https:\/\//i.test(href)) {
-      return { ok: true, pdfURL: href };
+    let pdfURL = "";
+    if (String(documentRef?.contentType || "").toLowerCase() === "application/pdf" || /\.pdf$/i.test(path)) {
+      pdfURL = href;
+    } else {
+      const nodes = Array.from(documentRef?.body?.childNodes || []);
+      const viewers = nodes.filter((node) => node.nodeType === 1
+        && Boolean(node.matches?.('embed[type="application/pdf"], #annotationContainer')));
+      const isViewerOnly = viewers.length > 0 && nodes.every((node) => viewers.includes(node)
+        || (node.nodeType === 1 && /^(style|script|link|meta|template)$/i.test(String(node.tagName || "")))
+        || node.nodeType === 8
+        || (node.nodeType === 3 && !String(node.textContent || "").trim()));
+      if (isViewerOnly) {
+        const source = viewers.find((node) => /^embed$/i.test(String(node.tagName || "")))?.getAttribute?.("src");
+        const base = /^https?:/i.test(String(documentRef?.baseURI || "")) ? String(documentRef.baseURI) : href;
+        try { pdfURL = source ? new URL(source, base).href : href; } catch { pdfURL = ""; }
+      }
+    }
+    if (/^https:\/\//i.test(pdfURL)) {
+      return { ok: true, pdfURL };
     }
     const capture = globalThis.SpokenMarginsBrowserTextCapture;
     if (!capture) {
@@ -41,6 +58,52 @@ export function invokeInjectedCapture() {
   }
 }
 
+// Safari refuses scripting.executeScript on a tab the extension has no access
+// to, such as a PDF opened straight in Safari (#1143). Trying again can't help,
+// so the popup shows this error without Try Again.
+export class TabAccessError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TabAccessError";
+    this.retryable = false;
+  }
+}
+
+export function canRetry(error) {
+  return !(error instanceof TabAccessError);
+}
+
+// Safari words it "Invalid call to scripting.executeScript(). This extension
+// does not have access to this tab." The "Invalid call" prefix alone also covers
+// other reasons (no such tab, a bad target) that Try Again may fix, so match the
+// no-access sentence only.
+const TAB_ACCESS_REFUSAL = /does not have access to this tab/i;
+
+function isTabAccessRefusal(error) {
+  const message = typeof error?.message === "string" ? error.message : String(error);
+  return TAB_ACCESS_REFUSAL.test(message);
+}
+
+// The PDF import takes https addresses only, and a PDF's path ends in .pdf.
+function pdfPathAddress(address) {
+  if (typeof address !== "string") { return null; }
+  let url;
+  try { url = new URL(address.trim()); } catch { return null; }
+  return /\.pdf$/i.test(url.pathname) ? url : null;
+}
+
+// Safari won't run the capture script here, but the tab's own address may
+// still say it is a PDF, which the app can fetch without the page.
+function recoverFromRefusedTab(tab) {
+  const pdf = pdfPathAddress(tab.url);
+  if (pdf?.protocol === "https:" && pdf.host) {
+    return { pdfURL: pdf.href };
+  }
+  throw new TabAccessError(
+    `Can’t import this ${pdf ? "PDF" : "page"} from the Safari extension. Tap Share in Safari and choose Spoken Margins.`
+  );
+}
+
 // Returns { payload } for page text, or { pdfURL } when the tab shows a PDF.
 export async function capturePage(extensionAPI) {
   const tab = await activeTab(extensionAPI);
@@ -51,6 +114,7 @@ export async function capturePage(extensionAPI) {
       files: ["browserTextCapture.js"]
     });
   } catch (error) {
+    if (isTabAccessRefusal(error)) { return recoverFromRefusedTab(tab); }
     throw new Error(`Safari could not access this page: ${error instanceof Error ? error.message : String(error)}`);
   }
 
@@ -62,6 +126,7 @@ export async function capturePage(extensionAPI) {
       args: []
     });
   } catch (error) {
+    if (isTabAccessRefusal(error)) { return recoverFromRefusedTab(tab); }
     throw new Error(`Safari could not run page capture: ${error instanceof Error ? error.message : String(error)}`);
   }
 

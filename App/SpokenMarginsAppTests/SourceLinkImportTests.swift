@@ -1488,29 +1488,6 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.integer(forKey: "mediaSkipForwardSeconds"), 45)
     }
 
-    func testStoredTranscriptWindowUsesFullShoulderAndAllowsTimestampGaps() throws {
-        let timeline = TranscriptTimeline(
-            segments: [
-                MediaTimelineSegment(id: "early", startMs: 35_000, endMs: 55_000, text: "Earlier context."),
-                MediaTimelineSegment(id: "before", startMs: 70_000, endMs: 120_000, text: "Before."),
-                MediaTimelineSegment(id: "after", startMs: 125_000, endMs: 175_000, text: "After."),
-                MediaTimelineSegment(id: "late", startMs: 200_000, endMs: 240_000, text: "Later context."),
-                MediaTimelineSegment(id: "far", startMs: 500_000, endMs: 550_000, text: "Far away.")
-            ],
-            chapters: [],
-            durationMs: 600_000
-        )
-
-        let window = try XCTUnwrap(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 123_000))
-
-        XCTAssertEqual(
-            window.segments.map(\.id),
-            ["early", "before", "after", "late"],
-            "The stored transcript should preserve the full 90-second/120-second shoulder despite normal word-timestamp gaps"
-        )
-        XCTAssertNil(Gate1AppModel.sourceContextWindow(from: timeline, anchorMediaTimeMs: 350_000))
-    }
-
     func testClipboardButtonExtractsSourceLinkURL() throws {
         #if canImport(UIKit)
         UIPasteboard.general.string = "Listen here: https://podcasts.apple.com/us/podcast/show/id123456?i=999"

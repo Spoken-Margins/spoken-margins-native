@@ -76,3 +76,36 @@ public enum LibraryRowWording {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 }
+
+/// A Library row's detail line, split so the item's length never truncates (#305 audit).
+/// The row shows `length` in its own text with room kept for it, then `rest` on the same line,
+/// which is what gives way to a long byline or status.
+public struct LibraryRowDetail: Equatable, Sendable {
+    /// "about 25 min" for a text item; nil when there's no length to show (podcasts).
+    public let length: String?
+    /// The byline, kind, listening progress and status, joined with " · ".
+    public let rest: String
+
+    public init(byline: String?, kind: String, length: String?, listening: String?, status: String?) {
+        self.length = Self.nonEmpty(length)
+        rest = [byline, kind, listening, status].compactMap(Self.nonEmpty).joined(separator: Self.separator)
+    }
+
+    /// The whole line as one string, for sizes where the row wraps instead of truncating.
+    public var fullLine: String {
+        [length, rest].compactMap(Self.nonEmpty).joined(separator: Self.separator)
+    }
+
+    /// The text that follows the length on the line: " · " and the rest, or nothing.
+    public var restAfterLength: String {
+        guard length != nil, !rest.isEmpty else { return rest }
+        return Self.separator + rest
+    }
+
+    static let separator = " · "
+
+    private static func nonEmpty(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        return value
+    }
+}

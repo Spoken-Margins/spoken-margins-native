@@ -8,7 +8,8 @@
 //     per-process secret, for rate limiting the unauthenticated endpoints.
 //   - The abuse log holds hour, install tag, reason and a count, only for
 //     over-limit installs, so the owner has something to block. It is also
-//     written at the hourly flush.
+//     written at the hourly flush. Explicit link reports also hold the
+//     reported link id and a fixed reason, never the reporter address.
 //   - Public documents (config, bridge manifest) are identical for everyone
 //     and need no attestation, so fetching them reveals nothing but "an app
 //     is running".
@@ -35,6 +36,7 @@ import (
 
 	"spokenmargins.dev/bridge/internal/appattest"
 	"spokenmargins.dev/bridge/internal/config"
+	"spokenmargins.dev/bridge/internal/links"
 	"spokenmargins.dev/bridge/internal/maps"
 	"spokenmargins.dev/bridge/internal/store"
 	"spokenmargins.dev/bridge/internal/tokens"
@@ -99,23 +101,31 @@ type Server struct {
 	// Tokens issues anonymous tokens (DESIGN.md §11). Nil answers 503.
 	Tokens *tokens.Issuer
 
+	// Links stores optional share packets; the install invitation is owner supplied.
+	Links          *links.Store
+	LinkInstallURL string
+
 	// Per-hour limits. Zero means the defaults below.
 	ChallengesPerIPPerHour  int
 	RequestsPerInstallPerHr int
 	MapUploadsPerIPPerHour  int
 
-	once          sync.Once
-	ipSecret      []byte
-	mu            sync.Mutex
-	challenges    map[string]time.Time
-	ipWindow      window
-	mapWindow     window
-	uploadSlots   chan struct{}
-	keyWindow     window
-	logMu         sync.Mutex
-	tokenQuota    dayQuota
-	requestCounts map[logKey]int
-	abuseCounts   map[abuseKey]int
+	once             sync.Once
+	ipSecret         []byte
+	mu               sync.Mutex
+	challenges       map[string]time.Time
+	ipWindow         window
+	mapWindow        window
+	linkWindow       window
+	linkReportWindow window
+	linkSlots        chan struct{}
+	linkReports      map[linkReportKey]int
+	uploadSlots      chan struct{}
+	keyWindow        window
+	logMu            sync.Mutex
+	tokenQuota       dayQuota
+	requestCounts    map[logKey]int
+	abuseCounts      map[abuseKey]int
 }
 
 func (s *Server) init() {
@@ -138,6 +148,7 @@ func (s *Server) init() {
 			s.MapUploadsPerIPPerHour = 30
 		}
 		s.uploadSlots = make(chan struct{}, maxConcurrentUploads)
+		s.linkSlots = make(chan struct{}, 1)
 	})
 }
 
@@ -172,6 +183,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+pathMapsPrefix+"{key}", s.getMap)
 	mux.HandleFunc("GET "+PathTokenKeys, s.tokensOn(s.tokenKeys))
 	mux.HandleFunc("POST "+PathTokens, s.tokensOn(s.attested(s.issueTokens)))
+	mux.HandleFunc("POST "+PathLinks, s.uploadLink)
+	mux.HandleFunc("GET /l/{id}", s.getLink)
+	mux.HandleFunc("GET /l/{id}/packet", s.getLinkPacket)
+	mux.HandleFunc("POST /l/{id}/report", s.reportLink)
 	return s.logRequests(mux)
 }
 
@@ -180,12 +195,14 @@ func (s *Server) Handler() http.Handler {
 var loggedRoutes = map[string]bool{
 	"/api/v1/health": true, PathConfig: true, PathManifest: true,
 	"/api/v1/attest/challenge": true, "/api/v1/attest/register": true, "/api/v1/ping": true,
-	PathMapTranscripts: true, PathTokens: true, PathTokenKeys: true,
+	PathLinks: true, PathMapTranscripts: true, PathTokens: true, PathTokenKeys: true,
 }
 
 // logRoute is the route name the request log may record for path.
 func logRoute(path string) string {
 	switch {
+	case isLinkRoute(path):
+		return routeLinks
 	case loggedRoutes[path]:
 		return path
 	case strings.HasPrefix(path, pathMapsPrefix):
@@ -249,8 +266,8 @@ func (s *Server) countAbuse(k abuseKey) {
 // say when a particular request happened.
 func (s *Server) Flush() error {
 	s.logMu.Lock()
-	requests, abuse := s.requestCounts, s.abuseCounts
-	s.requestCounts, s.abuseCounts = nil, nil
+	requests, abuse, reports := s.requestCounts, s.abuseCounts, s.linkReports
+	s.requestCounts, s.abuseCounts, s.linkReports = nil, nil, nil
 	s.logMu.Unlock()
 	for k, n := range requests {
 		s.writeLine(s.RequestLog, map[string]any{
@@ -260,6 +277,9 @@ func (s *Server) Flush() error {
 	}
 	for k, n := range abuse {
 		s.writeLine(s.AbuseLog, map[string]any{"hour": k.hour, "tag": k.tag, "reason": k.reason, "count": n})
+	}
+	for k, n := range reports {
+		s.writeLine(s.AbuseLog, map[string]any{"hour": k.hour, "id": k.id, "reason": k.reason, "count": n})
 	}
 	return s.Store.Flush()
 }

@@ -5,7 +5,7 @@ launchd runs this every 10 minutes with no arguments (a "tick"). A tick never wa
 it reads the Dial, Codex usage, free disk and the live slots, and when a slot is free and
 pacing allows it spawns ONE detached child (`--slot N --pr M` or `--issue M`) and exits.
 
-PR finishing goes first: needs-mac, a code lane FAIL, or Codex audit findings on the head.
+PR finishing goes first: needs-mac, a code lane FAIL, or audit findings on the head.
 Drafts and forks are excluded; lane changes qualify only for audit findings. At most two
 finishing rounds per PR per 24 h. The child disarms
 automerge, merges next without rewriting history, runs Codex and the host fast plan, and
@@ -26,6 +26,16 @@ Holds (every slip fails toward spending less):
   pacing ticks, use the Dial's stop line and Codex's reset.
 - The usage read fails, or no stop line is ticked.
 - Less than 30 GiB free disk.
+
+Freeze (#902): the Dial's `**Codex focus**` group names the frozen milestone
+(`- [x] Solid Ground`) or lifts it (`- [x] None`). Without that group, or with no box
+ticked, FOCUS_MILESTONE applies (SM_CODEX_FOCUS_MILESTONE, default 'Listening Baseline'). During a freeze:
+- issues: the milestone's first; outside it, only issues whose Likely files are all outside
+  App/, Packages/ and Contracts/. Anything unclear is skipped with the reason.
+- PRs: finished only when linked to a milestone issue (by branch, title or body) or when their
+  diff stays out of app code. A PR gets `automerge`, on opening or after finishing, only on the
+  same rule; otherwise it is left unarmed with a one-line note.
+If the milestone can't be read, a tick holds and a child treats every issue as outside it.
 
 Usage:
   /usr/bin/python3 ops/codex/sm_codex_worker.py [--dry-run]
@@ -52,6 +62,9 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 from zoneinfo import ZoneInfo
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from ledger import usage
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -80,7 +93,10 @@ CODEX_STOPS = (70, 80, 90, 97)
 CODEX_FINISHES = {'Fri noon': (4, 12), 'Sat 7 AM': (5, 7), 'Codex reset': None}
 CLAIM_WINDOW = dt.timedelta(hours=24)
 
-EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked'}
+EXCLUDED_LABELS = {'in-progress', 'where:mac', 'regression', 'blocked',
+                   'status: needs-human-validation'}  # a fix already merged; it waits on the owner's phone
+# Only this milestone's issues and their PRs while it is set; '' lifts it.
+FOCUS_MILESTONE = os.environ.get('SM_CODEX_FOCUS_MILESTONE', 'Listening Baseline')
 CLAIM_MARK = 'Claimed by project thread "'
 # Issues whose body points at SessionKit or host tests go first: Codex can verify those itself.
 HOST_HINT_RE = re.compile(
@@ -190,11 +206,48 @@ def codex_pacing(body: str, shared_stop: Optional[int]) -> dict:
             'problems': problems}
 
 
+NO_FOCUS_WORDS = ('none', 'off', 'no freeze')
+
+
+def parse_codex_focus(body: str) -> tuple[Optional[str], list[str]]:
+    """The `**Codex focus**` group: the ticked milestone, '' for None, or None (with a problem
+    when the group is there) when FOCUS_MILESTONE should apply. A milestone beats None."""
+    current, found, ticked = None, False, []
+    for line in body.splitlines():
+        heading = re.match(r'\s*\*\*(.+?)\*\*', line)
+        if heading and not line.lstrip().startswith('-'):
+            current = heading.group(1).strip().lower()
+            found = found or current.startswith('codex focus')
+            continue
+        if line.strip() == '---':
+            current = None
+            continue
+        box = re.match(r'\s*[-*]\s*\[([ xX])\]\s*(.+)', line)
+        if box and current and current.startswith('codex focus') and box.group(1).lower() == 'x':
+            # "Solid Ground (only its issues ...)" -> "Solid Ground"
+            ticked.append(re.split(r'\s+\(|\s+[—–-]\s+', box.group(2), maxsplit=1)[0].strip())
+    if not found:
+        return None, []
+    milestones = [t for t in ticked if t and t.lower() not in NO_FOCUS_WORDS]
+    if not ticked:
+        return None, [f'no Codex focus box is ticked, so it uses {FOCUS_MILESTONE or "no focus"}']
+    if not milestones:
+        return '', []
+    problems = []
+    if len(ticked) > 1:
+        problems.append(f'{len(ticked)} Codex focus boxes are ticked, so it uses {milestones[0]}')
+    return milestones[0], problems
+
+
 def read_dial(body: str, parse_dial: Optional[Callable[[str], dict]]) -> dict:
-    """Mode, workers, Codex pacing targets and problems. Unreadable means zero workers."""
+    """Mode, workers, Codex pacing targets, focus milestone and problems. Unreadable means zero
+    workers; the focus then falls back to FOCUS_MILESTONE."""
     workers, problems = parse_codex_workers(body)
+    focus, focus_problems = parse_codex_focus(body)
+    problems += focus_problems
+    focus = FOCUS_MILESTONE if focus is None else focus
     off = {'mode': 'off', 'stop': None, 'stop_source': 'Dial Stop line',
-           'finish_by': ('Codex reset',), 'workers': 0}
+           'finish_by': ('Codex reset',), 'workers': 0, 'focus': focus}
     if parse_dial is None:
         return {**off,
                 'problems': problems + ['ops/dial/dial_gate.py could not be imported, so it reads Off']}
@@ -207,7 +260,8 @@ def read_dial(body: str, parse_dial: Optional[Callable[[str], dict]]) -> dict:
     if mode == 'off':
         workers = 0
     pacing = codex_pacing(body, stop)
-    return {**pacing, 'mode': mode, 'workers': workers, 'problems': problems + pacing['problems']}
+    return {**pacing, 'mode': mode, 'workers': workers, 'focus': focus,
+            'problems': problems + pacing['problems']}
 
 
 # ---------------------------------------------------------------------------
@@ -366,6 +420,92 @@ def label_skip(issue: dict, held: set = frozenset()) -> Optional[str]:
     return None
 
 
+BRANCH_ISSUE_RE = re.compile(r'^(?:ws|codex|claude)/(\d+)-')
+TITLE_ISSUE_RE = re.compile(r'\(#(\d+)\)')
+BODY_ISSUE_RE = re.compile(r'\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?|part of)\s+#(\d+)', re.I)
+
+
+def linked_issues(pr: dict) -> set:
+    """Issue numbers a PR works on: its `ws/<n>-` style branch, `(#n)` in the title, closing words in the body."""
+    found = set()
+    branch = BRANCH_ISSUE_RE.match(pr.get('headRefName') or '')
+    if branch:
+        found.add(int(branch.group(1)))
+    found.update(int(n) for n in TITLE_ISSUE_RE.findall(pr.get('title') or ''))
+    found.update(int(n) for n in BODY_ISSUE_RE.findall(pr.get('body') or ''))
+    return found
+
+
+def in_focus(pr: dict, focus: Optional[set]) -> bool:
+    return focus is None or bool(linked_issues(pr) & focus)
+
+
+# The freeze (AGENTS.md, PR #894) lets automerge through only for the milestone or diffs outside these.
+APP_ROOTS = ('App/', 'Packages/', 'Contracts/')
+GH_FILES_CAP = 100  # gh lists at most this many files per PR; a longer list may hide app files
+# The section runs to the next bold or heading line, or a blank line that isn't followed by more list items.
+LIKELY_FILES_RE = re.compile(r'Likely files\W*?[:.]?\**[ \t]*(.*?)'
+                             r'(?:\n[ \t]*\n(?![ \t]*(?:[-*+]|\d+[.)])[ \t])|\n[ \t]*(?:\*\*|#)|\Z)', re.I | re.S)
+PATHISH_RE = re.compile(r'[\w.*-]+(?:/[\w.*-]*)+|[\w*-]+\.[A-Za-z][\w]*')
+
+
+def app_paths(paths) -> list:
+    return [p for p in paths if p.startswith(APP_ROOTS)]
+
+
+def app_code_risk(issue: dict, repo_root: Path = REPO_ROOT) -> Optional[str]:
+    """Why this issue's work might touch App/, Packages/ or Contracts/, or None when its
+    Likely files are all clearly outside them. Unclear counts as a risk."""
+    m = LIKELY_FILES_RE.search(issue.get('body') or '')
+    if not m:
+        return 'no Likely files, so it may touch app code'
+    tokens = [t.strip('`,;:()[]').rstrip('.') for t in PATHISH_RE.findall(m.group(1))]
+    paths = [t[2:] if t.startswith('./') else t for t in tokens if t]
+    if not paths:
+        return 'its Likely files name no paths, so it may touch app code'
+    app = app_paths(paths)
+    if app:
+        return f'its Likely files include app code ({app[0]})'
+    loose = [p for p in paths if '/' not in p and not (repo_root / p).is_file()]
+    if loose:
+        return f'its Likely files name `{loose[0]}` without a folder, so it may touch app code'
+    unknown = [p for p in paths if '/' in p and not (repo_root / p.split('/')[0]).is_dir()]
+    if unknown:
+        return f'its Likely files name `{unknown[0]}`, which is not under a top-level folder, so it may touch app code'
+    return None
+
+
+def diff_is_app_free(paths: list, complete: bool = True) -> bool:
+    return complete and not app_paths(paths)
+
+
+def pr_paths(pr: dict) -> tuple[list, bool]:
+    """(changed paths, whether the list is complete)."""
+    files = pr.get('files') or []
+    paths = [f.get('path') or '' for f in files]
+    total = pr.get('changedFiles')
+    complete = len(files) < GH_FILES_CAP and (total is None or total <= len(files))
+    return paths, complete
+
+
+def freeze_allows(pr: dict, focus: Optional[set], paths: Optional[list] = None) -> bool:
+    """During a freeze, only milestone PRs and diffs outside app code may be armed or finished.
+    A body's "part of #n" doesn't count: the PR may only touch the milestone issue in passing."""
+    links = linked_issues(dict(pr, body=re.sub(r'(?i)\bpart of\s+#\d+', '', pr.get('body') or '')))
+    if focus is None or links & focus:
+        return True
+    if paths is not None:
+        return diff_is_app_free(paths)
+    return diff_is_app_free(*pr_paths(pr))
+
+
+def unarmed_note(milestone: str, paths: list) -> str:
+    app = app_paths(paths)
+    shown = ', '.join(f'`{p}`' for p in app[:3]) + (' and more' if len(app) > 3 else '')
+    return (f'Left without `automerge`: the {milestone} freeze is on, this PR is not linked to a '
+            f'{milestone} issue, and its diff touches app code ({shown or "file list incomplete"}).')
+
+
 def recent_claim(comments: list, now: dt.datetime) -> bool:
     for c in comments or []:
         if CLAIM_MARK not in (c.get('body') or ''):
@@ -420,7 +560,7 @@ _scope = importlib.util.module_from_spec(_scope_spec)
 _scope_spec.loader.exec_module(_scope)
 LANE_REPORT_RE = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)\b')
 FINISH_MARK_RE = re.compile(r'Thread "Codex worker \d+" finishing #\d+')
-AUDIT_REPORT_RE = re.compile(r'^\*\*Codex audit \(Astra\) on `([0-9a-f]{7,40})`\*\*\s*$')
+AUDIT_REPORT_RE = re.compile(r'^\*\*(?:Codex audit \(Astra\)|Claude audit) on `([0-9a-f]{7,40})`\*\*\s*$')
 MAX_FINISH_ROUNDS = 2
 FINISH_LIMIT_REASON = 'two finishing rounds in the last 24 h; leaving this PR for a human'
 FINISH_LIMIT_MARK = 'Codex finisher round limit reached.'
@@ -464,7 +604,7 @@ def failing_head_report(pr: dict) -> Optional[dict]:
 
 
 def audit_findings_on_head(pr: dict) -> Optional[dict]:
-    """Newest Astra audit only: its header must name the head and its verdict must not be clean."""
+    """Newest headless Codex or Claude audit only: its header must name the head and its verdict must not be clean."""
     reports = [c for c in pr.get('comments') or []
                if AUDIT_REPORT_RE.match((c.get('body') or '').strip().split('\n', 1)[0])]
     report = max(reports, key=comment_time, default=None)
@@ -527,9 +667,9 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
             return False, FINISH_LIMIT_REASON
         if claimed_by_other_finisher(pr.get('comments') or [], now):
             return False, OTHER_FINISHER_REASON
-        return True, ('Codex audit findings on head' if audit else
+        return True, ('audit findings on head' if audit else
                       'needs-mac' if 'needs-mac' in label_names(pr) else 'lane FAIL on head')
-    return False, 'no needs-mac, code failure or Codex audit findings on head'
+    return False, 'no needs-mac, code failure or audit findings on head'
 
 
 def choose_finish(prs: list, details_for: Callable[[int], dict], now: dt.datetime,
@@ -579,6 +719,14 @@ def claim_text(slot: int, now: dt.datetime) -> str:
 
 def stop_text(slot: int, result: str, reason: str) -> str:
     return f'Thread "Codex worker {slot}" stopping: {result} · {reason}'
+
+
+def issue_trigger(issue: dict) -> dict:
+    stops = [c for c in issue.get('comments') or [] if re.match(
+        r'^Thread "Codex worker \d+" stopping:', c.get('body') or '')]
+    previous = max(stops, key=comment_time, default=None)
+    return {'trigger': 'retry after ' + previous['body'][:600] if previous else 'new ready issue',
+            'trigger_comment': previous.get('url') if previous else None}
 
 
 def build_prompt(number: int, title: str, body: str) -> str:
@@ -676,7 +824,7 @@ def default_run(cmd: list, cwd: Optional[Path] = None, timeout: Optional[float] 
 
 def codex_command(worktree: Path, answer: Path, prompt: str) -> list:
     roots = json.dumps([str(p) for p in SANDBOX_WRITABLE_ROOTS])  # a JSON string list is a TOML array
-    return [CODEX, 'exec', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
+    return [CODEX, 'exec', '--json', '-m', MODEL, '-c', f'model_reasoning_effort="{EFFORT}"',
             '-s', 'workspace-write', '-c', f'sandbox_workspace_write.writable_roots={roots}',
             '-C', str(worktree), '-o', str(answer), prompt]
 
@@ -750,11 +898,13 @@ class Ops:
                  run: Callable = default_run, codex: Callable = default_codex,
                  limits: Callable = read_codex_limits, now: Callable = now_utc,
                  alive: Callable = pid_alive, free_bytes: Optional[Callable] = None,
-                 echo: bool = True):
+                 echo: bool = True, ledger_dir: Optional[Path] = None):
         self.home, self.repo_root = home, repo_root
         self.run, self.codex, self.limits, self.now, self.alive = run, codex, limits, now, alive
         self.free_bytes = free_bytes or (lambda: shutil.disk_usage(str(Path.home())).free)
         self.echo = echo
+        self.ledger_dir = ledger_dir or (usage.DEFAULT_DIR if home.parent == Path.home() / 'SpokenMarginsOps'
+                                         else home / 'ledger')
 
     def log(self, msg: str) -> None:
         line = f"{dt.datetime.now().astimezone().isoformat(timespec='seconds')} {msg}"
@@ -784,17 +934,43 @@ class Ops:
         return self.gh_json(['issue', 'view', str(number), '-R', REPO,
                              '--json', 'number,title,body,labels,state,createdAt,comments'])
 
-    def open_prs(self) -> list:
+    def open_prs(self, with_files: bool = False) -> list:
+        fields = 'number,isDraft,createdAt,title,headRefName,body' + (',files,changedFiles' if with_files else '')
         return self.gh_json(['pr', 'list', '-R', REPO, '--state', 'open', '--base', BASE_BRANCH,
-                             '--limit', '200', '--json', 'number,isDraft,createdAt'])
+                             '--limit', '200', '--json', fields])
+
+    def focus_issues(self, milestone: str) -> Optional[set]:
+        """Open issue numbers in the milestone, or None when no focus is set. Raises if unreadable."""
+        if not milestone:
+            return None
+        return {i['number'] for i in self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
+                                                   '--milestone', milestone, '--limit', '200',
+                                                   '--json', 'number'])}
+
+    def freeze(self) -> tuple[str, Optional[set]]:
+        """(milestone, its open issues) for a child. A Dial read error falls back to FOCUS_MILESTONE;
+        an unreadable milestone counts as empty, so only diffs outside app code are armed."""
+        try:
+            milestone, _ = parse_codex_focus(self.dial_body())
+            milestone = FOCUS_MILESTONE if milestone is None else milestone
+        except Exception as exc:
+            self.log(f'Dial read failed ({exc}); freeze falls back to {FOCUS_MILESTONE or "none"}')
+            milestone = FOCUS_MILESTONE
+        try:
+            return milestone, self.focus_issues(milestone)
+        except Exception as exc:
+            self.log(f'{milestone} milestone read failed ({exc}); treating every issue as outside it')
+            return milestone, set()
 
     def pull(self, number: int) -> dict:
         return self.gh_json(['pr', 'view', str(number), '-R', REPO, '--json',
                              'number,title,body,labels,state,isDraft,baseRefName,headRefName,headRefOid,'
                              'headRepository,headRepositoryOwner,isCrossRepository,files,comments,createdAt'])
 
-    def comment(self, number: int, body: str) -> None:
-        self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
+    def comment(self, number: int, body: str) -> Optional[str]:
+        res = self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
+        match = re.search(r'https://\S+#issuecomment-\d+', res.stdout or '')
+        return match.group(0) if match else None
 
     def label(self, number: int, add: Optional[str] = None, remove: Optional[str] = None) -> None:
         cmd = ['gh', 'issue', 'edit', str(number), '-R', REPO]
@@ -853,7 +1029,8 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
         finish = f"{label} ({utc_stamp(dt.datetime.fromtimestamp(finish_ts, dt.timezone.utc))})"
     else:
         finish = ' / '.join(dial['finish_by']) + ' (time unavailable without usage window)'
-    say(f"Dial: mode {dial['mode']}, {stop}, finish by {finish}, Codex workers {dial['workers']}")
+    say(f"Dial: mode {dial['mode']}, {stop}, finish by {finish}, Codex workers {dial['workers']}, "
+        f"freeze {dial['focus'] or 'none'}")
     for p in dial['problems']:
         say(f'  note: {p}')
     if dry_run:
@@ -889,13 +1066,33 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
     if decision['why'] is None or dry_run:
         try:
             held_prs = {int(i['pr']) for i in live.values() if i.get('pr')}
-            pr, skipped = choose_finish(ops.open_prs(), ops.pull, now, held_prs,
+            focus = ops.focus_issues(dial['focus'])
+            prs = [p for p in ops.open_prs(with_files=focus is not None) if freeze_allows(p, focus)]
+            pr, skipped = choose_finish(prs, ops.pull, now, held_prs,
                                        on_limit=None if dry_run else lambda p: note_finish_limit(ops, p, now))
             held = {int(i.get('issue')) for i in live.values() if i.get('issue')}
             if pr is None:
-                issue, issue_skipped = choose_issue(ops.ready_issues(), lambda n: ops.issue(n).get('comments') or [],
-                                                    now, held)
+                comments = lambda n: ops.issue(n).get('comments') or []
+                ready = ops.ready_issues()
+                inside = [i for i in ready if focus is None or i['number'] in focus]
+                issue, issue_skipped = choose_issue(inside, comments, now, held)
                 skipped += issue_skipped
+                if issue is None and focus is not None:
+                    outside, risky = [], []
+                    for i in ready:
+                        if i['number'] in focus:
+                            continue
+                        why = app_code_risk(i, ops.repo_root)
+                        if why:
+                            risky.append((i['number'], f"outside {dial['focus']}: {why}"))
+                        else:
+                            outside.append(i)
+                    issue, issue_skipped = choose_issue(outside, comments, now, held)
+                    skipped += issue_skipped + risky
+                    if risky and not dry_run:
+                        ops.log(f"freeze {dial['focus']}: skipped {len(risky)} ready issues outside it that "
+                                'may touch app code: ' + ', '.join(f'#{n}' for n, _ in risky[:20])
+                                + (' ...' if len(risky) > 20 else ''))
             decision['pr'] = pr['number'] if pr else None
             decision['issue'] = issue['number'] if issue else None
             if dry_run:
@@ -907,7 +1104,8 @@ def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> d
             if decision['why'] is None:
                 decision['why'] = f'listing jobs failed ({exc})'
         if decision['why'] is None and issue is None and pr is None:
-            decision['why'] = 'no eligible ready issue'
+            decision['why'] = ('no eligible ready issue' if not dial['focus']
+                               else f"no eligible issue or PR under the {dial['focus']} freeze")
 
     if decision['why']:
         say(f"{tag}idle: {decision['why']}")
@@ -992,6 +1190,14 @@ def check_staged_changes(ops: Ops, wt: Path) -> None:
               '-indent-with-non-tab,-tab-in-indent', 'diff', '--cached', '--check'], cwd=wt)
 
 
+def branch_paths(ops: Ops, wt: Path) -> list:
+    """Files the PR changes: HEAD against its merge base with origin/next. --no-renames lists both
+    sides of a move, so moving a file out of App/ still counts as touching App/."""
+    out = ops.must(['git', 'diff', '--name-only', '--no-renames', f'origin/{BASE_BRANCH}...HEAD'],
+                   cwd=wt).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
 def run_fast_plan(ops: Ops, wt: Path, run_dir: Path) -> Result:
     """The wrapper's own --plan fast in the worktree, its evidence written to the run folder.
 
@@ -1061,14 +1267,23 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
     thread = f'Codex worker {slot}'
     claimed = stopped = wt_added = False
     branch = None
+    usage_run = None
 
     def stop(result: str, reason: str, keep_label: bool = False) -> None:
         # Best effort on both: a failed comment must not leave the issue labelled in-progress.
         nonlocal stopped
         stopped = True
+        if usage_run:
+            kind = ('stop note' if not result.startswith('PR #') else
+                    'PR not armed' if result.endswith('unarmed') else 'PR armed')
+            usage_run.checkpoint(outcome={'kind': kind,
+                                          'reason': reason, 'result': result,
+                                          'signature': usage.signature(result + ': ' + reason)})
         ops.log(f'#{number} slot {slot}: stopping: {result} · {reason}')
         try:
-            ops.comment(number, stop_text(slot, result, reason))
+            url = ops.comment(number, stop_text(slot, result, reason))
+            if usage_run:
+                usage_run.checkpoint(comment_url=url)
         except Exception as exc:
             ops.log(f'#{number} slot {slot}: could not post the stop note: {exc}')
         if not keep_label:
@@ -1106,7 +1321,15 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
 
         t0 = time.time()
         prompt = build_prompt(number, issue.get('title') or '', issue.get('body') or '')
-        codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.txt')
+        base_sha = usage.git_sha(ops.run, wt, f'origin/{BASE_BRANCH}', ops.log)
+        usage_run = usage.Run(ops.ledger_dir, 'issue', MODEL, EFFORT, run_dir / 'transcript.jsonl',
+                              targets=[{'pr': None, 'issues': [number], 'head_sha': base_sha,
+                                        'base_sha': base_sha, **issue_trigger(issue)}], log=ops.log)
+        try:
+            codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.jsonl')
+        finally:
+            usage_run.model_finished()
+        usage_run.checkpoint(model_result={'ok': codex_ok, 'reason': codex_why})
         ops.log(f'#{number} slot {slot}: Codex finished in {int(time.time() - t0) // 60} min: {codex_why}')
 
         changes = ops.run(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
@@ -1148,10 +1371,26 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
         body_file = run_dir / 'pr-body.md'
         body_file.write_text(pr_body(raw_body, number, slot))
         title = msg_file.read_text().splitlines()[0].strip()[:120]
+        milestone, focus = ops.freeze()
+        paths = branch_paths(ops, wt)
+        armed = focus is None or number in focus or diff_is_app_free(paths)
         created = ops.must(['gh', 'pr', 'create', '-R', REPO, '--base', BASE_BRANCH, '--head', branch,
-                            '--title', title, '--body-file', str(body_file), '--label', 'automerge'], cwd=wt)
+                            '--title', title, '--body-file', str(body_file)]
+                           + (['--label', 'automerge'] if armed else []), cwd=wt)
         m = re.search(r'/pull/(\d+)', created.stdout or '')
         pr = m.group(1) if m else '?'
+        if m:
+            usage_run.row['targets'][0]['pr'] = int(pr)
+        usage_run.checkpoint(result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
+        if not armed:
+            note = unarmed_note(milestone, paths)
+            if m:
+                try:
+                    ops.comment(int(pr), note)
+                except Exception as exc:
+                    ops.log(f'PR #{pr}: could not post the unarmed note: {exc}')
+            stop(f'PR #{pr} opened unarmed', note, keep_label=True)
+            return 'pr-unarmed'
         stop(f'PR #{pr} armed', 'done', keep_label=True)
         return 'pr'
     except Exception as exc:
@@ -1160,6 +1399,8 @@ def run_child(ops: Ops, slot: int, number: int) -> str:
             stop('none', f'wrapper error: {str(exc)[:200]}')
         return 'error'
     finally:
+        if usage_run:
+            usage_run.finish()
         if wt_added:
             ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
         if branch:
@@ -1184,8 +1425,12 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
     run_dir = ops.home / 'runs' / f"pr-{number}-{now.strftime('%Y%m%dT%H%M%SZ')}"
     claimed = wt_added = False
     original_labels = set()
+    usage_run = None
 
     def stop(reason: str) -> None:
+        if usage_run:
+            usage_run.checkpoint(outcome={'kind': 'stop note', 'reason': reason,
+                                          'signature': usage.signature(reason)})
         # Keep every original label except automerge, even if arming failed partway through.
         try:
             ops.label(number, remove='automerge')
@@ -1197,7 +1442,9 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         except Exception as exc:
             ops.log(f'PR #{number}: could not restore stop labels: {exc}')
         try:
-            ops.comment(number, stop_text(slot, 'PR not armed', reason[:500]))
+            url = ops.comment(number, stop_text(slot, 'PR not armed', reason[:500]))
+            if usage_run:
+                usage_run.checkpoint(comment_url=url)
         except Exception as exc:
             ops.log(f'PR #{number}: could not post stop note: {exc}')
 
@@ -1239,17 +1486,20 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         report = failing_head_report(pr) or newest_lane_report(pr.get('comments') or [])
         report_text = report['body'] if report else '(no lane report)'
         audit = audit_findings_on_head(pr)
-        audit_text = audit['body'] if audit else '(no Codex audit findings on head)'
+        audit_text = audit['body'] if audit else '(no audit findings on head)'
         summary = '\n'.join(line for line in report_text.splitlines()
                             if 'evidence:' in line or 'observed:' in line or line.startswith('ran:'))
         summary += f'\nMerge next output:\n{merge.stdout}\n{merge.stderr}\nConflicts:\n{conflicts or "none"}'
         context = (f"Finish PR #{number}: {pr['title']}\n\n{pr.get('body') or ''}\n\n"
                    f'Lane report:\n{report_text}\n\nEvidence summary:\n{summary}\n\n'
-                   f'Codex audit findings:\n{audit_text}\n\n'
+                   f'audit findings:\n{audit_text}\n\n'
                    'For each audit finding, fix it with a regression test that you run first to show '
                    'it fails without the fix, or explain with evidence why the finding is wrong in '
                    '.codex-out/pr-body.md. The wrapper posts that explanation as a PR comment, even '
                    'if no code change is needed. Do not post comments yourself. '
+                   'For a matching, sanitizing or page/title parsing finding, write a table of neighbouring inputs before fixing: '
+                   'case, whitespace, Unicode normalization, punctuation, empty, very long, '
+                   'the same item from another source, and lookalike items. Fix every row that fails in the same commit. '
                    'Fix the reported code failure or resolve the merge conflicts. The wrapper has merged '
                    'origin/next with --no-commit; leave resolved files uncommitted. Do not run git merge, '
                    'rebase, reset, push, or change labels. Explain the cause and fix in the output files.')
@@ -1259,7 +1509,20 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
                 'Issue body:', 'PR context:', 1)
         out = wt / OUT_DIR_NAME
         out.mkdir(exist_ok=True)
-        codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.txt')
+        base_sha = usage.git_sha(ops.run, wt, f'origin/{BASE_BRANCH}', ops.log)
+        round_number = recent_finish_rounds(pr.get('comments') or [], now) + 1
+        usage_run = usage.Run(ops.ledger_dir, 'finisher', MODEL, EFFORT, run_dir / 'transcript.jsonl',
+                              targets=[{'pr': number, 'issues': [int(n) for n in re.findall(
+                                  r'(?i)\b(?:closes|fixes|resolves)\s+#(\d+)', pr.get('body') or '')],
+                                        'head_sha': head, 'base_sha': base_sha,
+                                        'trigger': f'finisher round {round_number}: ' +
+                                        ('audit findings' if audit else 'lane failure or needs-mac'),
+                                        'trigger_comment': (audit or report or {}).get('url')}], log=ops.log)
+        try:
+            codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.jsonl')
+        finally:
+            usage_run.model_finished()
+        usage_run.checkpoint(model_result={'ok': codex_ok, 'reason': codex_why})
         changes = ops.must(['git', 'status', '--porcelain', '--', '.', f':(exclude){OUT_DIR_NAME}'], cwd=wt).stdout
         if changes.strip():
             kept, why = save_or_keep(ops, wt, run_dir / 'codex.diff', run_dir.name)
@@ -1294,7 +1557,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         raw_msg = (out / 'commit-msg.txt').read_text(errors='replace') if (out / 'commit-msg.txt').exists() else ''
         if not raw_msg.strip() or not (out / 'pr-body.md').exists():
             raise RuntimeError('Codex did not leave a cause/fix and change summary; no push')
-        subject = (f'Address Codex audit findings on #{number}' if audit else
+        subject = (f'Address audit findings on #{number}' if audit else
                    f'Fix lane FAIL on #{number}' if failing_head_report(pr) else 'Merge next and resolve conflicts')
         msg = run_dir / 'commit-msg.txt'
         msg.write_text(commit_message(f'{subject}\n\n{raw_msg.strip()}', number, pr['title']))
@@ -1311,14 +1574,26 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
         # No force options, no ref rewrite. A concurrent author's push makes this fail normally.
         ops.must(['git', 'push', '--quiet', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt, timeout=600)
         summary = (out / 'pr-body.md').read_text(errors='replace').strip()
-        ops.comment(number, f'Thread "Codex worker {slot}" finished #{number}.\n\n{summary}\n\n'
-                    'Wrapper --plan fast passed. No simulator or device check.')
+        url = ops.comment(number, f'Thread "Codex worker {slot}" finished #{number}.\n\n{summary}\n\n'
+                          'Wrapper --plan fast passed. No simulator or device check.')
+        usage_run.checkpoint(comment_url=url)
         ops.label(number, remove='needs-mac')
         # Queue T3 before arming so an automerge run sees the pending request immediately.
         if request:
             ops.comment(number, request)
             ops.label(number, add='lane:queued')
+        milestone, focus = ops.freeze()
+        paths = branch_paths(ops, wt)
+        if not freeze_allows(fresh, focus, paths):
+            note = unarmed_note(milestone, paths)
+            ops.comment(number, note)
+            usage_run.checkpoint(outcome={'kind': 'PR not armed', 'reason': note,
+                                          'signature': usage.signature(note)},
+                                 result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
+            return 'finished-unarmed'
         ops.label(number, add='automerge')
+        usage_run.checkpoint(outcome={'kind': 'PR armed', 'signature': usage.signature(summary)},
+                             result_head_sha=usage.git_sha(ops.run, wt, 'HEAD', ops.log))
         return 'finished'
     except Exception as exc:
         ops.log(f'PR #{number} slot {slot}: wrapper error: {exc}')
@@ -1326,6 +1601,8 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
             stop(f'wrapper error: {exc}')
         return 'error'
     finally:
+        if usage_run:
+            usage_run.finish()
         if wt_added:
             ops.run(['git', 'worktree', 'remove', '--force', str(wt)], cwd=ops.repo_root)
         try:
@@ -1348,6 +1625,8 @@ def main(argv: Optional[list] = None) -> int:
     ap.add_argument('--pr', type=int, help='(child) PR to finish')
     args = ap.parse_args(argv)
     ops = Ops()
+    if not args.dry_run:
+        usage.recover(ops.ledger_dir, ops.log)
 
     if args.slot is not None or args.issue is not None or args.pr is not None:
         if args.slot is None or (args.issue is None) == (args.pr is None):

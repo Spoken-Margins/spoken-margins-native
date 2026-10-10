@@ -236,23 +236,34 @@ func transcribeLongFormSpeechFile(at url: URL) async throws -> [LongFormSpeechPa
         throw SessionKitError.persistenceFailed("long_form_audio_file_unreadable")
     }
 
-    async let passages = collectLongFormSpeechPassages(from: transcriber)
     let analyzer = SpeechAnalyzer(modules: [transcriber])
-    do {
-        if let lastSample = try await analyzer.analyzeSequence(from: audioFile) {
-            try await analyzer.finalizeAndFinish(through: lastSample)
-        } else {
+    // A cancelled task must stop the analyzer however far it got: the queue's timeout cancels this task, and the slot
+    // comes back only once this function returns (#1037). `analyzeSequence` can return while recognition still runs,
+    // so the handler covers finalization and the wait for results too. `downloadAndInstall()` above relies on Swift
+    // cancellation alone.
+    return try await withTaskCancellationHandler {
+        async let passages = collectLongFormSpeechPassages(from: transcriber)
+        do {
+            let analyzedThrough = try await analyzer.analyzeSequence(from: audioFile)
+            try Task.checkCancellation()
+            if let lastSample = analyzedThrough {
+                try await analyzer.finalizeAndFinish(through: lastSample)
+            } else {
+                await analyzer.cancelAndFinishNow()
+            }
+            let completed = try await passages
+            try Task.checkCancellation()
+            guard !completed.isEmpty else {
+                throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
+            }
+            return completed
+        } catch {
             await analyzer.cancelAndFinishNow()
+            _ = try? await passages
+            throw error
         }
-        let completed = try await passages
-        guard !completed.isEmpty else {
-            throw SessionKitError.persistenceFailed("long_form_speech_transcript_empty")
-        }
-        return completed
-    } catch {
-        await analyzer.cancelAndFinishNow()
-        _ = try? await passages
-        throw error
+    } onCancel: {
+        Task { await analyzer.cancelAndFinishNow() }
     }
 }
 
@@ -835,6 +846,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     private weak var activeUtterance: AVSpeechUtterance?
     private var chunksByUtteranceId: [ObjectIdentifier: SpeechPlaybackChunk] = [:]
     private var finalUtteranceId: ObjectIdentifier?
+    /// Hands a narration utterance to the synthesizer. Tests replace it to keep the synthesizer and
+    /// the utterance, then deliver the delegate callbacks themselves (#1129).
+    var speakNarration: (AVSpeechSynthesizer, AVSpeechUtterance) -> Void = { $0.speak($1) }
     #endif
 
     public override init() {
@@ -954,7 +968,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             let identifier = ObjectIdentifier(utterance)
             chunksByUtteranceId[identifier] = chunk
             finalUtteranceId = identifier
-            synthesizer.speak(utterance)
+            speakNarration(synthesizer, utterance)
         }
         #else
         if preparedSpeechText.isEmpty {
@@ -1054,6 +1068,17 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
         let restartOffset = currentOffset ?? lastStartOffset
         try play(targetId: targetId, from: restartOffset)
         #endif
+    }
+
+    /// The client's own intent for `playback.state` diagnostics (#1109), in the words the on-device voice
+    /// client uses: `paused` after a pause that stopped speech, `playing` while speech is queued or
+    /// spoken, otherwise `stopped`.
+    public var diagnosticIntent: String {
+        if paused { return "paused" }
+        #if canImport(AVFoundation)
+        if synthesizer.isSpeaking || !chunksByUtteranceId.isEmpty { return "playing" }
+        #endif
+        return "stopped"
     }
 
     public func currentCharOffset() -> Int? {
@@ -3196,6 +3221,18 @@ public final class SystemRecordingClient: RecordingClient {
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
+    private var recorderDelegate: CaptureDelegate?
+    /// The loudest the microphone has been since the Margin began, in dB (diagnostics only, #937).
+    private var peakPowerDb: Float?
+    /// A Margin is being captured: from `beginRecording` until it is finished or cancelled.
+    private var isCaptureActive = false
+    private var captureRestarts = 0
+    /// The most `currentTime` the current recorder has shown. A stopped `AVAudioRecorder` reads 0, but
+    /// the audio it took in is still in its file.
+    private var capturedHighWaterMs = 0
+    /// The length of a stopped recorder's finalized file, measured once off the main thread. Nil while the
+    /// recorder runs. Until it lands, or if the file can't be read, the length is unknown and kept (#937).
+    private var stoppedMeasurement: StoppedFileMeasurement?
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3258,6 +3295,69 @@ public final class SystemRecordingClient: RecordingClient {
     }
     #endif
 
+    #if canImport(AVFoundation)
+    /// Puts the session in `playAndRecord`, then starts a recorder on a new file. A restart passes
+    /// `cycleSession` to drop and retake the session, which makes iOS settle the route again (#937).
+    private func startRecorder(cycleSession: Bool) throws -> (recorder: AVAudioRecorder, url: URL) {
+        #if os(iOS) || os(watchOS)
+        let session = AVAudioSession.sharedInstance()
+        if cycleSession { try? session.setActive(false) }
+        #if os(watchOS)
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
+        #else
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        #endif
+        try session.setActive(true)
+        #endif
+        let directory = try recordingsDirectory()
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let url = directory.appending(path: "\(stamp)\(captureRestarts == 0 ? "" : "-r\(captureRestarts)").m4a")
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
+        ]
+        let recorder = try AVAudioRecorder(url: url, settings: settings)
+        let delegate = CaptureDelegate()
+        recorder.delegate = delegate
+        recorder.isMeteringEnabled = true
+        recorder.prepareToRecord()
+        guard recorder.record() else {
+            throw SessionKitError.persistenceFailed("recording_failed")
+        }
+        recorderDelegate = delegate
+        capturedHighWaterMs = 0
+        stoppedMeasurement = nil
+        return (recorder, url)
+    }
+
+    /// What `AVAudioRecorder` reported when it stopped by itself, kept for the diagnostics log.
+    private final class CaptureDelegate: NSObject, AVAudioRecorderDelegate, @unchecked Sendable {
+        private let lock = NSLock()
+        private var finishedSuccessfully: Bool?
+        private var encodeError: String?
+
+        func audioRecorderDidFinishRecording(_ recorder: AVAudioRecorder, successfully flag: Bool) {
+            lock.withLock { finishedSuccessfully = flag }
+        }
+
+        func audioRecorderEncodeErrorDidOccur(_ recorder: AVAudioRecorder, error: Error?) {
+            lock.withLock { encodeError = error.map { String(describing: type(of: $0)) } ?? "unknown" }
+        }
+
+        var fields: [String: String] {
+            lock.withLock {
+                var result: [String: String] = [:]
+                if let finishedSuccessfully { result["recorderFinished"] = finishedSuccessfully ? "ok" : "failed" }
+                if let encodeError { result["encodeError"] = encodeError }
+                return result
+            }
+        }
+    }
+    #endif
+
     public func beginRecording() throws {
         #if canImport(AVFoundation)
         #if os(iOS)
@@ -3300,33 +3400,112 @@ public final class SystemRecordingClient: RecordingClient {
             throw SessionKitError.persistenceFailed("recording_permission_unknown")
         }
         #endif
+        captureRestarts = 0
+        peakPowerDb = nil
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
-        #if os(watchOS)
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
-        #else
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
         #endif
-        try session.setActive(true)
-        #endif
-        let directory = try recordingsDirectory()
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appending(path: "\(ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")).m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
-            AVSampleRateKey: 44_100,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue
-        ]
-        let recorder = try AVAudioRecorder(url: url, settings: settings)
-        recorder.prepareToRecord()
-        guard recorder.record() else {
-            throw SessionKitError.persistenceFailed("recording_failed")
-        }
+        let (recorder, url) = try startRecorder(cycleSession: false)
+        isCaptureActive = true
         self.recorder = recorder
         self.currentURL = url
         #else
         throw SessionKitError.persistenceFailed("recording_unavailable")
+        #endif
+    }
+
+    public func captureReading() -> RecordingCaptureReading? {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { return nil }
+        // No recorder while a capture is active means a restart failed: report that, not "can't tell".
+        guard let recorder else { return RecordingCaptureReading(recorderRunning: false, capturedMs: 0) }
+        recorder.updateMeters()
+        let peak = recorder.peakPower(forChannel: 0)
+        peakPowerDb = max(peakPowerDb ?? peak, peak)
+        capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
+        var durationKnown = true
+        if recorder.isRecording {
+            stoppedMeasurement = nil
+        } else {
+            // The polls can miss audio taken in just before the stop, and a stopped recorder reads 0. The
+            // finalized file says how much it really holds. It is measured once, off the main thread, and
+            // until that lands (or if the file can't be read) the length is unknown, which means keep.
+            if stoppedMeasurement == nil, let currentURL {
+                stoppedMeasurement = StoppedFileMeasurement.start(url: currentURL)
+            }
+            if case .milliseconds(let fileMs)? = stoppedMeasurement?.outcome {
+                capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+            } else {
+                durationKnown = false
+            }
+        }
+        return RecordingCaptureReading(
+            recorderRunning: recorder.isRecording,
+            capturedMs: capturedHighWaterMs,
+            durationKnown: durationKnown
+        )
+        #else
+        return nil
+        #endif
+    }
+
+    public func restartCapture() throws {
+        #if canImport(AVFoundation)
+        guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
+        let previousURL = currentURL
+        recorder?.stop()
+        // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
+        // old, so read what the file really holds first and refuse to delete audio worth keeping.
+        // This one read is on the main thread, once, and only for a recorder that is already stopped.
+        switch previousURL.map(RecordedFileDuration.measure) ?? .milliseconds(0) {
+        case .milliseconds(let fileMs):
+            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
+        case .unreadable:
+            // The length is unknown, so the file may hold speech: keep it, never delete on a failed read.
+            throw SessionKitError.persistenceFailed("recording_unreadable")
+        }
+        if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
+            throw SessionKitError.persistenceFailed("recording_has_audio")
+        }
+        recorder?.delegate = nil
+        recorder = nil
+        recorderDelegate = nil
+        currentURL = nil
+        if let previousURL { try? fileManager.removeItem(at: previousURL) }
+        captureRestarts += 1
+        // The first restart only replaces the recorder. A second retakes the session too.
+        let started = try startRecorder(cycleSession: captureRestarts >= 2)
+        recorder = started.recorder
+        currentURL = started.url
+        #else
+        throw SessionKitError.persistenceFailed("recording_restart_unsupported")
+        #endif
+    }
+
+    public func captureDiagnostics() -> [String: String] {
+        #if canImport(AVFoundation)
+        var fields: [String: String] = ["captureRestarts": String(captureRestarts)]
+        if let recorder {
+            fields["recorderRunning"] = String(recorder.isRecording)
+            fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
+            switch stoppedMeasurement?.outcome {
+            case nil: fields["stoppedFile"] = stoppedMeasurement == nil ? "recording" : "measuring"
+            case .milliseconds(let fileMs)?: fields["stoppedFile"] = "\(fileMs)ms"
+            case .unreadable?: fields["stoppedFile"] = "unreadable"
+            }
+        }
+        if let currentURL, let bytes = (try? currentURL.resourceValues(forKeys: [.fileSizeKey]))?.fileSize {
+            fields["fileBytes"] = String(bytes)
+        }
+        if let peakPowerDb { fields["peakDb"] = String(Int(peakPowerDb.rounded())) }
+        if let recorderDelegate { fields.merge(recorderDelegate.fields) { current, _ in current } }
+        #if os(iOS)
+        // The session fields name only the output route; a silent microphone is about the input.
+        fields["inputs"] = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        #endif
+        return fields.merging(AudioSessionDiagnostics.fields()) { current, _ in current }
+        #else
+        return [:]
         #endif
     }
 
@@ -3336,6 +3515,8 @@ public final class SystemRecordingClient: RecordingClient {
             if let audioRef { return audioRef }
             throw SessionKitError.invalidCommandForState("finishRecording")
         }
+        isCaptureActive = false
+        recorderDelegate = nil
         recorder.stop()
         self.recorder = nil
         self.currentURL = nil
@@ -3354,6 +3535,8 @@ public final class SystemRecordingClient: RecordingClient {
     public func cancelRecording() throws {
         #if canImport(AVFoundation)
         let url = currentURL
+        isCaptureActive = false
+        recorderDelegate = nil
         recorder?.stop()
         recorder?.deleteRecording()
         recorder = nil
@@ -3533,12 +3716,9 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
         recognizer: SFSpeechRecognizer
     ) async throws -> AlignedInterjectionTranscript? {
         let request = makeOnDeviceSpeechRecognitionRequest(url: url)
-        return try await withCheckedThrowingContinuation { continuation in
-            var didFinish = false
-            recognizer.recognitionTask(with: request) { result, error in
-                guard !didFinish else { return }
+        return try await CancellableRecognition.run { finish in
+            let task = recognizer.recognitionTask(with: request) { result, error in
                 if let result, result.isFinal {
-                    didFinish = true
                     let transcript = result.bestTranscription.formattedString
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     let segments = result.bestTranscription.segments.enumerated().compactMap { index, segment -> AlignedTranscriptSegment? in
@@ -3554,18 +3734,18 @@ public final class SystemSpeechTranscriptionClient: @unchecked Sendable {
                             confidence: Double(segment.confidence)
                         )
                     }
-                    continuation.resume(returning: transcript.isEmpty ? nil : AlignedInterjectionTranscript(
+                    finish(.success(transcript.isEmpty ? nil : AlignedInterjectionTranscript(
                         text: transcript,
                         localeIdentifier: recognizer.locale.identifier,
                         segments: segments
-                    ))
+                    )))
                     return
                 }
                 if let error {
-                    didFinish = true
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                 }
             }
+            return RecognitionHandle { task.cancel() }
         }
     }
 
@@ -3767,7 +3947,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let windowDirectory = directory.appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: windowDirectory, withIntermediateDirectories: true)
@@ -3868,8 +4048,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let localWindowURL = caches
-            .appending(path: "SourceAudioTranscriptionWindows/\(itemId)", directoryHint: .isDirectory)
+        let localWindowURL = SourceTranscriptionCaches.directory(for: .windows, itemId: itemId, cachesDirectory: caches)
             .appending(path: "window-\(anchorMediaTimeMs)-v3", directoryHint: .isDirectory)
             .appending(path: "source-window.m4a")
         let startMs = max(0, anchorMediaTimeMs - windowBeforeMs)
@@ -3937,24 +4116,22 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
         sourceDurationMs: Int?
     ) async throws -> TranscriptTimeline {
         let request = makeOnDeviceSpeechRecognitionRequest(url: chunk.url)
-        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<TranscriptTimeline, Error>) in
-            var didFinish = false
-            recognizer.recognitionTask(with: request) { result, error in
-                guard !didFinish else { return }
+        // A cancelled task (the job queue's timeout, #1037) must stop the recognizer, or the stuck chunk keeps its slot.
+        return try await CancellableRecognition.run { finish in
+            let task = recognizer.recognitionTask(with: request) { result, error in
                 if let result, result.isFinal {
-                    didFinish = true
-                    continuation.resume(returning: Self.timeline(
+                    finish(.success(Self.timeline(
                         from: result.bestTranscription,
                         itemId: itemId,
                         durationMs: sourceDurationMs
-                    ))
+                    )))
                     return
                 }
                 if let error {
-                    didFinish = true
-                    continuation.resume(throwing: error)
+                    finish(.failure(error))
                 }
             }
+            return RecognitionHandle { task.cancel() }
         }
     }
 
@@ -3993,7 +4170,7 @@ public final class SystemSourceTranscriptionClient: SourceTranscriptionClient, @
             appropriateFor: nil,
             create: true
         )
-        let directory = caches.appending(path: "SourceAudioTranscriptionChunksV3/\(itemId)", directoryHint: .isDirectory)
+        let directory = SourceTranscriptionCaches.directory(for: .chunks, itemId: itemId, cachesDirectory: caches)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var chunks: [SourceAudioChunk] = []
         for (index, range) in ranges.enumerated() {

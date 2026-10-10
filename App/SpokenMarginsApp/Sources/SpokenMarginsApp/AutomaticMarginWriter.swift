@@ -11,6 +11,15 @@ actor AutomaticMarginWriter {
     init(journalURL: URL) { self.journalURL = journalURL }
 
     func deliver(_ notes: [Note], to folder: URL, destinationID: String) throws -> MarginNoteDelivery.Summary {
+        try deliverReportingKeptEdits(notes, to: folder, destinationID: destinationID).summary
+    }
+
+    /// `deliver`, plus which notes the listener had edited and were left as they are, so a pass that
+    /// covers only some notes can still report the whole folder (#1192).
+    func deliverReportingKeptEdits(
+        _ notes: [Note], to folder: URL, destinationID: String
+    ) throws -> (summary: MarginNoteDelivery.Summary, keptEditIDs: Set<String>) {
+        var keptEditIDs: Set<String> = []
         var journal: [String: Entry] = [:]
         if FileManager.default.fileExists(atPath: journalURL.path) {
             journal = try JSONDecoder().decode([String: Entry].self, from: Data(contentsOf: journalURL))
@@ -56,11 +65,12 @@ actor AutomaticMarginWriter {
                 summary.failures.append(error.localizedDescription)
             } else if keptEdit {
                 summary.keptEdits += 1
+                keptEditIDs.insert(note.id)
             } else { summary.saved += 1 }
         }
         if let message = MarginNoteDelivery.failureMessage(summary) {
             throw EditionError.invalid(message)
         }
-        return summary
+        return (summary, keptEditIDs)
     }
 }

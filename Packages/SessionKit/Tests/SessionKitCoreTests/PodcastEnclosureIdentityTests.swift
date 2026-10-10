@@ -13,6 +13,43 @@ final class PodcastEnclosureIdentityTests: XCTestCase {
         XCTAssertTrue(PodcastEnclosureIdentity.sameFile(packet, otherTracker))
     }
 
+    /// Every redirect service in the list unwraps to the file behind it. The address after each
+    /// service is how that service writes it: some put one opaque token (a show or campaign id)
+    /// in front of the file's host, most don't. One wrong count drops the file's host or keeps the
+    /// token, and the sender's and the recipient's keys for the same file stop matching, so the
+    /// shared Margin is not placed.
+    func testEveryRedirectServiceUnwrapsToTheFileBehindIt() {
+        let services: [(wrapper: String, token: String?)] = [
+            ("podtrac.com/pts/redirect.mp3", nil),
+            ("dts.podtrac.com/redirect.mp3", nil),
+            ("dts.podtrac.com/redirect.m4a", nil),
+            ("www.podtrac.com/pts/redirect.mp3", nil),
+            ("tracking.swap.fm/track", "UVBrz8bN8aM2Xe47PEPu"),
+            ("chtbl.com/track", "ABC123"),
+            ("pdst.fm/e", nil),
+            ("pscrb.fm/rss/p", nil),
+            ("verifi.podscribe.com/rss/p", nil),
+            ("arttrk.com/p", "K1E2Y"),
+            ("pfx.vpixl.com", "9f8e7d"),
+            ("mgln.ai/e", "xyz789"),
+            ("claritaspod.com/measure", nil),
+            ("op3.dev/e", nil),
+            ("prfx.byspotify.com/e", nil),
+            ("prefix.up.audio/s", nil)
+        ]
+        let direct = "https://\(omnyFile)"
+        let other = "https://\(omnyFile.replacingOccurrences(of: "audio.mp3", with: "another.mp3"))"
+        for (wrapper, token) in services {
+            let front = "\(wrapper)/" + (token.map { "\($0)/" } ?? "")
+            for form in ["https://\(front)\(omnyFile)", "http://\(front)\(omnyFile)?utm_source=feed",
+                         "https://\(front)https://\(omnyFile)", "https://\(front.uppercased())\(omnyFile)"] {
+                XCTAssertEqual(PodcastEnclosureIdentity.key(form), omnyFile, form)
+                XCTAssertTrue(PodcastEnclosureIdentity.sameFile(form, direct), form)
+                XCTAssertFalse(PodcastEnclosureIdentity.sameFile(form, other), "another file behind the same service: \(form)")
+            }
+        }
+    }
+
     func testDifferentEpisodesInTheSameFeedStayDifferent() {
         let hollywood = "https://podtrac.com/pts/redirect.mp3/tracking.swap.fm/track/X/\(omnyFile)"
         let strikes = hollywood.replacingOccurrences(of: "77d27e49-f26e-4c79-8913-b4cf01192cf5", with: "108c6d5b-0564-4c56-a502-b059015ea18f")

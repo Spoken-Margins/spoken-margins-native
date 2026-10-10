@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,16 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cut_candidate  # noqa: E402
+
+
+class ReleaseUploadConfigurationTests(unittest.TestCase):
+    def test_normal_upload_remains_eligible_for_external_review(self):
+        path = Path(__file__).resolve().parents[2] / 'scripts' / 'TestFlightUploadOptions.plist'
+        with path.open('rb') as source:
+            options = plistlib.load(source)
+        self.assertEqual(options['method'], 'app-store-connect')
+        self.assertFalse(options.get('testFlightInternalTestingOnly', False),
+                         'Internal tester assignment must not prevent later external review')
 
 # Answers `gh api repos/.../pulls/N` from FAKE_PULLS (a JSON file the test may change while the cut
 # waits) and records comments, with the body file's text, in FAKE_LOG.

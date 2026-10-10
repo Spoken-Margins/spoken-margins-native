@@ -100,6 +100,70 @@ final class ListeningSignalRecorderTests: XCTestCase {
         XCTAssertEqual(ListeningSignalRecorder.read(log).map(\.event), [.finish, .dismiss], "the log is only appended to")
     }
 
+    /// #1048 (PERSIST-09): the test above only sees that no file exists yet, which is also true for a
+    /// recorder whose calls wait for its queue (`queue.sync`), because nothing is written for 60 s
+    /// either way. Playback reports on every progress tick, so a call that waits stalls playback.
+    ///
+    /// The queue is private, so this parks it on the one thing a test controls: a named pipe in place
+    /// of the log file. Opening a pipe for writing blocks until something reads it, exactly as slow
+    /// disk I/O would. While the queue is parked, every public call must still return at once.
+    func testNoCallWaitsForTheRecordersQueue() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        XCTAssertEqual(mkfifo(log.path, 0o600), 0, "the queue is parked on a named pipe")
+        let pipe = ParkedPipe(path: log.path)
+        defer { _ = pipe.release() }
+        let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        let (source, item) = Self.podcast
+        let start = Self.time("2026-09-02T19:00:00Z")
+
+        // A call that waits for the queue is freed after three seconds, so it fails below instead of hanging the run.
+        pipe.release(after: 3)
+
+        func returnsAtOnce(_ name: String, _ call: () -> Void) {
+            let began = Date()
+            call()
+            XCTAssertLessThan(Date().timeIntervalSince(began), 0.5, "\(name) waited for the recorder's queue")
+        }
+
+        // Closing a listening interval writes it at once, which opens the pipe and parks the queue.
+        returnsAtOnce("noteListening") {
+            recorder.noteListening(source: source, item: item, at: start)
+            recorder.noteListening(source: source, item: item, at: start.addingTimeInterval(2))
+        }
+        returnsAtOnce("endListening") { recorder.endListening() }
+        // Control: a call that must wait for the queue does wait, so the queue really is parked.
+        let waited = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = recorder.writeError
+            waited.signal()
+        }
+        XCTAssertEqual(waited.wait(timeout: .now() + 0.3), .timedOut, "the queue is not parked on the pipe, so this test proves nothing")
+
+        returnsAtOnce("record") { recorder.record(.finish, source: source, item: item, at: start) }
+        returnsAtOnce("noteListening") {
+            recorder.noteListening(source: source, item: item, at: start.addingTimeInterval(10))
+            recorder.noteListening(source: source, item: item, at: start.addingTimeInterval(12))
+        }
+        returnsAtOnce("endListening") { recorder.endListening() }
+        returnsAtOnce("recordPacketImport") {
+            recorder.recordPacketImport(packetId: "package-1", marginCount: 1, source: source, item: item, at: start)
+        }
+
+        // Freed with nothing to read, the queue's first write fails (a pipe cannot seek) and keeps the
+        // rows for the next write, which creates a plain file; if a platform lets it write into the
+        // pipe instead, those rows are in what the pipe held. Either way they are all accounted for.
+        let leftInPipe = pipe.release()
+        let inFile = recorder.signals()
+        let copy = temporary.appendingPathComponent("from-pipe.jsonl")
+        try leftInPipe.write(to: copy)
+        XCTAssertEqual((ListeningSignalRecorder.read(copy) + inFile).map(\.event), [
+            .listened(seconds: 2),
+            .finish,
+            .listened(seconds: 2),
+            .packetImport(packetId: "package-1", fromOther: true, marginCount: 1),
+        ], "everything called while the queue was parked is written once it is free")
+    }
+
     func testAClosedIntervalIsWrittenWithoutWaitingForTheFlushDelay() throws {
         let log = temporary.appendingPathComponent("i4.jsonl")
         let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
@@ -140,6 +204,46 @@ final class ListeningSignalRecorderTests: XCTestCase {
             .export(packetId: "package-new", marginCount: 1),
             .packetImport(packetId: "package-new", fromOther: false, marginCount: 1),
         ])
+    }
+
+    /// #867: an export from an item without a followed source logs no row, so the packet id is
+    /// noted in its own small file beside the log, and a later launch still knows it is ours.
+    func testANotedExportIsRememberedAcrossLaunchesWithoutAnyLogRow() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let (source, item) = Self.podcast
+        let first = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        first.noteExportedPacket("package-mine")
+        _ = first.writeError // waits for the queue, without flushing
+        XCTAssertFalse(FileManager.default.fileExists(atPath: log.path), "noting an export writes no log row")
+
+        let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        recorder.recordPacketImport(packetId: "package-mine", marginCount: 2, source: source, item: item)
+        recorder.recordPacketImport(packetId: "package-theirs", marginCount: 1, source: source, item: item)
+        XCTAssertEqual(recorder.signals().map(\.event), [
+            .packetImport(packetId: "package-mine", fromOther: false, marginCount: 2),
+            .packetImport(packetId: "package-theirs", fromOther: true, marginCount: 1),
+        ])
+    }
+
+    func testAnUnreadableExportedPacketsFileFallsBackToTheLogAndIsRewritten() throws {
+        let log = temporary.appendingPathComponent("i4.jsonl")
+        let noted = temporary.appendingPathComponent("exported-packets.json")
+        let (source, item) = Self.podcast
+        let first = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        first.record(.export(packetId: "package-logged", marginCount: 1), source: source, item: item)
+        first.flush()
+        try Data("not json".utf8).write(to: noted)
+
+        let recorder = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        recorder.recordPacketImport(packetId: "package-logged", marginCount: 1, source: source, item: item)
+        recorder.noteExportedPacket("package-noted")
+        _ = recorder.writeError
+        XCTAssertEqual(recorder.signals().map(\.event).last, .packetImport(packetId: "package-logged", fromOther: false, marginCount: 1))
+
+        let relaunched = ListeningSignalRecorder(fileURL: log, flushDelay: 60)
+        relaunched.recordPacketImport(packetId: "package-noted", marginCount: 1, source: source, item: item)
+        XCTAssertEqual(relaunched.signals().map(\.event).last, .packetImport(packetId: "package-noted", fromOther: false, marginCount: 1))
+        XCTAssertEqual(try JSONDecoder().decode([String].self, from: Data(contentsOf: noted)), ["package-logged", "package-noted"])
     }
 
     /// Unfollowing deletes a feed's unimported entries but keeps the log; following it again
@@ -430,5 +534,45 @@ final class ListeningSignalRecorderTests: XCTestCase {
             root = parent
         }
         return root.appendingPathComponent(relative)
+    }
+}
+
+/// A named pipe at the recorder's log path. The recorder's queue parks opening it for writing until
+/// something opens it for reading, which `release()` does, after moving the pipe out of the log's
+/// path so that nothing the queue does next can wait on it again.
+private final class ParkedPipe: @unchecked Sendable {
+    private let path: String
+    private let lock = NSLock()
+    private var released = false
+    private var leftovers = Data()
+
+    init(path: String) { self.path = path }
+
+    func release(after seconds: TimeInterval) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds) { _ = self.release() }
+    }
+
+    /// Frees the queue, and returns what it wrote into the pipe (nothing, when its first write failed).
+    @discardableResult
+    func release() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !released else { return leftovers }
+        released = true
+        let spare = path + ".released"
+        guard rename(path, spare) == 0 else { return leftovers }
+        let reader = open(spare, O_RDONLY | O_NONBLOCK)
+        unlink(spare)
+        guard reader >= 0 else { return leftovers }
+        // Give the freed queue a moment to write or fail, then take what reached the pipe.
+        Thread.sleep(forTimeInterval: 0.2)
+        var buffer = [UInt8](repeating: 0, count: 65_536)
+        while true {
+            let count = read(reader, &buffer, buffer.count)
+            if count <= 0 { break }
+            leftovers.append(contentsOf: buffer[0..<count])
+        }
+        close(reader)
+        return leftovers
     }
 }
