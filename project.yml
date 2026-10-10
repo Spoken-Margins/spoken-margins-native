@@ -123,10 +123,12 @@ targets:
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
+          - fetch
           - processing
         BGTaskSchedulerPermittedIdentifiers:
           - com.spokenmargins.native.audio-preparation
           - com.spokenmargins.native.audio-preparation.continued
+          - com.spokenmargins.native.feed-refresh
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
