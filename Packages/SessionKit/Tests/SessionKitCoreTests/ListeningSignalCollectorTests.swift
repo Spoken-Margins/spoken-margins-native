@@ -109,6 +109,38 @@ final class ListeningSignalCollectorTests: XCTestCase {
         XCTAssertEqual(recorder.signals().map { $0.source.title }, ["Notes", "Renamed"])
     }
 
+    /// #1048 (PERSIST-11): the test above renames the subscription between the spells, which makes
+    /// the collector re-resolve whatever stopping did. Here nothing about the follows changes, only
+    /// the item's link to a feed entry, so a cache that survived the stop would keep the old entry.
+    func testStoppingForgetsTheItemsContextEvenWhenTheFollowsDidNotChange() throws {
+        let count = Counter()
+        let collector = ListeningSignalCollector(recorder: recorder, resolve: { id, repository in
+            count.increment()
+            return ListeningSignalContext.load(forItemId: id, from: repository)
+        })
+        for second in 0...4 {
+            collector.playbackProgress(itemId: "item", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.endListening()
+        collector.flush()
+        XCTAssertEqual(count.value, 1)
+
+        try store.saveFeedEntry(FeedEntry(id: "entry-2", subscriptionId: "subscription",
+            canonicalURL: "https://example.com/posts/2", title: "Two", publishedAt: epoch))
+        var item = try store.loadItem(id: "item")
+        item.externalReference = "https://example.com/posts/2"
+        try store.saveItem(item)
+        for second in 10...11 {
+            collector.playbackProgress(itemId: "item", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.endListening()
+        collector.flush()
+
+        XCTAssertEqual(count.value, 2, "the second spell resolves the item again")
+        XCTAssertEqual(recorder.signals().map { $0.item?.id }, ["entry", "entry-2"],
+                       "and files its listening under the entry the item is linked to now")
+    }
+
     func testQueuedArticleActionsAreIncludedInExplicitExportAndKeepPacketProvenance() throws {
         let collector = ListeningSignalCollector(recorder: recorder)
         collector.record(.margin(kind: .written, length: 12), itemId: "item", repository: store, at: epoch)
@@ -126,6 +158,34 @@ final class ListeningSignalCollectorTests: XCTestCase {
             .packetImport(packetId: "theirs", fromOther: true, marginCount: 1), .finish, .share, .dismiss])
         XCTAssertTrue(signals.allSatisfy { $0.source.id == "source" && $0.item?.id == "entry" })
         XCTAssertFalse(try String(contentsOf: url, encoding: .utf8).contains("https://"))
+    }
+
+    /// #867: an export from an item with no followed source logs no row, so after the listener
+    /// followed that source (and the app relaunched) their own packet read as from someone else.
+    func testAnExportFromAnUnfollowedItemStillMarksItsPacketAsOurs() throws {
+        let library = try SQLiteSessionStore(path: root.appendingPathComponent("unfollowed.sqlite").path)
+        try library.saveItem(Item(id: "item", title: "One", mediaType: "article", text: "Words",
+                                  externalReference: "https://example.com/posts/1", status: "ready"))
+        let log = root.appendingPathComponent("relaunch", isDirectory: true).appendingPathComponent("signals.jsonl")
+
+        let first = ListeningSignalCollector(recorder: ListeningSignalRecorder(fileURL: log, flushDelay: 60))
+        first.record(.export(packetId: "ours", marginCount: 2), itemId: "item", repository: library, at: epoch)
+        first.flush()
+        XCTAssertTrue(ListeningSignalRecorder.read(log).isEmpty, "an item without a followed source still logs no row")
+
+        try library.saveFeedSubscription(FeedSubscription(id: "subscription", source: SourceIdentity(
+            id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com", title: "Notes")))
+        try library.saveFeedEntry(FeedEntry(id: "entry", subscriptionId: "subscription",
+            canonicalURL: "https://example.com/posts/1", title: "One", publishedAt: epoch))
+
+        let relaunched = ListeningSignalCollector(recorder: ListeningSignalRecorder(fileURL: log, flushDelay: 60))
+        relaunched.packetImport(itemId: "item", packetId: "ours", marginCount: 2, repository: library, at: epoch)
+        relaunched.packetImport(itemId: "item", packetId: "theirs", marginCount: 1, repository: library, at: epoch)
+        relaunched.flush()
+        XCTAssertEqual(ListeningSignalRecorder.read(log).map(\.event), [
+            .packetImport(packetId: "ours", fromOther: false, marginCount: 2),
+            .packetImport(packetId: "theirs", fromOther: true, marginCount: 1),
+        ])
     }
 
     private func seed(_ repository: SQLiteSessionStore) throws {

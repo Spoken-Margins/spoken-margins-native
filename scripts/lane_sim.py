@@ -21,6 +21,8 @@ the first crash, and holds the job's simulator slot until the device is gone.
 `lane-sim-boot --done <udid>` tells the watcher a shutdown is coming, so it isn't counted as a
 crash, then shuts the device down and deletes it; the slot frees when the watcher exits.
 A fresh device's first boot migrates data for several minutes, hence the long readiness wait.
+The Test Desk reuses a small pool of devices, erased between runs, instead of creating one per run
+(lane_sim_pool.py, #688); the boot rules above apply to them unchanged.
 
 The unsafe list is ~/Library/Caches/SpokenMarginsLane/unsafe-simulators.json. The lane guard blocks
 any command naming a device on it, except deleting or shutting it down.
@@ -323,13 +325,17 @@ def start_watcher(udid: str, helper: Path, slot=None, crash_window: tuple | None
     pid_file.write_text(f'{watcher.pid}\n')
 
 
-def release(udid: str, wait: float = RELEASE_WAIT) -> None:
-    """Tell the watcher a shutdown is coming, shut the device down, delete it, and wait for the watcher."""
+def release(udid: str, wait: float = RELEASE_WAIT, keep: bool = False) -> None:
+    """Tell the watcher a shutdown is coming, shut the device down, delete it, and wait for the watcher.
+
+    keep leaves the device in place (a Test Desk pool device, lane_sim_pool.py), for the caller to erase.
+    """
     stop_flag, _, pid_file = watch_files(udid)
     stop_flag.parent.mkdir(parents=True, exist_ok=True)
     stop_flag.write_text('released\n')
     subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
-    subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
+    if not keep:
+        subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
     try:
         pid = int(pid_file.read_text())
     except (OSError, ValueError):

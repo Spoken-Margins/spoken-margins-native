@@ -25,6 +25,8 @@ final class SpokenMarginsAppDelegate: NSObject, UIApplicationDelegate {
         UNUserNotificationCenter.current().delegate = ListeningReadyNotifications.shared
         #if canImport(BackgroundTasks)
         AudioPreparationBackgroundController.shared.register()
+        FollowedSourceBackgroundRefreshController.shared.register()
+        ContinuedAudioPreparationController.shared.register()
         #endif
         return true
     }
@@ -77,6 +79,10 @@ struct SpokenMarginsApp: App {
         #if !SPOKEN_MARGINS_LEGACY
         ListeningEditionShortcutBridge.model = model
         #endif
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        // The same refresh as in the foreground, with the same six-hour staleness (#170).
+        FollowedSourceBackgroundRefreshController.shared.install { [weak model] in await model?.performFollowedSourceRefresh(force: false) }
+        #endif
         _model = StateObject(wrappedValue: model)
         _playbackStartCue = StateObject(wrappedValue: PlaybackStartCue(model: model, pinned: pinnedDiagnostics))
         _bridge = StateObject(wrappedValue: BridgeService(store: BridgeService.makeStore()))
@@ -119,6 +125,9 @@ struct SpokenMarginsApp: App {
                         model.handleAppBecameActive()
                     } else if phase == .inactive || phase == .background {
                         model.handleAppBecameInactiveOrBackground(entersBackground: phase == .background)
+                        #if canImport(BackgroundTasks) && canImport(UIKit)
+                        if phase == .background { FollowedSourceBackgroundRefreshController.shared.schedule(enabled: !model.storedFeedSubscriptions().isEmpty) }
+                        #endif
                     }
                 }
                 #if canImport(UIKit)

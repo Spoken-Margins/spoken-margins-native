@@ -157,7 +157,7 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 ## Branches and merging
 
 - `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
-- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. Audio, persistence, packet and lane diffs wait for a clean Codex audit of their head commit, then merge the same way.
+- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. Audio, persistence, packet and lane diffs wait for a clean Claude (or legacy Codex) audit of their head commit, then merge the same way.
 - GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open. The hourly dispatcher then removes `in-progress`, adds `status: needs-human-validation` and names the PR; only the owner validates it.
 - Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.

@@ -1,6 +1,6 @@
 # Can the last shipped build still open what this PR's code writes? (#317)
 #
-# On PRs into next that touch storage or sharing, on the Mac's self-hosted runner:
+# On PRs into next that touch storage, sharing or a stored type, on the Mac's self-hosted runner:
 # 1. The frozen packet reader in Packages/SessionKit/Tests/ShippedReader still matches the shipped
 #    tag (scripts/freeze-shipped-reader.sh --check). SharingTests reads every exported packet with it
 #    in every --plan fast run; this step makes sure nobody edited the frozen copy.
@@ -19,6 +19,36 @@ on:
     paths:
       - 'Packages/SessionKit/Sources/SessionKitPersistence/**'
       - 'Packages/SessionKit/Sources/SessionKitSharing/**'
+      # The files in SessionKit that define a type the stored database or a packet holds (#1053).
+      # Build 29's reader builds the whole SessionKit target, so any of them can change what it
+      # reads. Derived from the types SessionKitPersistence and SessionKitSharing name, plus the
+      # Codable types those files reach. A new model file matches *Models*.swift; any other new
+      # file that defines a stored type must be added here.
+      - 'Packages/SessionKit/Sources/SessionKit/*Models*.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/BridgeManifest.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/CommunityMapUpload.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/FeedNewItemPolicy.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/InterjectionCleanup.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/ItemCollection.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/ListeningEdition.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/ListeningMoment.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/MarginConversation.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/MarginLayerSynthesis.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/PodcastDownloads.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/PortableListeningMapContract.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/PrivacyPassToken.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/Protocols.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/PublisherAudio.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/ReadLaterClient.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/ReadwiseHighlightClient.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/SessionExport.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/ShareableLinkPolicy.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/StructuredDocument.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/StructuredDocumentUpgrade.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/WatchCaptureHandoff.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/WatchMarginOutbox.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/WatchMediaAvailability.swift'
+      - 'Packages/SessionKit/Sources/SessionKit/WatchMediaStore.swift'
       - 'Packages/SessionKit/Tests/ShippedReader/**'
       - 'Packages/SessionKit/Tests/*/Build29DatabaseFixtureTests.swift'
       - 'scripts/check-build29-database.sh'

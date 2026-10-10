@@ -50,24 +50,121 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertEqual(voiceover.durationMs, 752_875)
     }
 
-    func testOnlySubstackAddressesAreFetched() {
+    /// Neighbouring addresses (#810, #882): Substack hosts and a `/p/<slug>` post path on any host are worth one
+    /// fetch; anything else is not.
+    func testSubstackAddressesAndPostPathsOnAnyDomainAreFetched() {
         for yes in [
             "https://open.substack.com/pub/garymarcus/p/breaking?r=2abc&utm_medium=ios",
             "https://garymarcus.substack.com/p/breaking",
             "https://substack.com/home/post/p-123",
-            "https://GaryMarcus.Substack.com/p/breaking"
+            "https://GaryMarcus.Substack.com/p/breaking",
+            // A publication on its own domain, as the Substack app shared it on the owner's phone (2026-10-05).
+            "https://victory.forwardblue.org/p/the-only-path-to-progress-is-fixing?r=4x1y&utm_medium=ios&triedRedirect=true",
+            "https://www.platformer.news/p/breaking",
+            "https://www.platformer.news/p/breaking/",
+            "https://WWW.Platformer.NEWS/p/breaking#footnote-1",
+            "https://example.com/p/%E2%9C%93-unicode-slug"
         ] {
             XCTAssertTrue(PublisherNarrationEvidence.mayHaveVoiceover(URL(string: yes)!), yes)
         }
         for no in [
             "http://garymarcus.substack.com/p/breaking",
-            "https://evilsubstack.com/p/breaking",
-            "https://substack.com.evil.example/p/breaking",
-            "https://www.platformer.news/p/breaking",
-            "https://example.com/article"
+            "http://www.platformer.news/p/breaking",
+            "https://evilsubstack.com/article",
+            "https://substack.com.evil.example/article",
+            "https://example.com/article",
+            "https://example.com/p/",
+            "https://example.com/p",
+            "https://example.com/p/breaking/comments",
+            "https://example.com/blog/p/breaking",
+            "https://example.com/P/breaking",
+            "https://example.com/?p=123"
         ] {
             XCTAssertFalse(PublisherNarrationEvidence.mayHaveVoiceover(URL(string: no)!), no)
         }
+    }
+
+    /// The owner's phone, 2026-10-05: a post on its own domain, shared from the Substack app, was read with
+    /// on-device speech because only `substack.com` addresses were looked up. The resolver had already read the
+    /// page, so the voiceover is found with no further request.
+    func testACustomDomainPostSharedFromTheSubstackAppFindsItsVoiceover() async throws {
+        let shared = URL(string: "https://captured.example/p/voiceover?r=4x1y&utm_campaign=post&utm_medium=ios&triedRedirect=true")!
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data(try Self.page().utf8), for: shared)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: shared, articleURL: shared.absoluteString, itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("the resolver's page is the answer"); throw URLError(.badURL) }
+        )
+        XCTAssertEqual(outcome, .found(PublisherAudio(
+            itemId: "item", audioURL: "https://recordings.example/voiceover.mp3", durationMs: 752_875,
+            detectedFrom: "substack_post_voiceover"
+        )))
+    }
+
+    func testACustomDomainPostTheResolverDidNotReadIsFetchedOnce() async throws {
+        let requests = RequestLog()
+        let page = try Self.page()
+        let shared = URL(string: "https://captured.example/p/voiceover?r=4x1y&utm_medium=ios")!
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: shared, articleURL: "https://captured.example/p/voiceover", itemId: "item", fetched: FetchedPageMemo(),
+            fetchPage: { url in requests.append(url); return (page, URL(string: "https://captured.example/p/voiceover")!) }
+        )
+        guard case .found = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(requests.urls, [shared])
+    }
+
+    /// A shared address that isn't a post path (a short link the resolver followed to the post) is still read when
+    /// the page it ended at declares Substack's `_preloads`, without another request.
+    func testARememberedPageDeclaringPreloadsIsReadWhateverItsAddress() async throws {
+        let short = URL(string: "https://captured.example/s/abc")!
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data(try Self.page().utf8), for: short, finalURL: URL(string: "https://captured.example/p/voiceover")!)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: short, articleURL: "https://captured.example/p/voiceover", itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("the remembered page is the answer"); throw URLError(.badURL) }
+        )
+        guard case .found = outcome else { return XCTFail("\(outcome)") }
+    }
+
+    func testAnOrdinaryArticleTheResolverReadIsNeitherReadNorFetched() async {
+        let article = URL(string: "https://openai.com/index/some-research")!
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data("<html><p>Research.</p></html>".utf8), for: article)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: article, articleURL: article.absoluteString, itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("no fetch for an ordinary article"); throw URLError(.badURL) }
+        )
+        XCTAssertEqual(outcome, .notSubstack)
+    }
+
+    /// A `/p/<slug>` page on a site that isn't Substack (a Blogger page, say) is fetched but gives nothing.
+    func testAPostPathPageWithoutAVoiceoverGivesNothing() async {
+        let page = URL(string: "https://someblog.example/p/about")!
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: page, articleURL: page.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { url in ("<html><p>About me.</p></html>", url) }
+        )
+        XCTAssertEqual(outcome, .none)
+    }
+
+    /// The owner's export could only show the last share (an openai.com link, `not_substack`), not what happened
+    /// to the Substack post shared before it. The log keeps each item's latest outcome.
+    func testTheLogKeepsEachSharedItemsLatestOutcome() {
+        var log = SharedPostVoiceoverLog()
+        log.record("none", for: "item-a")
+        log.record("saved", for: "item-b")
+        log.record("not_substack", for: "item-c")
+        log.record("text map 40%", for: "item-b")
+        XCTAssertEqual(log.summary, "item-a: none; item-c: not_substack; item-b: text map 40%")
+    }
+
+    func testTheLogKeepsOnlyTheMostRecentItems() {
+        var log = SharedPostVoiceoverLog()
+        for index in 0..<(SharedPostVoiceoverLog.capacity + 3) { log.record("none", for: "item-\(index)") }
+        let lines = log.summary.components(separatedBy: "; ")
+        XCTAssertEqual(lines.count, SharedPostVoiceoverLog.capacity)
+        XCTAssertEqual(lines.first, "item-3: none")
+        XCTAssertEqual(lines.last, "item-\(SharedPostVoiceoverLog.capacity + 2): none")
     }
 
     /// Codex audit on 749fc07: the share path fetched the post page for link resolution and then again for the

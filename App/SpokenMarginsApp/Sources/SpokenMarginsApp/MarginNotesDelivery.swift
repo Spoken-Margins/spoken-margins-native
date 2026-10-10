@@ -11,6 +11,9 @@ import UIKit
 /// transcript is saved, and once more under a background task when the app leaves the foreground, so a
 /// Margin recorded just before switching apps still arrives. Passes never overlap; one asked for during a
 /// pass runs right after it. The writer only rewrites its own unedited files, so repeated passes are safe.
+///
+/// A pass rebuilds only the notes whose sessions changed, and does nothing when none did; every 30 minutes, on the
+/// first pass and when the folder changes it rebuilds all of them (#1192, `MarginNotePassPlanner`).
 @MainActor
 final class MarginNotesDelivery {
     /// What a pass writes to, read at the start of each pass.
@@ -38,6 +41,8 @@ final class MarginNotesDelivery {
     private var isDelivering = false
     private var passRequestedDuringPass = false
     private var writer: AutomaticMarginWriter?
+    /// What the last finished pass left to do next time (#1192).
+    private var planner = MarginNotePassPlanner()
 
     init(
         isEnabled: @escaping @MainActor () -> Bool,
@@ -132,12 +137,20 @@ final class MarginNotesDelivery {
     private func deliverOnce() async {
         do {
             let target = try target()
-            // Built on a background task (#161); the main actor only waits.
-            let gathered = try await AutomaticMarginNoteGatherer.gather(store: target.store)
-            recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
-            let summary = try await currentWriter().deliver(gathered.notes, to: target.folder, destinationID: target.destinationID)
+            let pass = try planner.plan(store: target.store, targetKey: target.destinationID + "|" + target.folder.path)
+            var delivered: (noteIDs: [String], keptEditIDs: Set<String>) = ([], [])
+            if pass.scope != .nothing {
+                var sessionIds: Set<String>?
+                if case .sessions(let changed) = pass.scope { sessionIds = changed }
+                // Built on a background task (#161); the main actor only waits.
+                let gathered = try await AutomaticMarginNoteGatherer.gather(store: target.store, sessionIds: sessionIds)
+                recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
+                let result = try await currentWriter().deliverReportingKeptEdits(gathered.notes, to: target.folder, destinationID: target.destinationID)
+                delivered = (gathered.notes.map(\.id), result.keptEditIDs)
+            }
+            planner.commit(pass, noteIDs: delivered.noteIDs, keptEditIDs: delivered.keptEditIDs)
             report(MarginOutputStatus(MarginNoteDelivery.statusLine(
-                summary, folderName: target.folder.lastPathComponent,
+                planner.folderSummary, folderName: target.folder.lastPathComponent,
                 checkedAt: Date().formatted(date: .omitted, time: .shortened)
             )))
         } catch {

@@ -56,14 +56,30 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
     case placing(previousMediaTimeMs: Int?)
     /// Nothing is running and no pass has finished for this layer, for example before the episode downloads.
     case notPlacedYet
+    /// A finished pass left this Margin unplaced, and the sender gave it nothing to find its spot by, only the
+    /// clock time on their copy. The pass can place such a Margin only between two neighbours it did verify, and
+    /// didn't. "Unresolved" would read as a match that failed, when the packet never gave it anything to match.
+    case noPositionSent
     /// A finished pass's result: describe the resolution itself.
     case settled
 
+    /// - Parameter hasPositionEvidence: whether the packet gave this Margin anything to match on
+    ///   (`ImportedCommentaryInterjection.carriesPositionEvidence(in:)`). Only a Margin that has none and is still
+    ///   unplaced once a pass has finished reads as sent without a position: before then, the pass may yet place
+    ///   it between its verified neighbours. Defaults to true so a caller that doesn't know keeps the pass-based
+    ///   wording.
+    /// - Parameter awaitingPlacementPass: whether a pass is still to come for this Margin's layer
+    ///   (`ImportedCommentaryLayer.awaitsPlacementPass`). A podcast layer is `.contextOnly` from the moment it is
+    ///   imported, before the episode has downloaded, so its status can't say that no pass has run. Until one
+    ///   finishes, an unplaced Margin is "not placed yet", not a failure. Defaults to false so a caller that
+    ///   doesn't know keeps the pass-based wording.
     public init(
         resolution: ImportedAnchorResolution,
         marginId: String,
         layerStatus: ImportedSourceResolutionStatus,
-        pass: SharedMarginPlacementPasses.Pass?
+        pass: SharedMarginPlacementPasses.Pass?,
+        hasPositionEvidence: Bool = true,
+        awaitingPlacementPass: Bool = false
     ) {
         // A pending layer's Margins were reset for a new edition, so their stored values aren't results.
         let hasResult = layerStatus != .pending && Self.isPlaced(resolution)
@@ -71,8 +87,14 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
             self = .settled
         } else if let pass {
             self = .placing(previousMediaTimeMs: pass.previousMediaTimeMs[marginId])
+        } else if layerStatus == .pending || awaitingPlacementPass {
+            self = .notPlacedYet
+        } else if !hasPositionEvidence, layerStatus != .wrongSource,
+                  !resolution.isAmbiguous, resolution.evidenceClass != .ambiguous {
+            // A layer that isn't this item's gets no pass, so it keeps the resolution's own wording.
+            self = .noPositionSent
         } else {
-            self = layerStatus == .pending ? .notPlacedYet : .settled
+            self = .settled
         }
     }
 
@@ -88,6 +110,7 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         case .placing(let previous?): "Placing again · was \(Self.clock(previous))"
         case .placing(nil): "Placing in your copy…"
         case .notPlacedYet: "Not placed yet"
+        case .noPositionSent: "Sent without a position"
         case .settled: nil
         }
     }
@@ -97,6 +120,7 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         switch self {
         case .placing: "Placing"
         case .notPlacedYet: "Not placed yet"
+        case .noPositionSent: "No position sent"
         case .settled: nil
         }
     }
@@ -129,5 +153,103 @@ public enum SharedMarginPlacementStatus: Equatable, Sendable {
         return seconds >= 3_600
             ? String(format: "%d:%02d:%02d", seconds / 3_600, seconds / 60 % 60, seconds % 60)
             : String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+extension ImportedCommentaryLayer {
+    /// Whether a placement pass is still to come for this layer: a podcast layer that no pass has finished for on
+    /// the listener's file. A finished pass saves the file's digest with the layer, and a new edition clears it. The
+    /// layer's status can't say this: a podcast layer is `.contextOnly` from the moment it is imported, before the
+    /// episode has downloaded. A layer that isn't this item's (`.wrongSource`) gets no pass, ever.
+    public var awaitsPlacementPass: Bool {
+        itemIdentity.itemType == .podcast && sourceResolutionStatus != .wrongSource && resolvedRecipientEditionSHA256 == nil
+    }
+}
+
+extension PortableAnchorEvidence {
+    /// Whether the sender's own words around the Margin are long enough to find it by in a transcript: six
+    /// words before or after. This is `PodcastTranscriptAnchorResolver.hasUsableContext`'s rule, counted the
+    /// same way (runs of letters and numbers, as its `[\p{L}\p{N}]+` pattern finds them, so a combining mark or
+    /// an emoji variation selector ends a word there and here). A host test keeps the two together.
+    public var hasUsableTextContext: Bool {
+        Self.wordCount(prefix) >= Self.minimumContextWords || Self.wordCount(suffix) >= Self.minimumContextWords
+    }
+
+    static let minimumContextWords = 6
+
+    private static func wordCount(_ text: String?) -> Int {
+        var count = 0
+        var inWord = false
+        for scalar in (text ?? "").unicodeScalars {
+            let isWordScalar: Bool
+            switch scalar.properties.generalCategory {
+            case .uppercaseLetter, .lowercaseLetter, .titlecaseLetter, .modifierLetter, .otherLetter,
+                 .decimalNumber, .letterNumber, .otherNumber:
+                isWordScalar = true
+            default:
+                isWordScalar = false
+            }
+            if isWordScalar, !inWord { count += 1 }
+            inWord = isWordScalar
+        }
+        return count
+    }
+}
+
+extension ImportedCommentaryInterjection {
+    /// Whether the packet gave this Margin anything to find its spot by: audio fingerprints, a transcript
+    /// context, or (through the layer) the sender's exact episode file. A Margin with none of these carries only
+    /// the sender's clock time, which is never trusted on its own. A pass places it only between two neighbours
+    /// it did verify (`PodcastAnchorFusionResolver.interpolatingBetweenVerifiedAnchors`), so call it sent without
+    /// a position only once no pass is running (#872). A Margin that is already placed carries evidence by
+    /// definition.
+    public func carriesPositionEvidence(in layer: ImportedCommentaryLayer) -> Bool {
+        guard layer.itemIdentity.itemType == .podcast else { return true }
+        return !anchorEvidence.machineEvidenceAssetIds.isEmpty
+            || !(podcastAnchorEvidence ?? []).isEmpty
+            || anchorEvidence.hasUsableTextContext
+            || layer.itemIdentity.exactEditionSHA256 != nil
+            || SharedMarginPlacementStatus.isPlaced(resolution)
+    }
+}
+
+/// What one finished placement pass did with a layer's Margins, for the diagnostics export (#872). Counts only:
+/// the export carries no Margin text or audio. It answers "why is this Margin still unplaced" without a device
+/// trace: the packet sent no position, or it did and the pass couldn't find it in this copy.
+public struct SharedMarginPlacementSummary: Equatable, Sendable {
+    public private(set) var margins = 0
+    public private(set) var placed = 0
+    public private(set) var ambiguous = 0
+    /// Had something to match on and the pass found no spot for it in this copy.
+    public private(set) var notFound = 0
+    /// Had nothing to match on: only the sender's clock time.
+    public private(set) var noPositionSent = 0
+
+    public init() {}
+
+    /// The summary of a pass over these layers, as the pass left their Margins.
+    public init(_ layers: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection])]) {
+        for (layer, records) in layers {
+            for record in records {
+                add(record.resolution, hasPositionEvidence: record.carriesPositionEvidence(in: layer))
+            }
+        }
+    }
+
+    public mutating func add(_ resolution: ImportedAnchorResolution, hasPositionEvidence: Bool) {
+        margins += 1
+        if SharedMarginPlacementStatus.isPlaced(resolution) {
+            placed += 1
+        } else if resolution.isAmbiguous || resolution.evidenceClass == .ambiguous {
+            ambiguous += 1
+        } else if hasPositionEvidence {
+            notFound += 1
+        } else {
+            noPositionSent += 1
+        }
+    }
+
+    public var diagnosticValue: String {
+        "margins:\(margins) placed:\(placed) ambiguous:\(ambiguous) notFound:\(notFound) noPositionSent:\(noPositionSent)"
     }
 }

@@ -185,12 +185,14 @@ public struct MarginReplyGraph: Equatable, Sendable {
             uniquingKeysWith: { first, _ in first }
         )
         var nodesByIdentity: [MarginPacketIdentity: MarginReference] = [:]
-        var importedIdentity: [String: MarginPacketIdentity] = [:]
+        var importedIdentity: [String: [MarginPacketIdentity]] = [:]
         for margin in importedMargins {
             guard let layer = liveLayers[margin.layerId] else { continue }
             let identity = MarginPacketIdentity(packageDigest: layer.packageDigest, packageScopedId: margin.packageScopedId)
-            importedIdentity[margin.id] = identity
-            nodesByIdentity[identity] = .imported(margin.id)
+            // A sender's later packet that carried this Margin again names it too (#858).
+            let identities = [identity] + (margin.alsoSharedAs ?? [])
+            importedIdentity[margin.id] = identities
+            for identity in identities { nodesByIdentity[identity] = .imported(margin.id) }
         }
         // A listener's own Margin wins over a copy of it they imported back.
         for margin in localMargins {
@@ -220,8 +222,8 @@ public struct MarginReplyGraph: Equatable, Sendable {
             }
         }
         for margin in importedMargins {
-            guard let identity = importedIdentity[margin.id] else { continue }
-            resolve(.imported(margin.id), links: margin.replyLinks ?? [], identities: [identity])
+            guard let identities = importedIdentity[margin.id] else { continue }
+            resolve(.imported(margin.id), links: margin.replyLinks ?? [], identities: identities)
         }
         for margin in localMargins {
             resolve(.local(margin.id), links: margin.replyTo.map { [$0] } ?? [], identities: margin.sharedAs ?? [])
