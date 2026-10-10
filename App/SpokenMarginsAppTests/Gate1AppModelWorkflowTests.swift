@@ -2961,8 +2961,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     func testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable() {
         let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            forcePreparedTextGate: true
+            audioPlaybackClient: NoopAudioPlaybackClient()
         )
         model.resetAndSeed()
         model.importTitle = "Prepared First"
@@ -2971,12 +2970,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.importTextItem()
 
         XCTAssertEqual(model.screen, .playback)
-        XCTAssertNil(model.pendingPreparedTextStartItemId)
         XCTAssertNotNil(model.snapshot.sessionId)
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(model.preparedTextAudioStatus, "live_fallback")
-        XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
     func testTextImportKeepsLiveSpeechStableWhilePreparedMediaRendersInBackground() async throws {
@@ -3011,7 +3008,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.preparedTextAudioStatus, "ready")
         XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(model.snapshot.targetId, request.itemId)
-        XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
     func testTextAudioPreparationSkipsAnyCompletedOrGreaterThanNinetyEightPercentSession() {

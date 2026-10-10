@@ -460,7 +460,6 @@ final class Gate1AppModel: ObservableObject {
     )
     @Published private(set) var isOnDeviceSpeechGenerationDelayed = false
     @Published var sourceTranscriptStatus = "Not started"
-    @Published var pendingPreparedTextStartItemId: String?
     @Published var speechVoiceOptions: [SpeechVoiceChoice] = []
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
     @Published var ttsVoiceSelection = AppTTSVoiceSelection(
@@ -543,7 +542,6 @@ final class Gate1AppModel: ObservableObject {
     private let recordingClientOverride: RecordingClient?
     let microphonePermissionRequest: (() async -> Bool)?
     let microphonePermissionStatusOverride: (() -> PermissionPromptStatus)?
-    private let forcePreparedTextGate: Bool
     private let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
     private let alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler?
@@ -809,7 +807,6 @@ final class Gate1AppModel: ObservableObject {
         recordingClient: RecordingClient? = nil,
         microphonePermissionRequest: (() async -> Bool)? = nil,
         microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
-        forcePreparedTextGate: Bool = false,
         sourceTranscriptionClient: SourceTranscriptionClient = SystemSourceTranscriptionClient(),
         interjectionTranscriptionHandler: InterjectionTranscriptionHandler? = nil,
         alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler? = nil,
@@ -829,7 +826,6 @@ final class Gate1AppModel: ObservableObject {
         self.recordingClientOverride = recordingClient
         self.microphonePermissionRequest = microphonePermissionRequest
         self.microphonePermissionStatusOverride = microphonePermissionStatus
-        self.forcePreparedTextGate = forcePreparedTextGate
         self.sourceTranscriptionClient = sourceTranscriptionClient
         self.gate2CompactControls = gate2CompactControls
         self.featureFlags = featureFlags
@@ -4591,16 +4587,6 @@ final class Gate1AppModel: ObservableObject {
         start()
     }
 
-    func playLiveSpeechInstead() {
-        guard canPlayLiveSpeechInstead else { return }
-        liveSpeechFallbackItemIds.insert(activeItemId)
-        pendingPreparedTextStartItemId = nil
-        preparedTextAudioStatus = "live_fallback"
-        snapshot.preparedTextAudioStatus = "live_fallback"
-        diagnostics["textAudioFallback:\(activeItemId)"] = "explicit_user_action"
-        start()
-    }
-
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
         resetMixWithOtherAudioForNewSession()
@@ -7484,10 +7470,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var canPlayLiveSpeechInstead: Bool {
-        pendingPreparedTextStartItemId == activeItemId
-    }
-
     var canSummarizeInterjections: Bool {
         aiSummaryExperienceAvailable && hasActiveSession && !unsummarizedInterjectionsForCurrentTarget().isEmpty
     }
@@ -8894,7 +8876,6 @@ final class Gate1AppModel: ObservableObject {
         replaceActivePlayback: Bool = false
     ) -> Bool {
         do {
-            let shouldAutoStart = pendingPreparedTextStartItemId == itemId
             if engine == nil, let store {
                 installEngine(try makeEngine(store: store))
             }
@@ -8914,16 +8895,9 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["textAudioPrewarm:\(itemId)"] = diagnosticStatus
             preparedTextAudioStatus = preparedStatus
             snapshot.preparedTextAudioStatus = preparedStatus
-            if shouldAutoStart {
-                pendingPreparedTextStartItemId = nil
-                startItem(id: itemId)
-            }
             return true
         } catch {
             diagnostics["textAudioPrewarm:\(itemId)"] = "attach_failed:\(error.localizedDescription)"
-            if pendingPreparedTextStartItemId == itemId {
-                pendingPreparedTextStartItemId = nil
-            }
             preparedTextAudioStatus = "failed"
             snapshot.preparedTextAudioStatus = "failed"
             return false
@@ -8933,9 +8907,6 @@ final class Gate1AppModel: ObservableObject {
     private func finishTextAudioPrewarm(itemId: String, status: String, diagnostic: String) {
         textAudioPrewarmTasks[itemId] = nil
         diagnostics["textAudioPrewarm:\(itemId)"] = diagnostic
-        if pendingPreparedTextStartItemId == itemId {
-            pendingPreparedTextStartItemId = nil
-        }
         preparedTextAudioStatus = status
         snapshot.preparedTextAudioStatus = status
     }
@@ -8997,45 +8968,6 @@ final class Gate1AppModel: ObservableObject {
             }
             try? store.deleteEpisodeMapPreparationJob(id: job.id)
         }
-    }
-
-    private func prepareTextPlaybackBeforeStarting(itemId: String) -> Bool {
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard shouldGatePreparedTextPlayback(for: item) else {
-                return false
-            }
-            pendingPreparedTextStartItemId = itemId
-            diagnostics["textAudioStartGate:\(itemId)"] = "waiting_for_prepared_media"
-            if preparedTextAudioStatus != "failed" {
-                preparedTextAudioStatus = "rendering"
-                snapshot.preparedTextAudioStatus = "rendering"
-            }
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            selectedItem = try loadItemDetail(id: itemId, store: store)
-            screen = .playback
-            reportSuccess("Preparing generated audio for \(item.title).")
-            return true
-        } catch {
-            reportFailure(error, context: "Prepare text playback failed", itemId: itemId)
-            return true
-        }
-    }
-
-    private func shouldGatePreparedTextPlayback(for item: Item) -> Bool {
-        guard (audioPlaybackClientOverride == nil || forcePreparedTextGate),
-              ttsVoiceSelection == .system,
-              !liveSpeechFallbackItemIds.contains(item.id),
-              shouldPrewarmTextAudio(for: item) else {
-            return false
-        }
-        if item.media?.sourceType == .generatedTTSPrerendered {
-            return false
-        }
-        return true
     }
 
     private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
