@@ -245,6 +245,23 @@ actor FollowedSourceCoordinator {
         try repository.saveFeedEntry(entry)
     }
 
+    /// Dismisses `id` and returns the state it had, for Undo (#477). Nil when there is no such entry
+    /// or it was already dismissed, so there is nothing to undo.
+    func dismissEntry(id: String) throws -> FeedEntryState? {
+        guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
+              entry.state != .dismissed else { return nil }
+        try setEntryState(id: id, state: .dismissed)
+        return entry.state
+    }
+
+    /// Puts an entry dismissed by `dismissEntry` back in the state it had (#477). It does nothing if
+    /// the entry has moved on since, for instance imported from another screen.
+    func undoDismissEntry(id: String, restoring previous: FeedEntryState) throws {
+        guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
+              entry.state == .dismissed else { return }
+        try setEntryState(id: id, state: previous)
+    }
+
     /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
     /// identifies narration without extracting or replacing subscriber feed text.
     func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {

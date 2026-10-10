@@ -6,9 +6,14 @@ import SessionKitAudio
 import XCTest
 @testable import SpokenMarginsApp
 
-/// Records a spoken Margin on a streamed episode through the real app model and real audio router, the way the
-/// Record button does, and checks that both anchor evidence windows are stored. Device Build 29 showed no
-/// evidence because starting a Margin stopped the shared router and discarded the podcast player and its tap.
+/// Records a spoken Margin on a streamed episode through the real app model, real audio router and real player tap,
+/// and checks that both anchor evidence windows are stored and place the Margin. Device Build 29 showed no evidence
+/// because starting a Margin stopped the shared router and discarded the podcast player and its tap.
+///
+/// The recorder is `NoopRecordingClient`, so this covers the router, the player and the tap, not the microphone. The
+/// lane's fresh simulator has never granted the microphone and a unit test can't answer the prompt, so
+/// `SystemRecordingClient` would refuse to record, and its switch to `.playAndRecord` never runs here. What that switch
+/// does to the paused player and its tap belongs to the owner's device pass (#1308, ANC-13).
 @MainActor
 final class RealPlaybackMarginCaptureTests: XCTestCase {
     func testStreamedMarginStoresPreAndPostEvidence() async throws {
@@ -46,6 +51,39 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
         let margin = try XCTUnwrap(model.selectedItem.interjections.first)
         XCTAssertEqual(margin.podcastAnchorEvidenceCaptureStatus, .ready, margin.podcastAnchorEvidenceFailureReason ?? "")
         if model.snapshot.status == .playing { model.playPause() }
+
+        // Each window must be the audio that played where the evidence says it did (#1308, ANC-02). The app asks for
+        // 11 s windows: the pre window ends 5 s before the Margin, and the post window starts 5 s after playback
+        // rejoins 3 s before it. Matched against the episode itself, each window alone places the Margin where the
+        // player's clock said it was.
+        let anchor = try XCTUnwrap(margin.anchor.mediaTimeMs)
+        let evidence = margin.podcastAnchorEvidence ?? []
+        let pre = try XCTUnwrap(evidence.first { $0.windowRole == .preInterjection })
+        let post = try XCTUnwrap(evidence.first { $0.windowRole == .postResume })
+        XCTAssertLessThanOrEqual(abs(pre.durationMs - 11_000), 250, "pre window signature length \(pre.durationMs) ms")
+        XCTAssertLessThanOrEqual(abs(pre.anchorOffsetMs - 16_000), 400, "pre window anchor offset \(pre.anchorOffsetMs) ms")
+        XCTAssertLessThanOrEqual(abs(post.durationMs - 11_000), 250, "post window signature length \(post.durationMs) ms")
+        XCTAssertLessThanOrEqual(abs(post.anchorOffsetMs - -2_000), 600, "post window anchor offset \(post.anchorOffsetMs) ms")
+        for window in [pre, post] {
+            let query = PodcastPortableAnchorQuery(
+                packageScopedId: window.id,
+                senderMediaTimeMs: anchor,
+                evidence: [PodcastAcousticEvidenceQuery(
+                    id: window.id,
+                    signatureData: try Data(contentsOf: URL(fileURLWithPath: window.localPath)),
+                    anchorOffsetMs: window.anchorOffsetMs
+                )]
+            )
+            let resolution = try await PodcastAcousticAnchorResolver.resolve(
+                queries: [query], recipientAudioURL: episode,
+                senderExactEditionSHA256: nil, senderDurationMs: 60_000, strongSourceIdentity: true
+            )[window.id]
+            let placed = try XCTUnwrap(
+                resolution?.localMediaTimeMs,
+                "\(window.id): evidence class \(String(describing: resolution?.evidenceClass))"
+            )
+            XCTAssertLessThanOrEqual(abs(placed - anchor), 400, "\(window.id): Margin at \(anchor) ms placed at \(placed) ms")
+        }
     }
 
     private struct Timeout: Error { let label: String }
@@ -66,7 +104,7 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         let frames = AVAudioFrameCount(sampleRate)
-        var generator = SystemRandomNumberGenerator()
+        var state: UInt64 = 0x9E3779B97F4A7C15 // seeded, so every run signs the same audio
         for second in 0..<seconds {
             let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
             buffer.frameLength = frames
@@ -75,7 +113,8 @@ final class RealPlaybackMarginCaptureTests: XCTestCase {
                 let time = Double(second) + Double(frame) / sampleRate
                 let envelope = max(0, sin(time * 5.3) * sin(time * 1.7 + 0.4))
                 let tone = sin(2 * .pi * (220 + 180 * sin(time * 0.9)) * time)
-                let noise = Double.random(in: -1...1, using: &generator)
+                state = state &* 6364136223846793005 &+ 1442695040888963407
+                let noise = Double(Int64(bitPattern: state >> 11)) / Double(1 << 52) - 1
                 samples[frame] = Float(0.06 * envelope * (0.5 * tone + 0.3 * noise))
             }
             try file.write(from: buffer)

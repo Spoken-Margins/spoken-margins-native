@@ -41,6 +41,8 @@ extension Gate1AppModel {
         default:
             break
         }
+        // The health may be unchanged while only the keepable state flipped: redraw for Try again.
+        objectWillChange.send()
     }
 
     /// The listener tapped Try again on a recording screen that says the microphone isn't recording.

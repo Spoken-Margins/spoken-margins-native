@@ -306,6 +306,102 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), try XCTUnwrap(v1Title))
     }
 
+    /// A page-one title (16 pt bold) over the given lines, then an abstract and a second page.
+    private func titlePagePDF(_ top: [(String, CGFloat)], others: [(String, CGPoint, [NSAttributedString.Key: Any])] = []) -> Data {
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        return renderer.pdfData { context in
+            context.beginPage()
+            for (text, y) in top {
+                (text as NSString).draw(at: CGPoint(x: 60, y: y), withAttributes: title)
+            }
+            for (text, point, attributes) in others {
+                (text as NSString).draw(at: point, withAttributes: attributes)
+            }
+            ("Abstract" as NSString).draw(at: CGPoint(x: 60, y: 236), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: body)
+            }
+        }
+    }
+
+    private func titleSegments(_ document: StructuredDocument) -> [String] {
+        let characters = Array(document.text)
+        return document.segments.filter { $0.role == .title }.map {
+            String(characters[$0.range.start..<$0.range.end]).split(whereSeparator: \.isNewline).joined(separator: " ")
+        }
+    }
+
+    func testV2ReadsATitleWhoseFirstLineIsShort() throws {
+        // #692: title candidates need four or more words, so a short first line was
+        // left out of the title, read as a badge, and never spoken; the item title
+        // also changed from v1's, so a re-import missed the existing item.
+        let authors: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 13)]
+        let data = titlePagePDF(
+            [("Understanding uncertainty", 90), ("in modern machine learning systems", 110)],
+            others: [("Ada Example1, Ben Sample2", CGPoint(x: 60, y: 160), authors)]
+        )
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let fullTitle = "Understanding uncertainty in modern machine learning systems"
+
+        XCTAssertEqual(titleSegments(document), [fullTitle], "both printed lines are one title segment")
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertTrue(spoken.contains(fullTitle), spoken)
+        XCTAssertEqual(spoken.components(separatedBy: "Understanding uncertainty").count, 2, "the title is read once")
+
+        let v1Markdown = try PDFStructuredTextExtractor.markdown(from: pdf)
+        let v1Title = try XCTUnwrap(v1Markdown.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) })
+        let v2Title = try XCTUnwrap(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document))
+        XCTAssertEqual(v2Title, v1Title)
+
+        // The same PDF imported under v1, then again under v2, is one Library item.
+        let path = FileManager.default.temporaryDirectory.appending(path: "pdf-692-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]),
+            repository: try SQLiteSessionStore(path: path)
+        )
+        let url = "shared-file://share-sheet/Uncertainty.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Uncertainty"),
+            text: v1Markdown,
+            contentFormat: .markdown
+        ))
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: v2Title),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+        XCTAssertEqual(reimported.id, v1.id)
+    }
+
+    func testV2KeepsBadgesInTheTitleTypeOutOfTheTitle() throws {
+        // #692's fix joins short lines above the title only when they sit right above
+        // it in the same type, and never an article-type label.
+        for (badge, y) in [("sensors", CGFloat(40)), ("Research Article", 70)] {
+            let pdf = try XCTUnwrap(PDFDocument(data: titlePagePDF(
+                [(badge, y), ("Understanding uncertainty in modern", 90), ("machine learning systems", 110)]
+            )))
+            let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+            XCTAssertEqual(titleSegments(document), ["Understanding uncertainty in modern machine learning systems"], badge)
+        }
+    }
+
     func testV2SkipsFootnoteTextAtTheFootOfAPage() throws {
         // #250: v2 never gave a line the footnote role, so a page's footnote was read
         // where PDFKit placed it, often between the halves of a body sentence.

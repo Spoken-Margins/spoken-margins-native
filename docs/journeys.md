@@ -43,7 +43,7 @@ Steps are written in terms of what the listener wants, not exact button labels, 
 ## J3 — Record a Margin and rejoin it
 
 1. While a podcast plays, record a spoken Margin of about 10 seconds, then finish it.
-   - Pass: the podcast resumes a few seconds before where it paused (3 seconds; an article goes back to the start of its sentence), and the Margin appears on the item's timeline.
+   - Pass: the podcast resumes a few seconds before where it paused (3 seconds). An article, read live or played as prepared audio, resumes at the start of the sentence it paused in. The Margin appears on the item's timeline.
 2. Keep listening for a minute, then open the Margin from the timeline and play it.
    - Pass: the Margin's own voice plays to the end.
 3. Return to the source.
