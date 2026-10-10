@@ -543,7 +543,7 @@ enum PostResumePodcastEvidenceTapFactory {
                 PostResumePodcastEvidenceTapFactory.storedContext(for: tap).process(
                     bufferList: bufferList,
                     frameCount: sourceFrames,
-                    timeRange: sourceTimeRange,
+                    timeRange: CMTimeRange(start: sourceTimeRange.start + CMTime(seconds: 1.2, preferredTimescale: 600), duration: sourceTimeRange.duration), // MUTATION #1308 ANC-02
                     endOfStream: sourceFlags
                         & MTAudioProcessingTapFlags(kMTAudioProcessingTapFlag_EndOfStream) != 0
                 )

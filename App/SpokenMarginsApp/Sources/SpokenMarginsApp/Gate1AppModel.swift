@@ -1718,7 +1718,7 @@ final class Gate1AppModel: ObservableObject {
             sequence: sequence,
             source: .init(
                 pause: { [weak self] in self?.pause() },
-                resume: { [weak self] in self?.resumePlayback() },
+                resume: { }, // MUTATION #1308 ANC-08
                 seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
             ),
             voiceURL: { voiceURLs[$0] }
@@ -10215,7 +10215,7 @@ final class Gate1AppModel: ObservableObject {
         // #871: at most two of these run at once, nearest the playhead first. A finished download used to start
         // one per Margin, all together.
         let identity = Self.marginIdentity(interjection)
-        sourceWindowJobQueue.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playhead: { [weak self, itemId = item.id] in
+        MutationBareTask.enqueue(id: identity, anchorMediaTimeMs: anchorMediaTimeMs, playhead: { [weak self, itemId = item.id] in
             // Asked each time the queue picks a job, so a seek while jobs wait is followed. A retry the listener
             // asked for goes first; otherwise the order follows the playhead of the episode that's playing.
             if reportsResult { return anchorMediaTimeMs }
@@ -13260,3 +13260,12 @@ private func voiceQualityName(_ voice: AVSpeechSynthesisVoice) -> String {
     return "Default"
 }
 #endif
+
+// MUTATION #1308 ANC-03: every job starts at once, as before #871.
+@MainActor enum MutationBareTask {
+    @discardableResult
+    static func enqueue(id: String, anchorMediaTimeMs: Int, playhead: @escaping @MainActor () -> Int?, work: @escaping @MainActor () async -> Void) -> Bool {
+        Task { @MainActor in await work() }
+        return true
+    }
+}
