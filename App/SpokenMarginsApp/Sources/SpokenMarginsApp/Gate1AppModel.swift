@@ -1369,8 +1369,11 @@ final class Gate1AppModel: ObservableObject {
             try reconcileOnboardingEvidence(store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows)
             // No transcription of this run exists yet, so a Margin still "pending" lost its worker with the last run (#942).
-            if let settled = try? store.settleOrphanedTranscriptions(), settled > 0 {
-                diagnostics["orphanedTranscriptionsSettled"] = "\(settled)"
+            do {
+                let settled = try store.settleOrphanedTranscriptions()
+                if settled > 0 { diagnostics["orphanedTranscriptionsSettled"] = "\(settled)" }
+            } catch {
+                diagnostics["orphanedTranscriptionsSettled"] = "failed:\(error.localizedDescription)"
             }
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)

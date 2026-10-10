@@ -34,6 +34,20 @@ final class OrphanedTranscriptionTests: XCTestCase {
         XCTAssertNotEqual(words, TranscriptionFailureWording.marginStatus(transcriptionStatus: "pending", speechRecognitionOff: false))
     }
 
+    func testRetryAfterADeleteCompletesFromTheFailedState() throws {
+        let (store, engine) = try makeEngine(path: makePath())
+        try store.saveInterjection(margin(id: "m1", status: "transcribed", words: "Spoken"))
+        _ = try engine.deleteRepresentation(interjectionId: "m1", sessionId: "session-A", representation: "transcript")
+
+        _ = try engine.transcriptionRetryFailed(interjectionId: "m1", sessionId: "session-A", error: "boom")
+        XCTAssertEqual(try store.loadInterjections(sessionId: "session-A").first?.transcriptionStatus, "failed", "a failed retry stays failed")
+
+        _ = try engine.transcriptionCompleted(interjectionId: "m1", sessionId: "session-A", transcript: "Again")
+        let stored = try XCTUnwrap(try store.loadInterjections(sessionId: "session-A").first)
+        XCTAssertEqual(stored.transcriptionStatus, "transcribed")
+        XCTAssertEqual(stored.transcript, "Again")
+    }
+
     // MARK: Launch recovery
 
     func testALaunchSettlesVoiceMarginsLeftPendingByAnEarlierRun() throws {
