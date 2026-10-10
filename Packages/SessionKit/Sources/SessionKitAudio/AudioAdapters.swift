@@ -846,6 +846,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     private weak var activeUtterance: AVSpeechUtterance?
     private var chunksByUtteranceId: [ObjectIdentifier: SpeechPlaybackChunk] = [:]
     private var finalUtteranceId: ObjectIdentifier?
+    /// Hands a narration utterance to the synthesizer. Tests replace it to keep the synthesizer and
+    /// the utterance, then deliver the delegate callbacks themselves (#1129).
+    var speakNarration: (AVSpeechSynthesizer, AVSpeechUtterance) -> Void = { $0.speak($1) }
     #endif
 
     public override init() {
@@ -965,7 +968,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             let identifier = ObjectIdentifier(utterance)
             chunksByUtteranceId[identifier] = chunk
             finalUtteranceId = identifier
-            synthesizer.speak(utterance)
+            speakNarration(synthesizer, utterance)
         }
         #else
         if preparedSpeechText.isEmpty {
