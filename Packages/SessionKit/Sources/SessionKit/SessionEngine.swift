@@ -2403,6 +2403,21 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// A retry of a Margin's transcription failed. A Margin that already has words keeps them and its status. One
+    /// still "pending" (saved, never transcribed) is settled as failed, so it doesn't claim work that has ended (#942).
+    @discardableResult
+    public func transcriptionRetryFailed(interjectionId: String, sessionId: String? = nil, error: String) throws -> SessionSnapshot {
+        if let sessionId,
+           let stored = try repository.loadInterjections(sessionId: sessionId).first(where: { $0.id == interjectionId }),
+           stored.transcriptionStatus != "pending" {
+            return snapshot
+        }
+        try updateInterjection(interjectionId, sessionId: sessionId) { interjection in
+            if interjection.transcriptionStatus == "pending" { interjection.transcriptionStatus = "failed" }
+        }
+        return snapshot
+    }
+
     @discardableResult
     public func sourceWindowContextCompleted(interjectionId: String, sessionId: String? = nil, timeline: TranscriptTimeline) throws -> SessionSnapshot {
         let normalized = normalizedSourceTranscriptTimeline(timeline).timeline
@@ -2475,7 +2490,9 @@ public final class SessionEngine {
                 interjection.transcript = nil
                 interjection.cleanedTranscript = nil
                 interjection.displayText = nil
-                interjection.transcriptionStatus = interjection.audioPath == nil ? "failed" : "pending"
+                // "pending" would promise a transcription no one is doing (#942). "failed" is stored so Build 29
+                // still opens the row; the app words it as a retry and Retry stays available while audio exists.
+                interjection.transcriptionStatus = "failed"
             }
         }
         return snapshot

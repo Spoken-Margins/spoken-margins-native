@@ -1368,6 +1368,10 @@ final class Gate1AppModel: ObservableObject {
             rows = try loadLibraryRows(store: store)
             try reconcileOnboardingEvidence(store: store)
             try recoverInterruptedAIJobs(store: store, rows: rows)
+            // No transcription of this run exists yet, so a Margin still "pending" lost its worker with the last run (#942).
+            if let settled = try? store.settleOrphanedTranscriptions(), settled > 0 {
+                diagnostics["orphanedTranscriptionsSettled"] = "\(settled)"
+            }
             libraryItems = rows
             recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
             let availableItemIDs = Set(rows.map(\.id))
@@ -10358,6 +10362,12 @@ final class Gate1AppModel: ObservableObject {
                     if wasRetry {
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "retry_failed:\(failure)"
                         diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
+                        // A Margin never transcribed would stay "pending" with the retry over (#942); one with words keeps them.
+                        run { engine in
+                            snapshot = try engine.transcriptionRetryFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
+                            refreshSelectedItem()
+                            refreshMarginRows()
+                        }
                         TranscriptionFailureWording.notice(error: failure, isRetry: true).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
                     } else {
                         run { engine in
