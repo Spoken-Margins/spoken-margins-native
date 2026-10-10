@@ -48,6 +48,7 @@ final class CommunityMapFetchTests: XCTestCase {
     private func body(_ response: CommunityMapResponse) throws -> Data { try JSONEncoder().encode(response) }
 
     private func decide(
+        optedIn: Bool = true,
         item: Item? = nil,
         local: CommunityMapLocalState? = nil,
         blockedUntil: Date? = nil,
@@ -55,13 +56,14 @@ final class CommunityMapFetchTests: XCTestCase {
         at time: Date? = nil
     ) -> CommunityMapFetchDecision {
         CommunityMapFetchPolicy.decide(
-            item: item ?? episode(), local: local ?? none, blockedUntil: blockedUntil,
+            optedIn: optedIn, item: item ?? episode(), local: local ?? none, blockedUntil: blockedUntil,
             audioDurationMs: audioDurationMs, now: time ?? now
         )
     }
 
     /// Runs the fetcher the way the app does, counting each request it makes.
     private func fetch(
+        optedIn: @escaping @Sendable () async -> Bool = { true },
         item: Item? = nil,
         status: Int = 200,
         data: Data? = nil,
@@ -84,6 +86,7 @@ final class CommunityMapFetchTests: XCTestCase {
         }
         return await fetcher.fetchIfEligible(
             item: item ?? episode(), blockedUntil: blockedUntil, now: now,
+            optedIn: optedIn,
             localState: { await calls.readLocalState(); return await local() },
             mapsState: { await calls.readMapsState(); return await mapsState() },
             audioDurationMs: { await calls.readAudioDuration(); return measuredDurationMs },
@@ -95,6 +98,15 @@ final class CommunityMapFetchTests: XCTestCase {
 
     func testAsksWhenEveryRuleHolds() {
         XCTAssertEqual(decide(), .fetch(episodeKey: key))
+    }
+
+    func testNothingAsksUntilTheListenerOptsIn() {
+        XCTAssertEqual(decide(optedIn: false), .skip(.optedOut))
+        // Consent is checked before anything about the episode, so an opted-out phone never
+        // even classifies it.
+        let article = Item(id: "article", title: "Article", mediaType: "text", text: "Body", externalReference: "https://example.com/a", status: "ready")
+        XCTAssertEqual(decide(optedIn: false, item: article), .skip(.optedOut))
+        XCTAssertEqual(decide(optedIn: false, blockedUntil: now.addingTimeInterval(60)), .skip(.optedOut))
     }
 
     func testOnlyPodcastEpisodesAsk() {
@@ -157,6 +169,46 @@ final class CommunityMapFetchTests: XCTestCase {
     }
 
     // MARK: Skips make no request
+
+    func testOptedOutMakesNoRequestNoConfigReadAndReadsNothing() async throws {
+        let calls = FetchCalls()
+        // Even an episode that would otherwise ask, with no length in the feed, touches nothing.
+        for item in [episode(), episode(durationMs: nil)] {
+            let outcome = try await fetch(optedIn: { false }, item: item, measuredDurationMs: 600_000, calls: calls)
+            XCTAssertEqual(outcome, .skipped(.optedOut))
+            XCTAssertNil(outcome.retryAfter)
+        }
+        let requests = await calls.urls.count
+        let configReads = await calls.mapsStateReads
+        let localReads = await calls.localStateReads
+        let audioReads = await calls.audioDurationReads
+        XCTAssertEqual([requests, configReads, localReads, audioReads], [0, 0, 0, 0])
+        XCTAssertEqual(CommunityMapFetchOutcome.skipped(.optedOut).diagnostic, "skipped:opted_out")
+    }
+
+    func testTurningTheSettingOffWhileTheStoreIsReadStopsTheRequestAndTheConfigRead() async throws {
+        let calls = FetchCalls()
+        let setting = Setting(true)
+        let stored = Stored()
+        let outcome = try await fetch(
+            optedIn: { setting.value },
+            local: { setting.value = false; return CommunityMapLocalState(hasPublisherChapters: false, hasMap: false) },
+            calls: calls, store: { stored.save($0); return true }
+        )
+        XCTAssertEqual(outcome, .skipped(.optedOut))
+        let requests = await calls.urls.count
+        let configReads = await calls.mapsStateReads
+        XCTAssertEqual([requests, configReads], [0, 0])
+        XCTAssertTrue(stored.maps.isEmpty)
+    }
+
+    func testOptedInAsksOnceAndStores() async throws {
+        let calls = FetchCalls()
+        let outcome = try await fetch(optedIn: { true }, calls: calls)
+        XCTAssertEqual(outcome, .stored(sceneCount: 3))
+        let requests = await calls.urls.count
+        XCTAssertEqual(requests, 1)
+    }
 
     func testAnEpisodeThatCantTakeAMapMakesNoRequestAndNoConfigRead() async throws {
         let calls = FetchCalls()
@@ -630,6 +682,18 @@ private actor FetchCalls {
     func readMapsState() { mapsStateReads += 1 }
     func readLocalState() { localStateReads += 1 }
     func readAudioDuration() { audioDurationReads += 1 }
+}
+
+private final class Setting: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Bool
+
+    init(_ value: Bool) { current = value }
+
+    var value: Bool {
+        get { lock.withLock { current } }
+        set { lock.withLock { current = newValue } }
+    }
 }
 
 private final class Stored: @unchecked Sendable {

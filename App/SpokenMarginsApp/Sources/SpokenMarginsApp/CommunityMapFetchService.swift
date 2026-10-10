@@ -7,9 +7,12 @@ import SessionKitPersistence
 /// SessionKit (`CommunityMapFetchPolicy`, `CommunityMapFetcher`, `CommunityMapConverter`); this
 /// gathers what they need and stores the map as an ordinary proposal and projection. The model
 /// then renders the Skim summaries the way it does for any map it holds. Nothing is shown to the
-/// listener when anything goes wrong.
+/// listener when anything goes wrong. A lookup tells the server which episode was opened (and the
+/// listener's IP address), so it is opt-in until requests go through an anonymous relay.
 @MainActor
 final class CommunityMapFetchService {
+    /// Settings > Support & Privacy > "Look up community maps". Off unless the listener turns it on.
+    static let optInKey = "communityMapLookupOptIn"
     static let shared = CommunityMapFetchService()
     /// Until when each episode isn't asked about again, as hashes and dates only.
     static let logKey = "communityMapFetchLog"
@@ -28,6 +31,8 @@ final class CommunityMapFetchService {
         didStore: @escaping @MainActor () -> Void,
         report: @escaping @MainActor (String) -> Void
     ) {
+        // Opted out: read nothing, send nothing, not even a config request.
+        guard Self.optedIn else { return }
         guard !inFlight.contains(itemId), let item = try? store.loadItem(id: itemId) else { return }
         let episodeKey = CommunityMapEpisodeKey.key(for: item)
         let blockedUntil = episodeKey.flatMap { Self.loadLog().blockedUntil(episodeKey: $0) }
@@ -38,6 +43,7 @@ final class CommunityMapFetchService {
         Task {
             let outcome = await fetcher.fetchIfEligible(
                 item: item, blockedUntil: blockedUntil,
+                optedIn: { await MainActor.run { Self.optedIn } },
                 localState: {
                     var embedded = false
                     if let audioFile { embedded = await CommunityMapUploadService.hasEmbeddedChapters(audioFile) ?? false }
@@ -64,6 +70,8 @@ final class CommunityMapFetchService {
             if case .stored = outcome { didStore() }
         }
     }
+
+    private static var optedIn: Bool { UserDefaults.standard.bool(forKey: optInKey) }
 
     private static func loadLog() -> CommunityMapFetchLog {
         UserDefaults.standard.data(forKey: logKey)

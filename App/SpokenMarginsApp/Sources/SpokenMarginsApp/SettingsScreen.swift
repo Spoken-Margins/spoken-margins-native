@@ -22,6 +22,7 @@ struct SettingsScreen: View {
     @State private var isListeningSignalsSharePresented = false
     @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
+    @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
 
     private enum Field {
         case mapModel
@@ -353,6 +354,15 @@ struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.communityMaps.toggle")
+                    Toggle(isOn: $looksUpCommunityMaps) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Look up community maps")
+                            Text("When you open a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. The request names the episode, not you, but the server can see your IP address.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.communityMapLookup.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                     }

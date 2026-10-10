@@ -43,6 +43,8 @@ public struct CommunityMapResponse: Codable, Equatable, Sendable {
 }
 
 public enum CommunityMapFetchSkipReason: String, Equatable, Sendable {
+    /// The listener hasn't turned on community map lookups (the default).
+    case optedOut = "opted_out"
     case notPodcastEpisode = "not_podcast_episode"
     case privateLink = "private_link"
     case unverifiedFeed = "unverified_feed"
@@ -96,20 +98,23 @@ public enum CommunityMapFetchPolicy {
     /// after this long, so coming back online soon after finds its map.
     public static let failureRetryInterval: TimeInterval = 5 * 60
 
-    /// Every rule from #553 the phone can check on its own, in the order that asks least: the
-    /// kind of episode, what it already has, then when it was last asked about. The server's
+    /// Every rule from #553 the phone can check on its own, in the order that asks least: consent
+    /// (a lookup tells the server which episode the listener opened, and their IP address, so it
+    /// is opt-in until requests go through an anonymous relay), the kind of episode, what it already has, then when it was last asked about. The server's
     /// `maps` switch is read afterwards by `CommunityMapFetcher`, so an episode that can't take a
     /// community map never causes a config request.
     ///
     /// The episode must be a public one, as for an upload (#552): a private feed's episodes never
     /// ask, though the key is a hash.
     public static func decide(
+        optedIn: Bool,
         item: Item,
         local: CommunityMapLocalState,
         blockedUntil: Date?,
         audioDurationMs: Int? = nil,
         now: Date
     ) -> CommunityMapFetchDecision {
+        guard optedIn else { return .skip(.optedOut) }
         guard CommunityMapUploadPolicy.isPodcastEpisode(item) else { return .skip(.notPodcastEpisode) }
         guard CommunityMapUploadPolicy.linksArePublic(item) else { return .skip(.privateLink) }
         guard CommunityMapUploadPolicy.feedIsVerified(item) else { return .skip(.unverifiedFeed) }
@@ -352,6 +357,9 @@ public struct CommunityMapFetcher: Sendable {
     /// to `store`. Never throws: a switched-off server, a 404, a timeout or a bad answer leave the
     /// episode as it was, and the outcome only goes to Diagnostics.
     ///
+    /// - `optedIn` is read first, before anything else is read or sent, and again just before the
+    ///   server is asked (even for its config), so turning the setting off while the phone reads
+    ///   the audio file or the store still stops the request.
     /// - The phone's cheap rules run first and `localState` (which reads the transcript and may
     ///   read the audio file) only for an episode that passes them, so articles, private feeds and
     ///   episodes asked about a moment ago cost nothing. `localState` is read again just before
@@ -364,18 +372,20 @@ public struct CommunityMapFetcher: Sendable {
         item: Item,
         blockedUntil: Date?,
         now: Date = Date(),
+        optedIn: @Sendable () async -> Bool,
         localState: @Sendable () async -> CommunityMapLocalState,
         mapsState: @Sendable () async -> ServerFeatureState,
         audioDurationMs: @Sendable () async -> Int? = { nil },
         store: @Sendable (CommunityMap) throws -> Bool
     ) async -> CommunityMapFetchOutcome {
+        guard await optedIn() else { return .skipped(.optedOut) }
         let nothingHeld = CommunityMapLocalState(hasPublisherChapters: false, hasMap: false)
         var measured: Int?
-        var screen = CommunityMapFetchPolicy.decide(item: item, local: nothingHeld, blockedUntil: blockedUntil, now: now)
+        var screen = CommunityMapFetchPolicy.decide(optedIn: true, item: item, local: nothingHeld, blockedUntil: blockedUntil, now: now)
         if case .skip(.unknownDuration) = screen {
             measured = await audioDurationMs()
             screen = CommunityMapFetchPolicy.decide(
-                item: item, local: nothingHeld, blockedUntil: blockedUntil, audioDurationMs: measured, now: now
+                optedIn: true, item: item, local: nothingHeld, blockedUntil: blockedUntil, audioDurationMs: measured, now: now
             )
         }
         guard case .fetch = screen else {
@@ -383,12 +393,14 @@ public struct CommunityMapFetcher: Sendable {
             return .skipped(.noEpisodeKey)
         }
         let decision = CommunityMapFetchPolicy.decide(
-            item: item, local: await localState(), blockedUntil: blockedUntil, audioDurationMs: measured, now: now
+            optedIn: true, item: item, local: await localState(), blockedUntil: blockedUntil, audioDurationMs: measured, now: now
         )
         guard case .fetch(let episodeKey) = decision else {
             if case .skip(let reason) = decision { return .skipped(reason) }
             return .skipped(.noEpisodeKey)
         }
+        // Reading the audio file and the store can take a while; the setting may be off by now.
+        guard await optedIn() else { return .skipped(.optedOut) }
         if case .off(let reason) = await mapsState() { return .mapsOff(reason) }
 
         let body: Data
