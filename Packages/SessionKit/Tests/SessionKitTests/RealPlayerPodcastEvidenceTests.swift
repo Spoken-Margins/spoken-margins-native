@@ -29,7 +29,7 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let audioURL = try Self.writeTestEpisode(to: directory.appending(path: "episode.caf"), seconds: 16)
-        try assertPreWindowCapture(playbackURL: audioURL, sourceType: .nativeMediaFile)
+        try assertPreWindowCapture(playbackURL: audioURL, episodeFile: audioURL, sourceType: .nativeMediaFile)
     }
 
     func testContinuousTapCapturesThePreWindowFromAStreamedEpisode() throws {
@@ -42,10 +42,10 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         defer { server.stop() }
         let port = try XCTUnwrap(server.waitForPort())
         let url = try XCTUnwrap(URL(string: "http://127.0.0.1:\(port)/episode.caf"))
-        try assertPreWindowCapture(playbackURL: url, sourceType: .remoteStream)
+        try assertPreWindowCapture(playbackURL: url, episodeFile: fileURL, sourceType: .remoteStream)
     }
 
-    private func assertPreWindowCapture(playbackURL audioURL: URL, sourceType: AudioSourceType) throws {
+    private func assertPreWindowCapture(playbackURL audioURL: URL, episodeFile: URL, sourceType: AudioSourceType) throws {
         let client = AVPlayerStreamPlaybackClient()
         try client.setPlaybackVolume(0)
         let results = Results()
@@ -91,6 +91,49 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         }
         XCTAssertEqual(capture.windowRole, .preInterjection)
         XCTAssertFalse(capture.signatureData.isEmpty)
+        // The window is the 3 s that ended 5 s before the Margin, so it starts about 8 s before it (#1133, ANC-02).
+        XCTAssertLessThanOrEqual(abs(capture.durationMs - 3_000), 250, "whole decoded buffers, so within a buffer or two; signature length \(capture.durationMs) ms")
+        XCTAssertLessThanOrEqual(abs(capture.anchorOffsetMs - 8_000), 400, "anchor offset \(capture.anchorOffsetMs) ms")
+        // The signature must be of the audio that played at those times: matched against the episode itself, it
+        // places the Margin where the player's clock said it was.
+        let query = PodcastPortableAnchorQuery(
+            packageScopedId: "margin",
+            senderMediaTimeMs: anchor,
+            evidence: [PodcastAcousticEvidenceQuery(
+                id: "ij-001-pre", signatureData: capture.signatureData, anchorOffsetMs: capture.anchorOffsetMs
+            )]
+        )
+        let resolution = try resolveSynchronously(query: query, against: episodeFile)
+        let placed = try XCTUnwrap(resolution?.localMediaTimeMs, "evidence class: \(String(describing: resolution?.evidenceClass))")
+        XCTAssertLessThanOrEqual(abs(placed - anchor), 400, "Margin at \(anchor) ms placed at \(placed) ms")
+    }
+
+    /// The resolver is async, and these tests stay synchronous because they spin the main run loop for the
+    /// player, so they wait for it on an expectation.
+    private func resolveSynchronously(query: PodcastPortableAnchorQuery, against file: URL) throws -> ImportedAnchorResolution? {
+        let box = ResolutionBox()
+        let done = expectation(description: "resolved")
+        Task.detached {
+            do {
+                let resolutions = try await PodcastAcousticAnchorResolver.resolve(
+                    queries: [query], recipientAudioURL: file,
+                    senderExactEditionSHA256: nil, senderDurationMs: 16_000, strongSourceIdentity: true
+                )
+                box.set(.success(resolutions[query.packageScopedId]))
+            } catch {
+                box.set(.failure(error))
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 60)
+        return try XCTUnwrap(box.value).get()
+    }
+
+    private final class ResolutionBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: Result<ImportedAnchorResolution?, any Error>?
+        func set(_ value: Result<ImportedAnchorResolution?, any Error>) { lock.withLock { stored = value } }
+        var value: Result<ImportedAnchorResolution?, any Error>? { lock.withLock { stored } }
     }
 
     private final class HeardWindows: @unchecked Sendable {
@@ -227,7 +270,7 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         let frames = AVAudioFrameCount(sampleRate) // one second per buffer
-        var generator = SystemRandomNumberGenerator()
+        var state: UInt64 = 0x9E3779B97F4A7C15 // seeded, so every run signs the same audio
         for second in 0..<seconds {
             let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
             buffer.frameLength = frames
@@ -236,7 +279,8 @@ final class RealPlayerPodcastEvidenceTests: XCTestCase {
                 let time = Double(second) + Double(frame) / sampleRate
                 let envelope = max(0, sin(time * 5.3) * sin(time * 1.7 + 0.4))
                 let tone = sin(2 * .pi * (220 + 180 * sin(time * 0.9)) * time)
-                let noise = Double.random(in: -1...1, using: &generator)
+                state = state &* 6364136223846793005 &+ 1442695040888963407
+                let noise = Double(Int64(bitPattern: state >> 11)) / Double(1 << 52) - 1
                 samples[frame] = Float(envelope * (0.5 * tone + 0.3 * noise))
             }
             try file.write(from: buffer)
