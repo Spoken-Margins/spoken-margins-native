@@ -199,6 +199,10 @@ targets:
       - path: App/SpokenMarginsShareExtension/Sources
         type: syncedFolder
       - path: App/SpokenMarginsShareExtension/Resources
+      # Shared text routing (#662), host-tested in SessionKit. The extension compiles these two
+      # Foundation-only files rather than linking SessionKit.
+      - path: Packages/SessionKit/Sources/SessionKit/ClipboardIntakeClassifier.swift
+      - path: Packages/SessionKit/Sources/SessionKit/SharedTextIntake.swift
       - path: App/Gate2Shared/Sources
         type: syncedFolder
         excludes:
