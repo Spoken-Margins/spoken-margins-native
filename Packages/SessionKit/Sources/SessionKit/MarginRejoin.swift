@@ -39,10 +39,13 @@ enum MarginRejoin {
     ) -> (timeMs: Int, outcome: PreparedNarrationOutcome) {
         let pausedAtMs = max(0, pausedAtMs)
         let segments = timeline.segments.sorted { $0.startMs < $1.startMs }
-        guard let chunkStart = segments.last(where: { $0.startMs <= pausedAtMs })?.startMs ?? segments.first?.startMs else {
+        guard let holding = segments.last(where: { $0.startMs <= pausedAtMs }) ?? segments.first else {
             return (pausedAtMs, .unmapped)
         }
-        guard segments.contains(where: { $0.startChar != nil && $0.endChar != nil }) else {
+        let chunkStart = holding.startMs
+        // A chunk with no text positions can't place a sentence, and reading its offset as 0 would
+        // send the listener to the top of the article.
+        guard holding.startChar != nil, holding.endChar != nil else {
             return (min(pausedAtMs, chunkStart), .chunkStart)
         }
         // Never read past the last character: the end of the text counts as a sentence start there.

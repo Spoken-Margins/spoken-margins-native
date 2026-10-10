@@ -454,4 +454,41 @@ final class MarginRejoinTests: XCTestCase {
         XCTAssertEqual(try savedSession(engine, repository).position.mediaTimeMs, 37_000)
         XCTAssertEqual(try engine.diagnostics()["lastMarginRejoin"], "media_step_back")
     }
+
+    /// Chunks like the real assembler writes them: sentences grouped, each chunk with its own text range.
+    private func threeChunkTimeline() -> TranscriptTimeline {
+        TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 2_000, startChar: 0, endChar: 15, text: "First sentence."),
+                MediaTimelineSegment(id: "seg-2", startMs: 2_000, endMs: 6_000, startChar: 16, endChar: 55,
+                                     text: "Second sentence carries the thought on."),
+                MediaTimelineSegment(id: "seg-3", startMs: 6_000, endMs: 8_000, startChar: 56, endChar: 71, text: "Third sentence."),
+            ],
+            chapters: [],
+            durationMs: 8_000
+        )
+    }
+
+    func testAPreparedArticleWithSeveralChunksResumesAtTheChunkThatStartsTheSentence() {
+        let timeline = threeChunkTimeline()
+        func resume(_ ms: Int) -> (Int, MarginRejoin.PreparedNarrationOutcome) {
+            let result = MarginRejoin.preparedNarrationResume(pausedAtMs: ms, text: text, timeline: timeline)
+            return (result.timeMs, result.outcome)
+        }
+        XCTAssertEqual(resume(1_000).0, 0)
+        XCTAssertEqual(resume(4_500).0, 2_000)
+        XCTAssertEqual(resume(2_000).0, 2_000, "a sentence start stays put")
+        XCTAssertEqual(resume(7_000).0, 6_000)
+        XCTAssertEqual(resume(7_000).1, .sentenceStart)
+    }
+
+    /// A pause inside a chunk with no text positions must not read as text offset 0 (the top of the article).
+    func testAChunkWithoutTextPositionsResumesAtItsOwnStartNotAtTheTopOfTheArticle() {
+        var timeline = threeChunkTimeline()
+        timeline.segments[1].startChar = nil
+        timeline.segments[1].endChar = nil
+        let result = MarginRejoin.preparedNarrationResume(pausedAtMs: 4_500, text: text, timeline: timeline)
+        XCTAssertEqual(result.timeMs, 2_000)
+        XCTAssertEqual(result.outcome, .chunkStart)
+    }
 }

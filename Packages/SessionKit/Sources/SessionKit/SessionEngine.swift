@@ -4474,7 +4474,10 @@ public final class SessionEngine {
             if session.currentTargetType == .transcriptBackedMedia,
                let source = item(for: session), isGeneratedTextMedia(source.media),
                let text = source.text, !text.isEmpty,
+               PreparedNarrationFallback.media(source.media, isTarget: session.currentTargetId),
                let timeline = sourceTranscriptTimeline(for: session) {
+                // The stored timeline belongs to the item's current render, so it is used only while that
+                // render is what plays (an older file's times differ after the article is prepared again, #277).
                 // An article played as prepared audio is text: it rejoins at the start of its sentence (#806).
                 let resume = MarginRejoin.preparedNarrationResume(pausedAtMs: pausedAtMs, text: text, timeline: timeline)
                 resumeAtMs = resume.timeMs
