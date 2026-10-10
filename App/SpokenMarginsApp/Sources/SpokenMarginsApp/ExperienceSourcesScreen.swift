@@ -756,7 +756,7 @@ private struct SourceInboxRow: View {
 
     private func dismiss() {
         switch candidate {
-        case .localFile(let file): model.dismissQuickAccessFile(file)
+        case .localFile(let file): model.dismissQuickAccessFileWithUndo(file)
         case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
         }
     }
