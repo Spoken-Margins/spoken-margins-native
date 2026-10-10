@@ -363,6 +363,29 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
     }
 
+    func testAMeasurementThatResolvesUnderTheLineReplacesTheKeptMessageWithTryAgain() {
+        // #1041: after retries are used up, a pending measurement is "unknown, keep". When it lands under 250 ms
+        // the health and restart count don't change, but the words and Try again must.
+        let recorder = ScriptedRecordingClient(capturedMs: 22)
+        recorder.stoppedButReports = true
+        recorder.durationUnknown = true
+        recorder.restartFails = true
+        let harness = Harness(recorder: recorder)
+
+        harness.run(seconds: 3)
+
+        XCTAssertTrue(harness.model.recordingHasKeepableAudio)
+        XCTAssertFalse(harness.model.canRetryMicrophone)
+        XCTAssertEqual(harness.model.lastError?.contains("kept if you tap Save"), true)
+
+        recorder.durationUnknown = false
+        harness.run(seconds: 1)
+
+        XCTAssertFalse(harness.model.recordingHasKeepableAudio)
+        XCTAssertTrue(harness.model.canRetryMicrophone)
+        XCTAssertEqual(harness.model.lastError?.contains("Tap Try again"), true)
+    }
+
     func testAShortRecordingThatStallsIsKeptBySaveAndNotDeletedByTryAgain() {
         // 500 ms is above the one keep threshold, so Try again and Save agree.
         let recorder = ScriptedRecordingClient(capturedMs: 500)

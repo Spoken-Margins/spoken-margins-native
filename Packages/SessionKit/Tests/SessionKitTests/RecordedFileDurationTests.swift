@@ -1,5 +1,6 @@
 #if canImport(AVFoundation)
 import XCTest
+import SessionKit
 @testable import SessionKitAudio
 
 /// #937: a stopped recorder reads 0 and a poll can be old, so the length of a finished recording is read
@@ -70,6 +71,28 @@ final class RecordedFileDurationTests: XCTestCase {
             return XCTFail("the measurement did not finish")
         }
         XCTAssertEqual(Double(milliseconds), 2_000, accuracy: 250)
+    }
+
+    /// #1041: a restart never reads the file on the main thread. A recorder that had already stopped is
+    /// restarted only once the poll's background measurement has landed and shows nothing worth keeping.
+    func testARestartOverAnUnfinishedOrUnreadableMeasurementKeepsTheFile() {
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: nil), .keepUnknown)
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: .unreadable), .keepUnknown)
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: .milliseconds(22)), .restart)
+        XCTAssertEqual(
+            CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: .milliseconds(MarginCaptureTimings.keepAudioMs)),
+            .keepAudio,
+            "the file holds more than the polls saw"
+        )
+    }
+
+    func testARunningRecorderIsJudgedByWhatItHasTakenIn() {
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: false, measurement: nil), .restart)
+        XCTAssertEqual(
+            CaptureRestartGuard.verdict(capturedMs: MarginCaptureTimings.keepAudioMs, recorderHadStopped: false, measurement: nil),
+            .keepAudio
+        )
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 249, recorderHadStopped: false, measurement: .unreadable), .restart)
     }
 }
 #endif
