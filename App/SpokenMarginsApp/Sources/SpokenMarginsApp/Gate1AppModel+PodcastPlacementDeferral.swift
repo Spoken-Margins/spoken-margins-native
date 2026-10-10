@@ -30,11 +30,4 @@ extension Gate1AppModel {
         }
     }
 
-    nonisolated static func podcastResolution(
-        previous: ImportedAnchorResolution, proposed: ImportedAnchorResolution,
-        previousEdition: String?, currentEdition: String?, hasTranscript: Bool
-    ) -> ImportedAnchorResolution {
-        PodcastAnchorFusionResolver.preservingVerifiedPlacement(previous: previous, proposed: proposed,
-            previousEdition: previousEdition, currentEdition: currentEdition, hasTranscript: hasTranscript)
-    }
 }
