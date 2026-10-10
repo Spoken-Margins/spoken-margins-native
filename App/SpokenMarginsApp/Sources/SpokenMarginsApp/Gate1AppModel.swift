@@ -12804,7 +12804,7 @@ final class Gate1AppModel: ObservableObject {
         Task { [weak self] in await self?.refreshFollowedSources(force: force) }
     }
 
-    private func refreshFollowedSources(force: Bool) async {
+    func refreshFollowedSources(force: Bool) async {
         guard !isRefreshingFollowedSources else { return }
         isRefreshingFollowedSources = true
         defer { isRefreshingFollowedSources = false }
