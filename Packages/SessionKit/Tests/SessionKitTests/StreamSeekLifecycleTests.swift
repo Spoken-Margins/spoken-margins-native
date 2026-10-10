@@ -75,6 +75,46 @@ final class StreamSeekLifecycleTests: XCTestCase {
                       "a real AVPlayer seek jump must record landing even with its completion withheld and watchdog stopped")
     }
 
+    /// #588 on the real player (#1133, ANC-06): an episode that played to its end stays ended until the listener
+    /// scrubs back. The seek must clear the client's own end-of-item flag, or the engine moves the episode
+    /// straight back to its end. EpisodeEndSeekTests runs the engine against a fake that copies this rule;
+    /// this runs the rule itself, in `AVPlayerStreamPlaybackClient`.
+    func testScrubbingBackFromTheEndClearsTheEndedFlag() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-seek-end-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 3, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 3_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 1_500)
+        XCTAssertTrue(spin(until: 8) { client.isPlaybackComplete(targetId: "episode-target") }, "the episode plays to its end")
+
+        let request = try client.requestMediaSeek(toMediaTimeMs: 1_000)
+        XCTAssertTrue(spin(until: 5) { client.mediaSeekResolution(for: request) != .pending }, "the seek lands")
+        XCTAssertFalse(client.isPlaybackComplete(targetId: "episode-target"), "scrubbed back, so no longer at the end")
+        let position = try XCTUnwrap(client.currentMediaTimeMs())
+        XCTAssertLessThan(abs(position - 1_000), 500, "the player is at the new place, not the end: \(position) ms")
+        RunLoop.main.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertFalse(client.isPlaybackComplete(targetId: "episode-target"), "and stays there, paused")
+    }
+
+    private func spin(until seconds: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if condition() { return true }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        return condition()
+    }
+
     private static func writeTone(to url: URL, seconds: Double, hz: Double) throws -> URL {
         let sampleRate = 44_100.0
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1))
