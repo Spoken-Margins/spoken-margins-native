@@ -1081,30 +1081,6 @@ final class Gate1AppModel: ObservableObject {
         return nil
     }
 
-    var selectedPodcastDownloadDescription: String? {
-        guard let record = podcastDownloadRecords[selectedItem.id] else { return nil }
-        if record.state == .downloading, let progress = record.progress {
-            return "Downloading \(Int((progress * 100).rounded()))%"
-        }
-        if record.state == .failed, let reason = record.failureReason {
-            return "Failed: \(reason)"
-        }
-        switch record.state {
-        case .availableOffline:
-            return "Downloaded for offline playback"
-        case .waitingForWiFi:
-            return "Waiting for Wi-Fi · Download Now can force it"
-        case .streamingOnly:
-            return "Online only · Download Now saves it in the app"
-        case .downloading:
-            return "Downloading"
-        case .failed:
-            return "Download failed"
-        case .evicted:
-            return "Download was removed to free space"
-        }
-    }
-
     private static func storedMediaSkipSeconds(forKey key: String) -> Int {
         MediaSkipRule.validated(UserDefaults.standard.integer(forKey: key))
     }
@@ -5157,11 +5133,12 @@ final class Gate1AppModel: ObservableObject {
 
     func redownloadSelectedPodcast() {
         guard let coordinator = podcastDownloadCoordinator else { return }
+        let alreadyDownloading = coordinator.recordsByItemId[selectedItem.id]?.state == .downloading
         requestedPodcastTransportReplacements.insert(selectedItem.id)
         if coordinator.recordsByItemId[selectedItem.id] == nil {
             prioritizeOfflinePreparation(id: selectedItem.id)
         } else { coordinator.redownload(itemId: selectedItem.id) }
-        reportConfirmation("Downloading a fresh copy of the podcast.")
+        reportConfirmation(alreadyDownloading ? "Already downloading. Progress shows on this screen." : "Downloading a fresh copy of the podcast.")
     }
 
     func downloadSelectedPodcastNow() {
@@ -12634,6 +12611,7 @@ final class Gate1AppModel: ObservableObject {
             )
             refreshSelectedItem()
         }
+        if requestedReplacement, let record = podcastDownloadRecords[itemId] { reportConfirmation(PodcastDownloadStatusText.downloaded(record) + ".") }
         scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
         retrySourceWindowContexts(itemId: itemId)
         resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
