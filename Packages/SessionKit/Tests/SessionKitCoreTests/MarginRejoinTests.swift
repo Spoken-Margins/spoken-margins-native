@@ -309,4 +309,186 @@ final class MarginRejoinTests: XCTestCase {
         XCTAssertEqual(MarginRejoin.mediaResumeTimeMs(pausedAtMs: 2_000), 0)
         XCTAssertEqual(MarginRejoin.mediaResumeTimeMs(pausedAtMs: 0), 0)
     }
+
+    // MARK: Articles played as prepared audio (#806)
+
+    private func preparedArticle(file: URL) -> Item {
+        Item(
+            id: "item-prepared-article", title: "Prepared Article", mediaType: "text", text: text,
+            externalReference: nil, status: "ready",
+            media: ItemMedia(
+                sourceType: .generatedTTSPrerendered, url: file.absoluteString,
+                durationMs: 7_100, nativeMediaId: file.absoluteString
+            ),
+            transcriptId: "generated-transcript-item-prepared-article"
+        )
+    }
+
+    /// One chunk reading the whole text at 100 ms a character, so the second sentence starts at 1.6 s.
+    private func oneChunkTimeline() -> TranscriptTimeline {
+        TranscriptTimeline(
+            segments: [MediaTimelineSegment(
+                id: "seg-1", startMs: 0, endMs: text.count * 100, startChar: 0, endChar: text.count, text: text
+            )],
+            chapters: [],
+            durationMs: text.count * 100
+        )
+    }
+
+    /// Chunks that carry no text positions, the way a timeline with no map reads.
+    private func unmappedTimeline() -> TranscriptTimeline {
+        TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 3_000, text: "First sentence."),
+                MediaTimelineSegment(id: "seg-2", startMs: 3_000, endMs: 6_000, text: "Second sentence."),
+            ],
+            chapters: [],
+            durationMs: 6_000
+        )
+    }
+
+    private let preparedProfile = RuntimeCapabilityProfile(
+        id: "phone-tablet-online",
+        displayName: "Phone/Tablet Online",
+        capabilities: [
+            "sync": ["canonical_persistence"],
+            "playback": ["prerendered_audio", "native_media"],
+            "timeline": ["transcript_segments", "media_time", "chapter_timing"],
+            "interjection": ["record_audio", "capture_media_anchor", "capture_text_anchor"]
+        ]
+    )
+
+    private func preparedEngine(timeline: TranscriptTimeline) throws -> (SessionEngine, RejoinAudio, InMemorySessionRepository, URL) {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("rejoin-\(UUID().uuidString).caf")
+        try Data().write(to: file)
+        let item = preparedArticle(file: file)
+        let repository = InMemorySessionRepository(items: [item.id: item])
+        try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
+            id: "generated-transcript-item-prepared-article", itemId: item.id, createdAt: Date(), timeline: timeline
+        ))
+        let audio = RejoinAudio()
+        let engine = SessionEngine(profile: preparedProfile, repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(engine.currentSession?.currentTargetType, .transcriptBackedMedia, "plays the prepared file")
+        return (engine, audio, repository, file)
+    }
+
+    func testAPreparedArticleMarginResumesAtTheStartOfItsSentence() throws {
+        let (engine, audio, repository, file) = try preparedEngine(timeline: oneChunkTimeline())
+        defer { try? FileManager.default.removeItem(at: file) }
+        audio.mediaTimeMs = 3_900  // "First sentence. Second sentence carries" is 39 characters in
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/prepared.m4a")
+
+        XCTAssertEqual(audio.plays.last, 1_600, "the second sentence's start, not 3 s back (2_900)")
+        XCTAssertEqual(try savedSession(engine, repository).position.mediaTimeMs, 1_600)
+        let margin = try XCTUnwrap(repository.loadInterjections(sessionId: try XCTUnwrap(engine.currentSession?.id)).first)
+        XCTAssertEqual(margin.anchor.mediaTimeMs, 3_900, "the Margin stays where it was made")
+        XCTAssertEqual(try engine.diagnostics()["lastMarginRejoin"], "sentence_start")
+    }
+
+    func testAPreparedArticleMarginOnASentenceStartStaysPut() throws {
+        let (engine, audio, repository, file) = try preparedEngine(timeline: oneChunkTimeline())
+        defer { try? FileManager.default.removeItem(at: file) }
+        audio.mediaTimeMs = 1_600
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/start.m4a")
+
+        XCTAssertEqual(try savedSession(engine, repository).position.mediaTimeMs, 1_600)
+    }
+
+    func testSeveralPreparedArticleMarginsInOneSentenceNeverDriftBack() throws {
+        let (engine, audio, repository, file) = try preparedEngine(timeline: oneChunkTimeline())
+        defer { try? FileManager.default.removeItem(at: file) }
+
+        for (index, pausedAt) in [3_100, 1_600, 4_800, 1_600, 1_600].enumerated() {
+            audio.mediaTimeMs = pausedAt
+            _ = try engine.beginInterjection()
+            _ = try engine.finishInterjection(audioRef: "interjections/prepared-drift-\(index).m4a")
+            XCTAssertEqual(try savedSession(engine, repository).position.mediaTimeMs, 1_600, "Margin \(index + 1)")
+        }
+    }
+
+    func testAPreparedArticleMarginWithoutATextMapResumesAtTheChunkStartNotThreeSecondsBack() throws {
+        let (engine, audio, repository, file) = try preparedEngine(timeline: unmappedTimeline())
+        defer { try? FileManager.default.removeItem(at: file) }
+        audio.mediaTimeMs = 4_500
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/chunk.m4a")
+
+        XCTAssertEqual(audio.plays.last, 3_000)
+        XCTAssertEqual(try savedSession(engine, repository).position.mediaTimeMs, 3_000)
+        XCTAssertEqual(try engine.diagnostics()["lastMarginRejoin"], "chunk_start")
+    }
+
+    func testPreparedNarrationResumeNeighbouringPauses() {
+        let timeline = oneChunkTimeline()
+        func resume(_ ms: Int) -> Int { MarginRejoin.preparedNarrationResume(pausedAtMs: ms, text: text, timeline: timeline).timeMs }
+        XCTAssertEqual(resume(0), 0)
+        XCTAssertEqual(resume(900), 0, "inside the first sentence")
+        XCTAssertEqual(resume(1_400), 0, "just before the second sentence")
+        XCTAssertEqual(resume(1_500), 1_500, "within the look-ahead of the second sentence's start: stays put, never after the pause")
+        XCTAssertEqual(resume(1_600), 1_600)
+        XCTAssertEqual(resume(1_650), 1_600)
+        let thirdStart = "First sentence. Second sentence carries the thought on. ".count * 100
+        XCTAssertEqual(resume(7_050), thirdStart, "the last 100 ms of the last sentence")
+        XCTAssertEqual(resume(7_100), thirdStart, "at the very end")
+        XCTAssertEqual(resume(90_000), thirdStart, "past the end clamps")
+        XCTAssertEqual(MarginRejoin.preparedNarrationResume(pausedAtMs: 500, text: "", timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: nil)).outcome, .unmapped)
+    }
+
+    /// Done when 1: recorded audio keeps the 3 s step back. Publisher audio lined up with an article
+    /// (#546) is recorded audio until it has a text-to-time map.
+    func testPublisherAudioForAnArticleStillStepsBackThreeSeconds() throws {
+        var lined = episode
+        lined.text = text
+        let (engine, audio, repository) = try engine(for: lined)
+        audio.mediaTimeMs = 40_000
+
+        _ = try engine.beginInterjection()
+        _ = try engine.finishInterjection(audioRef: "interjections/publisher.m4a")
+
+        XCTAssertEqual(try savedSession(engine, repository).position.mediaTimeMs, 37_000)
+        XCTAssertEqual(try engine.diagnostics()["lastMarginRejoin"], "media_step_back")
+    }
+
+    /// Chunks like the real assembler writes them: sentences grouped, each chunk with its own text range.
+    private func threeChunkTimeline() -> TranscriptTimeline {
+        TranscriptTimeline(
+            segments: [
+                MediaTimelineSegment(id: "seg-1", startMs: 0, endMs: 2_000, startChar: 0, endChar: 15, text: "First sentence."),
+                MediaTimelineSegment(id: "seg-2", startMs: 2_000, endMs: 6_000, startChar: 16, endChar: 55,
+                                     text: "Second sentence carries the thought on."),
+                MediaTimelineSegment(id: "seg-3", startMs: 6_000, endMs: 8_000, startChar: 56, endChar: 71, text: "Third sentence."),
+            ],
+            chapters: [],
+            durationMs: 8_000
+        )
+    }
+
+    func testAPreparedArticleWithSeveralChunksResumesAtTheChunkThatStartsTheSentence() {
+        let timeline = threeChunkTimeline()
+        func resume(_ ms: Int) -> (Int, MarginRejoin.PreparedNarrationOutcome) {
+            let result = MarginRejoin.preparedNarrationResume(pausedAtMs: ms, text: text, timeline: timeline)
+            return (result.timeMs, result.outcome)
+        }
+        XCTAssertEqual(resume(1_000).0, 0)
+        XCTAssertEqual(resume(4_500).0, 2_000)
+        XCTAssertEqual(resume(2_000).0, 2_000, "a sentence start stays put")
+        XCTAssertEqual(resume(7_000).0, 6_000)
+        XCTAssertEqual(resume(7_000).1, .sentenceStart)
+    }
+
+    /// A pause inside a chunk with no text positions must not read as text offset 0 (the top of the article).
+    func testAChunkWithoutTextPositionsResumesAtItsOwnStartNotAtTheTopOfTheArticle() {
+        var timeline = threeChunkTimeline()
+        timeline.segments[1].startChar = nil
+        timeline.segments[1].endChar = nil
+        let result = MarginRejoin.preparedNarrationResume(pausedAtMs: 4_500, text: text, timeline: timeline)
+        XCTAssertEqual(result.timeMs, 2_000)
+        XCTAssertEqual(result.outcome, .chunkStart)
+    }
 }

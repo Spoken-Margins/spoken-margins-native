@@ -2863,7 +2863,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: context?.title ?? "Spoken Margins",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedSeconds,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? playbackRate : 0,
+            // The clock runs only once the player is really playing: while it opens the stream or
+            // rebuffers it is waiting, and a nonzero rate would advance the Lock Screen clock (#943).
+            MPNowPlayingInfoPropertyPlaybackRate: SystemPlaybackPresentation.playerRate(
+                isPlayingByIntent: isPlaying,
+                isWaitingForPlayer: player?.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                selectedRate: playbackRate
+            ),
             MPNowPlayingInfoPropertyDefaultPlaybackRate: playbackRate,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
             MPNowPlayingInfoPropertyIsLiveStream: durationSeconds == nil
