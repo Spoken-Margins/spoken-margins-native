@@ -34,7 +34,6 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
         let source = try appSource("Gate1AppModel.swift")
         for (start, end) in [
             ("func finishInterjection()", "func cancelInterjection()"),
-            ("private func performGate3WatchCommand(", "private func performGate2CompactCommand("),
             ("private func performGate2CompactCommand(", "private func compactSkipUnit(")
         ] {
             let route = try body(source, from: start, to: end)

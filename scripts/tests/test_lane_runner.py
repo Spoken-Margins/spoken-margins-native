@@ -1011,7 +1011,7 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'push_merge', side_effect=push), \
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
-                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'), \
+                mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'run_automerge', side_effect=automerge or (
@@ -1488,19 +1488,129 @@ class WarmBuildTests(unittest.TestCase):
         self.assertFalse(busy.exists())
 
 
+class AutomergeKeepsNoCacheTests(unittest.TestCase):
+    """#1207: automerge runs build no app, yet linked a warm cache each and kept four per runner (1.3 GB of
+    SwiftPM build apiece, about 9 GB on the build runners), which held them at the 20 GB disk floor."""
+    setUp, commit, warm, caches = WarmBuildTests.setUp, WarmBuildTests.commit, WarmBuildTests.warm, WarmBuildTests.caches
+
+    def run_auto(self):
+        github = FakeGitHub(labels=('automerge',))
+        with tempfile.TemporaryDirectory() as folder, \
+                mock.patch.dict(os.environ, {'SM_LANE_WARM_DIR': str(self.cache)}), \
+                mock.patch.object(lane, 'ROOT', self.tree), \
+                mock.patch.object(lane, 'TESTED_RECORD', Path(folder) / 'tested.json'), \
+                mock.patch.object(lane, 'build_merge_commit', return_value=(MERGE, [])), \
+                mock.patch.object(lane, 'push_merge', return_value=(True, '')), \
+                mock.patch.object(lane, 'sweep_merge_audit'), \
+                mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T1', 'why': ['x'], 'files': []}), \
+                mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
+                mock.patch.object(lane, 'changed_paths_for_tests', return_value=None), \
+                mock.patch.object(lane, 'run_automerge', return_value=('PASS', 'host only', 'host tests', [])):
+            return lane.run_auto(github, {'title': 'T'}, 5, 'next', HEAD, MERGE, Path(folder), [])
+
+    def cache_folder(self, name, checkout=None):
+        cache = self.cache / (checkout or lane.checkout_folder(self.tree)) / name
+        (cache / 'root').mkdir(parents=True)
+        (cache / 'root/verification.lock').write_text('')
+        (cache / 'sessionkit/out').mkdir(parents=True)
+        (cache / 'sessionkit/out/SessionKit.o').write_bytes(b'x' * 8192)
+        return cache
+
+    def test_an_automerge_run_links_no_cache_and_keeps_none(self):
+        verdict, _, _, details = self.run_auto()
+        self.assertEqual(verdict, 'PASS', details)
+        self.assertEqual(self.caches(), [])
+        self.assertFalse((self.tree / '.build').is_symlink())
+        self.assertFalse((self.tree / 'Packages/SessionKit/.build').is_symlink())
+        self.assertIn('no cache kept', details[0])
+
+    def test_after_a_t3_in_the_same_job_its_links_are_undone_and_its_cache_kept(self):
+        self.warm()  # the T3's links; its job still holds the cache
+        cache = (self.tree / '.build').resolve().parent
+        built = cache / 'root/verification/SpokenMarginsAppBehavior/Build/product'
+        built.parent.mkdir(parents=True)
+        built.write_text('T3 build')
+        line = lane.host_build_folders(self.tree, root=self.cache)
+        self.assertFalse((self.tree / '.build').exists())
+        self.assertFalse((self.tree / 'Packages/SessionKit/.build').exists())
+        self.assertEqual(built.read_text(), 'T3 build')
+        self.assertNotIn('removed', line)
+
+    def test_idle_host_test_caches_are_removed_and_app_builds_and_busy_caches_stay(self):
+        import fcntl
+        idle = self.cache_folder('sk-idle-0000')
+        busy = self.cache_folder('sk-busy-0000')
+        t2 = self.cache_folder('sk-t2-0000')
+        (t2 / 'root/dd-simulator').mkdir()
+        t3 = self.cache_folder('sk-t3-0000')
+        (t3 / 'root/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+        other_runner = self.cache_folder('sk-idle-0000', checkout='checkout-0th3r000')
+        with open(busy / '.lock', 'a+') as job:
+            fcntl.flock(job, fcntl.LOCK_EX | fcntl.LOCK_NB)  # another job of this runner's, from an older runner
+            line = lane.host_build_folders(self.tree, root=self.cache)
+        self.assertFalse(idle.exists())
+        for kept in (busy, t2, t3, other_runner):
+            self.assertTrue(kept.exists(), kept)
+        self.assertRegex(line, r'removed 1 idle host-test cache \(0\.0 GB\)')
+        line = lane.host_build_folders(self.tree, root=self.cache)
+        self.assertRegex(line, r'removed 1 idle host-test cache')  # the busy one, now that its job has ended
+        self.assertNotIn('removed', lane.host_build_folders(self.tree, root=self.cache))  # once
+        self.assertTrue(t2.exists() and t3.exists() and other_runner.exists())
+
+    def test_a_checkout_with_no_caches_gets_no_folder(self):
+        lane.host_build_folders(self.tree, root=self.cache)
+        self.assertFalse(self.cache.exists())
+
+    def test_the_job_empties_the_build_folders_it_kept_in_the_workspace(self):
+        swiftpm = self.tree / 'Packages/SessionKit/.build/out'
+        swiftpm.mkdir(parents=True)
+        (swiftpm / 'SessionKit.o').write_text('host tests')
+        (self.tree / '.build/dd-simulator').mkdir(parents=True)
+        (self.tree / '.build/verification.lock').write_text('')
+        lane.drop_workspace_builds(self.tree)
+        self.assertFalse((self.tree / 'Packages/SessionKit/.build').exists())
+        self.assertFalse((self.tree / '.build/dd-simulator').exists())
+
+    def test_the_job_leaves_a_warm_cache_it_linked_alone(self):
+        self.warm()
+        product = self.tree / 'Packages/SessionKit/.build/out/product'
+        product.parent.mkdir(parents=True)
+        product.write_text('kept')
+        lane.drop_workspace_builds(self.tree)
+        self.assertEqual(product.read_text(), 'kept')
+
+    def test_main_empties_them_when_an_automerge_job_ends(self):
+        seen = []
+
+        def auto(*args, **kwargs):
+            (lane.ROOT / 'Packages/SessionKit/.build/out').mkdir(parents=True)
+            return 'PASS', 'host only', 'host tests', []
+
+        def drop(tree):
+            real(tree)
+            seen.append((tree / 'Packages/SessionKit/.build').exists())
+
+        real = lane.drop_workspace_builds
+        flow = MainFlowTests()
+        with mock.patch.object(lane, 'run_auto', side_effect=auto), \
+                mock.patch.object(lane, 'drop_workspace_builds', side_effect=drop):
+            flow.run_main(FakeGitHub(labels=('automerge',)))
+        self.assertEqual(seen, [False])
+
+
 class BuildRunnerRoomTests(unittest.TestCase):
-    """The second runner builds only while the Mac has room (item 5)."""
+    """The second runner runs its automerge jobs only while the Mac has room (item 5)."""
 
     def wait(self, jobs, pressures, frees, max_wait=100):
         now = [0.0]
         states = {'jobs': list(jobs), 'pressure': list(pressures), 'free': list(frees)}
         take = lambda key: (states[key].pop(0) if len(states[key]) > 1 else states[key][0])
         with open(os.devnull, 'w') as quiet:
-            return lane.wait_for_room_to_build(
+            return lane.wait_for_room_to_test_on_host(
                 out=quiet, max_wait=max_wait, poll=10, clock=lambda: now[0],
                 sleep=lambda seconds: now.__setitem__(0, now[0] + seconds),
-                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'), free=lambda: take('free'),
-                builds=lambda: 0), now[0]
+                simulator_jobs=lambda: take('jobs'), pressure=lambda: take('pressure'),
+                free=lambda: take('free'))[0], now[0]
 
     def test_it_starts_at_once_when_the_mac_has_room(self):
         self.assertEqual(self.wait([0], [1], [10**12]), (None, 0.0))
@@ -2285,7 +2395,7 @@ class MergeTests(unittest.TestCase):
                 mock.patch.object(lane, 'build_merge_commit', return_value=('m' * 40, [])), \
                 mock.patch.object(lane, 'push_merge', side_effect=lambda tree, sha, base: pushed.append(sha) or (True, '')), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
-                mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm'), \
+                mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=docs_only):
             result = lane.run_auto(github, {'title': 'T'}, 5, 'next', head, base_sha, Path(folder), [],
                                    labels=labels)

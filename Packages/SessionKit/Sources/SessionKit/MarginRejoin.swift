@@ -13,6 +13,55 @@ enum MarginRejoin {
         max(0, pausedAtMs - mediaStepBackMs)
     }
 
+    /// How a prepared article's narration found its resume time (#806). Kept on the engine's diagnostics
+    /// so a rejoin that fell back to a chunk start can be told from one that found the sentence.
+    enum PreparedNarrationOutcome: String, Equatable {
+        /// The audio is a sentence-start time on the narration timeline.
+        case sentenceStart = "sentence_start"
+        /// The sentence start had no time on the timeline, so the audio went to the start of the
+        /// narration chunk (timeline segment) holding the pause.
+        case chunkStart = "chunk_start"
+        /// The narration has no timeline at all, so the audio stays where it paused.
+        case unmapped = "unmapped"
+    }
+
+    /// How far past the pause the text position is read. A pause made right at a sentence start can read
+    /// as a character or two before it once times round to characters, and would step back a whole
+    /// sentence; reading slightly ahead keeps such a pause on its own sentence.
+    static let preparedNarrationLookaheadMs = 100
+
+    /// The time to resume a prepared article's narration at after a Margin made at `pausedAtMs` (#806).
+    /// An article's text is read from the start of the sentence that was playing, whether it is spoken
+    /// live or played as audio, so this finds that sentence on the narration's timeline. It never steps
+    /// back a fixed few seconds: when the sentence has no time it uses the start of the chunk instead.
+    static func preparedNarrationResume(
+        pausedAtMs: Int, text: String, timeline: TranscriptTimeline
+    ) -> (timeMs: Int, outcome: PreparedNarrationOutcome) {
+        let pausedAtMs = max(0, pausedAtMs)
+        let segments = timeline.segments.sorted { $0.startMs < $1.startMs }
+        guard let holding = segments.last(where: { $0.startMs <= pausedAtMs }) ?? segments.first else {
+            return (pausedAtMs, .unmapped)
+        }
+        let chunkStart = holding.startMs
+        // A chunk with no text positions can't place a sentence, and reading its offset as 0 would
+        // send the listener to the top of the article.
+        guard holding.startChar != nil, holding.endChar != nil else {
+            return (min(pausedAtMs, chunkStart), .chunkStart)
+        }
+        // Never read past the last character: the end of the text counts as a sentence start there.
+        let pausedOffset = min(
+            PreparedNarrationFallback.textOffset(
+                mediaTimeMs: pausedAtMs + preparedNarrationLookaheadMs, timeline: timeline
+            ),
+            max(0, text.count - 1)
+        )
+        let sentenceStart = textResumeOffset(pausedAt: pausedOffset, in: text)
+        if let timeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: sentenceStart, timeline: timeline) {
+            return (max(0, min(timeMs, pausedAtMs)), .sentenceStart)
+        }
+        return (min(pausedAtMs, chunkStart), .chunkStart)
+    }
+
     /// The start of the sentence holding `offset` in `text`. An offset that is already a sentence
     /// start stays where it is, so several Margins in one sentence never drift back into the
     /// sentence before it.

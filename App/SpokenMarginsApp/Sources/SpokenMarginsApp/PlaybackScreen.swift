@@ -893,7 +893,7 @@ struct PlaybackScreen: View {
     @ViewBuilder
     private var playbackSecondaryControls: some View {
         if let state = model.selectedPodcastDownloadState {
-            Button(state == .availableOffline ? "Download Again" : "Download Audio", action: model.redownloadSelectedPodcast)
+            Button(model.selectedPodcastDownloadButtonTitle, action: model.redownloadSelectedPodcast)
                 .disabled(state == .downloading)
                 .accessibilityIdentifier("playback.download.button")
         }

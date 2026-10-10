@@ -91,18 +91,30 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         model.resetAndSeed()
         // Export requires a session, independent of persisted first-run voice consent.
         model.declineCurrentTerms()
+        // #1043 APM-11: with only a session that has no Margin, a default filter that hid everything passed,
+        // and an export that dropped the Margins section had nothing to drop. One session of each kind here.
+        model.importTitle = "Quiet Article"
+        model.importText = "A session nobody wrote a Margin on."
+        model.importTextItem()
+        model.pause()
+        let quietSessionId = try XCTUnwrap(model.snapshot.sessionId)
         model.importTitle = "Batch Export Article"
         model.importText = "A source passage that should survive the Markdown export."
         model.importTextItem()
         model.pause()
         let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        let marginText = "A written Margin that must reach the exported file."
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: marginText)
+        XCTAssertEqual(model.selectedItem.interjections.count, 1)
 
         model.openBatchExport()
 
         XCTAssertEqual(model.batchExportFilter, .withInterjections)
-        XCTAssertTrue(model.visibleBatchExportRows.isEmpty)
+        XCTAssertEqual(model.visibleBatchExportRows.map(\.id), [sessionId], "the default shows exactly the sessions with Margins")
         model.batchExportFilter = .all
-        XCTAssertEqual(model.visibleBatchExportRows.map(\.id), [sessionId])
+        XCTAssertEqual(Set(model.visibleBatchExportRows.map(\.id)), [sessionId, quietSessionId])
+        model.batchExportFilter = .withInterjections
 
         model.toggleBatchExportSelection(sessionId: sessionId)
         model.exportScope = "full_session"
@@ -116,11 +128,13 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
 
         let result = try XCTUnwrap(model.batchExportResult)
         XCTAssertTrue(result.failures.isEmpty)
+        XCTAssertEqual(result.exportedFileNames.count, 1)
         let fileName = try XCTUnwrap(result.exportedFileNames.first)
         XCTAssertTrue(fileName.hasPrefix("Batch Export Article — "))
         XCTAssertTrue(fileName.hasSuffix(".md"))
         let markdown = try String(contentsOf: root.appendingPathComponent(fileName), encoding: .utf8)
         XCTAssertTrue(markdown.contains("# Spoken Margins AI Handoff: Batch Export Article"))
         XCTAssertTrue(markdown.contains("A source passage that should survive the Markdown export."))
+        XCTAssertTrue(markdown.contains(marginText), "the Margin reaches the exported file")
     }
 }

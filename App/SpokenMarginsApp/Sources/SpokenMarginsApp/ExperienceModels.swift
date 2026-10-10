@@ -153,6 +153,8 @@ struct AppNavigationState: Equatable, Sendable {
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?
+    /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
+    var followingScroll = FollowingScrollMemory()
 
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
@@ -202,11 +204,6 @@ enum LibraryPresentation {
                 return lhs == rhs ? $0.id < $1.id : lhs > rhs
             }
             .first
-    }
-
-    static func compactItems(_ rows: [LibraryItemRow], excluding continueItem: LibraryItemRow?) -> [LibraryItemRow] {
-        guard let continueItem else { return rows }
-        return rows.filter { $0.id != continueItem.id }
     }
 }
 

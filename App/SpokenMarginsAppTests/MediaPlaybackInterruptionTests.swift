@@ -420,6 +420,30 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
+    /// #1308 (ANC-08): the host test drives the real player through pause and resume closures it wrote itself. This
+    /// one goes through the app's own: the episode stands still while their voice plays, then plays on by itself.
+    func testTheEpisodePlaysOnAfterASharedMarginsMoment() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true, "their voice is playing")
+        XCTAssertFalse(model.snapshot.status.isPlaybackActive, "the episode is paused while their voice plays")
+        let pausedAtMs = model.snapshot.currentMediaTimeMs ?? 0
+
+        // The voice is 2 s long. When it ends, the app's resume closure must restart the episode.
+        try waitUntil("the episode plays again after their voice", timeout: 10) { model.snapshot.status == .playing }
+        XCTAssertNotEqual(marginMomentVoice(model)?.isPlaying, true, "their voice has finished")
+        try waitUntil("the episode's clock moves on past the Margin", timeout: 5) {
+            (model.snapshot.currentMediaTimeMs ?? 0) >= pausedAtMs + 1_000
+        }
+    }
+
     /// #1036: Start New Session closed the engine's session without the hook that ends a Margin moment. A new session
     /// of the same item (item page "Start New Session", or Play on a finished session) left the moment's voice and
     /// card alive over the restarted source. It must end the moment, as the mini player's X does.
@@ -433,14 +457,48 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { model.endMarginMoment(); model.pause() }
         model.playMarginMomentNow()
         XCTAssertNotNil(model.marginMoment, "the moment is playing before the new session")
+        weak var voice = try XCTUnwrap(marginMomentVoice(model), "the friend's voice is playing before the new session")
+        XCTAssertEqual(voice?.isPlaying, true, "the friend's voice is playing before the new session")
         let firstSessionId = try XCTUnwrap(model.snapshot.sessionId)
 
         model.startNewSession(id: "real-source")
 
         XCTAssertNil(model.marginMoment, "the new session ended the Margin moment")
         XCTAssertFalse(model.marginMomentVoiceIsPaused)
+        XCTAssertNotEqual(voice?.isPlaying, true, "the friend's voice stopped, not just its card")
         XCTAssertNotEqual(model.snapshot.sessionId, firstSessionId, "a new session of the same item started")
         XCTAssertEqual(model.snapshot.itemId, "real-source")
+    }
+
+    /// #1045 (NAR-05): the engine tests pass their own closure to `endSession(stoppingInlinePlayback:)`, so they
+    /// pass whether or not the app supplies `endMarginMoment`. This closes the session the way the mini player's X
+    /// and End Session do (`closeCurrentSession`) on the moment's own item, so the item check in
+    /// `observeMarginMoment` can't end the moment instead. The moment and its voice must both end.
+    func testClosingTheSessionEndsAPlayingMarginMomentAndStopsItsVoice() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertNotNil(model.marginMoment, "the moment is playing before the close")
+        weak var voice = try XCTUnwrap(marginMomentVoice(model), "the friend's voice is playing before the close")
+        XCTAssertEqual(voice?.isPlaying, true, "the friend's voice is playing before the close")
+
+        model.endSession()
+
+        XCTAssertNil(model.marginMoment, "closing the session ended the Margin moment")
+        XCTAssertFalse(model.marginMomentVoiceIsPaused)
+        XCTAssertNotEqual(voice?.isPlaying, true, "the friend's voice stopped")
+    }
+
+    /// The Margin moment's voice player, read through the model's conductor (both are private).
+    private func marginMomentVoice(_ model: Gate1AppModel) -> AVAudioPlayer? {
+        let conductor = Mirror(reflecting: model).children.first { $0.label == "marginMomentConductor" }?.value as? MarginMomentConductor
+        guard let conductor else { return nil }
+        return Mirror(reflecting: conductor).children.first { $0.label == "voice" }?.value as? AVAudioPlayer
     }
 
     /// #932 (found on the phone): tapping a friend's Margin in the Timeline started their voice with no chime.

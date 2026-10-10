@@ -61,8 +61,8 @@ public struct HeardAudioWindow: Sendable, Equatable {
 
 /// Keeps the last minute of heard audio and, for each Margin, collects up to a minute after playback resumes (#156).
 ///
-/// Runs on the audio tap's thread under the tap's lock, so it only copies samples: no allocation-heavy work beyond
-/// appending, no I/O. The caller downsamples to mono speech rate before appending.
+/// Runs on the tap's worker queue (#457) under the tap's lock, so it only copies samples: no allocation-heavy work
+/// beyond appending, no I/O. The caller downsamples to mono speech rate before appending.
 public struct HeardAudioWindowRecorder: Sendable {
     public static let beforeMs = 60_000
     public static let afterMs = 60_000
@@ -136,10 +136,12 @@ public struct HeardAudioWindowRecorder: Sendable {
     }
 
     /// Called when a Margin finishes, before playback resumes: snapshots the minute before its anchor and starts
-    /// collecting what plays next.
+    /// collecting what plays next. The snapshot keeps the whole rolling minute, including the half second or so
+    /// the player decoded past the anchor before it paused: the rejoin replays that audio, and leaving it out
+    /// left a hole right after the Margin (#1133).
     public mutating func begin(_ request: PostResumeAudioSampleRequest) {
         let key = Self.key(request)
-        let before = ring.filter { $0.startMediaTimeMs < request.anchorMediaTimeMs }
+        let before = ring
         collecting[key] = Collecting(
             request: request,
             before: before,

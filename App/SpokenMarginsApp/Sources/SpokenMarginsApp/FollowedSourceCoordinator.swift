@@ -221,6 +221,8 @@ actor FollowedSourceCoordinator {
     func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
         var toAdd: [FeedEntry] = []
         for subscription in (try? repository.loadFeedSubscriptions()) ?? [] {
+            // A background refresh that iOS cuts short stops here, not by failing every feed left (#170).
+            if Task.isCancelled { break }
             guard force || subscription.lastRefreshAt.map({ now.timeIntervalSince($0) >= minimumAge }) ?? true else { continue }
             toAdd += await refresh(subscription, now: now)
         }
@@ -241,6 +243,23 @@ actor FollowedSourceCoordinator {
         guard var entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }) else { return }
         entry.state = state
         try repository.saveFeedEntry(entry)
+    }
+
+    /// Dismisses `id` and returns the state it had, for Undo (#477). Nil when there is no such entry
+    /// or it was already dismissed, so there is nothing to undo.
+    func dismissEntry(id: String) throws -> FeedEntryState? {
+        guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
+              entry.state != .dismissed else { return nil }
+        try setEntryState(id: id, state: .dismissed)
+        return entry.state
+    }
+
+    /// Puts an entry dismissed by `dismissEntry` back in the state it had (#477). It does nothing if
+    /// the entry has moved on since, for instance imported from another screen.
+    func undoDismissEntry(id: String, restoring previous: FeedEntryState) throws {
+        guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
+              entry.state == .dismissed else { return }
+        try setEntryState(id: id, state: previous)
     }
 
     /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
@@ -362,6 +381,8 @@ actor FollowedSourceCoordinator {
                 errorCode: error.localizedDescription
             ))
         } catch {
+            // A refresh iOS cut short is not a failed feed; it stays stale and is tried again (#170).
+            if Task.isCancelled || error is CancellationError || (error as? URLError)?.code == .cancelled { return toAdd }
             try? repository.saveFeedRefreshState(FeedRefreshState(
                 id: "refresh-\(subscription.id)", subscriptionId: subscription.id,
                 status: .failed, checkedAt: now, redactedHost: subscription.source.host,

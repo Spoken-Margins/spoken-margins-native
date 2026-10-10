@@ -15,7 +15,7 @@ final class CatalogDrawerTests: XCTestCase {
         var subscriptionReads = 0
     }
 
-    private func makeDrawer(defaults: UserDefaults, log: FollowLog) throws -> CatalogDrawerModel {
+    private func makeDrawer(defaults: UserDefaults, log: FollowLog, searcher: PodcastNameSearch? = nil) throws -> CatalogDrawerModel {
         let bundled = try XCTUnwrap(Bundle.main.url(forResource: "catalog", withExtension: "json"), "catalog snapshot is bundled")
         let cache = FileManager.default.temporaryDirectory.appending(path: "catalog-drawer-\(UUID().uuidString)")
         addTeardownBlock { try? FileManager.default.removeItem(at: cache) }
@@ -40,7 +40,8 @@ final class CatalogDrawerTests: XCTestCase {
                     source: SourceIdentity(id: sourceId, kind: .podcastFeed, canonicalURL: settled, host: URL(string: settled)?.host ?? "")
                 ))
                 return sourceId
-            }
+            },
+            searcher: searcher
         )
     }
 
@@ -232,6 +233,124 @@ final class CatalogDrawerTests: XCTestCase {
         XCTAssertFalse(drawer.isPresented)
         drawer.present()
         XCTAssertTrue(drawer.isPresented)
+    }
+
+    // MARK: Search by name (#471)
+
+    private func searcher(pause: Duration = .milliseconds(10), answer: @escaping @Sendable (URL) throws -> Data) -> PodcastNameSearch {
+        PodcastNameSearch(resolver: ITunesSearchSourceResolver { url, _ in (200, try answer(url)) }, pause: pause)
+    }
+
+    nonisolated private static func iTunesResponse(_ shows: [(id: Int, title: String, feed: String?)]) -> Data {
+        let results = shows.map { show in
+            let feed = show.feed.map { #","feedUrl":"\#($0)""# } ?? ""
+            return #"{"collectionId":\#(show.id),"collectionName":"\#(show.title)","artistName":"Studio"\#(feed)}"#
+        }.joined(separator: ",")
+        return Data(#"{"resultCount":\#(shows.count),"results":[\#(results)]}"#.utf8)
+    }
+
+    private func waitFor(_ condition: () -> Bool) async throws {
+        for _ in 0..<250 where !condition() { try await Task.sleep(for: .milliseconds(20)) }
+    }
+
+    func testSearchingByNameShowsTheMatchingShowFirstAndOneTapFollowsIt() async throws {
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log, searcher: searcher { _ in
+            Self.iTunesResponse([
+                (1, "Fork Lore", "https://forklore.example/feed.xml"),
+                (2, "Hard Fork", "https://hardfork.example/feed.xml"),
+            ])
+        })
+        await drawer.load()
+        drawer.selectedSubject = drawer.subjects.first?.id
+        XCTAssertFalse(drawer.showsSearchResults)
+
+        drawer.searchText = "hard fork"
+        try await waitFor { drawer.searchResults != nil }
+        XCTAssertTrue(drawer.showsSearchResults, "results replace the subject list")
+        let top = try XCTUnwrap(drawer.searchResults?.first)
+        XCTAssertEqual(top.title, "Hard Fork", "the exact title comes first")
+
+        drawer.followSearchResult(top)
+        drawer.followSearchResult(top) // a second tap while following does nothing
+        try await waitFor { drawer.state(for: top) == .followed }
+        XCTAssertEqual(drawer.state(for: top), .followed)
+        XCTAssertEqual(log.feeds, ["https://hardfork.example/feed.xml"], "one subscription")
+        XCTAssertEqual(log.subscriptions.count, 1)
+    }
+
+    func testAShowWithNoPublicFeedIsListedWithItsReasonAndCannotBeFollowed() async throws {
+        let log = FollowLog()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: log, searcher: searcher { _ in
+            Self.iTunesResponse([(7, "Exclusive Show", nil)])
+        })
+        await drawer.load()
+        drawer.searchText = "exclusive show"
+        try await waitFor { drawer.searchResults != nil }
+        let show = try XCTUnwrap(drawer.searchResults?.first)
+        XCTAssertNil(show.feed)
+        XCTAssertEqual(show.reason, "No public feed: this show is exclusive to another app")
+
+        drawer.followSearchResult(show)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(log.feeds, [], "nothing was followed")
+        XCTAssertNil(drawer.state(for: show))
+    }
+
+    func testANetworkFailureShowsAMessageAndLeavesTheSubjectListUsable() async throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), searcher: searcher { _ in
+            throw URLError(.notConnectedToInternet)
+        })
+        await drawer.load()
+        let subjectEntries = drawer.entries
+
+        drawer.searchText = "hard fork"
+        try await waitFor { drawer.searchError != nil }
+        XCTAssertEqual(drawer.searchError, PodcastNameSearch.networkFailureMessage)
+        XCTAssertNil(drawer.searchResults)
+        XCTAssertFalse(drawer.showsSearchResults, "the subject list stays on screen")
+        XCTAssertEqual(drawer.entries, subjectEntries)
+        XCTAssertFalse(subjectEntries.isEmpty)
+    }
+
+    func testClearingTheSearchReturnsToTheSubjectTheListenerWasOn() async throws {
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), searcher: searcher { _ in
+            Self.iTunesResponse([(1, "Hard Fork", "https://hardfork.example/feed.xml")])
+        })
+        await drawer.load()
+        let subject = try XCTUnwrap(drawer.subjects.dropFirst().first?.id)
+        drawer.selectedSubject = subject
+        let entries = drawer.entries
+
+        drawer.searchText = "hard fork"
+        try await waitFor { drawer.searchResults != nil }
+        XCTAssertTrue(drawer.showsSearchResults)
+
+        drawer.searchText = ""
+        XCTAssertFalse(drawer.showsSearchResults)
+        XCTAssertNil(drawer.searchResults)
+        XCTAssertEqual(drawer.selectedSubject, subject)
+        XCTAssertEqual(drawer.entries, entries)
+    }
+
+    func testOneCharacterDoesNotSearch() async throws {
+        let requests = RequestCount()
+        let drawer = try makeDrawer(defaults: try freshDefaults(), log: FollowLog(), searcher: searcher { _ in
+            requests.add()
+            return Self.iTunesResponse([])
+        })
+        drawer.searchText = "h"
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(requests.value, 0)
+        XCTAssertFalse(drawer.isSearching)
+        XCTAssertFalse(drawer.isSearchPending)
+    }
+
+    private final class RequestCount: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        var value: Int { lock.withLock { count } }
+        func add() { lock.withLock { count += 1 } }
     }
 }
 

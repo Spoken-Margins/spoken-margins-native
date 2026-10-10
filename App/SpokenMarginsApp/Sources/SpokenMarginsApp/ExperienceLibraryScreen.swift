@@ -13,16 +13,9 @@ struct ExperienceLibraryScreen: View {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
     }
 
-    private var compactItems: [LibraryItemRow] {
-        LibraryPresentation.compactItems(model.visibleLibraryItems, excluding: continueItem)
-    }
-
-    private var visibleContinueItem: LibraryItemRow? {
-        guard let continueItem,
-              model.visibleLibraryItems.contains(where: { $0.id == continueItem.id }) else {
-            return nil
-        }
-        return continueItem
+    /// One identity per item, the Continue row included, so completing the top row removes that row (#585).
+    private var listEntries: [LibraryListEntry<LibraryItemRow>] {
+        LibraryListRows.entries(visible: model.visibleLibraryItems, currentId: continueItem?.id)
     }
 
     var body: some View {
@@ -30,21 +23,6 @@ struct ExperienceLibraryScreen: View {
             List {
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-
-                if let continueItem = visibleContinueItem {
-                    ExperienceLibraryCompactRow(
-                        row: continueItem,
-                        isCurrentItem: true,
-                        playbackSpeed: model.speechPlaybackRateMultiplier,
-                        onOpen: { model.openItem(id: continueItem.id) },
-                        onPlay: { model.startItem(id: continueItem.id) },
-                        onComplete: { model.markItemCompleted(id: continueItem.id) },
-                        onMarkUnfinished: { model.markItemUnfinished(id: continueItem.id) },
-                        onPrepareOffline: { model.prioritizeOfflinePreparation(id: continueItem.id) },
-                        onDelete: { model.moveItemToTrash(id: continueItem.id) }
-                    )
-                    .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
-                }
 
                 items
 
@@ -61,7 +39,7 @@ struct ExperienceLibraryScreen: View {
             .background(AppColors.bone)
             .scrollContentBackground(.hidden)
             .listStyle(.plain)
-            .animation(.smooth(duration: 0.24), value: compactItems.map(\.id))
+            .animation(.smooth(duration: 0.24), value: listEntries.map(\.id))
             .accessibilityIdentifier("home.screen")
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
@@ -340,9 +318,11 @@ struct ExperienceLibraryScreen: View {
             }
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
         } else {
-            ForEach(compactItems) { row in
+            ForEach(listEntries) { entry in
+                let row = entry.row
                 ExperienceLibraryCompactRow(
                     row: row,
+                    isCurrentItem: entry.isCurrent,
                     playbackSpeed: model.speechPlaybackRateMultiplier,
                     onOpen: { model.openItem(id: row.id) },
                     onPlay: { model.startItem(id: row.id) },
@@ -600,21 +580,5 @@ private extension View {
         ))
         .listRowBackground(AppColors.bone)
         .listRowSeparator(.hidden)
-    }
-}
-
-extension LibraryItemRow {
-    var mediaSymbol: String {
-        if hasNativeAudio { return "headphones" }
-        return switch mediaType.lowercased() {
-        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
-            "headphones"
-        case "pdf":
-            "doc.richtext"
-        case "epub":
-            "book.closed"
-        default:
-            "doc.text"
-        }
     }
 }

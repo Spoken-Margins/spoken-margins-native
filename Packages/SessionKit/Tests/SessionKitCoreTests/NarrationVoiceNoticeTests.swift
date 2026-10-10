@@ -104,3 +104,41 @@ final class NarrationVoiceNoticeTests: XCTestCase {
         return snapshot
     }
 }
+
+/// #934: one cue when narration changes from the on-device voice to the iOS voice.
+final class NarrationVoiceChangeCueTests: XCTestCase {
+    func testOneCueBeforeTheFirstStandInPassageOnly() {
+        var cue = NarrationVoiceChangeCue()
+
+        XCTAssertEqual(cue.leadIn(forStandIn: false), 0)
+        XCTAssertEqual(cue.leadIn(forStandIn: false), 0)
+        XCTAssertEqual(cue.leadIn(forStandIn: true), NarrationVoiceChangeCue.leadIn, "the switch gets the cue")
+        XCTAssertEqual(cue.leadIn(forStandIn: true), 0, "a later stand-in passage in the same run gets none")
+        XCTAssertEqual(cue.leadIn(forStandIn: true), 0)
+    }
+
+    func testNoCueWithoutAFallback() {
+        var cue = NarrationVoiceChangeCue()
+        for _ in 0..<5 { XCTAssertEqual(cue.leadIn(forStandIn: false), 0) }
+    }
+
+    func testReturningToTheChosenVoiceAndFallingBackAgainCuesAgain() {
+        var cue = NarrationVoiceChangeCue()
+        _ = cue.leadIn(forStandIn: false)
+        XCTAssertGreaterThan(cue.leadIn(forStandIn: true), 0)
+        XCTAssertEqual(cue.leadIn(forStandIn: false), 0, "the chosen voice returns without a cue")
+        XCTAssertGreaterThan(cue.leadIn(forStandIn: true), 0, "a second switch is a new change of voice")
+    }
+
+    /// A run that opens on a stand-in has not changed voice: the listener hasn't heard the chosen one yet.
+    func testNarrationThatOpensOnAStandInGetsNoCue() {
+        var cue = NarrationVoiceChangeCue()
+        XCTAssertEqual(cue.leadIn(forStandIn: true), 0)
+        XCTAssertEqual(cue.leadIn(forStandIn: true), 0)
+    }
+
+    /// The cue is a lead-in before the passage, not part of it, so it adds nothing to a passage's own length.
+    func testLeadInIsTheStartChimePlusAGap() {
+        XCTAssertEqual(NarrationVoiceChangeCue.leadIn, 0.31, accuracy: 0.001)
+    }
+}

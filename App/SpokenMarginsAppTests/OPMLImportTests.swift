@@ -21,10 +21,13 @@ final class OPMLImportTests: XCTestCase {
         configuration.protocolClasses = [OPMLFeedsURLProtocol.self]
         coordinator = FollowedSourceCoordinator(repository: store, session: URLSession(configuration: configuration))
         OPMLFeedsURLProtocol.reset()
+        // Also catch a download made through URLSession.shared rather than the coordinator's session.
+        URLProtocol.registerClass(OPMLFeedsURLProtocol.self)
         refreshCount = 0
     }
 
     override func tearDown() async throws {
+        URLProtocol.unregisterClass(OPMLFeedsURLProtocol.self)
         coordinator = nil
         store = nil
         try? FileManager.default.removeItem(at: root)
@@ -105,7 +108,10 @@ final class OPMLImportTests: XCTestCase {
         XCTAssertEqual(try store.listItems(includeDeleted: true).count, 0, "nothing is added to the Library")
         XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty, "nothing is prepared")
         XCTAssertTrue(try store.loadPreparedAudioManifests().isEmpty)
-        XCTAssertFalse(OPMLFeedsURLProtocol.requestedPaths.contains { $0.hasSuffix(".mp3") }, "nothing is downloaded")
+        // #1044 APO-08: the stub now sees every example.com host, so an episode fetch from the CDN is caught.
+        let audioRequests = OPMLFeedsURLProtocol.requestedURLs.filter { $0.host != "feeds.example.com" || $0.path.hasSuffix(".mp3") }
+        XCTAssertEqual(audioRequests, [], "nothing is downloaded")
+        XCTAssertTrue(try store.loadPodcastDownloads().isEmpty, "no episode download is recorded")
     }
 
     func testCancelAtThePreviewFollowsNothing() async throws {
@@ -169,20 +175,32 @@ final class OPMLImportTests: XCTestCase {
 }
 
 /// Serves small RSS feeds on feeds.example.com. /blog.xml has no enclosures; /gone.xml is a 404.
+/// Every other example.com host (the episodes are on cdn.example.com) is recorded and answered 404,
+/// so a download attempt shows up in `requestedURLs` instead of going to the network.
 private final class OPMLFeedsURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
-    nonisolated(unsafe) private static var paths: [String] = []
+    nonisolated(unsafe) private static var urls: [URL] = []
 
-    static func reset() { lock.withLock { paths = [] } }
-    static var requestedPaths: [String] { lock.withLock { paths } }
+    static func reset() { lock.withLock { urls = [] } }
+    static var requestedURLs: [URL] { lock.withLock { urls } }
+    static var requestedPaths: [String] { requestedURLs.map(\.path) }
 
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "feeds.example.com" }
+    override class func canInit(with request: URLRequest) -> Bool {
+        guard let host = request.url?.host?.lowercased() else { return false }
+        return host == "example.com" || host.hasSuffix(".example.com")
+    }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
         guard let url = request.url else { return }
         let path = url.path
-        Self.lock.withLock { Self.paths.append(path) }
+        Self.lock.withLock { Self.urls.append(url) }
+        guard url.host?.lowercased() == "feeds.example.com" else {
+            let response = HTTPURLResponse(url: url, statusCode: 404, httpVersion: "HTTP/1.1", headerFields: nil)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
         let name = (path as NSString).lastPathComponent.replacingOccurrences(of: ".xml", with: "")
         let status = name == "gone" ? 404 : 200
         let items = (1...3).map { number in

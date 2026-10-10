@@ -10,6 +10,17 @@ final class PodcastAssetSignatureGenerator: @unchecked Sendable {
     private let queue = DispatchQueue(label: "SpokenMargins.podcast-asset-signatures", qos: .utility)
     private var pending: [Request] = []
     private var isGenerating = false
+    /// Signatures handed to ShazamKit and not yet called back, and the most there have been at once since the last
+    /// reset. The one-at-a-time rule is the memory bound, so tests check it here (#1308, ANC-15).
+    private var inFlight = 0
+    private var peakInFlight = 0
+
+    /// The most signatures that were in flight at once since `resetPeakInFlight()`. Tests read it; nothing else should.
+    static var peakSignaturesInFlight: Int { shared.queue.sync { shared.peakInFlight } }
+
+    static func resetPeakInFlight() {
+        shared.queue.sync { shared.peakInFlight = shared.inFlight }
+    }
 
     static func signature(from asset: AVAsset) async throws -> SHSignature {
         let cancellation = Cancellation()
@@ -39,6 +50,8 @@ final class PodcastAssetSignatureGenerator: @unchecked Sendable {
                 continue
             }
             isGenerating = true
+            inFlight += 1
+            peakInFlight = max(peakInFlight, inFlight)
             autoreleasepool {
                 SHSignatureGenerator.generateSignature(from: request.asset) { signature, error in
                     if let error {
@@ -49,6 +62,7 @@ final class PodcastAssetSignatureGenerator: @unchecked Sendable {
                         request.continuation.resume(throwing: PodcastAnchorEvidenceError.signatureGenerationFailed)
                     }
                     self.queue.async {
+                        self.inFlight -= 1
                         self.isGenerating = false
                         self.startNext()
                     }

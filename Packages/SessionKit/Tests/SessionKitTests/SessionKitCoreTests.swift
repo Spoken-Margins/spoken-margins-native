@@ -106,20 +106,41 @@ final class SessionKitCoreTests: XCTestCase {
     }
 
     #if canImport(AVFoundation)
+    /// A callback from a synthesizer the client has retired must not move the current playback,
+    /// even when it names an utterance the current playback has registered (#1129, BIG-08). Each
+    /// callback names a registered utterance, so only the `synthesizer === self.synthesizer`
+    /// guards can reject it; the current synthesizer then shows the same utterances are live.
     func testRetiredSpeechSynthesizerCannotConfirmOrCancelCurrentPlayback() throws {
         let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
+        var queued: [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)] = []
+        client.speakNarration = { queued.append(($0, $1)) } // nothing is spoken, so no real callback races the test
         _ = try client.prepareSpeechText(String(repeating: "Keep the current speech request intact. ", count: 30))
-        try client.play(targetId: "current", from: 0)
-        let status = client.playbackStartStatus(targetId: "current")
-        let position = client.currentCharOffset()
-        let retired = AVSpeechSynthesizer()
-        let obsolete = AVSpeechUtterance(string: "Earlier request")
-        client.speechSynthesizer(retired, didStart: obsolete)
-        client.speechSynthesizer(retired, didCancel: obsolete)
-        client.speechSynthesizer(retired, didFinish: obsolete)
-        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), status)
+        try client.play(targetId: "earlier", from: 0)
+        let retired = try XCTUnwrap(queued.first?.synthesizer)
+        queued.removeAll()
+        try client.play(targetId: "current", from: 40)
+        let current = try XCTUnwrap(queued.first?.synthesizer)
+        XCTAssertFalse(retired === current, "playing again retires the earlier synthesizer")
+        let first = try XCTUnwrap(queued.first?.utterance)
+        let last = try XCTUnwrap(queued.last?.utterance)
+        let position = try XCTUnwrap(client.currentCharOffset())
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending)
+
+        client.speechSynthesizer(retired, didStart: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending, "a retired start doesn't confirm playback")
+        client.speechSynthesizer(retired, willSpeakRangeOfSpeechString: NSRange(location: 5, length: 4), utterance: first)
+        XCTAssertEqual(client.currentCharOffset(), position, "a retired word marker doesn't move the place")
+        client.speechSynthesizer(retired, didFinish: last)
+        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"), "a retired finish doesn't end playback")
         XCTAssertEqual(client.currentCharOffset(), position)
-        XCTAssertFalse(client.isPlaybackComplete(targetId: "current"))
+        client.speechSynthesizer(retired, didCancel: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .pending, "a retired cancel doesn't fail the start")
+
+        // The same utterances, from the current synthesizer, start and finish playback.
+        client.speechSynthesizer(current, didStart: first)
+        XCTAssertEqual(client.playbackStartStatus(targetId: "current"), .confirmed)
+        client.speechSynthesizer(current, didFinish: last)
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "current"))
         try client.stop()
     }
 
@@ -1552,6 +1573,111 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertThrowsError(try engine.submitFollowup(text: "Discuss this.")) { error in
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("submitFollowup"))
         }
+    }
+
+    /// #943: the system card shows Play while a start is pending (its clock must not run), so a Play tap
+    /// there cancels the load like the Pause it replaced, and Pause still works.
+    func testPlayTapWhilePlaybackIsStartingCancelsThePendingStart() throws {
+        for command in [CompactControlCommand.play, .pause] {
+            let audio = RecordingAudioClient()
+            audio.startStatus = .pending
+            let engine = SessionEngine(
+                profile: phonePlaybackProfile(),
+                repository: InMemorySessionRepository(items: [
+                    "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+                ]),
+                audio: audio
+            )
+            _ = try engine.startSession(itemId: "item-pill")
+            XCTAssertEqual(engine.snapshot.status, .starting)
+            let surface = RuntimeCapabilityProfile(
+                id: "lock-screen-widget",
+                displayName: "Lock Screen / Widget",
+                capabilities: [
+                    "timeline": ["chapter_timing"],
+                    "remoteControl": ["display_snapshot", "send_transport_commands"]
+                ],
+                forbiddenCapabilities: []
+            )
+            let dispatcher = CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine)
+
+            let result = try dispatcher.dispatch(command)
+            XCTAssertEqual(result.snapshot.status, .paused, "\(command)")
+            XCTAssertEqual(engine.snapshot.status, .paused, "\(command)")
+        }
+    }
+
+    /// #943: a podcast that rebuffers keeps engine status `.playing` while the system card shows Play
+    /// (rate 0). That Play tap pauses instead of failing; with audio really playing, Play is still refused.
+    func testPlayTapWhileAudioIsWaitingForTheNetworkPauses() throws {
+        let surface = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ],
+            forbiddenCapabilities: []
+        )
+        func makeDispatcher(transport: PlaybackTransportState) throws -> (CompactControlDispatcher, SessionEngine) {
+            let audio = RecordingAudioClient()
+            let engine = SessionEngine(
+                profile: phonePlaybackProfile(),
+                repository: InMemorySessionRepository(items: [
+                    "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+                ]),
+                audio: audio
+            )
+            _ = try engine.startSession(itemId: "item-pill")
+            XCTAssertEqual(engine.snapshot.status, .playing)
+            audio.transportState = transport
+            return (CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine), engine)
+        }
+
+        let (stalled, stalledEngine) = try makeDispatcher(transport: .waiting)
+        let result = try stalled.dispatch(.play)
+        XCTAssertEqual(result.snapshot.status, .paused)
+        XCTAssertEqual(stalledEngine.snapshot.status, .paused)
+
+        let (running, runningEngine) = try makeDispatcher(transport: .playing)
+        XCTAssertThrowsError(try running.dispatch(.play))
+        XCTAssertEqual(runningEngine.snapshot.status, .playing)
+    }
+
+    /// #943: delayed start, failed start and replacing the item never publish a running clock.
+    func testSystemClockStaysStillThroughDelayedFailedAndReplacedStarts() throws {
+        func rate(_ engine: SessionEngine) -> Double {
+            SystemPlaybackPresentation(status: engine.snapshot.status, selectedRate: 1.25, isNarration: true).playbackRate
+        }
+        let repo = InMemorySessionRepository(items: [
+            "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready"),
+            "item-two": Item(id: "item-two", title: "Two", mediaType: "text", text: "Three. Four.", externalReference: nil, status: "ready")
+        ])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+
+        // Confirmed playback earns the selected rate.
+        _ = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(rate(engine), 1.25)
+
+        // Replacing the item with one whose audio is still loading must not carry the old running clock.
+        audio.startStatus = .pending
+        _ = try engine.startSession(itemId: "item-two")
+        XCTAssertEqual(engine.snapshot.status, .starting)
+        XCTAssertEqual(rate(engine), 0)
+
+        // Delayed start confirms: the clock may run.
+        audio.startStatus = .confirmed
+        _ = try engine.syncPlaybackProgress()
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(rate(engine), 1.25)
+
+        // A start that fails never runs it.
+        audio.startStatus = .failed("native_audio_failed")
+        _ = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(engine.snapshot.status, .failed)
+        XCTAssertEqual(rate(engine), 0)
     }
 
     func testPlaybackStartRemainsStartingUntilAudioConfirms() throws {

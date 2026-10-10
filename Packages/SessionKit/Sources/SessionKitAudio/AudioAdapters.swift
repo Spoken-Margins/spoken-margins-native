@@ -846,6 +846,9 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
     private weak var activeUtterance: AVSpeechUtterance?
     private var chunksByUtteranceId: [ObjectIdentifier: SpeechPlaybackChunk] = [:]
     private var finalUtteranceId: ObjectIdentifier?
+    /// Hands a narration utterance to the synthesizer. Tests replace it to keep the synthesizer and
+    /// the utterance, then deliver the delegate callbacks themselves (#1129).
+    var speakNarration: (AVSpeechSynthesizer, AVSpeechUtterance) -> Void = { $0.speak($1) }
     #endif
 
     public override init() {
@@ -965,7 +968,7 @@ public final class SystemSpeechPlaybackClient: NSObject, AudioPlaybackClient, Sp
             let identifier = ObjectIdentifier(utterance)
             chunksByUtteranceId[identifier] = chunk
             finalUtteranceId = identifier
-            synthesizer.speak(utterance)
+            speakNarration(synthesizer, utterance)
         }
         #else
         if preparedSpeechText.isEmpty {
@@ -2860,7 +2863,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: context?.title ?? "Spoken Margins",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedSeconds,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? playbackRate : 0,
+            // The clock runs only once the player is really playing: while it opens the stream or
+            // rebuffers it is waiting, and a nonzero rate would advance the Lock Screen clock (#943).
+            MPNowPlayingInfoPropertyPlaybackRate: SystemPlaybackPresentation.playerRate(
+                isPlayingByIntent: isPlaying,
+                isWaitingForPlayer: player?.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                selectedRate: playbackRate
+            ),
             MPNowPlayingInfoPropertyDefaultPlaybackRate: playbackRate,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
             MPNowPlayingInfoPropertyIsLiveStream: durationSeconds == nil
@@ -3450,18 +3459,27 @@ public final class SystemRecordingClient: RecordingClient {
         #if canImport(AVFoundation)
         guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
         let previousURL = currentURL
-        recorder?.stop()
-        // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
-        // old, so read what the file really holds first and refuse to delete audio worth keeping.
-        // This one read is on the main thread, once, and only for a recorder that is already stopped.
-        switch previousURL.map(RecordedFileDuration.measure) ?? .milliseconds(0) {
-        case .milliseconds(let fileMs):
-            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
-        case .unreadable:
-            // The length is unknown, so the file may hold speech: keep it, never delete on a failed read.
-            throw SessionKitError.persistenceFailed("recording_unreadable")
+        // A restart deletes the file, and the poll that asked for it may be old, so work out what the recorder
+        // really holds first and refuse to delete audio worth keeping. None of this reads the file on the main
+        // thread (#1041). A running recorder says how much it has taken in until the moment it stops. One that
+        // had already stopped has a background measurement the poll started; if that hasn't landed, the length
+        // is unknown, which means keep.
+        let hadStopped = recorder.map { !$0.isRecording } ?? false
+        if let recorder, !hadStopped {
+            capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         }
-        if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
+        recorder?.stop()
+        switch CaptureRestartGuard.verdict(
+            capturedMs: capturedHighWaterMs,
+            recorderHadStopped: hadStopped,
+            measurement: stoppedMeasurement?.outcome
+        ) {
+        case .restart:
+            break
+        case .keepUnknown:
+            // The file may hold speech: keep it, never delete on an unfinished or failed read.
+            throw SessionKitError.persistenceFailed("recording_unreadable")
+        case .keepAudio:
             throw SessionKitError.persistenceFailed("recording_has_audio")
         }
         recorder?.delegate = nil
