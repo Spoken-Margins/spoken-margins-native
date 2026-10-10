@@ -17,7 +17,13 @@ public enum SharedPacketItemMatcher {
                 localIdentity(for: item, ownedAudiobookDigest: ownedAudiobookDigest(item))
             )
         }
-        return matches.count == 1 ? matches[0].id : nil
+        if matches.count == 1 { return matches[0].id }
+        // The listener linked their own file to this episode, and a streamed copy of it exists too (an earlier
+        // link-shared packet added one). The file they chose wins; any other owned file that matches, or a
+        // second linked file, is still ambiguous (#755).
+        let ownedFiles = matches.filter { $0.mediaType == "audiobook" }
+        if ownedFiles.count == 1, ownedFiles[0].linkedEpisode != nil { return ownedFiles[0].id }
+        return nil
     }
 
     /// How a Library item describes itself when it is compared with a packet's item.

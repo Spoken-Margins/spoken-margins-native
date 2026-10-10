@@ -55,6 +55,8 @@ public enum ImportedFileEpisodeLink {
         case couldNotReadLink
         /// The link resolved only by guessing, as a show's feed does by taking its first episode.
         case notOneEpisode
+        /// A friend's Margins are already on the file under its current episode, so the episode cannot change.
+        case hasSharedMargins
     }
 
     /// A resolution below this is the resolver's guess among several episodes, not the episode the link names.
@@ -129,6 +131,7 @@ extension ImportedFileEpisodeLink.Refusal: LocalizedError {
         case .lengthsDisagree: "This file is a very different length from that episode, so it is probably not the same recording. Check the link and try again."
         case .couldNotReadLink: "Couldn't read that link. Paste the link to the episode itself."
         case .notOneEpisode: "That link is for a whole show, not one episode. Paste the link to the episode itself."
+        case .hasSharedMargins: "Margins a friend shared are already on this file under its current episode, so the episode can't be changed."
         }
     }
 }

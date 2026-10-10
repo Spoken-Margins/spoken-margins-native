@@ -150,6 +150,34 @@ final class LinkedFileEpisodeMatchTests: XCTestCase {
         }
     }
 
+    /// The state #755 describes: earlier link-shared packets already added a streamed copy next to the file.
+    func testALinkedFileWinsOverAStreamedCopyOfTheSameEpisode() throws {
+        let streamed = Item(
+            id: "audio-url:\(Self.enclosure)", title: "Harbour Lights", mediaType: TargetType.transcriptBackedMedia.rawValue,
+            text: nil, externalReference: Self.page, status: "ready", externalReferenceType: "url",
+            media: ItemMedia(sourceType: .remoteStream, url: Self.enclosure, durationMs: 1_800_000)
+        )
+        var streamedWithGUID = streamed
+        streamedWithGUID.episodeGUID = "harbour-lights"
+        streamedWithGUID.showTitle = "Example Show"
+        let linked = try linkedFile()
+        for copy in [streamed, streamedWithGUID] {
+            XCTAssertEqual(match(linkShared(), [copy]), copy.id, "the streamed copy alone still matches")
+            XCTAssertEqual(match(linkShared(), [copy, linked]), linked.id)
+            XCTAssertEqual(match(linkShared(), [linked, copy]), linked.id)
+        }
+        // Still ambiguous: two linked files, or another owned file that also matches the packet.
+        let second = try linkedFile(id: "audiobook-2")
+        XCTAssertNil(match(linkShared(), [streamedWithGUID, linked, second]))
+        let ana = SharedItemIdentity(
+            itemType: .podcast, canonicalURL: Self.page, title: "Harbour Lights", episodeGUID: "harbour-lights",
+            durationMs: 1_800_000, exactEditionSHA256: Self.digest
+        )
+        XCTAssertNil(match(ana, [streamedWithGUID, linked, importedFile(id: "audiobook-3")]))
+        // An unlinked file next to a streamed copy is not the listener's say-so: the packet keeps its old target.
+        XCTAssertEqual(match(linkShared(), [streamedWithGUID, importedFile(id: "audiobook-3")]), streamedWithGUID.id)
+    }
+
     /// The link goes through the real store: a later load, as the app does on the next launch or import, still finds the file.
     func testTheLinkSurvivesTheStore() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "linked-file-\(UUID().uuidString)")

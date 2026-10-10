@@ -11,6 +11,8 @@ struct ImportedFileEpisodeLinker {
     struct Status: Equatable {
         var canLink = false
         var episodeTitle: String?
+        /// False once a friend's Margins sit on the file under its episode: changing it would orphan them.
+        var canChange = true
     }
 
     var resolve: @Sendable (LinkResolutionRequest) async throws -> LinkResolutionResult = {
@@ -21,7 +23,16 @@ struct ImportedFileEpisodeLinker {
     func status(itemId: String, store: SQLiteSessionStore) -> Status {
         guard let item = try? store.loadItem(id: itemId),
               item.mediaType == "audiobook", item.media?.sourceType == .nativeMediaFile else { return Status() }
-        return Status(canLink: true, episodeTitle: item.linkedEpisode.map { $0.title.isEmpty ? "Podcast episode" : $0.title })
+        return Status(
+            canLink: true,
+            episodeTitle: item.linkedEpisode.map { $0.title.isEmpty ? "Podcast episode" : $0.title },
+            canChange: item.linkedEpisode == nil || !hasSharedMargins(itemId: itemId, store: store)
+        )
+    }
+
+    @MainActor
+    private func hasSharedMargins(itemId: String, store: SQLiteSessionStore) -> Bool {
+        ((try? store.loadImportedCommentaryLayers(itemId: itemId)) ?? []).contains { $0.deletedAt == nil }
     }
 
     /// Resolves the pasted link and links the file to the episode it names. Returns the episode's title.
@@ -32,6 +43,7 @@ struct ImportedFileEpisodeLinker {
         guard URL(string: pasted)?.scheme?.lowercased() == "https" else {
             throw ImportedFileEpisodeLink.Refusal.couldNotReadLink
         }
+        try requireChangeable(itemId: itemId, store: store)
         let request = LinkResolutionRequest(
             id: "imported-file-episode-\(UUID().uuidString)", inputURL: pasted,
             sourceSurface: "imported_file_episode_link", createdAt: Date()
@@ -50,6 +62,15 @@ struct ImportedFileEpisodeLinker {
 
     @MainActor
     func unlink(itemId: String, store: SQLiteSessionStore) throws {
+        try requireChangeable(itemId: itemId, store: store)
         try store.saveItem(ImportedFileEpisodeLink.unlink(try store.loadItem(id: itemId)))
+    }
+
+    /// A friend's Margins placed by the linked episode would lose their file if the link changed or went away.
+    @MainActor
+    private func requireChangeable(itemId: String, store: SQLiteSessionStore) throws {
+        if try store.loadItem(id: itemId).linkedEpisode != nil, hasSharedMargins(itemId: itemId, store: store) {
+            throw ImportedFileEpisodeLink.Refusal.hasSharedMargins
+        }
     }
 }

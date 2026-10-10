@@ -139,7 +139,7 @@ final class LinkedEpisodeTests: XCTestCase {
         // An episode page that the resolver found in that feed is fine: the pasted link is the page, not the feed.
         XCTAssertNoThrow(try ImportedFileEpisodeLink.link(importedFile(), resolution: feedPick, pageURL: page))
         // Every refusal says what to do in words a listener reads.
-        for refusal in [ImportedFileEpisodeLink.Refusal.notAnImportedAudioFile, .noEpisodeIdentity, .lengthsDisagree, .couldNotReadLink, .notOneEpisode] {
+        for refusal in [ImportedFileEpisodeLink.Refusal.notAnImportedAudioFile, .noEpisodeIdentity, .lengthsDisagree, .couldNotReadLink, .notOneEpisode, .hasSharedMargins] {
             XCTAssertFalse((refusal.errorDescription ?? "").isEmpty, "\(refusal)")
         }
     }
