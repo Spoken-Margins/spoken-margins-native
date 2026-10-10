@@ -78,6 +78,7 @@ public enum StoredSessionMargin {
             now: now
         )
         try engine.inspectSession(sessionId: session.id)
+        let originalUpdatedAt = session.updatedAt
         let capture = try engine.beginWrittenInterjection()
         do {
             try engine.saveWrittenInterjection(captureId: capture.id, text: text)
@@ -85,8 +86,20 @@ public enum StoredSessionMargin {
             _ = try? engine.cancelWrittenInterjection(captureId: capture.id)
             throw error
         }
+        try restoreUpdatedAt(originalUpdatedAt, ofSession: session.id, in: repository)
         let saved = try repository.loadInterjections(sessionId: session.id).first { $0.id == "ij-written-\(capture.id)" }
         guard let saved else { throw SessionKitError.invalidCommandForState("saveWrittenInterjection") }
         return Saved(interjection: saved, itemTitle: item.title)
+    }
+
+    /// Saving the Margin stamps the session as touched now. Sessions are ordered by that stamp, and the app
+    /// reopens the newest resumable one at launch, so a Margin written from a shortcut must not pull its item
+    /// ahead of the one the listener was last listening to.
+    private static func restoreUpdatedAt(
+        _ updatedAt: Date?, ofSession id: String, in repository: SessionRepository
+    ) throws {
+        guard var stamped = try repository.loadSession(id: id), stamped.updatedAt != updatedAt else { return }
+        stamped.updatedAt = updatedAt
+        try repository.saveSession(stamped)
     }
 }

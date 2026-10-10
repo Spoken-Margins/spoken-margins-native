@@ -173,9 +173,10 @@ final class AddMarginShortcutIntentTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertNil(model.writtenMarginDraft)
         XCTAssertFalse(model.marginRows.contains { $0.interjection.sessionId == playingSessionId })
-        // The sample's session is where the listener left it.
-        let store = try XCTUnwrap(model.store)
+        // The sample's session is where the listener left it, and not pulled ahead of the playing item's.
         XCTAssertEqual(try store.loadSession(id: sampleSessionId)?.position.charOffset, 120)
+        XCTAssertEqual(try store.loadSession(id: sampleSessionId)?.updatedAt, sampleUpdatedAt)
+        XCTAssertEqual(try store.loadSessions().first?.id, playingSessionId)
         XCTAssertEqual(try store.loadSessions(itemId: sampleId).count, 1)
     }
 

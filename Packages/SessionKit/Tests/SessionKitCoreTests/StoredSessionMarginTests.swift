@@ -112,6 +112,20 @@ final class StoredSessionMarginTests: XCTestCase {
         XCTAssertEqual(repository.sessions.count, 1, "no session is created")
     }
 
+    func testTheSessionIsNotPulledAheadOfTheOneLastListenedTo() throws {
+        let stamp = Date(timeIntervalSince1970: 1_000)
+        let repository = repository([savedSession(updatedAt: stamp)])
+        let live = SessionEngine(profile: profile, repository: repository, audio: LivePlayer())
+        _ = try live.startSession(itemId: playingItem.id)
+        let playingSessionId = try XCTUnwrap(live.snapshot.sessionId)
+
+        _ = try StoredSessionMargin.addWritten(text: "Later.", itemId: savedItem.id, repository: repository)
+
+        XCTAssertEqual(try repository.loadSession(id: "session-saved")?.updatedAt, stamp)
+        let newest = repository.sessions.values.max { ($0.updatedAt ?? .distantPast) < ($1.updatedAt ?? .distantPast) }
+        XCTAssertEqual(newest?.id, playingSessionId, "launch restore still picks the item that was playing")
+    }
+
     func testAnItemWithNoSessionThrowsAndCreatesNothing() {
         let repository = repository([])
 

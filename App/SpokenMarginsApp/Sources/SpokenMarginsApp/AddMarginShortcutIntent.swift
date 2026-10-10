@@ -58,6 +58,8 @@ enum AddMarginShortcutAction {
             return try model.addWrittenMarginToStoredItem(id: itemId, text: text)
         } catch let failure as StoredSessionMargin.Failure {
             throw AddMarginShortcutError(failure)
+        } catch {
+            throw AddMarginShortcutError.notSaved(error.localizedDescription)
         }
     }
 
