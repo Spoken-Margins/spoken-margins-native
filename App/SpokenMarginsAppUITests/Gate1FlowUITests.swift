@@ -183,15 +183,27 @@ final class Gate1FlowUITests: XCTestCase {
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+        let search = app.textFields["library.search.field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 4))
+        let searchTop = search.frame.minY
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
+        // #1149: the completion banner is the app's shared one and floats over the list.
         XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("app.feedback.banner").exists)
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "The banner must not push the Library down")
         XCTAssertFalse(row.exists)
         element("completion.undo.button").tap()
         XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "Undo must not move the Library")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
-        let search = app.textFields["library.search.field"]
+        XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        captureScreen(named: "library-completion-banner")
+        // The banner dismisses itself (#123); it also covers the top of the list while it shows.
+        XCTAssertTrue(element("app.feedback.banner").waitForNonExistence(timeout: 12))
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "The Library must not move when the banner goes")
+        captureScreen(named: "library-completion-notice-expired")
         search.tap()
         search.typeText("pill")
         XCTAssertFalse(row.exists)
@@ -199,9 +211,6 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["All items"].exists)
         captureScreen(named: "library-completed-search-and-undo")
-        XCTAssertTrue(element("completion.undo.banner").waitForNonExistence(timeout: 12))
-        XCTAssertTrue(row.exists)
-        captureScreen(named: "library-completion-notice-expired")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
@@ -644,17 +653,18 @@ final class Gate1FlowUITests: XCTestCase {
         )
     }
 
-    func testDiagnosticsCopyShowsLocalConfirmation() throws {
+    func testShareDiagnosticsOpensTheShareSheet() throws {
         XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
         openLibrarySettings()
-        let copy = scrollToElement("settings.copyDiagnostics.button")
+        let share = scrollToElement("settings.shareDiagnostics.button")
 
-        copy.tap()
+        share.tap()
 
-        XCTAssertTrue(app.buttons["Copied"].waitForExistence(timeout: 2))
-        // The global success banner expires after three seconds while XCTest
-        // waits for idle. Its event and exported payload are verified by
-        // testDiagnosticsCopyPublishesSafePayloadAndSuccessFeedback.
+        // The exported file's payload is verified by testDiagnosticsExportFileCarriesSafePayload.
+        let shareSheet = element("ActivityListView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "Share Diagnostics did not open the system share sheet.")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
     func testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries() throws {
@@ -778,7 +788,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 4))
         editor.tap()
         editor.typeText("Remember the amber doorway.")
-        XCTAssertTrue(element("writtenMargin.save.button").isHittable, "The keyboard hides Save")
+        // #1184: a button under the keyboard can still report isHittable, so compare frames.
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        let save = element("writtenMargin.save.button")
+        XCTAssertTrue(save.isHittable, "The keyboard hides Save")
+        XCTAssertLessThanOrEqual(save.frame.maxY, keyboard.frame.minY, "Save sits under the keyboard")
         captureScreen(named: "second-edition-written-capture-keyboard")
         element("writtenMargin.save.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))

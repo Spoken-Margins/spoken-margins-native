@@ -62,6 +62,10 @@ type fakeAPI struct {
 	keys    []string
 	status  int   // when nonzero, every call fails with this status
 	fail    []int // statuses for the first calls, before any answer
+	// stopReason overrides "end_turn", the reason of a finished answer.
+	stopReason string
+	// cacheWrite and cacheRead are reported as cache token usage.
+	cacheWrite, cacheRead int
 }
 
 func newFakeAPI(t *testing.T, answers ...string) *fakeAPI {
@@ -93,11 +97,18 @@ func newFakeAPI(t *testing.T, answers ...string) *fakeAPI {
 		if len(f.answers) > 1 {
 			text, f.answers = f.answers[0], f.answers[1:]
 		}
+		stopReason := "end_turn"
+		if f.stopReason != "" {
+			stopReason = f.stopReason
+		}
 		json.NewEncoder(w).Encode(map[string]any{
 			"id": "msg_test", "type": "message", "role": "assistant", "model": DefaultModel,
 			"content":     []map[string]any{{"type": "text", "text": text}},
-			"stop_reason": "end_turn", "stop_sequence": nil,
-			"usage": map[string]any{"input_tokens": 13000, "output_tokens": 2000},
+			"stop_reason": stopReason, "stop_sequence": nil,
+			"usage": map[string]any{
+				"input_tokens": 13000, "output_tokens": 2000,
+				"cache_creation_input_tokens": f.cacheWrite, "cache_read_input_tokens": f.cacheRead,
+			},
 		})
 	}))
 	t.Cleanup(f.Close)

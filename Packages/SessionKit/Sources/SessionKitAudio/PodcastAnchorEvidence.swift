@@ -1118,7 +1118,11 @@ public enum PodcastAnchorFusionResolver {
         var contradicted: Set<String> = []
         for firstIndex in positioned.indices {
             for secondIndex in positioned.index(after: firstIndex)..<positioned.endIndex {
-                if positioned[firstIndex].recipient >= positioned[secondIndex].recipient {
+                // Only a genuinely reversed pair contradicts the sender's order. Equal recipient
+                // times are two Margins at the same moment, and equal sender times have no order
+                // to reverse (the id tie-break above is arbitrary).
+                if positioned[firstIndex].sender < positioned[secondIndex].sender,
+                   positioned[firstIndex].recipient > positioned[secondIndex].recipient {
                     contradicted.insert(positioned[firstIndex].id)
                     contradicted.insert(positioned[secondIndex].id)
                 }

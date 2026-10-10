@@ -5,14 +5,6 @@ import SessionKitSharing
 import SwiftUI
 import UIKit
 
-enum ShareMarginRepresentationChoice: String, CaseIterable, Identifiable {
-    case original
-    case cleaned
-    case textOnly
-
-    var id: String { rawValue }
-}
-
 enum ShareMarginDraftFilter: String, CaseIterable, Identifiable {
     case all
     case starred
@@ -38,42 +30,6 @@ enum ShareAutoCleanPreference {
     }
 }
 
-struct ShareMarginEditState: Equatable {
-    var automaticCleanupEnabled = false
-    var restoredAutomaticDecisionIds: Set<String> = []
-    var manuallyDeletedSegmentIds: Set<String> = []
-
-    static let original = ShareMarginEditState()
-}
-
-struct ShareInterjectionDraft: Identifiable {
-    var id: String { interjection.id }
-    var interjection: Interjection
-    var isIncluded = true
-    var approvedTranscript: String
-    var cleanup: InterjectionCleanupResult?
-    var cleanedAudioURL: URL?
-    var cleanedAudioDurationMs: Int?
-    var representationChoice: ShareMarginRepresentationChoice
-    var warning: String?
-    var anchorBefore: String
-    var anchorAfter: String
-    var acousticPauseDecisions: [InterjectionCleanupDecision] = []
-    var editHistory: [ShareMarginEditState] = [.original]
-    var editHistoryIndex = 0
-    var isAnalyzingPauses = false
-    var isPreparingCleanup = false
-    var preparationMessage: String?
-    var renderGeneration = 0
-
-    var currentEditState: ShareMarginEditState {
-        editHistory[min(max(0, editHistoryIndex), editHistory.count - 1)]
-    }
-
-    var canUndoEdit: Bool { editHistoryIndex > 0 }
-    var canRedoEdit: Bool { editHistoryIndex + 1 < editHistory.count }
-}
-
 struct InterjectionSharingState {
     var drafts: [ShareInterjectionDraft] = []
     var senderDisplayLabel = UserDefaults.standard.string(forKey: "sharingSenderDisplayLabel") ?? ""
@@ -93,6 +49,9 @@ struct InterjectionSharingState {
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
     var automaticallyCleanedDraftIDs: Set<String> = []
+    /// Set by the export screen, which prepares drafts from the session picked there. The
+    /// sheet's `begin` keeps them once instead of rebuilding from the open item's session.
+    var draftsPreparedForExport = false
 }
 
 struct SpokenMarginsPackageImportReview: Identifiable {
@@ -117,16 +76,6 @@ struct SpokenMarginsPackageImportReview: Identifiable {
     var requiresRecipientItem: Bool {
         contents.manifest.itemTransport.kind == .recipientSupplied && matchingItemId == nil
     }
-}
-
-struct ImportedCommentaryPrompt: Identifiable {
-    var id: String { interjection.id }
-    let layer: ImportedCommentaryLayer
-    let interjection: ImportedCommentaryInterjection
-    let index: Int
-    let count: Int
-
-    var senderLabel: String { layer.displayLabel?.nilIfEmpty ?? "Unsigned sender" }
 }
 
 private enum MarginReviewToken: Identifiable {
@@ -927,16 +876,10 @@ struct SharedSpokenMarginsPackageReadyView: View {
                         Text(packageURL.lastPathComponent)
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
-                        Text("Use the recipient test path to import this exact package back onto this device and experience it in a separate listening session.")
-                            .font(.callout)
                     }
                 }
                 Button("Share File") { isActivityPresented = true }
                     .buttonStyle(PrimaryButtonStyle())
-                Button("Create Recipient Test Session") {
-                    model.createRecipientTestSessionFromLastSharedPackage()
-                }
-                .buttonStyle(SecondaryButtonStyle())
                 Button("Done") { model.isSharedSpokenMarginsPackagePresented = false }
                     .buttonStyle(SecondaryButtonStyle())
                 Spacer()

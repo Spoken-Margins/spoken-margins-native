@@ -16,12 +16,16 @@ What it does:
   test-plan.md, and a `latest` symlink to the newest good build. Keeps the three newest builds;
   older ones, the temporary worktree and its DerivedData are deleted.
 - test-plan.md lists the listener-facing PRs merged since the build the owner last installed
-  (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command), each with
-  its issue's "Owner check" line, sized to about ten minutes. Only written checks go in the ten minutes:
+  (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command; a commit built
+  on the Mac before it reached next still counts), each with
+  its issue's "Owner check" line, sized to about ten minutes. A change whose issues are all closed
+  is left out: the owner has passed it (#1100). Only written checks go in the ten minutes:
   a phone-found bug without one is listed with the other unchecked changes and the run names its issue
   (#847), and a check that names an issue or PR not on the phone yet waits in its own section. A step
   carries the check's own numbered steps, its URLs as links, and the repo files it names (copied to
   files/ and to iCloud Drive as "Test plan <sha7> files", beside the plan the installer puts there).
+  A check that asks for a PDF, EPUB, audiobook or packet with no link and no repo file to attach waits
+  with the run naming its issue (#1038); test PDFs live in TestPlans/phone-files/.
   After those, "Still waiting on your check" lists open issues labelled `status: needs-human-validation` whose
   fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
   is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
@@ -34,8 +38,9 @@ pass; bugs are fine, crashes the runners would catch are not):
 - Memory pressure must be normal, and free disk at least 10 GB plus 4 GB per running build
   (counting this one). Otherwise it skips and exits 75; the next trigger tries again.
 - Checks on the exact commit: a tip the lane runner pushed after testing it (its "Merge check"
-  comment says so) has passed host tests and both builds. Any other commit (a merge by hand)
-  gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
+  comment says so) has passed host tests; its author built both targets, and the iPhone build
+  below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
+  merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
 
 The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
@@ -94,9 +99,13 @@ NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|veri
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
-# "None this time: ..." and "none needed." aren't either (#927: #811's heading section).
-NO_CHECK = re.compile(r'^(none|n/?a|nothing)(?:\s+(?:this time|needed|for now|yet))?\s*(?:[.;:,(\u2014\u2013]|-\s|$)',
-                      re.I)
+# "None this time: ..." and "none needed." aren't either (#927: #811's heading section), nor "none now;
+# ..." / "none at the moment" / "not needed" / "no owner check" (#1193: #177 reached the plan as a check).
+NO_CHECK = re.compile(
+    r'^(?:(?:none|n/?a|nothing)(?:\s+(?:this time|at this time|needed|required|for now|right now|now|yet|currently'
+    r'|at the moment|at all))*'
+    r'|not needed|no (?:(?:owner|phone) )?checks?(?:\s+needed)?)'
+    r'\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
 REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
 # "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927). Plain text
@@ -125,6 +134,11 @@ STEP_LINE = re.compile(r'\s*(?:\d+[.)]|[-*+]|>)\s|\s{2,}\S|\s*```')
 CODE_URL = re.compile(r'`(https?://[^`\s]+)`')                       # a URL in code: not tappable
 REPO_FILE = re.compile(r'`([\w.-]+(?:/[\w.-]+)+)`')                     # `Contracts/fixtures/x.spokenmargins`
 ATTACH_LIMIT = 50_000_000
+# A check that asks for a test file must hand it over (#1038): "import a book PDF that has bookmarks" with
+# no file left the owner with nothing to test, twice (2026-09-30, 2026-10-07).
+MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re.I)
+# A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
+SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/)\S+')
 MERGED_ON_NEXT = 'status: needs-human-validation'  # dispatch adds it when a PR for the issue merges into next
 
 
@@ -228,16 +242,30 @@ def runner_tested(sha: str) -> str | None:
 # ---- test plan -----------------------------------------------------------------------------------
 
 def plan_base(target: str) -> tuple[str | None, str]:
-    """(base commit, how it was chosen) for "what changed since the owner's last install"."""
+    """(base commit, how it was chosen) for "what changed since the owner's last install".
+
+    The installed commit is the base whenever this checkout has it and it isn't ahead of the target, even when
+    it isn't in next's history (a candidate built on this Mac before its changes reached next, #1100):
+    merged_prs then lists what next has that the installed build lacks. A commit this checkout doesn't have,
+    one newer than the target, or no installed.txt falls back to the last TestFlight build.
+    """
     sha = installed_sha()
+
+    def ancestor(older: str, newer: str) -> bool:
+        return subprocess.run(['git', 'merge-base', '--is-ancestor', older, newer], cwd=str(ROOT),
+                              capture_output=True).returncode == 0
     known = sha and subprocess.run(['git', 'cat-file', '-e', f'{sha}^{{commit}}'], cwd=str(ROOT),
                                    capture_output=True).returncode == 0
-    if known and subprocess.run(['git', 'merge-base', '--is-ancestor', sha, target], cwd=str(ROOT),
-                                capture_output=True).returncode == 0:
-        return sha, f'the build you last installed (`{sha[:7]}`, from installed.txt)'
+    behind = bool(known) and ancestor(sha, target)
+    ahead = bool(known) and not behind and ancestor(target, sha)
+    if known and not ahead:
+        return sha, f'the build you last installed (`{sha[:7]}`, from installed.txt' + (
+            ')' if behind else '; it isn\'t part of next\'s history, so this lists what next has beyond it)')
     tags = git('tag', '--list', 'testflight/*', '--sort=-creatordate', '--merged', target, check=False).split()
     if tags:
-        why = 'nothing recorded in installed.txt yet' if not sha else f'installed.txt names `{sha[:7]}`, which isn\'t behind this build'
+        why = ('nothing recorded in installed.txt yet' if not sha else
+               f'installed.txt names `{sha[:7]}`, which is newer than this build' if ahead else
+               f'installed.txt names `{sha[:7]}`, which this checkout doesn\'t have')
         return git('rev-list', '-1', tags[0]), f'the last TestFlight build, `{tags[0]}` ({why})'
     return None, 'no earlier build found'
 
@@ -255,8 +283,8 @@ def merged_prs(base: str | None, target: str) -> dict[int, str]:
 
 COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
-closingIssuesReferences(first:5){nodes{number title url body labels(first:20){nodes{name}} %s}}''' % COMMENTS
-ISSUE_FIELDS = 'number title url body labels(first:20){nodes{name}} ' + COMMENTS
+closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} %s}}''' % COMMENTS
+ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} ' + COMMENTS  # state: passed_on_phone (#1100)
 
 
 def graphql(fields_by_alias: dict[str, str]) -> dict:
@@ -609,6 +637,16 @@ def found_on_phone(entry: list[dict]) -> bool:
     return any(FIRST_ON_PHONE & labels(issue) for pr in entry for issue in pr['issues'])
 
 
+def passed_on_phone(entry: list[dict]) -> bool:
+    """Every issue the entry fixes is closed, which only happens after the owner's pass, so it never goes on a
+    plan again (#1100). An entry with no linked issue has nothing to close and stays.
+
+    No timestamps: a follow-up PR can merge after its issue closed (#223 closed 10-04, PR #677 merged 10-05) and
+    the owner records the pass as a comment, so closedAt never moves past the merge."""
+    issues = [issue for pr in entry for issue in pr['issues']]
+    return bool(issues) and all(issue.get('state') == 'CLOSED' for issue in issues)
+
+
 def labels(item: dict) -> set[str]:
     return {node['name'] for node in item.get('labels', {}).get('nodes', [])}
 
@@ -683,15 +721,32 @@ def step_lines(check: str, sha: str, folder: Path) -> list[str]:
     return lines
 
 
-def attach_files(check: str, sha: str, folder: Path) -> list[str]:
-    """Copy the repo files a check names in backticks, as of the built commit, into folder/files."""
-    names = []
+def repo_files(check: str, sha: str) -> list[str]:
+    """The repo files a check names in backticks that exist, as files, in the built commit."""
+    paths = []
     for path in dict.fromkeys(REPO_FILE.findall(check)):
         spec = f'{sha}:{path}'
         size = git('cat-file', '-s', spec, check=False)
-        if git('cat-file', '-t', spec, check=False) != 'blob' or not size.isdigit() or int(size) > ATTACH_LIMIT:
-            continue
-        data = subprocess.run(['git', 'cat-file', 'blob', spec], cwd=str(ROOT), capture_output=True).stdout
+        if git('cat-file', '-t', spec, check=False) == 'blob' and size.isdigit() and int(size) <= ATTACH_LIMIT:
+            paths.append(path)
+    return paths
+
+
+def missing_material(check: str, sha: str) -> str | None:
+    """The kind of test file a check asks for ("PDF", "packet") when it carries no link and names no repo
+    file to attach, so the owner would have nothing to test with (#1038); None when it needs none."""
+    found = MATERIAL.search(check)
+    if not found or SUPPLIED_URL.search(check) or repo_files(check, sha):
+        return None
+    kind = (found.group(1) or 'packet').lower()
+    return {'pdf': 'PDF', 'epub': 'EPUB'}.get(kind, kind)
+
+
+def attach_files(check: str, sha: str, folder: Path) -> list[str]:
+    """Copy the repo files a check names in backticks, as of the built commit, into folder/files."""
+    names = []
+    for path in repo_files(check, sha):
+        data = subprocess.run(['git', 'cat-file', 'blob', f'{sha}:{path}'], cwd=str(ROOT), capture_output=True).stdout
         (folder / 'files').mkdir(exist_ok=True)
         (folder / 'files' / Path(path).name).write_bytes(data)
         names.append(Path(path).name)
@@ -767,6 +822,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
     entries = plan_entries(facing)
+    passed = [entry for entry in entries if passed_on_phone(entry)]
+    entries = [entry for entry in entries if not any(entry is gone for gone in passed)]
     # Only what the owner can check goes in the ten minutes: a written check (#504). A bug his phone found
     # with none goes with the unchecked changes, and the run names its issues so one gets written (#847);
     # "repeat what you did" sent him back to the issue for his own steps and content.
@@ -803,16 +860,27 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     for fix in fixes:
         fix['needs'] = waiting_on(fix['check'], {fix['issue']['number'], *(pr['number'] for pr in fix['prs'])},
                                   built, items)
-    waiting = [entry for entry in checkable if waits[id(entry)]]
-    checkable = [entry for entry in checkable if not waits[id(entry)]]
+    # A check that asks for a PDF or packet it doesn't supply waits for one (#1038), and the run names it.
+    lacks = {id(entry): missing_material(check_of[id(entry)], sha) for entry in checkable}
+    for fix in fixes:
+        fix['lacks'] = missing_material(fix['check'], sha)
+    unsupplied = [issue['number'] for entry in checkable if lacks[id(entry)] for pr in entry for issue in pr['issues']]
+    unsupplied += [fix['issue']['number'] for fix in fixes if fix['lacks']]
+    if unsupplied:
+        say('a check asks for a test file it doesn\'t supply, so not in the ten minutes; add the file to the repo '
+            'and name its path in backticks in the check, or link it: '
+            + ', '.join(f'#{n}' for n in dict.fromkeys(unsupplied)))
+    waiting = [entry for entry in checkable if waits[id(entry)] or lacks[id(entry)]]
+    checkable = [entry for entry in checkable if not (waits[id(entry)] or lacks[id(entry)])]
     budget = checkable[:PLAN_CHECKS]
     rest = checkable[PLAN_CHECKS:]
     # They share the ten minutes, new changes first; the rest are listed with their links.
-    still = [fix for fix in fixes if not fix['needs']][:PLAN_CHECKS - len(budget)]
+    still = [fix for fix in fixes if not fix['needs'] and not fix['lacks']][:PLAN_CHECKS - len(budget)]
     also_waiting = [fix for fix in fixes if fix not in still]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
-    lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.', '',
+    left_out = f' {len(passed)} changes whose issues are already closed are left out.' if passed else ''
+    lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.{left_out}', '',
               '## Try these (about ten minutes)', '']
     if not budget and still:
         lines += ['No change new in this build has a phone check. The fixes below, from earlier builds, '
@@ -849,7 +917,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         for fix in also_waiting[:ALSO_WAITING]:
             needs = ', '.join(f'[#{item["number"]}]({item["url"]})' for item in fix['needs'])
             lines.append(f'- {fix["issue"]["title"]}{fix_tag(fix)} ({", ".join(fix_links(fix, label=False))})'
-                         + (f': needs {needs} on your phone first' if needs else ''))
+                         + (f': needs {needs} on your phone first' if needs else
+                            f': needs a test {fix["lacks"]}, not supplied yet' if fix.get('lacks') else ''))
         if len(also_waiting) > ALSO_WAITING:
             query = 'is%3Aissue+is%3Aopen+label%3A%22' + MERGED_ON_NEXT.replace(':', '%3A').replace(' ', '+') + '%22'
             lines.append(f'- and {len(also_waiting) - ALSO_WAITING} more: '
@@ -864,11 +933,13 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if rest:
         lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
     if waiting:
-        lines += ['## Waiting on another change (not in the ten minutes)', '',
+        lines += ['## Waiting on another change or a test file (not in the ten minutes)', '',
                   'Their checks need something that is not on your phone yet.', '']
         for entry, title in zip(waiting, titles(waiting)):
-            needed = ', '.join(f'[#{item["number"]}]({item["url"]}) ({item["title"]})' for item in waits[id(entry)])
-            lines.append(f'{title}: needs {needed}')
+            needed = [f'[#{item["number"]}]({item["url"]}) ({item["title"]})' for item in waits[id(entry)]]
+            if lacks[id(entry)]:
+                needed.append(f'a test {lacks[id(entry)]}, not supplied yet')
+            lines.append(f'{title}: needs {", ".join(needed)}')
         lines.append('')
     if unchecked:
         lines += ['## Also changed (no phone check written)', '',

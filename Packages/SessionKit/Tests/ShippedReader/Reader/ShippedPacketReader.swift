@@ -50,15 +50,19 @@ public enum ShippedPacketReader {
     public struct ImportedMargin: Equatable, Sendable {
         public let packageScopedId: String
         public let approvedTranscript: String
+        /// Encoded with the shipped types after repository readback; no current types cross this boundary.
+        public let anchorEvidenceJSON: Data?
 
-        public init(packageScopedId: String, approvedTranscript: String) {
+        public init(packageScopedId: String, approvedTranscript: String, anchorEvidenceJSON: Data? = nil) {
             self.packageScopedId = packageScopedId
             self.approvedTranscript = approvedTranscript
+            self.anchorEvidenceJSON = anchorEvidenceJSON
         }
     }
 
     /// Imports a packet as `importPacket(at:)` does, then reads back the Margins the shipped build saved.
-    public static func importedMargins(at packetURL: URL) throws -> [ImportedMargin] {
+    /// Anchor readback is opt-in to preserve the existing transcript-only comparisons.
+    public static func importedMargins(at packetURL: URL, includingAnchorEvidence: Bool = false) throws -> [ImportedMargin] {
         let scratch = FileManager.default.temporaryDirectory
             .appending(path: "shipped-reader-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: scratch) }
@@ -71,7 +75,10 @@ public enum ShippedPacketReader {
                 throw Rejected(description: "not imported")
             }
             return try repository.loadImportedCommentaryInterjections(layerId: layerId).map {
-                ImportedMargin(packageScopedId: $0.packageScopedId, approvedTranscript: $0.approvedTranscript)
+                ImportedMargin(
+                    packageScopedId: $0.packageScopedId, approvedTranscript: $0.approvedTranscript,
+                    anchorEvidenceJSON: includingAnchorEvidence ? try JSONEncoder().encode($0.anchorEvidence) : nil
+                )
             }
         } catch {
             throw Rejected(description: "\(build) could not import \(packetURL.lastPathComponent): \(error)")

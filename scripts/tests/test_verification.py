@@ -1,5 +1,6 @@
 import contextlib
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -57,6 +58,33 @@ class VerificationTests(unittest.TestCase):
             step = run.manifest['steps'][-1]
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
+
+    def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
+        # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.
+        import json
+        import os
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / 'state'
+            state.mkdir()
+            (state / 'desk-simulator-pool.json').write_text(json.dumps({'devices': {'pool-device': {'name': 'SM Lane Desk pool 1'}}}))
+            seen = {}
+
+            def shutdown(command, **kwargs):
+                unsafe = state / 'unsafe-simulators.json'
+                seen['unsafe_at_shutdown'] = json.loads(unsafe.read_text()) if unsafe.exists() else {}
+                return mock.Mock(returncode=0)
+
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.manifest['destination'] = {'udid': 'pool-device'}
+            run.crash_baseline = {}
+            crashes = [f'WidgetRenderer_Default-2026-09-24-10000{i}.ips' for i in range(3)]
+            with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}), \
+                    patch.object(verification, 'new_crash', side_effect=self.crash_reports(*crashes)), \
+                    patch.object(verification.subprocess, 'run', side_effect=shutdown):
+                with self.assertRaises(RuntimeError):
+                    run.command('crash-check', [sys.executable, '-c', 'import time; time.sleep(60)'])
+            self.assertIn('crash flood', seen['unsafe_at_shutdown']['pool-device']['reason'])
 
     def test_a_crash_report_renamed_while_it_is_read_is_skipped(self):
         # integration-4ca9d9c (#767): macOS wrote `.SpokenMarginsApp-….ips`, then renamed it between
@@ -181,22 +209,73 @@ class VerificationTests(unittest.TestCase):
                 run.ops_steps(root)
             self.assertIn('executed zero tests', str(raised.exception))
 
-    def host_step_calls(self, environment):
+    def host_step_calls(self, environment, changed=None):
         """(commands run, manifest, final status) for the host steps under an environment."""
         calls = []
+        self.ops_ran = False
         audio = next(iter(verification.CODEX_SANDBOX_AUDIO_TESTS))
         with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, environment, clear=False):
             if not environment:
                 verification.os.environ.pop('CODEX_SANDBOX', None)
-            run = verification.Run(Path(temporary) / 'run', 'fast')
+            run = verification.Run(Path(temporary) / 'run', 'fast', changed)
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
-                    patch.object(run, 'ops_steps'), \
+                    patch.object(run, 'ops_steps', side_effect=lambda: setattr(self, 'ops_ran', True)), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'swift_tests',
                                  side_effect=lambda folder: {audio.split('/', 1)[1], 'OtherTests/testX'}
                                  if folder.name == 'SessionKitTests' else set()), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
             return calls, run.manifest, verification.passed_status(), audio
+
+    def package_failing(self, usable, failed, **step):
+        """The manifest and error from the host steps when the package step fails these tests."""
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+
+            def command(name, args, **kw):
+                if name == 'package':
+                    run.manifest['steps'].append({
+                        'name': name, 'tests': {t: {'status': 'failed'} for t in failed},
+                        'errors': ['Process exit 1', *(f'Failed: {t}' for t in failed)], **step})
+                    raise RuntimeError('Failed: ' + ', '.join(failed))
+
+            with patch.object(run, 'command', side_effect=command), patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output',
+                                 return_value={'usable': usable, 'why': 'lid closed'}), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                with self.assertRaises(RuntimeError) as raised:
+                    run.host_steps()
+            return run.manifest, str(raised.exception)
+
+    def test_real_player_failures_with_no_sound_output_are_a_lane_fault(self):
+        # #909: the same real-player tests failed for every PR while the lane Mac's lid was closed.
+        player = ['SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays',
+                  'SessionKitTests/RealPlayerPodcastEvidenceTests/testTap',
+                  'SessionKitTests/StreamSeekLifecycleTests/testSeek']
+        manifest, message = self.package_failing(usable=False, failed=player)
+        self.assertEqual(manifest['lane_fault'], 'no audio output: lid closed')
+        self.assertTrue(message.startswith('lane fault, not the PR: no audio output'), message)
+        self.assertEqual(manifest['audio_output'], {'usable': False, 'why': 'lid closed'})
+
+    def test_other_failures_stay_the_prs_even_with_no_sound_output_or_with_it(self):
+        player = 'SessionKitTests/RealPlayerMarginMomentTests/testMarginPlays'
+        for name, step in (('a later test crashed, so tests are missing', {'errors': [
+                                'Process exit 1', f'Failed: {player}', 'Missing 40 tests; first ten: []']}),
+                           ('the step timed out', {'interrupted': True})):
+            with self.subTest(name):
+                manifest, message = self.package_failing(False, [player], **step)
+                self.assertNotIn('lane_fault', manifest)
+        for name, usable, failed in (
+                ('a player test and a sharing test', False, [player, 'SessionKitTests/SharingTests/testPacket']),
+                ('a similarly named class', False, ['SessionKitTests/RealPlayerlessTests/testX']),
+                ('sound works, so the player tests failing is the code', True, [player])):
+            with self.subTest(name):
+                manifest, message = self.package_failing(usable, failed)
+                self.assertNotIn('lane_fault', manifest)
+                self.assertNotIn('lane fault', message)
 
     def test_inside_codex_s_sandbox_the_fast_plan_skips_runner_tests_and_is_never_verified(self):
         # #64's Codex run (2026-10-01): its sandbox refuses `ps`, runner-tests failed (2 failures, 12 errors),
@@ -216,6 +295,110 @@ class VerificationTests(unittest.TestCase):
         self.assertFalse([step for step in manifest['steps'] if step.get('skipped')])
         self.assertEqual(status, 'verified')
 
+    def skipped_steps(self, manifest):
+        return {step['name']: step['skipped'] for step in manifest['steps'] if step.get('skipped')}
+
+    def test_a_lane_run_for_an_app_only_diff_runs_just_the_tests_that_read_the_app(self):
+        # #862: runner-tests are about 2 minutes of a 10-minute run, and the ones that read App/ are seconds.
+        calls, manifest, status, _ = self.host_step_calls({}, ['App/SpokenMarginsApp/Sources/SpokenMarginsApp/X.swift'])
+        self.assertEqual(status, 'verified')
+        self.assertIn('runner-tests', [name for name, _ in calls])
+        self.assertFalse(self.ops_ran)
+        self.assertEqual(list(self.skipped_steps(manifest)), ['ops'])
+        self.assertIn('App/', manifest['runner_tests_note'])
+
+    def test_a_lane_run_for_a_docs_only_diff_skips_both_and_records_why(self):
+        calls, manifest, status, _ = self.host_step_calls({}, ['docs/workstreams/README.md'])
+        self.assertNotIn('runner-tests', [name for name, _ in calls])
+        self.assertFalse(self.ops_ran)
+        skipped = self.skipped_steps(manifest)
+        self.assertEqual(sorted(skipped), ['ops', 'runner-tests'])
+        self.assertTrue(all(skipped.values()))
+        self.assertEqual(status, 'verified')
+        self.assertIn('package', [name for name, _ in calls])  # everything else still runs
+
+    def test_a_diff_touching_scripts_or_github_runs_every_runner_test_and_the_ops_tests(self):
+        for path in ('scripts/lane-runner.py', 'scripts/tests/test_x.py', '.github/workflows/lane.yml'):
+            with self.subTest(path=path):
+                calls, manifest, _, _ = self.host_step_calls({}, ['docs/a.md', path])
+                self.assertIn('runner-tests', [name for name, _ in calls])
+                self.assertTrue(self.ops_ran)
+                self.assertFalse(self.skipped_steps(manifest))
+                self.assertNotIn('runner_tests_note', manifest)
+
+    def test_a_diff_touching_ops_runs_the_ops_tests_and_skips_the_runner_tests(self):
+        calls, manifest, _, _ = self.host_step_calls({}, ['ops/dial/dial_gate.py'])
+        self.assertTrue(self.ops_ran)
+        self.assertEqual(list(self.skipped_steps(manifest)), ['runner-tests'])
+
+    def test_a_diff_touching_the_root_agents_file_runs_the_ops_tests(self):
+        # The Codex audit's tests check that AGENTS.md is at the repository root (Codex audit of #898 on 4ef1b0f).
+        self.host_step_calls({}, ['App/X.swift', 'AGENTS.md'])
+        self.assertTrue(self.ops_ran)
+
+    def test_every_runner_test_that_reads_the_repository_outside_scripts_is_covered(self):
+        # The lane's warm-build tests copy the root .gitignore, and next's research and hot-file tests read
+        # research/ and the hot files under App/: a diff to any of them must still reach those tests (audit of #898).
+        self.assertEqual(verification.runner_test_scope(['App/X.swift', '.gitignore'])[0], 'all')
+        for path in ('research/B4/README.md', 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'):
+            with self.subTest(path=path):
+                scope, why = verification.runner_test_scope([path])
+                self.assertEqual(scope, 'readers')
+        self.assertIn('test_research_tests', verification.RUNNER_TEST_READERS)
+        self.assertIn('test_hot_file_ratchet', verification.RUNNER_TEST_READERS)
+        # The lane runner's T3 tests plan against the real TestPlans/ and app test sources: renaming an app test
+        # or editing a plan must still reach them (found in review of #898).
+        for name in ('test_lane_runner.ScopeClassTests', 'test_lane_runner.T3Tests',
+                     'test_lane_runner.OnlyTestingTests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit'):
+            self.assertIn(name, verification.RUNNER_TEST_READERS)
+        for path in ('TestPlans/AudioAdapters.xctestplan', 'App/SpokenMarginsAppTests/Gate1AppModelWorkflowTests.swift'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        # The sharing kit's tests (next, #848) read the kit under docs/ and the packet sources under Packages/.
+        self.assertIn('test_sharing_kit', verification.RUNNER_TEST_READERS)
+        for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
+
+    def test_no_diff_information_runs_every_step(self):
+        for changed in (None, []):
+            with self.subTest(changed=changed):
+                calls, manifest, _, _ = self.host_step_calls({}, changed)
+                self.assertEqual([name for name, _ in calls][0], 'runner-tests')
+                self.assertTrue(self.ops_ran)
+                self.assertFalse(self.skipped_steps(manifest))
+
+    def test_the_readers_run_names_modules_that_exist_and_would_catch_an_app_change(self):
+        for name in verification.RUNNER_TEST_READERS:
+            module, _, cls = name.partition('.')
+            source = SCRIPTS / 'tests' / f'{module}.py'
+            self.assertTrue(source.exists(), name)
+            self.assertTrue(not cls or f'class {cls}(' in source.read_text(), name)
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast', ['App/X.swift'])
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args))), \
+                    patch.object(run, 'ops_steps'), patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+        args = dict(calls)['runner-tests']
+        self.assertEqual(args[-len(verification.RUNNER_TEST_READERS):], list(verification.RUNNER_TEST_READERS))
+        # Run the loader for real, on the scan modules only (this module is one of the readers): the runner's
+        # "Ran N tests" line is there for the zero-tests check.
+        scans = [module for module in verification.RUNNER_TEST_READERS if module.startswith('test_filled_button')]
+        done = subprocess.run([sys.executable, *args[1:-len(verification.RUNNER_TEST_READERS)], *scans],
+                              cwd=SCRIPTS.parent, capture_output=True, text=True)
+        self.assertRegex(done.stderr, r'Ran \d+ tests? in ')
+
+    def test_the_changed_files_list_is_read_or_ignored(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            listing = Path(temporary) / 'changed.txt'
+            listing.write_text('docs/a.md\n\nApp/b.swift\n')
+            self.assertEqual(verification.read_changed_files(listing), ['docs/a.md', 'App/b.swift'])
+            listing.write_text('\n')
+            self.assertIsNone(verification.read_changed_files(listing))
+            self.assertIsNone(verification.read_changed_files(Path(temporary) / 'missing.txt'))
+            self.assertIsNone(verification.read_changed_files(None))
+
     def test_the_sessionkit_build_has_its_own_limit_so_the_tests_keep_theirs(self):
         # #844 (2026-10-05): one 300 s limit covered the SessionKit build and about 1,000 tests. Under a
         # load average of 40 to 180 the run stopped with hundreds of tests missing, at a different test
@@ -226,6 +409,7 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'fast')
             with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, args, kw))), \
                     patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
                     patch.object(verification, 'swift_tests', return_value=set()), \
                     patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
                 run.host_steps()
@@ -238,11 +422,64 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(steps['package'][1]['tests'])  # the exact-test-ID check stays on the tests
         self.assertFalse(steps['package-build'][1].get('tests'))
 
-    def test_the_sessionkit_script_still_builds_and_tests_with_no_argument(self):
-        script = (SCRIPTS / 'run-sessionkit-tests.sh').read_text()
-        self.assertIn('"") exec "$ROOT/scripts/host-test-lane" swift test ', script)
-        self.assertIn('--build-only) exec "$ROOT/scripts/host-test-lane" swift build --build-tests', script)
-        self.assertIn('--skip-build) exec "$ROOT/scripts/host-test-lane" swift test --skip-build', script)
+    def test_runner_tests_have_their_own_limit_with_room_over_their_measured_time(self):
+        # #1110: the runner's own suite takes 164.5 to 172.3 s on a quiet Mac, and the 180 s command default
+        # killed it (exit 124, "executed zero tests") on PR #1103's head twice, beside a simulator job.
+        measured = 172.3
+        default = inspect.signature(verification.Run.command).parameters['timeout'].default
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification, 'swift_tests', return_value=set()), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.host_steps()
+        timeout = dict(calls)['runner-tests'].get('timeout', default)
+        self.assertGreaterEqual(timeout, 2 * measured)  # the suite grows and runs beside a simulator job
+        self.assertGreater(timeout, default)
+
+    def run_sessionkit_script(self, *args, exit_code=0, **env):
+        """Run scripts/run-sessionkit-tests.sh from a copy in a temporary ROOT whose host-test-lane records what it
+        was asked to run (and where), so the script's real argument handling executes. Returns (done, calls)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / 'scripts').mkdir()
+            (root / 'Packages/SessionKit').mkdir(parents=True)
+            shutil.copy(SCRIPTS / 'run-sessionkit-tests.sh', root / 'scripts/run-sessionkit-tests.sh')
+            lane = root / 'scripts/host-test-lane'
+            lane.write_text(f'#!/bin/sh\nprintf "%s|" "$PWD" "$@" >> "{root}/calls"\necho >> "{root}/calls"\n'
+                            f'exit {exit_code}\n')
+            lane.chmod(0o755)
+            environment = {key: value for key, value in os.environ.items() if key != 'CODEX_SANDBOX'}
+            done = subprocess.run(['bash', str(root / 'scripts/run-sessionkit-tests.sh'), *args], env={**environment, **env},
+                                  capture_output=True, text=True, timeout=30)
+            calls = [line.split('|')[:-1] for line in (root / 'calls').read_text().splitlines()] \
+                if (root / 'calls').exists() else []
+            return done, [(Path(call[0]).resolve().relative_to(root.resolve()).as_posix(), call[1:]) for call in calls]
+
+    def test_the_sessionkit_script_builds_and_tests_with_no_argument_and_splits_the_two_steps(self):
+        package = 'Packages/SessionKit'
+        for args, command in (((), ['swift', 'test']), (('--build-only',), ['swift', 'build', '--build-tests']),
+                              (('--skip-build',), ['swift', 'test', '--skip-build'])):
+            with self.subTest(args=args):
+                done, calls = self.run_sessionkit_script(*args)
+                self.assertEqual((done.returncode, calls), (0, [(package, command)]), done.stderr)  # run in the package
+
+    def test_the_sessionkit_script_passes_on_the_exit_code_and_refuses_an_unknown_argument(self):
+        done, calls = self.run_sessionkit_script('--skip-build', exit_code=3)
+        self.assertEqual((done.returncode, len(calls)), (3, 1))  # a failing `swift test` fails the step
+        done, calls = self.run_sessionkit_script('--everything')
+        self.assertEqual((done.returncode, calls), (2, []))  # nothing ran
+        self.assertIn('usage:', done.stderr)
+
+    def test_inside_the_codex_sandbox_the_sessionkit_script_disables_swiftpm_s_own_sandbox(self):
+        for args, command in (((), ['swift', 'test']), (('--build-only',), ['swift', 'build', '--build-tests']),
+                              (('--skip-build',), ['swift', 'test', '--skip-build'])):
+            with self.subTest(args=args):
+                done, calls = self.run_sessionkit_script(*args, CODEX_SANDBOX='seatbelt')
+                self.assertEqual(calls, [('Packages/SessionKit', command + ['--disable-sandbox'])], done.stderr)
 
     def test_ops_files_count_as_verification_inputs(self):
         with patch.object(verification, 'capture', return_value='ops/dial/dial_gate.py\n'), \
@@ -431,6 +668,26 @@ class VerificationTests(unittest.TestCase):
                 run.command('xcode-tests-gating', [sys.executable, '-c', self.xctest_log(
                     ('TourUITests', 'testTour', 'failed'), ('ShareUITests', 'testShare', 'passed')) + '; raise SystemExit(65)'],
                     expected={tour, share}, tests=True, probation={share})
+
+    def test_a_test_step_that_exits_non_zero_fails_even_when_every_recorded_test_passed(self):
+        # The shape of a real xcodebuild failure after the tests: the host crashes on teardown, the simulator
+        # dies after the last test, `swift test` exits 1. Only a failing *probation* test excuses the exit code.
+        tour, share = 'SpokenMarginsAppUITests/TourUITests/testTour', 'SpokenMarginsAppUITests/ShareUITests/testShare'
+        passed = self.xctest_log(('TourUITests', 'testTour', 'passed'), ('ShareUITests', 'testShare', 'passed'))
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'journeys')
+            for label, probation in (('no probation', None), ('probation that passed', {share})):
+                with self.subTest(label):
+                    with self.assertRaisesRegex(RuntimeError, 'Process exit 65'):
+                        run.command(f'xcode-tests-{len(run.manifest["steps"])}',
+                                    [sys.executable, '-c', passed + '; raise SystemExit(65)'],
+                                    expected={tour, share}, tests=True, probation=probation)
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['exit_code'], step['errors'][0]), (65, 'Process exit 65'))
+                    self.assertEqual(step['counts']['passed'], 2)  # the tests did pass: the exit code is the failure
+            # and the same step with a zero exit is clean, so the above is the exit code and nothing else
+            run.command('xcode-tests-clean', [sys.executable, '-c', passed], expected={tour, share}, tests=True)
+            self.assertEqual(run.manifest['steps'][-1]['errors'], [])
 
     def test_journeys_plan_passes_ui_test_selectors_and_names_the_probation_ones(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -709,6 +966,69 @@ class VerificationTests(unittest.TestCase):
                 path.unlink()
             self.assertTrue(any('Empty fixture/schema selection' in e for e in inventory.validate(root)))
 
+    def plan_root(self, root, **plans):
+        """A repo for inventory.validate(): the real contracts, traces and scripts (symlinked, never written),
+        and a made-up app of one test class (three methods) and one UI class, with plans that are correct
+        unless `plans` replaces one: {plan name: [(target, {'selectedTests': ...}), ...]}."""
+        for directory in ('Contracts', 'validation', 'Packages', 'scripts'):
+            (root / directory).symlink_to(inventory.ROOT / directory, target_is_directory=True)
+        tests, ui = root / 'App/SpokenMarginsAppTests', root / 'App/SpokenMarginsAppUITests'
+        tests.mkdir(parents=True)
+        ui.mkdir(parents=True)
+        (tests / 'Gate4WatchPackageRenderTests.swift').write_text(
+            'final class Gate4WatchPackageRenderTests: XCTestCase { func testRender() {} }')
+        (tests / 'SpeechTests.swift').write_text(
+            'final class SpeechTests: XCTestCase { func testA() {} func testB() {} func testC() {} }')
+        (ui / 'TourUITests.swift').write_text('final class TourUITests: XCTestCase { func testTour() {} func testShare() {} }')
+        app, uis = 'SpokenMarginsAppTests', 'SpokenMarginsAppUITests'
+        selecting = lambda target, *tests: (target, {'selectedTests': list(tests)} if tests else {})
+        defaults = {'AppBehavior': [selecting(app, 'SpeechTests/testA', 'SpeechTests/testC')],
+                    'AudioAdapters': [selecting(app, 'SpeechTests/testB')],
+                    'Release': [selecting(app), selecting(uis)],
+                    'UISeams': [selecting(uis, 'TourUITests/testTour')],
+                    'SpeechCanary': [selecting(uis, 'TourUITests/testShare')],
+                    'Smoke': [selecting(uis, 'TourUITests/testTour')]}
+        (root / 'TestPlans').mkdir()
+        (root / 'TestPlans/scripted-journeys.json').write_text(json.dumps({'version': 1, 'gating': [], 'probation': []}))
+        for name, targets in {**defaults, **plans}.items():
+            (root / f'TestPlans/{name}.xctestplan').write_text(json.dumps({'testTargets': [
+                dict(target={'name': target}, **selection) for target, selection in targets]}))
+
+    def test_inventory_accepts_plans_that_partition_the_app_tests_and_release_runs_everything(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            self.plan_root(Path(temporary))
+            self.assertEqual(inventory.validate(Path(temporary)), [])  # the others below change one plan of this
+
+    def test_inventory_rejects_app_tests_that_are_in_both_plans_or_in_neither(self):
+        partition = 'AppBehavior and AudioAdapters must partition all active app tests'
+        app = 'SpokenMarginsAppTests'
+        for label, plans in (
+                ('SpeechTests/testB runs in both plans (twice in T3)', {
+                    'AudioAdapters': [(app, {'selectedTests': ['SpeechTests/testB', 'SpeechTests/testA']})]}),
+                ('SpeechTests/testC runs in neither (never in T3)', {
+                    'AppBehavior': [(app, {'selectedTests': ['SpeechTests/testA']})]})):
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                self.plan_root(Path(temporary), **plans)
+                self.assertEqual(inventory.validate(Path(temporary)), [partition])
+
+    def test_inventory_rejects_a_release_plan_that_leaves_out_an_app_or_ui_test(self):
+        release = 'Release must include all active app and UI tests'
+        app, ui = 'SpokenMarginsAppTests', 'SpokenMarginsAppUITests'
+        for label, targets in (
+                ('a UI test missing', [(app, {}), (ui, {'selectedTests': ['TourUITests/testTour']})]),
+                ('an app test missing', [(app, {'selectedTests': ['SpeechTests/testA', 'SpeechTests/testB']}), (ui, {})])):
+            with self.subTest(label), tempfile.TemporaryDirectory() as temporary:
+                self.plan_root(Path(temporary), Release=targets)
+                self.assertEqual(inventory.validate(Path(temporary)), [release])
+
+    def test_inventory_rejects_a_ui_plan_that_selects_an_app_test(self):
+        for plan in ('UISeams', 'SpeechCanary', 'Smoke'):
+            with self.subTest(plan), tempfile.TemporaryDirectory() as temporary:
+                self.plan_root(Path(temporary), **{plan: [
+                    ('SpokenMarginsAppUITests', {'selectedTests': ['TourUITests/testTour']}),
+                    ('SpokenMarginsAppTests', {'selectedTests': ['SpeechTests/testA']})]})
+                self.assertEqual(inventory.validate(Path(temporary)), [f'{plan}: non-UI test selected'])
+
     def test_built_preprocessor_check_rejects_missing_entrypoint(self):
         with tempfile.TemporaryDirectory() as temporary:
             resource = Path(temporary) / 'broken.js'
@@ -723,6 +1043,24 @@ class VerificationTests(unittest.TestCase):
             run = verification.Run(Path(temporary) / 'run', 'test')
             with self.assertRaisesRegex(RuntimeError, 'zero tests'):
                 run.command('runner-tests', [sys.executable, '-c', 'print("Ran 0 tests in 0.0s")'])
+
+    def test_a_node_suite_that_ran_zero_tests_is_not_a_pass_for_the_browser_and_share_link_steps(self):
+        # `node --test` exits 0 and prints "# tests 0" when its glob matches no files (a renamed folder).
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            for name in ('browser', 'share-link'):
+                for label, output in (('a TAP summary of zero tests', '# tests 0'),
+                                      ('no TAP summary at all', 'npm warn nothing to run')):
+                    with self.subTest(name=name, label=label):
+                        with self.assertRaisesRegex(RuntimeError, f'{"Browser runner" if name == "browser" else name} '
+                                                                  'executed zero tests'):
+                            run.command(name, [sys.executable, '-c', f'print({output!r})'])
+                        step = run.manifest['steps'][-1]
+                        self.assertEqual((step['executed_count'], step['exit_code']), (0, 0))  # it exited 0
+                with self.subTest(name=name, label='a TAP summary of three tests'):
+                    run.command(name, [sys.executable, '-c', 'print("TAP version 13\\n# tests 3\\n# pass 3")'])
+                    step = run.manifest['steps'][-1]
+                    self.assertEqual((step['executed_count'], step['errors']), (3, []))
 
     def test_hung_process_is_bounded_and_manifest_retains_failure(self):
         with tempfile.TemporaryDirectory() as temporary:

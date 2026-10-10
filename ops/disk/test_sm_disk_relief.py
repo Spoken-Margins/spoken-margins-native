@@ -49,7 +49,8 @@ class FakeMachine(d.Machine):
     Free space on the data volume follows what is deleted under the fake home."""
 
     def __init__(self, cfg: d.Config, base_free: int, procs=None, mounted=None, drive_free=None,
-                 live_pids=(), copy=None, frozen_free=False):
+                 live_pids=(), copy=None, frozen_free=False, now=NOW, snapshots=(), backup=False,
+                 undeletable=()):
         self.cfg = cfg
         self.base_free = base_free
         self.initial_used = d.tree_stats(cfg.home).disk_bytes
@@ -60,9 +61,27 @@ class FakeMachine(d.Machine):
         self.copy_override = copy
         self.frozen_free = frozen_free
         self.notes = []
+        self.clock = now
+        self.snapshots = list(snapshots)
+        self.backup = backup
+        self.undeletable = set(undeletable)
+        self.deleted_snapshots = []
 
     def now(self):
-        return NOW
+        return self.clock
+
+    def snapshot_dates(self, volume):
+        return list(self.snapshots)
+
+    def backup_running(self):
+        return self.backup
+
+    def delete_snapshot(self, date):
+        if date in self.undeletable:
+            return False
+        self.snapshots.remove(date)
+        self.deleted_snapshots.append(date)
+        return True
 
     def free_bytes(self, path):
         if Path(path) == self.cfg.data_volume:
@@ -112,6 +131,7 @@ class Base(unittest.TestCase):
             codex_sessions=home / '.codex/sessions',
             claude_tmp=home / 'tmp/claude-501',
             claude_sessions=home / '.claude/sessions',
+            tmp_root=home / 'tmp',
             own_session=None,
             trigger_bytes=100 * MiB,
             target_bytes=104 * MiB,
@@ -126,7 +146,7 @@ class Base(unittest.TestCase):
         repo.mkdir(parents=True, exist_ok=True)
         git(repo, 'init', '-q', '-b', 'next')
         write(repo / 'README.md', 10)
-        (repo / '.gitignore').write_text('.build/\nartifacts/\nPackages/SessionKit/.build/\n')
+        (repo / '.gitignore').write_text('.build/\nartifacts/\nPackages/SessionKit/.build/\n.venv\nnode_modules\n.swiftpm\n')
         git(repo, 'add', '.')
         git(repo, 'commit', '-qm', 'one')
         git(repo, 'update-ref', 'refs/remotes/origin/next', 'HEAD')
@@ -157,15 +177,25 @@ class Thresholds(Base):
         self.assertFalse(result.acted)
         self.assertTrue(c.exists())
 
-    def test_drive_missing_means_no_action_at_all(self):
+    def test_without_the_drive_caches_still_go_and_moves_wait(self):
+        # 2026-10-04 to 10-09 every run logged "did nothing" because SlawBulk was unplugged or
+        # unwritable, while free space fell to 16.9 GiB: deleting caches needs no drive (#1211).
         _, (w,) = self.make_repo('a')
         c = self.cache(w, MiB)
+        evidence = write(self.cfg.repo / 'artifacts/lane/full-old/report.md', 1000).parent
+        age_tree(evidence, 5 * DAY)
         m = FakeMachine(self.cfg, base_free=10 * MiB, mounted=[])
         result = d.run(self.cfg, m, self.log)
-        self.assertFalse(result.acted)
-        self.assertIn('not mounted', result.reason)
-        self.assertTrue(c.exists())
-        self.assertEqual(m.notes, [])
+        self.assertTrue(result.acted)
+        self.assertFalse(c.exists())
+        self.assertTrue(evidence.exists(), 'moved evidence without the drive')
+        self.assertTrue(any('moves skipped' in line and 'not mounted' in line for line in self.log.lines),
+                        self.log.lines)
+
+    def test_default_trigger_leaves_room_for_a_build(self):
+        cfg = d.Config()
+        self.assertGreaterEqual(cfg.trigger_bytes, 50 * d.GiB, 'one app build takes 8 to 9 GiB')
+        self.assertGreater(cfg.target_bytes, cfg.trigger_bytes)
 
     def test_stops_once_free_space_reaches_the_target(self):
         _, (a, b, c) = self.make_repo('a', 'b', 'c')
@@ -394,11 +424,26 @@ class Moves(Base):
         self.assertTrue(d.move_verified(self.cfg, m, log, '2026-10-01', mirror=False)[0])
         self.assertEqual(list(log.parent.iterdir()), [])
 
-    def test_run_moves_old_evidence_and_skips_moves_without_the_mirror(self):
+    def test_without_the_mirror_moves_make_one_copy_on_the_drive(self):
+        # Owner, 2026-10-09: the mirror is for highly sensitive data and is stored away from the desk.
+        self.assertFalse(d.Config().require_mirror)
         self.make_repo()
         m = FakeMachine(self.cfg, base_free=99 * MiB, mounted=[self.cfg.drive])
-        d.run(self.cfg, m, self.log)
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(self.src.exists())
+        day = time.strftime('%Y-%m-%d', time.localtime(m.now()))
+        self.assertTrue((self.cfg.drive / 'Codex-Offload' / f'{day}-disk-relief' / self.rel / 'report.md').exists())
+        self.assertFalse((self.cfg.mirror / 'Current').exists())
+
+    def test_require_mirror_still_holds_moves_back(self):
+        self.make_repo()
+        self.cfg.require_mirror = True
+        d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB, mounted=[self.cfg.drive]), self.log)
         self.assertTrue(self.src.exists(), 'moved with only one copy')
+
+    def test_run_moves_old_evidence_to_both_disks_when_the_mirror_is_there(self):
+        self.make_repo()
         m = FakeMachine(self.cfg, base_free=99 * MiB)
         result = d.run(self.cfg, m, self.log)
         self.assertFalse(self.src.exists())
@@ -425,6 +470,51 @@ class Moves(Base):
             self.assertTrue(old.exists())
         d.run(self.cfg, FakeMachine(self.cfg, base_free=99 * MiB), self.log)
         self.assertFalse(old.exists())
+
+
+NIGHT = time.mktime((2026, 10, 1, 3, 0, 0, 0, 0, -1))
+
+
+class Snapshots(Base):
+    """Owner, 2026-10-09: "We can delete snapshots overnight." tmutil is faked; the stamp is real."""
+
+    SNAPS = ('2026-10-01-010203', '2026-10-01-020304')
+
+    def test_deletes_local_snapshots_once_a_night(self):
+        m = FakeMachine(self.cfg, base_free=500 * MiB, now=NIGHT, snapshots=self.SNAPS)
+        d.locked_run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, list(self.SNAPS))
+        self.assertEqual(self.cfg.snapshot_stamp.read_text().strip(), '2026-10-01')
+        m.snapshots = ['2026-10-01-033000']
+        d.locked_run(self.cfg, m, self.log)
+        self.assertEqual(m.snapshots, ['2026-10-01-033000'], 'deleted twice in one night')
+
+    def test_daytime_keeps_snapshots(self):
+        m = FakeMachine(self.cfg, base_free=10 * MiB, snapshots=self.SNAPS)
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, [])
+
+    def test_a_running_backup_keeps_them_until_a_later_run(self):
+        m = FakeMachine(self.cfg, base_free=500 * MiB, now=NIGHT, snapshots=self.SNAPS, backup=True)
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, [])
+        self.assertFalse(self.cfg.snapshot_stamp.exists())
+        m.backup = None
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, [], 'deleted without knowing whether a backup runs')
+        m.backup = False
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.deleted_snapshots, list(self.SNAPS))
+
+    def test_a_failed_delete_is_logged_and_tried_again(self):
+        m = FakeMachine(self.cfg, base_free=500 * MiB, now=NIGHT, snapshots=self.SNAPS,
+                        undeletable={self.SNAPS[0]})
+        d.run(self.cfg, m, self.log)
+        self.assertTrue(any(line.startswith('FAILED snapshot') for line in self.log.lines), self.log.lines)
+        self.assertFalse(self.cfg.snapshot_stamp.exists())
+        m.undeletable = set()
+        d.run(self.cfg, m, self.log)
+        self.assertEqual(m.snapshots, [])
 
 
 class SessionScratch(Base):
@@ -517,15 +607,104 @@ class DryRun(Base):
         self.assertTrue(any(str(c) in line for line in out))
         self.assertEqual(list(self.cfg.drive.iterdir()), [])
 
-    def test_stale_worktrees_are_listed_not_removed(self):
-        repo, (clean, dirty, in_use) = self.make_repo('clean', 'dirty', 'in-use')
-        desk = self.cfg.home / 'Documents/GitHub/spoken-margins-native-test-desk'
-        git(repo, 'worktree', 'add', '-q', '--detach', str(desk))
-        write(dirty / 'wip.txt', 10)
-        m = FakeMachine(self.cfg, 0, procs=[d.Proc(5, str(in_use), 'claude')])
+    def test_dry_run_removes_no_worktree(self):
+        _, (done,) = self.make_repo('done')
+        age_tree(done, 2 * DAY)
+        out = d.dry_run(self.cfg, FakeMachine(self.cfg, base_free=10 * MiB), None)
+        self.assertTrue(done.exists())
+        self.assertTrue(any('worktree' in line and str(done) in line for line in out), out)
+
+
+class Worktrees(Base):
+    """Real git worktrees; `git worktree remove` does the removing."""
+
+    def finished(self, tree: Path) -> Path:
+        self.cache(tree, MiB)
+        self.cache(tree, MiB, sub='Packages/SessionKit/.build')
+        os.symlink(self.cfg.repo / '.venv', tree / '.venv')
+        write(tree / 'Packages/SessionKit/.swiftpm/xcode/state.bin', 10)
+        age_tree(tree, 2 * DAY)
+        return tree
+
+    def test_a_finished_worktree_goes_whole_and_its_cache_is_not_planned_twice(self):
+        repo, (done,) = self.make_repo('done')
+        self.finished(done)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
         plan = d.make_plan(self.cfg, m)
-        self.assertEqual(plan.stale_worktrees, [clean])
-        self.assertTrue(clean.exists())
+        self.assertEqual([(c.step, c.path) for c in plan.candidates], [('worktree', done)])
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(done.exists())
+        listed = subprocess.run(['git', '-C', str(repo), 'worktree', 'list'], capture_output=True, text=True).stdout
+        self.assertNotIn(str(done), listed)
+        self.assertTrue((repo / 'README.md').exists())
+
+    def test_worktrees_that_must_stay(self):
+        repo, (dirty, busy, recent, evidence, locked, session, ahead) = self.make_repo(
+            'dirty', 'busy', 'recent', 'evidence', 'locked', 'session', 'ahead')
+        desk = self.cfg.home / 'Documents/GitHub/spoken-margins-native-test-desk'
+        elsewhere = self.cfg.home / 'SpokenMarginsOps/finisher/pr-1'
+        for path in (desk, elsewhere):
+            git(repo, 'worktree', 'add', '-q', '--detach', str(path))
+        write(dirty / 'wip.txt', 10)
+        write(evidence / 'artifacts/run/report.md', 10)
+        git(repo, 'worktree', 'lock', str(locked))
+        git(ahead, 'commit', '-q', '--allow-empty', '-m', 'not in next yet')
+        for tree in (dirty, busy, evidence, locked, session, ahead, desk, elsewhere):
+            age_tree(tree, 2 * DAY)
+        self.cfg.claude_sessions.mkdir(parents=True)
+        (self.cfg.claude_sessions / '77.json').write_text(json.dumps(
+            {'pid': 77, 'sessionId': 's', 'cwd': str(session / 'App')}))
+        m = FakeMachine(self.cfg, base_free=10 * MiB, procs=[d.Proc(5, str(busy), 'zsh')], live_pids={77})
+        plan = d.make_plan(self.cfg, m)
+        self.assertNotIn('worktree', {c.step for c in plan.candidates})
+        kept = dict(plan.stale_worktrees)
+        self.assertIn('24 hours', kept[recent])
+        self.assertIn('artifacts/', kept[evidence])
+        self.assertIn('locked', kept[locked])
+        self.assertIn('Claude Code session', kept[session])
+        self.assertIn('.claude/worktrees', kept[elsewhere])
+        for tree in (dirty, busy, ahead, desk):
+            self.assertNotIn(tree, kept, 'listed a worktree that is not stale or is in use')
+        d.run(self.cfg, m, self.log)
+        for tree in (dirty, busy, recent, evidence, locked, session, ahead, desk, elsewhere):
+            self.assertTrue(tree.exists(), tree)
+        self.assertTrue((dirty / 'wip.txt').exists())
+
+    def test_a_worktree_that_changes_after_planning_is_kept(self):
+        _, (done,) = self.make_repo('done')
+        self.finished(done)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        plan = d.make_plan(self.cfg, m)
+        write(done / 'new-idea.txt', 10)
+        d.execute(self.cfg, m, plan, self.log, 10 * MiB)
+        self.assertTrue((done / 'new-idea.txt').exists())
+
+
+class TmpFolders(Base):
+    def folder(self, name: str, age: float) -> Path:
+        path = self.cfg.tmp_root / name
+        write(path / 'repo/blob', MiB)
+        age_tree(path, age)
+        return path
+
+    def test_old_test_folders_go_and_others_stay(self):
+        old = self.folder('spoken-margins-test-desk-1234', 2 * DAY)
+        recent = self.folder('spoken-margins-test-desk-5678', 2 * 3600)
+        other = self.folder('somebody-else', 9 * DAY)
+        held = self.folder('spoken-margins-held', 2 * DAY)
+        with open(held / 'repo/blob', 'rb'):
+            age_tree(held, 2 * DAY)
+            result = d.run(self.cfg, FakeMachine(self.cfg, base_free=90 * MiB), self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(old.exists())
+        self.assertTrue(recent.exists() and other.exists() and held.exists())
+
+    def test_a_process_working_there_keeps_it(self):
+        old = self.folder('spoken-margins-x', 2 * DAY)
+        m = FakeMachine(self.cfg, base_free=90 * MiB, procs=[d.Proc(3, str(old / 'repo'), 'zsh')])
+        d.run(self.cfg, m, self.log)
+        self.assertTrue(old.exists())
 
 
 if __name__ == '__main__':

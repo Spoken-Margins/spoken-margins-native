@@ -110,6 +110,88 @@ class TestScopeTests(unittest.TestCase):
                 self.assertTrue(any('Build 29' in n for n in result['notes']))
         self.assertEqual(self.classify(APP + 'SharingExperience.swift')['tier'], 'T3')
 
+    def kind(self, path, added=None):
+        """(category, tier) test-scope.py gives one path; `added` is a changed line of a SessionKit source."""
+        diffs = {path: f'@@ -0,0 +1 @@\n+{added}\n'} if added is not None else None
+        [found] = self.classify(path, diffs=diffs)['files']
+        return found['category'], found['tier']
+
+    # The tables below decide which diffs escalate to an app build or app-hosted tests and which are held for a
+    # Codex audit, so each entry of each one is checked on its own. The sample paths match only the entry they
+    # are named for (`Playback` alone, not `Speech` too), or a table could lose entries unnoticed.
+
+    def test_persistence_fixtures_are_persistence_and_t2(self):
+        self.assertEqual(self.kind('Contracts/fixtures/persistence/build-29-library.json'), ('persistence', 'T2'))
+        self.assertEqual(self.kind('Contracts/fixtures/persistence/nested/prior-build.sqlite'), ('persistence', 'T2'))
+        self.assertEqual(self.kind('Contracts/fixtures/other/build-29-library.json'), ('validated', 'T1'))
+
+    def test_every_packet_schema_and_fixture_folder_is_a_packet_change(self):
+        for name in ('spoken-margins-package.schema.json', 'shared-commentary-layer.schema.json',
+                     'interjection-share-revision.schema.json', 'portable-listening-map-proposal.schema.json'):
+            with self.subTest(schema=name):
+                self.assertEqual(self.kind('Contracts/schemas/' + name), ('packet', 'T2'))
+                self.assertEqual(self.kind('Contracts/other/' + name), ('validated', 'T1'))  # only schemas/ counts
+        self.assertEqual(self.kind('Contracts/schemas/spoken-margins-other.schema.json'), ('validated', 'T1'))
+        for folder in ('interjection-packages', 'sharing'):
+            with self.subTest(fixtures=folder):
+                self.assertEqual(self.kind(f'Contracts/fixtures/{folder}/basic.json'), ('packet', 'T2'))
+        self.assertEqual(self.kind('Contracts/fixtures/shares/basic.json'), ('validated', 'T1'))
+
+    def test_sessionkit_targets_and_files_that_carry_packets_audio_or_persistence_escalate(self):
+        for path, category in ((KIT + 'SessionKitAudio/PlaybackStallDetector.swift', 'audio'),
+                               (KIT + 'SessionKitPersistence/SQLiteSessionStore.swift', 'persistence'),
+                               (KIT + 'SessionKitSharing/InterjectionPackageArchive.swift', 'packet'),
+                               (KIT + 'SessionKit/SharingModels.swift', 'packet'),
+                               (KIT + 'SessionKit/ShareableLinkPolicy.swift', 'packet')):
+            with self.subTest(path=path):
+                self.assertEqual(self.kind(path), (category, 'T2'))
+        self.assertEqual(self.kind(KIT + 'SessionKit/SharingSummary.swift'), ('sessionkit', 'T1'))  # not on the list
+
+    def test_each_audio_name_pattern_makes_an_app_file_an_audio_change(self):
+        for name in ('AudioRouteWatcher', 'PlaybackScreen', 'SpeechVoiceCatalog', 'SupertonicVoicePack',
+                     'RemoteControlCenter', 'MediaSessionBridge'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('audio', 'T3'))
+        self.assertEqual(self.kind(APP + 'ExperienceLibraryScreen.swift'), ('app-ui', 'T2'))
+
+    def test_each_packet_name_pattern_and_the_share_extension_make_an_app_file_a_packet_change(self):
+        for name in ('SharingExperience', 'ImportedMarginStore', 'PackageHandoffCoordinator', 'PacketBuilder'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('packet', 'T3'))
+        self.assertEqual(self.kind('App/SpokenMarginsShareExtension/ShareViewController.swift'), ('packet', 'T3'))
+        self.assertEqual(self.kind('App/SpokenMarginsShareExtension/Info.plist'), ('packet', 'T3'))
+        self.assertEqual(self.kind('App/SpokenMarginsWidgetExtension/Info.plist'), ('app-other', 'T2'))
+
+    def test_each_persistence_name_pattern_makes_an_app_file_a_persistence_change(self):
+        for name in ('ListeningEditionStore', 'ListeningLedger'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('persistence', 'T3'))
+        self.assertEqual(self.kind(APP + 'StoreKitHelper.swift'), ('app-ui', 'T2'))  # `Store.swift` ends the name
+
+    def test_each_orchestration_name_pattern_makes_an_app_file_orchestration(self):
+        for name in ('Gate1AppModel', 'LibraryCoordinator', 'PlayerController', 'SessionConductor', 'DeepLinkRouter',
+                     'LibraryViewModel'):
+            with self.subTest(name=name):
+                self.assertEqual(self.kind(f'{APP}{name}.swift'), ('app-orchestration', 'T3'))
+
+    def test_every_kind_of_public_declaration_in_a_sessionkit_source_needs_an_app_compile(self):
+        source = KIT + 'SessionKit/ListeningEdition.swift'
+        for keyword in ('func', 'var', 'let', 'class', 'struct', 'enum', 'protocol', 'init', 'typealias', 'actor',
+                        'subscript', 'extension', 'case', 'associatedtype'):
+            with self.subTest(keyword=keyword):
+                self.assertEqual(self.kind(source, f'    public {keyword} edition'), ('public-api', 'T2'))
+        for line in ('    open class Edition {', '    public static let current = 1', '    public final class Edition {',
+                     '    @MainActor public final class Edition {', '    @available(iOS 26, *) public func edition() {}'):
+            with self.subTest(line=line):
+                self.assertEqual(self.kind(source, line), ('public-api', 'T2'))
+        removed = '@@ -1 +0,0 @@\n-    public func edition() {}\n'  # removing public API breaks the app as much as adding it
+        [found] = self.classify(source, diffs={source: removed})['files']
+        self.assertEqual(found['category'], 'public-api')
+        for line in ('    // public func edition() {}', '    func edition() {}', '    let publicEdition = 1',
+                     '    internal struct Edition {}', '++ public func edition() {}'):
+            with self.subTest(line=line):
+                self.assertEqual(self.kind(source, line), ('sessionkit', 'T1'))
+
     def test_orchestration_is_t3_with_matching_tests(self):
         result = self.classify(APP + 'Gate1AppModel.swift')
         self.assertEqual(result['tier'], 'T3')
@@ -302,10 +384,10 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                 self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
                 self.assertIn(f'"{normal}"', text)
 
-    def test_lane_routes_still_require_codex_audit(self):
+    def test_lane_routes_still_require_codex_or_claude_audit(self):
         result = scope.classify(['scripts/lane-runner.py'])
         self.assertIn('scripts/lane-runner.py', result['lane_paths'])
-        self.assertTrue(any('Codex audit' in note for note in result['notes']))
+        self.assertTrue(any('Codex or Claude audit' in note for note in result['notes']))
 
 
 if __name__ == '__main__':

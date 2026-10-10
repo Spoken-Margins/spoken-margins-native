@@ -90,6 +90,14 @@ public struct ListeningEdition: Codable, Equatable, Sendable {
             throw EditionError.invalid("Listening edition JSON: \(Self.describe(error))")
         }
     }
+    /// The JSON the Import Listening Edition shortcut action decodes: the Assemble action's file (or any
+    /// saved file) when one is passed, otherwise the JSON as text. Both reach `decode`, so a bad edition
+    /// gets the same readable error either way (#574).
+    public static func shortcutInput(file: Data?, text: String?) throws -> Data {
+        if let file, !file.isEmpty { return file }
+        if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return Data(text.utf8) }
+        throw EditionError.invalid("Nothing to import. In Shortcuts, pass the Assemble Listening Edition result to Import Listening Edition, or pass the edition's JSON as text.")
+    }
     public func encoded() throws -> Data {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         return try encoder.encode(self)

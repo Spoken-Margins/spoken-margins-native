@@ -711,7 +711,7 @@ class FinishChildTests(unittest.TestCase):
         self.assertLess(push, arm)
         self.assertFalse(any(c.startswith('/lane') for c in run.comments()))
         commit = next(c for c in run.calls if c[:2] == ['git', 'commit'])
-        self.assertTrue(Path(commit[-1]).read_text().startswith('Address Codex audit findings on #73'))
+        self.assertTrue(Path(commit[-1]).read_text().startswith('Address audit findings on #73'))
 
     def test_finisher_tests_matching_and_sanitizing_findings_by_class(self):
         _, _, _, codex = self.run_finish(audit_only=True)
@@ -1577,8 +1577,8 @@ class FreezeDialTests(unittest.TestCase):
 
     def test_ticked_milestone(self):
         self.assertEqual(w.parse_codex_focus(focus_group('Build 30')), ('Build 30', []))
-        group = focus_group('Build 31', options=('Build 31 (only its issues)', 'None'))
-        self.assertEqual(w.parse_codex_focus(group), ('Build 31', []))
+        group = focus_group('Solid Ground', options=('Solid Ground (only its issues)', 'None'))
+        self.assertEqual(w.parse_codex_focus(group), ('Solid Ground', []))
 
     def test_none_lifts_the_freeze(self):
         self.assertEqual(w.parse_codex_focus(focus_group('None')), ('', []))

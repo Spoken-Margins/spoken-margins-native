@@ -1,9 +1,11 @@
 package store
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -111,5 +113,50 @@ func TestPruneHourLog(t *testing.T) {
 	data, _ := os.ReadFile(p)
 	if strings.Contains(string(data), "aaaa") || !strings.Contains(string(data), "bbbb") {
 		t.Fatalf("after prune: %s", data)
+	}
+}
+
+// The file kept for an install is the whole of what the server knows about
+// it. Comparing its field names to the exact set, rather than looking for a
+// few unwanted words, means a new field (a remote address, a user agent, a
+// device model) fails here and has to be argued for.
+func TestInstallRecordFileHoldsExactlyTheDeclaredFields(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 9, 28, 15, 4, 5, 0, time.UTC)
+	key := []byte("key-one-32-bytes-long-0123456789")
+	in := Install{PublicKey: []byte{4, 1}, Environment: "production", CreatedDay: day.Format(DayFormat), LastSeenDay: day.Format(DayFormat)}
+	if err := s.Register(key, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Advance(key, 1, day); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(s.path(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for name := range fields {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if got, want := strings.Join(names, ","), "counter,createdDay,environment,lastSeenDay,publicKey"; got != want {
+		t.Fatalf("install record fields %s, want exactly %s:\n%s", got, want, raw)
+	}
+	// The days are days, not times.
+	for _, name := range []string{"createdDay", "lastSeenDay"} {
+		if _, err := time.Parse(DayFormat, fields[name].(string)); err != nil || len(fields[name].(string)) != len("2006-01-02") {
+			t.Errorf("%s = %v, want a plain day", name, fields[name])
+		}
 	}
 }

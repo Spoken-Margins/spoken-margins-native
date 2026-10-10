@@ -181,6 +181,30 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertFalse(excerpt.contains("\n"))
         XCTAssertFalse(excerpt.contains("\t"))
         XCTAssertFalse(excerpt.hasSuffix(" margin…"), "The excerpt should use the last complete word inside its limit.")
+
+        // A hard cut at 80 characters ends mid-word and also avoids " margin…", so check where the excerpt stops.
+        let normalized = longMargin.split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
+        let kept = String(excerpt.dropLast())
+        XCTAssertTrue(normalized.hasPrefix(kept), "The excerpt is the start of the Margin, whitespace collapsed.")
+        XCTAssertEqual(normalized[normalized.index(normalized.startIndex, offsetBy: kept.count)], " ", "The excerpt ends where a word ends, not inside one.")
+    }
+
+    func testTimelineTextExcerptCutsAtWordBoundariesForNeighbouringInputs() {
+        let cases: [(text: String, limit: Int, expected: String)] = [
+            ("", 10, ""),
+            ("short", 10, "short"),
+            ("exactly ten", 11, "exactly ten"),
+            ("aaaa bbbb cccc", 9, "aaaa bbbb…"),
+            ("aaaa bbbb cccc", 10, "aaaa bbbb…"),
+            ("aaaa bbbb cccc", 11, "aaaa bbbb…"),
+            ("supercalifragilistic", 8, "supercal…"),
+            ("  leading   and\ttrailing  ", 100, "leading and trailing"),
+            ("caf\u{E9} \u{FC}ni\u{EF}code w\u{F6}rds", 9, "caf\u{E9}…"),
+            ("cafe\u{301} \u{FC}ni\u{EF}code w\u{F6}rds", 9, "cafe\u{301}…")
+        ]
+        for (text, limit, expected) in cases {
+            XCTAssertEqual(TimelineTextPresentation.excerpt(text, characterLimit: limit), expected, "\(text.debugDescription) at \(limit)")
+        }
     }
 
     @MainActor
@@ -361,19 +385,6 @@ final class ExperiencePresentationTests: XCTestCase {
         )
     }
 
-    func testCompactItemsRemoveOnlyTheContinueItemIdentity() {
-        let hero = libraryRow(id: "hero", title: "Shared Title", progress: 30)
-        let sameTitle = libraryRow(id: "same-title", title: "Shared Title", progress: 20)
-        let other = libraryRow(id: "other", title: "Other", progress: nil)
-
-        let compact = LibraryPresentation.compactItems(
-            [hero, sameTitle, hero, other],
-            excluding: hero
-        )
-
-        XCTAssertEqual(compact.map(\.id), [sameTitle.id, other.id])
-    }
-
     func testMarkedCompleteItemIsExcludedEvenWhenActiveSessionStillHasProgress() {
         let completed = LibraryItemRow(id: "done", title: "Done", status: "Ready", canDelete: true, hasContinuationSession: true, continuationProgressPercent: 35, isCompleted: true)
         XCTAssertNil(LibraryPresentation.continueItem(in: [completed], activeItemId: completed.id))
@@ -391,33 +402,6 @@ final class ExperiencePresentationTests: XCTestCase {
             )
         )
         XCTAssertNil(LibraryPresentation.continueItem(in: [], activeItemId: nil))
-    }
-
-    func testPodcastDownloadStateDrivesTruthfulLibraryOfflinePresentation() {
-        XCTAssertEqual(
-            Gate1AppModel.libraryOfflineState(
-                preparedState: nil,
-                mediaSourceType: .remoteStream,
-                podcastDownloadState: .availableOffline
-            ),
-            .readyOffline
-        )
-        XCTAssertEqual(
-            Gate1AppModel.libraryOfflineState(
-                preparedState: nil,
-                mediaSourceType: .remoteStream,
-                podcastDownloadState: .downloading
-            ),
-            .preparing
-        )
-        XCTAssertEqual(
-            Gate1AppModel.libraryOfflineState(
-                preparedState: nil,
-                mediaSourceType: .remoteStream,
-                podcastDownloadState: .streamingOnly
-            ),
-            .onlineOnly
-        )
     }
 
     func testWrittenMediaMarginHasNoAudioRepairOrPendingContextWork() {
@@ -581,40 +565,12 @@ final class ExperiencePresentationTests: XCTestCase {
         )
     }
 
-    func testSeededOnboardingItemsDoNotCountAsUserSourceEvidence() {
-        let welcome = item(
-            id: "item-spoken-margins-overview",
-            mediaType: "text",
-            externalReferenceType: "url"
-        )
-        let guided = item(
-            id: "guided-onboarding",
-            mediaType: "guided_tour",
-            externalReferenceType: "file"
-        )
-
-        let steps = OnboardingEvidenceClassifier.sourceSteps(items: [welcome, guided])
-
-        XCTAssertTrue(steps.isEmpty)
-    }
-
-    func testUserOwnedSourcesProduceTypedOnboardingEvidence() {
-        let pasted = item(id: "pasted", mediaType: "text", externalReferenceType: nil)
-        let webpage = item(id: "webpage", mediaType: "text", externalReferenceType: "url")
-        let file = item(id: "file", mediaType: "pdf", externalReferenceType: "file")
-
-        XCTAssertEqual(
-            OnboardingEvidenceClassifier.sourceSteps(items: [pasted]),
-            [.addedOwnSource]
-        )
-        XCTAssertEqual(
-            OnboardingEvidenceClassifier.sourceSteps(items: [webpage]),
-            [.addedOwnSource, .addedFromSafari]
-        )
-        XCTAssertEqual(
-            OnboardingEvidenceClassifier.sourceSteps(items: [file]),
-            [.addedOwnSource, .addedFromFiles]
-        )
+    /// The classifier lives in SessionKit with its own copy of the two seeded ids (#1019), so the
+    /// ids this app seeds must be in it, or seeding would count as the listener adding a source.
+    @MainActor
+    func testTheClassifiersSeededIdsIncludeTheSampleAndTourThisAppSeeds() {
+        XCTAssertTrue(OnboardingEvidenceClassifier.defaultSeededItemIDs.contains(Gate1AppModel.welcomeSampleItemId))
+        XCTAssertTrue(OnboardingEvidenceClassifier.defaultSeededItemIDs.contains(Gate1AppModel.guidedOnboardingItemId))
     }
 
     private func libraryRow(
@@ -709,22 +665,6 @@ final class ExperiencePresentationTests: XCTestCase {
             protections: protections,
             lastAccessedAt: Date(timeIntervalSince1970: 1),
             createdAt: Date(timeIntervalSince1970: 1)
-        )
-    }
-
-    private func item(
-        id: String,
-        mediaType: String,
-        externalReferenceType: String?
-    ) -> Item {
-        Item(
-            id: id,
-            title: id,
-            mediaType: mediaType,
-            text: "Source text",
-            externalReference: "source://\(id)",
-            status: "ready",
-            externalReferenceType: externalReferenceType
         )
     }
 }

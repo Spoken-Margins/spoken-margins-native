@@ -2,6 +2,7 @@ import XCTest
 import SessionKit
 import SessionKitPersistence
 import AppIntents
+import SQLite3
 @testable import SpokenMarginsApp
 
 @MainActor
@@ -115,6 +116,26 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.filter { $0.id == edition.itemID }.count, 1)
     }
 
+    func testShortcutIntentImportsFromJSONTextWithNoFile() async throws {
+        // #574: the share-sheet shortcut passes the edition's JSON, with no file picker.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        let priorModel = ListeningEditionShortcutBridge.model
+        ListeningEditionShortcutBridge.model = model
+        defer { ListeningEditionShortcutBridge.model = priorModel }
+        let edition = ListeningEdition(title: "Shortcut text article", text: "Source " + UUID().uuidString,
+            generator: "Ask ChatGPT", overview: "Overview", scenes: [.init(title: "One", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        defer { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(edition.itemID)) }
+        let intent = ImportListeningEditionIntent()
+        intent.json = String(decoding: try edition.encoded(), as: UTF8.self)
+        _ = try await intent.perform()
+        XCTAssertEqual(model.selectedItem.id, edition.itemID)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID), edition)
+        let empty = ImportListeningEditionIntent()
+        do { _ = try await empty.perform(); XCTFail("an import with no file and no text must fail") }
+        catch { XCTAssertTrue((error as? EditionError)?.errorDescription?.contains("Assemble Listening Edition") == true) }
+    }
+
     // MARK: - Every spoken Margin reaches the notes folder (#171)
 
     private func spokenMargin(id: String, sessionId: String, itemId: String, transcript: String?) -> Interjection {
@@ -201,6 +222,42 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertFalse(statuses.contains { $0.hasPrefix("Delivery needs attention") }, statuses.joined(separator: "\n"))
     }
 
+    /// #1192: a pass every minute used to rebuild every note, changed or not (37 passes, 142 s in 18 minutes).
+    func testAPassWithNothingNewBuildsNothingAndANewMarginBuildsOnlyItsNote() async throws {
+        let fixture = try notesFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var gathers: [(sessions: Int, notes: Int)] = []
+        let delivery = MarginNotesDelivery(
+            isEnabled: { true },
+            isRecording: { false },
+            target: { .init(store: fixture.store, folder: fixture.folder, destinationID: "vault") },
+            report: { _ in },
+            recordGather: { _, sessions, notes in gathers.append((sessions, notes)) },
+            journalURL: { fixture.root.appendingPathComponent("journal.json") }
+        )
+        func ageEverything() {
+            var raw: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(fixture.root.appendingPathComponent("library.sqlite").path, &raw), SQLITE_OK)
+            defer { sqlite3_close(raw) }
+            XCTAssertEqual(sqlite3_exec(raw, "UPDATE records SET updated_at = '2020-01-01 00:00:00';", nil, nil, nil), SQLITE_OK)
+        }
+        try fixture.store.saveInterjection(spokenMargin(id: "ij-001", sessionId: "session-episode", itemId: "item-episode", transcript: "First."))
+        await delivery.pass()
+        XCTAssertEqual(gathers.count, 1)
+        XCTAssertEqual(try notes(in: fixture.folder).count, 1)
+        ageEverything()
+
+        await delivery.pass()
+        await delivery.pass()
+        XCTAssertEqual(gathers.count, 1, "nothing changed, so no pass read any session")
+
+        try fixture.store.saveInterjection(spokenMargin(id: "ij-002", sessionId: "session-episode", itemId: "item-episode", transcript: "Second."))
+        await delivery.pass()
+        XCTAssertEqual(gathers.count, 2)
+        XCTAssertEqual(gathers.last?.sessions, 1)
+        XCTAssertEqual(try notes(in: fixture.folder).count, 2)
+    }
+
     func testSavingAMarginStartsAPassWithinFiveSeconds() async throws {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -248,7 +305,7 @@ final class PKMWorkflowTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("library.sqlite")
         let firstLaunch = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
-        firstLaunch.resetAndSeed()
+        firstLaunch.resetAndSeed(); firstLaunch.declineCurrentTerms()
         firstLaunch.startItem(id: "item-pill")
         firstLaunch.pause()
         let restoredSessionID = try XCTUnwrap(firstLaunch.snapshot.sessionId)

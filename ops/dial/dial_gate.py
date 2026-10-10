@@ -142,22 +142,50 @@ def parse_dial(body: str) -> dict:
             'refill_at': refill_at, 'problems': problems}
 
 
+BREAKER_RE = re.compile(r'(HALT|RESUMED) \(usage breaker(?::\s*([A-Za-z, ]+?))?\)')
+PROVIDERS = ('claude', 'codex')
+
+
+def breaker_marks(text: str, scoped_only: bool = False) -> list[tuple[str, set[str]]]:
+    """Breaker markers in a line, as (HALT|RESUMED, providers). `HALT (usage breaker: Codex)`
+    covers Codex only; the older unscoped `HALT (usage breaker)` covers every provider."""
+    marks = []
+    for m in BREAKER_RE.finditer(text):
+        if scoped_only and m.group(2) is None:
+            continue
+        named = {p.strip().lower() for p in (m.group(2) or '').split(',')} & set(PROVIDERS)
+        marks.append((m.group(1), named or set(PROVIDERS)))
+    return marks
+
+
 def parse_usage(comments: list[dict]) -> dict:
-    """Latest Claude weekly usage and breaker state from the Mac tick's comments on #337."""
+    """Latest Claude weekly usage and the usage breaker from the Mac tick's comments on #337.
+
+    The breaker is per provider (owner, 2026-10-09): a provider over its line halts only the
+    work that runs on that provider. `halted` is the Claude state, the only one the Dial
+    gate acts on; `halted_by` lists every halted provider. A marker opening a comment's first
+    line (a Mac tick or a transition comment) sets or clears the providers it names, and an
+    unscoped marker keeps its old meaning of all providers. A Mac tick's `advice for dispatch`
+    line is read only for the scoped form, so an old-style tick can't hold the gate."""
     usage = None
-    halted = False
+    halted: set[str] = set()
     for c in comments:  # oldest first
         body = c.get('body') or ''
         m = re.search(r'Claude (\d+)% used', body)
         if m:
             usage = {'percent': int(m.group(1)), 'at': parse_time(c['created_at'])}
-        if '(Mac tick' in body:
-            first = body.splitlines()[0] if body else ''
-            if 'HALT (usage breaker)' in first:
-                halted = True
-            elif 'RESUMED (usage breaker)' in first:
-                halted = False
-    return {'usage': usage, 'halted': halted}
+        first = body.splitlines()[0] if body else ''
+        is_tick = '(Mac tick' in first
+        marks = []
+        if is_tick or first.lstrip('*_ ').startswith(('HALT', 'RESUMED')):
+            marks = breaker_marks(first)
+        if is_tick:
+            advice = re.search(r'advice for dispatch:\s*(.*)', body)
+            if advice:
+                marks += breaker_marks(advice.group(1), scoped_only=True)
+        for kind, who in marks:
+            halted = halted | who if kind == 'HALT' else halted - who
+    return {'usage': usage, 'halted': 'claude' in halted, 'halted_by': sorted(halted)}
 
 
 def parse_ack(comments: list[dict]) -> dict | None:
@@ -286,7 +314,7 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
         if stop is None:
             return {'fire': False, 'why': 'Paced, but no stop line is ticked.', 'hold': None}
         if usage_info['halted']:
-            hold = 'the Mac tick says HALT (usage breaker)'
+            hold = 'the Mac tick says HALT (usage breaker: Claude)'
         elif u is None:
             hold = 'no usage report from the Mac found'
         elif now - u['at'] > USAGE_MAX_AGE:
@@ -349,6 +377,10 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
         lines.append(f"- Trend: about {line:.0f}% by now, reaching {dial['stop']}% by {t(finish)}; "
                      f"usage is {abs(gap):.0f} points {'ahead' if gap >= 0 else 'behind'} "
                      f"(Paced holds if more than {TREND_SLACK} ahead).")
+    if usage_info.get('halted_by'):
+        mine = 'Claude' if usage_info['halted'] else 'not Claude'
+        lines.append(f"- Usage breaker: {' and '.join(p.capitalize() for p in usage_info['halted_by'])} halted "
+                     f"({mine}, so this gate {'holds' if usage_info['halted'] else 'is unaffected'}).")
     lines.append(f'- Ready issues: {ready_count}.')
     issues = lambda th: ', '.join(f'#{n}' for n in th['issues']) or 'no issue'
     active = [th for th in threads if th['state'] == 'active']
