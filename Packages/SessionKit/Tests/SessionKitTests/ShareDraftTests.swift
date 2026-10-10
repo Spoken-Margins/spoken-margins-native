@@ -9,6 +9,13 @@ import AudioToolbox
 
 /// The Send sheet's defaults and its Includes line (#785), and that a packet built from them
 /// still imports in the last shipped build.
+///
+/// These tests pin the planned Send sheet, not what a sender gets today: nothing in the app uses `ShareDraft`
+/// yet. The live flow is `ShareInterjectionDraft` in Gate1AppModel, which defaults each Margin to its original
+/// voice when it has audio and to text otherwise (`representationChoice: hasAudio ? .original : .textOnly`),
+/// where `ShareDraft` defaults to cleaned, then original, then text. A green run here says nothing about the
+/// live defaults. When the sheet is wired, drive the app model's draft creation in an app test and assert the
+/// same defaults there (PKT-12 of the #1039 audit).
 final class ShareDraftTests: XCTestCase {
     private let fixedDate = Date(timeIntervalSince1970: 1_790_000_000)
 
