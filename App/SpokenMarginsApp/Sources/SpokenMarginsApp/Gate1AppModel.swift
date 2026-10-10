@@ -13907,10 +13907,7 @@ final class Gate1AppModel: ObservableObject {
                     defer { self.sharedMarginPlacementPasses.end(.matching, itemId: itemId) }
                     guard let store = self.store else { return }
                     do {
-                        // A layer the listener deleted while the pass ran takes no part in its result (#915).
-                        let livingWork = try resolvedWork.filter { work in
-                            try store.loadImportedCommentaryLayer(id: work.0.id).map { $0.deletedAt == nil } ?? false
-                        }
+                        let livingWork = try resolvedWork.filter { try store.isLiveImportedCommentaryLayer(id: $0.0.id) } // #915
                         let outcomes = livingWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
                         let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
                         let activation = SharedListeningMapPlacement.activation(
@@ -13919,8 +13916,6 @@ final class Gate1AppModel: ObservableObject {
                         for (layer, records, outcome) in livingWork {
                             var layer = layer
                             layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
-                            // Only the pass's own fields, onto the layer as stored now: the listener may have
-                            // turned it off or deleted it while the pass ran (#915).
                             guard try store.savePlacementResult(of: layer) else { continue }
                             for record in records { try store.saveImportedCommentaryInterjection(record) }
                         }

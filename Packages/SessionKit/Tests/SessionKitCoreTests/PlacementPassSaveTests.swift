@@ -95,6 +95,17 @@ final class PlacementPassSaveTests: XCTestCase {
         XCTAssertNotNil(try store.loadImportedCommentaryLayer(id: removed.id)?.deletedAt)
     }
 
+    func testALayerIsLiveOnlyWhileItIsStoredAndNotDeleted() throws {
+        let original = layer("layer-live", status: .pending)
+        XCTAssertFalse(try store.isLiveImportedCommentaryLayer(id: original.id))
+        try store.saveImportedCommentaryLayer(original)
+        XCTAssertTrue(try store.isLiveImportedCommentaryLayer(id: original.id))
+        var deleted = original
+        deleted.deletedAt = Date(timeIntervalSince1970: 1_777_000_100)
+        try store.saveImportedCommentaryLayer(deleted)
+        XCTAssertFalse(try store.isLiveImportedCommentaryLayer(id: original.id))
+    }
+
     private func layer(_ id: String, status: ImportedSourceResolutionStatus) -> ImportedCommentaryLayer {
         ImportedCommentaryLayer(id: id, itemId: "item", packageDigest: "digest-\(id)", packageId: "package-\(id)",
                                 itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"),

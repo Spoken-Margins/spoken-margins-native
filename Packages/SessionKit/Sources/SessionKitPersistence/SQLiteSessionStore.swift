@@ -396,6 +396,12 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// minutes later; saving that whole copy undid anything the listener changed meanwhile, and could bring
     /// back a layer they deleted (#915). Only the pass's own fields are written; a layer that is gone or
     /// deleted is left alone and `false` is returned, so the caller skips that layer's Margins too.
+    /// Whether the layer is still stored and not deleted: a layer the listener deleted while a pass ran takes no
+    /// part in its result (#915).
+    public func isLiveImportedCommentaryLayer(id: String) throws -> Bool {
+        try loadImportedCommentaryLayer(id: id).map { $0.deletedAt == nil } ?? false
+    }
+
     @discardableResult
     public func savePlacementResult(of layer: ImportedCommentaryLayer) throws -> Bool {
         try withConnectionLock {
