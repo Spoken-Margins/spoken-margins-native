@@ -1073,11 +1073,15 @@ private final class Gate2LiveSpeechNowPlayingController {
             configureRemoteCommandAvailability(for: snapshot)
         }
         let timeline = Gate2NowPlayingTimelineMetadata(snapshot: snapshot)
+        // A pending start publishes rate 0 and a loading line: iOS runs the clock from a nonzero rate (#943).
+        let presentation = SystemPlaybackPresentation(
+            status: snapshot.status, selectedRate: snapshot.playbackRate, isNarration: publishesLiveSpeech
+        )
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: snapshot.title ?? "Spoken Margins",
             MPMediaItemPropertyAlbumTitle: snapshot.chapterTitle ?? "Session",
-            MPMediaItemPropertyArtist: "Spoken Margins",
-            MPNowPlayingInfoPropertyPlaybackRate: snapshot.status.isPlaybackActive ? snapshot.playbackRate : 0,
+            MPMediaItemPropertyArtist: presentation.loadingLine ?? "Spoken Margins",
+            MPNowPlayingInfoPropertyPlaybackRate: presentation.playbackRate,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         if let elapsedSeconds = timeline.elapsedSeconds,
