@@ -747,6 +747,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let originalURL = directory.appending(path: "private-original.m4a")
         let originalBytes = Data([0x53, 0x4D, 0x01, 0x35])
         try originalBytes.write(to: originalURL)
+        // The model writes cleaned copies under the real Application Support; remove every folder this test adds.
+        let shareRevisions = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        ).appending(path: "SpokenMargins/ShareRevisions", directoryHint: .isDirectory)
+        let revisionsBefore = Set((try? FileManager.default.contentsOfDirectory(atPath: shareRevisions.path)) ?? [])
+        defer {
+            let after = (try? FileManager.default.contentsOfDirectory(atPath: shareRevisions.path)) ?? []
+            for name in after where !revisionsBefore.contains(name) {
+                try? FileManager.default.removeItem(at: shareRevisions.appending(path: name))
+            }
+        }
         let probe = BulkSharePreparationProbe()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -790,9 +801,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 && $0.approvedTranscript == "Keep words."
         })
         let cleanedURLs = model.sharingState.drafts.compactMap(\.cleanedAudioURL)
-        defer {
-            for url in cleanedURLs { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-        }
         XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes, "the owner's recording is untouched")
         XCTAssertEqual(cleanedURLs.count, 53)
         XCTAssertEqual(Set(cleanedURLs.map(\.standardizedFileURL.path)).count, 53, "each Margin gets its own cleaned copy")
@@ -807,6 +815,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep um words.")
         model.redoShareDraftEdit(firstID)
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        // Redo renders the cleaned copy again in the background; let it land before the folder cleanup runs.
+        try await waitFor("the redo render to finish", timeoutNanoseconds: 5_000_000_000) {
+            !model.sharingState.drafts[0].isPreparingCleanup
+        }
     }
 
     func testTurningOffAutomaticCleanupRestoresAutomaticallyCleanedDrafts() async throws {
