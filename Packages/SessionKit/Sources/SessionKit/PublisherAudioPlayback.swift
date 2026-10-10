@@ -92,13 +92,31 @@ public struct PublisherAudioPlayback: Equatable, Sendable {
         return stored
     }
 
+    /// The recording time for article text at `textOffset`. Generated narration maps text between two
+    /// segments to the next segment's start, which is right for whitespace and headings. A publisher map
+    /// may leave whole sentences out, and the recording still speaks them between the neighbours, so
+    /// a place between two placed segments is the earlier one's end: the listener hears the sentence
+    /// the place is in. Nil past the last placed segment, where the article keeps its on-device voice.
+    public func mediaTimeMs(textOffset: Int) -> Int? {
+        let placed = timeline.segments
+            .filter { $0.startChar != nil && $0.endChar != nil }
+            .sorted { $0.startMs < $1.startMs }
+        let insideOne = placed.contains { ($0.startChar ?? .max) <= textOffset && textOffset < ($0.endChar ?? .min) }
+        if !insideOne,
+           let previous = placed.last(where: { ($0.endChar ?? .max) <= textOffset }),
+           placed.contains(where: { ($0.startChar ?? .min) > textOffset }) {
+            return previous.endMs
+        }
+        return PreparedNarrationFallback.mediaTimeMs(textOffset: textOffset, timeline: timeline)
+    }
+
     /// A stored article session as it plays when the recording does: at the time the map gives for
     /// its text offset. Nil when the recording doesn't reach that place (a partly mapped article
     /// read past the end of what the recording covers), so the article keeps its on-device voice.
     public func playingSession(from stored: Session) -> Session? {
         guard stored.currentTargetType == .itemTextTTS,
               stored.phase == .itemPlayback,
-              let mediaTimeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: stored.position.charOffset, timeline: timeline) else {
+              let mediaTimeMs = mediaTimeMs(textOffset: stored.position.charOffset) else {
             return nil
         }
         var playing = stored

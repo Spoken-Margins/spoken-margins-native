@@ -403,6 +403,58 @@ final class PublisherAudioPlaybackTests: XCTestCase {
         XCTAssertNil(try repository.loadItem(id: "item-post").media)
     }
 
+    /// The map keeps 80% of the article, so a sentence in the middle can be missing. The recording still
+    /// speaks it, between the end of the sentence before and the start of the sentence after.
+    private func mapWithoutTheMiddleSentence() -> TranscriptTimeline {
+        let full = map()
+        return TranscriptTimeline(segments: [full.segments[0], full.segments[2]], chapters: [], durationMs: full.durationMs)
+    }
+
+    func testAMarginInAMissingMiddleSentenceHearsThatSentenceInTheRecording() throws {
+        let repository = repository(map: mapWithoutTheMiddleSentence())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        let second = sentences[0].count + 1
+        let margin = Interjection(
+            id: "ij-001", itemId: "item-post", sessionId: try XCTUnwrap(engine.currentSession?.id), targetType: .item, targetId: "item-post",
+            createdAt: Date(timeIntervalSince1970: 1), roughPercent: 40,
+            anchor: Anchor(anchorType: .text, startChar: second + 5, endChar: second + 10, anchorBefore: "", anchorAfter: ""),
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A note", status: "active")
+        try repository.saveInterjection(margin)
+
+        let played = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(played.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 4_000,
+                       "where the first sentence ends, not the third sentence's start (9 s)")
+    }
+
+    func testASeekIntoAMissingMiddleSentenceHearsThatSentenceInTheRecording() throws {
+        let repository = repository(map: mapWithoutTheMiddleSentence())
+        let audio = FakePublisherAudioClient()
+        let engine = SessionEngine(profile: profile(), repository: repository, audio: audio)
+        _ = try engine.startSession(itemId: "item-post")
+        let second = sentences[0].count + 1
+
+        let seeked = try engine.seekText(toCharOffset: second + 5)
+
+        XCTAssertEqual(seeked.targetType, TargetType.transcriptBackedMedia.rawValue)
+        XCTAssertEqual(engine.currentSession?.position.mediaTimeMs, 4_000)
+    }
+
+    func testAMissingMiddleSentenceResumesFromTheEndOfTheSentenceBefore() throws {
+        let playback = try XCTUnwrap(PublisherAudioPlayback.plan(for: article(), record: record(map: mapWithoutTheMiddleSentence())))
+        let second = sentences[0].count + 1
+
+        XCTAssertEqual(playback.mediaTimeMs(textOffset: second + 5), 4_000)
+        XCTAssertEqual(playback.mediaTimeMs(textOffset: second - 1), 4_000, "the space after the first sentence")
+        XCTAssertEqual(playback.mediaTimeMs(textOffset: 0), 1_000)
+        XCTAssertEqual(playback.mediaTimeMs(textOffset: sentences[0].count + sentences[1].count + 2), 9_000)
+        XCTAssertNil(playback.mediaTimeMs(textOffset: text.count + 5), "past the last placed sentence")
+    }
+
     func testAMarginHearsTheRecordingEvenWhenOldNarrationOfADifferentLengthIsStored() throws {
         let repository = repository(map: map())
         try repository.saveTranscriptTimeline(SourceTranscriptTimeline(

@@ -771,7 +771,8 @@ public final class SessionEngine {
            let item = currentItem ?? (try? repository.loadItem(id: session.itemId)),
            isTextBackedMedia(item),
            let timeline = sourceTranscriptTimeline(itemId: item.id),
-           let mediaTimeMs = PreparedNarrationFallback.mediaTimeMs(textOffset: charOffset, timeline: timeline) {
+           let mediaTimeMs = publisherPlayback[item.id]?.mediaTimeMs(textOffset: charOffset)
+               ?? PreparedNarrationFallback.mediaTimeMs(textOffset: charOffset, timeline: timeline) {
             do {
                 return try seekMedia(toMediaTimeMs: mediaTimeMs)
             } catch SessionKitError.invalidCommandForState(let reason)
@@ -1611,7 +1612,7 @@ public final class SessionEngine {
         let item = try repository.loadItem(id: originalSession.itemId)
         // A place the recording doesn't reach (a sentence the map couldn't place) is heard with on-device speech.
         let publisher = publisherPlayback[originalSession.itemId].flatMap {
-            PreparedNarrationFallback.mediaTimeMs(textOffset: stored.anchor.startChar, timeline: $0.timeline) == nil ? nil : $0
+            $0.mediaTimeMs(textOffset: stored.anchor.startChar) == nil ? nil : $0
         }
         let playingItem = publisher?.playing(item) ?? item
         let map = try repository.loadListeningMap(itemId: item.id)
@@ -1627,7 +1628,7 @@ public final class SessionEngine {
             session.phase = .itemPlayback
             if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
                 let anchorMediaTimeMs = publisher.flatMap {
-                    PreparedNarrationFallback.mediaTimeMs(textOffset: stored.anchor.startChar, timeline: $0.timeline)
+                    $0.mediaTimeMs(textOffset: stored.anchor.startChar)
                 } ?? stored.anchor.mediaTimeMs
                 guard let mediaTimeMs = anchorMediaTimeMs,
                       mediaTimeMs >= 0 else {
