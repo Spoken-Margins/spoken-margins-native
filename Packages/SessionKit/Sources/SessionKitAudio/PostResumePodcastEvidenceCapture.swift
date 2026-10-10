@@ -210,7 +210,8 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     func captureBufferedPreInterjection(_ request: PostResumeAudioSampleRequest) -> Bool {
-        // Called when a Margin finishes and before playback resumes, so the rolling minute ends at the anchor.
+        // Called when a Margin finishes and before playback resumes, so the rolling minute ends at the anchor,
+        // plus the half second or so the tap decoded ahead of the clock (#1133).
         drainTapWork()
         lock.withLock { heardRecorder?.begin(request) }
         let endMs = request.anchorMediaTimeMs - 5_000

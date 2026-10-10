@@ -514,16 +514,30 @@ struct ExperienceItemDetailScreen: View {
                         .buttonStyle(.bordered)
                         .tint(AppColors.evergreen)
                 case .downloading:
-                    ProgressView()
-                        .tint(readinessColor)
+                    if let progress = model.selectedPodcastDownloadProgress {
+                        ProgressView(value: progress)
+                            .tint(readinessColor)
+                            .frame(width: 72)
+                    } else {
+                        ProgressView()
+                            .tint(readinessColor)
+                    }
                 case .availableOffline, .none:
                     EmptyView()
                 }
             }
             .accessibilityIdentifier("item.podcastDownload.status")
         case .availableOffline:
-            Button("Download Again", action: model.redownloadSelectedPodcast)
-                .buttonStyle(.bordered)
+            HStack(spacing: 12) {
+                Label(readinessLabel, systemImage: readinessIcon)
+                    .font(.subheadline)
+                    .foregroundStyle(readinessColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("item.podcastDownload.saved")
+                Spacer(minLength: 8)
+                Button("Download Again", action: model.redownloadSelectedPodcast)
+                    .buttonStyle(.bordered)
+            }
         case .none:
             EmptyView()
         }
@@ -590,8 +604,8 @@ struct ExperienceItemDetailScreen: View {
         case .waitingForWiFi: "Waiting for Wi-Fi"
         case .streamingOnly: "Streaming available"
         case .failed, .evicted: "Download needs attention"
-        case .downloading: "Downloading"
-        case .availableOffline: "Available offline"
+        case .downloading: model.selectedPodcastDownloadStatusText ?? "Downloading"
+        case .availableOffline: model.selectedPodcastDownloadStatusText ?? "Available offline"
         case .none: ""
         }
     }

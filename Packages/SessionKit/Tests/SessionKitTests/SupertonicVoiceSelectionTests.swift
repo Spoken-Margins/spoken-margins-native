@@ -40,7 +40,9 @@ final class SupertonicVoiceSelectionTests: XCTestCase {
         let lilyPitch = try XCTUnwrap(Self.medianPitch(lily.samples, sampleRate: lily.sampleRate), "Lily has a voiced pitch")
         let pitches = "James \(Int(jamesPitch)) Hz and \(Int(jamesAgainPitch)) Hz, Lily \(Int(lilyPitch)) Hz"
         print("APA-15 median pitch: \(pitches)")
-        XCTAssertLessThan(abs(jamesPitch - jamesAgainPitch) / jamesPitch, 0.12,
+        // Two renders of one voice differ by up to about 15% (53 lane runs, #1338), so the control allows 20%:
+        // still well inside the 30% gap the voice check below asks for.
+        XCTAssertLessThan(abs(jamesPitch - jamesAgainPitch) / jamesPitch, 0.2,
                           "control: one voice keeps its pitch from render to render: \(pitches)")
         XCTAssertGreaterThan(lilyPitch / jamesPitch, 1.3, "Lily's voice is not James's: \(pitches)")
     }
