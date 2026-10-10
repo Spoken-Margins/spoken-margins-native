@@ -29,5 +29,4 @@ extension Gate1AppModel {
             }
         }
     }
-
 }
