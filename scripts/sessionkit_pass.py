@@ -10,6 +10,7 @@ A run records a pass only after the whole package step passed. A lane run that w
 changed paths looks the key up before building. Runs without that list (the Test Desk's run on next, a
 session's own run) never skip, so they remain the backstop for a reader this list misses.
 """
+import calendar
 import hashlib
 import json
 import os
@@ -49,6 +50,9 @@ RUNNERS = (
     'scripts/sessionkit_pass.py',
 )
 KEEP = 100  # records kept; each is a few hundred bytes
+# A record older than this is not honored, so every Mac runs the whole package at least daily. The scheduled run on
+# next's tip is --plan app and never runs these tests, so this bounds how long an input missing from READS can hide.
+MAX_AGE_SECONDS = 24 * 3600
 
 
 def listed(root):
@@ -107,7 +111,13 @@ def find(state, key_):
         record = json.loads((passes_dir(state) / f'{key_}.json').read_text())
     except (OSError, ValueError):
         return None
-    return record if isinstance(record, dict) and record.get('key') == key_ else None
+    if not (isinstance(record, dict) and record.get('key') == key_):
+        return None
+    try:
+        age = time.time() - calendar.timegm(time.strptime(record['passed_at'], '%Y-%m-%dT%H:%M:%SZ'))
+    except (KeyError, TypeError, ValueError):
+        return None
+    return record if -300 <= age <= MAX_AGE_SECONDS else None
 
 
 def record(state, key_, **details):

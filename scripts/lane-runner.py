@@ -73,7 +73,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   usual build slots wherever they run.
 - SessionKit tests are skipped when the tree under test already passed them on this Mac (#1328,
   scripts/sessionkit_pass.py): the key is a digest of the package, the repository files its tests read, the
-  toolchain and the test runner. The PASS report says so. Never skipped without the changed-paths list.
+  toolchain and the test runner. The PASS report says so. Never skipped without the changed-paths list,
+  and a pass older than 24 hours isn't used.
 - The step ledger (#1200, scripts/lane_ledger.py). Each step a job runs (the hot-file ratchet, host tests, app
   builds, app tests) is noted with its verdict and wall time, and when the job has reported, they go into
   step-ledger.json in the lane state folder: runs, time, PASS / FAIL / runner faults, and catches. A rule that

@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -130,6 +131,17 @@ class RecordTests(unittest.TestCase):
             self.assertIsNone(sk.find(state, 'b' * 64))
             self.assertIsNone(sk.find(state, None))
             self.assertIsNone(sk.record(state, None, head='x'))
+
+    def test_a_record_older_than_a_day_is_not_honored(self):
+        with tempfile.TemporaryDirectory() as state:
+            path = sk.passes_dir(state) / f'{"a" * 64}.json'
+            for age, honored in ((60, True), (sk.MAX_AGE_SECONDS - 60, True), (sk.MAX_AGE_SECONDS + 60, False)):
+                sk.record(state, 'a' * 64, head='x')
+                stamp = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(time.time() - age))
+                path.write_text(json.dumps({'key': 'a' * 64, 'passed_at': stamp}))
+                self.assertEqual(sk.find(state, 'a' * 64) is not None, honored, age)
+            path.write_text(json.dumps({'key': 'a' * 64}))  # no time: no pass
+            self.assertIsNone(sk.find(state, 'a' * 64))
 
     def test_a_damaged_or_mismatched_record_is_no_pass(self):
         with tempfile.TemporaryDirectory() as state:
