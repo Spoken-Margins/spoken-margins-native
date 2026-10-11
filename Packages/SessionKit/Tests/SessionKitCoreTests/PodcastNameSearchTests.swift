@@ -21,16 +21,16 @@ final class PodcastNameSearchTests: XCTestCase {
     private func searcher(
         pause: Duration = .milliseconds(30),
         log: Log = Log(),
+        sleep: (@Sendable (Duration) async throws -> Void)? = nil,
         answer: @escaping @Sendable (String) async throws -> Data
     ) -> PodcastNameSearch {
-        PodcastNameSearch(
-            resolver: ITunesSearchSourceResolver { url, _ in
-                await log.record(url)
-                let term = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "term" }?.value ?? ""
-                return (200, try await answer(term))
-            },
-            pause: pause
-        )
+        let resolver = ITunesSearchSourceResolver { url, _ in
+            await log.record(url)
+            let term = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "term" }?.value ?? ""
+            return (200, try await answer(term))
+        }
+        if let sleep { return PodcastNameSearch(resolver: resolver, pause: pause, sleep: sleep) }
+        return PodcastNameSearch(resolver: resolver, pause: pause)
     }
 
     func testAMatchingShowComesFirst() async throws {
@@ -64,10 +64,15 @@ final class PodcastNameSearchTests: XCTestCase {
 
     func testTypingOnDuringThePauseSearchesOnlyTheLastQuery() async throws {
         let log = Log()
-        let search = searcher(pause: .milliseconds(150), log: log) { term in Self.body([term]) }
+        let firstPaused = expectation(description: "first query is paused")
+        let secondPaused = expectation(description: "second query is paused")
+        let gate = PauseGate(first: firstPaused, second: secondPaused)
+        let search = searcher(log: log, sleep: { try await gate.sleep($0) }) { term in Self.body([term]) }
         async let first = search.search("hard")
-        try await Task.sleep(for: .milliseconds(30))
+        await fulfillment(of: [firstPaused], timeout: 5)
         async let second = search.search("hard fork")
+        await fulfillment(of: [secondPaused], timeout: 5)
+        await gate.release()
         let (a, b) = await (first, second)
         XCTAssertNil(a, "the superseded search returns nothing")
         guard case .results(let shows)? = b else { return XCTFail("expected results") }
@@ -106,10 +111,13 @@ final class PodcastNameSearchTests: XCTestCase {
 
     func testCancelDropsASearchThatIsWaiting() async throws {
         let log = Log()
-        let search = searcher(pause: .milliseconds(150), log: log) { term in Self.body([term]) }
+        let paused = expectation(description: "query is paused")
+        let gate = PauseGate(first: paused)
+        let search = searcher(log: log, sleep: { try await gate.sleep($0) }) { term in Self.body([term]) }
         async let waiting = search.search("hard fork")
-        try await Task.sleep(for: .milliseconds(30))
+        await fulfillment(of: [paused], timeout: 5)
         await search.cancel()
+        await gate.release()
         let result = await waiting
         XCTAssertNil(result)
         let terms = await log.terms
@@ -119,5 +127,34 @@ final class PodcastNameSearchTests: XCTestCase {
     private actor FlakyAnswer {
         private var calls = 0
         func shouldFail() -> Bool { calls += 1; return calls == 1 }
+    }
+
+    /// Establishes that the calls really overlap within the pause, without a wall-clock race.
+    private actor PauseGate {
+        private let first: XCTestExpectation
+        private let second: XCTestExpectation?
+        private var waiters: [CheckedContinuation<Void, Error>] = []
+        private var released = false
+
+        init(first: XCTestExpectation, second: XCTestExpectation? = nil) {
+            self.first = first
+            self.second = second
+        }
+
+        func sleep(_ duration: Duration) async throws {
+            guard !released else { return }
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                waiters.append(continuation)
+                if waiters.count == 1 { first.fulfill() }
+                if waiters.count == 2 { second?.fulfill() }
+            }
+        }
+
+        func release() {
+            released = true
+            let pending = waiters
+            waiters.removeAll()
+            for waiter in pending { waiter.resume() }
+        }
     }
 }

@@ -184,6 +184,37 @@ final class Build29DatabaseFixtureTests: XCTestCase {
 
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
+
+        // #1052: the shipped reader must open a database the restore pass actually wrote to,
+        // not merely one with the same table shapes. Set aside the v2 item's Library rows
+        // as an older decoder would, then reopen with this build before handing it to Build 29.
+        let restoredRowsSQL = """
+            SELECT kind, id, session_id, item_id, payload FROM records
+            WHERE item_id = ? AND kind IN ('item', 'session', 'interjection', 'listening_map', 'canonical_source')
+            ORDER BY kind, id;
+            """
+        let rowsBeforeQuarantine = try StoreRawSQL.rows(restoredRowsSQL, bindings: [v2.id], at: path)
+        let itemBeforeQuarantine = try store.loadItem(id: v2.id)
+        XCTAssertGreaterThanOrEqual(rowsBeforeQuarantine.count, 3, "item, session and Margin must exercise restoration")
+        try StoreRawSQL.execute("""
+            INSERT INTO quarantined_records(kind, id, payload, decode_error, quarantined_at)
+            SELECT kind, id, payload, 'older build could not decode this row', '2026-02-03 04:05:06'
+            FROM records WHERE item_id = ?
+            AND kind IN ('item', 'session', 'interjection', 'listening_map', 'canonical_source');
+            """, bindings: [v2.id], at: path)
+        try StoreRawSQL.execute("""
+            DELETE FROM records WHERE item_id = ?
+            AND kind IN ('item', 'session', 'interjection', 'listening_map', 'canonical_source');
+            """, bindings: [v2.id], at: path)
+        XCTAssertEqual(try StoreRawSQL.rows(restoredRowsSQL, bindings: [v2.id], at: path), [])
+        XCTAssertEqual(try store.quarantinedRecordCount(), rowsBeforeQuarantine.count)
+
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try StoreRawSQL.rows(restoredRowsSQL, bindings: [v2.id], at: path), rowsBeforeQuarantine,
+                       "the shipped-reader fixture contains the original keys, columns and bytes restored on open")
+        XCTAssertEqual(try reopened.loadItem(id: v2.id), itemBeforeQuarantine)
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "session-\(v2.id)").map(\.id), ["margin-\(v2.id)"])
+        XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         let data = try JSONSerialization.data(
             withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]], "feedEntryIds": [feedEntry.id]],
