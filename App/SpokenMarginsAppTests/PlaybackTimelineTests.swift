@@ -1,5 +1,5 @@
 import XCTest
-import SessionKit
+@testable import SessionKit
 import SessionKitPersistence
 @testable import SpokenMarginsApp
 
@@ -63,7 +63,7 @@ final class PlaybackTimelineTests: XCTestCase {
             targetId: item.id, createdAt: Date(), roughPercent: 1,
             anchor: .init(anchorType: .text, startChar: 11, endChar: 12, anchorBefore: "", anchorAfter: ""),
             audioPath: nil, audioStatus: "not_recorded", transcriptionStatus: "transcribed", transcript: "My thought",
-            status: "active")]
+            cleanedTranscript: nil, displayText: nil, status: "active")]
         item.turns = [.init(id: "reply", sessionId: "session", role: "assistant", turnType: "assistant_response",
                             status: "complete", text: "Response", sourceInterjectionIds: ["margin"])]
         let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
@@ -85,5 +85,26 @@ final class PlaybackTimelineTests: XCTestCase {
                        "A response must follow its own Margin even inside one rounded percentage")
         guard case .margin = relevant.first?.action else { return XCTFail("Margin detail action was lost") }
         guard case .chapter = relevant.dropFirst(2).first?.action else { return XCTFail("Chapter seek action was lost") }
+    }
+
+    func testUnknownAudioDurationKeepsTheMarginAndResponseAtTheirRoughPosition() throws {
+        for duration in [nil, 0, -1] as [Int?] {
+            var item = ItemDetailState(id: "podcast", title: "Episode", mediaDurationMs: duration, isNativeAudio: true)
+            item.interjections = [.init(id: "margin", itemId: item.id, sessionId: "session", targetType: .item,
+                targetId: item.id, createdAt: Date(), roughPercent: 20,
+                anchor: .init(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "",
+                              mediaTimeMs: 30_000),
+                audioPath: nil, audioStatus: "not_recorded", transcriptionStatus: "transcribed", transcript: "My thought",
+                cleanedTranscript: nil, displayText: nil, status: "active")]
+            item.turns = [.init(id: "reply", sessionId: "session", role: "assistant", turnType: "assistant_response",
+                                status: "complete", text: "Response", sourceInterjectionIds: ["margin"])]
+            let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+            let margin = try XCTUnwrap(entries.first { $0.id == "session::margin" })
+            let reply = try XCTUnwrap(entries.first { $0.id == "turn.reply" })
+            XCTAssertNil(margin.precisePosition)
+            XCTAssertEqual(margin.position, 20)
+            XCTAssertEqual(reply.position, 20)
+            XCTAssertEqual(entries.map(\.id), ["source.beginning", "session::margin", "turn.reply"])
+        }
     }
 }

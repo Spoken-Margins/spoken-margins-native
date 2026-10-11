@@ -254,7 +254,8 @@ struct ExperienceTimelineRailScreen: View {
             )
         }
 
-        let duration = max(1, item.mediaDurationMs ?? playbackDurationMs ?? 1)
+        let knownDuration = (item.mediaDurationMs ?? playbackDurationMs).flatMap { $0 > 0 ? $0 : nil }
+        let duration = knownDuration ?? 1
         let sourceChapterIDs = Set(item.chapters.map(\.id))
         for chapter in item.mediaChapters where !sourceChapterIDs.contains(chapter.id) {
             let position = max(0, min(100, Int((Double(chapter.startMs) / Double(duration) * 100).rounded())))
@@ -266,7 +267,7 @@ struct ExperienceTimelineRailScreen: View {
                     provenance: .source,
                     title: chapter.title,
                     detail: "Chapter · \(formatTime(chapter.startMs))",
-                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: duration)
+                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration)
                 )
             )
         }
@@ -280,7 +281,7 @@ struct ExperienceTimelineRailScreen: View {
                 id: "source.listeningMapScene.\(scene.id)", position: position, rank: 0,
                 provenance: .listeningMap, title: scene.title,
                 detail: "Generated scene · \(formatTime(scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
-                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: duration)
+                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration)
             ))
         }
 
@@ -298,7 +299,7 @@ struct ExperienceTimelineRailScreen: View {
                     detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
                     action: .sharedMargin(row),
                     isNew: row.isNew,
-                    precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: duration)
+                    precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: knownDuration)
                 ))
             }
         }
@@ -321,14 +322,14 @@ struct ExperienceTimelineRailScreen: View {
                     ),
                     detail: row.needsAttention ? row.attentionDescription : "Captured at \(position)%",
                     action: .margin(row),
-                    precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: duration)
+                    precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration)
                 )
             )
         }
 
         var children: [String: [TimelineRailEntry]] = [:]
         for (turnIndex, turn) in item.turns.enumerated() {
-            let position = turnPosition(turn, in: item, durationMs: duration, visited: [])
+            let position = turnPosition(turn, in: item, durationMs: knownDuration, visited: [])
             let provenance: TimelineProvenance = turn.role == "user" ? .userResponse : .assistantResponse
             result.append(
                 TimelineRailEntry(
@@ -398,7 +399,7 @@ struct ExperienceTimelineRailScreen: View {
             .map { MarginRow(interjection: $0, itemTitle: item.title, sessionDate: sessionDate) }
     }
 
-    private static func preciseSourcePosition(_ margin: Interjection, in item: ItemDetailState, durationMs: Int) -> Double? {
+    private static func preciseSourcePosition(_ margin: Interjection, in item: ItemDetailState, durationMs: Int?) -> Double? {
         if item.isNativeAudio {
             return TimelineRailSortKey.percent(position: margin.anchor.mediaTimeMs, length: durationMs)
         }
@@ -407,7 +408,7 @@ struct ExperienceTimelineRailScreen: View {
         return TimelineRailSortKey.percent(position: margin.anchor.startChar, length: length)
     }
 
-    private static func turnPosition(_ turn: ConversationTurn, in item: ItemDetailState, durationMs: Int,
+    private static func turnPosition(_ turn: ConversationTurn, in item: ItemDetailState, durationMs: Int?,
                                      visited: Set<String>) -> Double {
         guard !visited.contains(turn.id) else { return 100 }
         let visited = visited.union([turn.id])
