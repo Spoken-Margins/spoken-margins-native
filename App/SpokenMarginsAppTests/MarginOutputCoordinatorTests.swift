@@ -11,7 +11,11 @@ final class MarginOutputCoordinatorTests: XCTestCase {
     private final class Revoked: @unchecked Sendable {
         private let lock = NSLock()
         private var bookmarks: Set<Data> = []
+        private var refreshes: [Data: Data] = [:]
         func revoke(_ bookmark: Data) { lock.lock(); bookmarks.insert(bookmark); lock.unlock() }
+        /// The next resolve of `old` reports it stale and hands back `new`, as iOS does for a moved or renamed folder.
+        func refresh(_ old: Data, to new: Data) { lock.lock(); refreshes[old] = new; lock.unlock() }
+        func refreshed(_ bookmark: Data) -> Data? { lock.lock(); defer { lock.unlock() }; return refreshes[bookmark] }
         func contains(_ bookmark: Data) -> Bool { lock.lock(); defer { lock.unlock() }; return bookmarks.contains(bookmark) }
     }
 
@@ -63,7 +67,8 @@ final class MarginOutputCoordinatorTests: XCTestCase {
             let revoked = revoked
             access.resolve = { bookmark in
                 if revoked.contains(bookmark) { throw CocoaError(.fileReadNoPermission) }
-                return try live(bookmark)
+                let resolved = try live(bookmark)
+                return (resolved.url, revoked.refreshed(bookmark) ?? resolved.refreshedBookmark)
             }
             return access
         }
@@ -145,6 +150,23 @@ final class MarginOutputCoordinatorTests: XCTestCase {
         await coordinator.pass()
         XCTAssertEqual(try f.notes(in: regained).count, 1)
         XCTAssertEqual(coordinator.rows.first { $0.id == "lost" }?.needsAccess, false)
+    }
+
+    func testAStaleBookmarkIsRefreshedAndTheSamePassStillWritesItsNotes() async throws {
+        let f = try Fixture()
+        try f.addMargin("m-1", text: "Saved just before switching apps.")
+        let folder = try f.folder("Vault")
+        let old = try f.bookmark(folder)
+        // Distinct bytes, so the saved destination visibly changes; only this one pass resolves it.
+        let real = Data("refreshed-bookmark".utf8)
+        f.revoked.refresh(old, to: real)
+        let coordinator = try f.makeCoordinator([MarginOutputDestination(id: "vault", name: "Vault", bookmark: old)])
+
+        await coordinator.pass()
+
+        XCTAssertEqual(try f.notes(in: folder).count, 1, coordinator.statuses.values.map(\.message).joined(separator: "\n"))
+        XCTAssertEqual(coordinator.destinations.first?.bookmark, real, "the refreshed bookmark is saved")
+        XCTAssertEqual(coordinator.rows.first?.status.isFailure, false, coordinator.rows.first?.status.message ?? "")
     }
 
     func testAFolderThatIsGoneNeedsAccessToo() async throws {

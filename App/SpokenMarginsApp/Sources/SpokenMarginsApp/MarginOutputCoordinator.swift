@@ -223,6 +223,9 @@ final class MarginOutputCoordinator: ObservableObject {
     private func deliver(to destination: MarginOutputDestination, store: SQLiteSessionStore, claimedFolders: inout [String: String]) async {
         do {
             let folder = try resolveFolder(of: destination)
+            // Resolving can refresh a stale bookmark and save it. Compare against that, or `isCurrent` would see the
+            // refresh as the listener repointing the destination and drop this pass's notes.
+            guard let destination = self.destination(destination.id) else { return }
             let path = folder.standardizedFileURL.path
             if let owner = claimedFolders[path] {
                 // Two destinations writing one folder would take each other's notes for edits.
