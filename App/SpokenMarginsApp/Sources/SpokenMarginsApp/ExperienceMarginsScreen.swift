@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitPersistence
 
 struct ExperienceMarginsScreen: View {
     private struct MarginGroup: Identifiable {
@@ -18,6 +19,7 @@ struct ExperienceMarginsScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var markdownFileURL: URL?
+    @State private var collections: [ItemCollection] = []
 
     var body: some View {
         NavigationStack {
@@ -28,9 +30,18 @@ struct ExperienceMarginsScreen: View {
                         .accessibilityIdentifier("margins.search.field")
                         .padding(.bottom, 12)
                     HStack {
-                        Picker("Scope", selection: $model.marginCollectionQuery.itemID) {
+                        Picker("Scope", selection: scopeTag) {
                             Text("All items").tag(String?.none)
-                            ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
+                            if !collections.isEmpty {
+                                Section("Collections") {
+                                    ForEach(collections) { collection in
+                                        Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
+                                    }
+                                }
+                            }
+                            Section("Items") {
+                                ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
+                            }
                         }
                         .accessibilityIdentifier("margins.scope.picker")
                         Spacer()
@@ -60,11 +71,14 @@ struct ExperienceMarginsScreen: View {
                     .accessibilityLabel("Settings")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: model.openBatchExport)
+                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
                         .accessibilityIdentifier("margins.export.button")
                 }
             }
-            .task { model.refreshMarginRows() }
+            .task {
+                model.refreshMarginRows()
+                loadCollections()
+            }
             .refreshable { model.refreshMarginRows() }
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $selectedMargin) { row in
@@ -74,6 +88,27 @@ struct ExperienceMarginsScreen: View {
                 SharedMarginDetailView(row: row).environmentObject(model)
             }
         }
+    }
+
+    /// The scope picker's choice: one item, one collection (#490) or all items.
+    private var scopeTag: Binding<String?> {
+        Binding(
+            get: { model.marginCollectionQuery.scopeTag },
+            set: { model.marginCollectionQuery.selectScope(tag: $0, collections: collections) }
+        )
+    }
+
+    private func loadCollections() {
+        collections = (try? model.store?.loadItemCollections()) ?? []
+        model.marginCollectionQuery.refreshCollection(from: collections)
+    }
+
+    /// Export Sessions starts with only the scoped collection's sessions selected.
+    private func openBatchExport() {
+        model.openBatchExport()
+        guard let scope = model.marginCollectionQuery.collection, model.screen == .batchExport else { return }
+        model.selectedBatchExportSessionIds = Set(model.visibleBatchExportRows
+            .filter { scope.contains(itemID: $0.session.itemId) }.map(\.id))
     }
 
     private var filterBar: some View {

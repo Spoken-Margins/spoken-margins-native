@@ -20,14 +20,21 @@ public struct MarginCollectionQuery: Equatable, Sendable {
     public var text = ""
     public var filter: MarginCollectionFilter = .all
     public var itemID: String? = nil
+    /// Only the items of this collection (#490). Never set together with `itemID`; see `selectScope`.
+    public var collection: ItemCollectionScope? = nil
 
-    public init(text: String = "", filter: MarginCollectionFilter = .all, itemID: String? = nil) {
+    public init(text: String = "", filter: MarginCollectionFilter = .all, itemID: String? = nil,
+                collection: ItemCollectionScope? = nil) {
         self.text = text
         self.filter = filter
         self.itemID = itemID
+        self.collection = collection
     }
 
-    public func includes(itemID: String?) -> Bool { self.itemID == nil || self.itemID == itemID }
+    public func includes(itemID: String?) -> Bool {
+        if let collection, !(itemID.map(collection.contains(itemID:)) ?? false) { return false }
+        return self.itemID == nil || self.itemID == itemID
+    }
 
     public func matches(_ values: [String]) -> Bool {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
