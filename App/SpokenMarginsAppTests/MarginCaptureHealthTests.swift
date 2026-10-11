@@ -34,7 +34,8 @@ final class MarginCaptureHealthTests: XCTestCase {
     }
 
     /// A recorder that accepts its start, as the phone's did, and then takes in only what the test lets it.
-    private final class ScriptedRecordingClient: RecordingClient {
+    private final class ScriptedRecordingClient: RecordingClient, RecordingInterruptionReporting {
+        var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
         /// What the recorder reports as audio taken in. The phone's said 22 and stayed there.
         var capturedMs: Int
         /// Audio grows by the time that passes, as a working microphone's does.
@@ -148,6 +149,44 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.recorder.cancelCount, 1)
         XCTAssertEqual(harness.model.lastError?.hasPrefix("Nothing was recorded"), true)
         XCTAssertEqual(harness.model.recordingCaptureHealth, .capturing, "the state resets for the next Margin")
+    }
+
+    /// #771 audit P2: a call after five seconds on the clock, with a microphone that took in 22 ms, must not
+    /// save an empty voice as a Margin. The interruption path asks the watcher, as Save does.
+    func testACallDuringARecordingThatTookInNothingSavesNoMargin() async throws {
+        let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22))
+        harness.run(seconds: 5)
+        let marginCount = harness.model.selectedItem.interjections.count
+
+        harness.recorder.onInterruption?(.interruptionBegan, 5)
+        for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertFalse(harness.model.snapshot.isRecording)
+        XCTAssertEqual(harness.recorder.finishCount, 0, "an empty voice must not be saved as a Margin")
+        XCTAssertEqual(harness.recorder.cancelCount, 1)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, marginCount)
+        XCTAssertEqual(harness.model.snapshot.status, .paused, "the source still waits through the call")
+        XCTAssertNil(harness.model.diagnostics["lastMarginCutShort"])
+        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=discard_empty"), true)
+        XCTAssertEqual(harness.model.statusMessage.contains("hadn't picked up any sound"), true)
+    }
+
+    /// #771 audit P2: a recording that did take in speech is still kept, and its end-of-recording line is written.
+    func testACallDuringARecordingWithSpeechSavesItAndWritesTheCaptureLine() async throws {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        harness.run(seconds: 5)
+        let marginCount = harness.model.selectedItem.interjections.count
+
+        recorder.onInterruption?(.interruptionBegan, 5)
+        for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertFalse(harness.model.snapshot.isRecording)
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, marginCount + 1)
+        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=save"), true)
     }
 
     func testARestartThatWorksShowsRecordingOnceAudioArrives() {

@@ -19,7 +19,20 @@ extension Gate1AppModel {
         _ event: MarginRecordingInterruptionEvent, recordedSeconds: TimeInterval?, holder: MarginInterruptionPolicyHolder
     ) {
         let seconds = snapshot.isRecording ? (recordedSeconds ?? 0) : nil
-        let action = holder.policy.handle(event, recordedSeconds: seconds, pausedSource: .paused(in: snapshot))
+        var action = holder.policy.handle(event, recordedSeconds: seconds, pausedSource: .paused(in: snapshot))
+        // The recorder's seconds are wall time. Ask the watcher what the microphone really took in, as
+        // Save does, so a call during a recording that never captured audio doesn't keep an empty Margin.
+        var emptyRecording = false
+        if action == .saveCutShort {
+            let verdict = captureWatcher.saveVerdict()
+            recordFinalCaptureDiagnostics(verdict.rawValue)
+            if verdict == .discardEmpty {
+                emptyRecording = true
+                action = .discard
+            }
+        } else if action == .discard {
+            recordFinalCaptureDiagnostics("cancelled")
+        }
         let cause = event == .routeLost ? "headphones_disconnected" : "call_or_siri"
         recordDeveloperDiagnostic("margin.interruption", [
             "event": "\(event)", "action": "\(action)", "recordedSeconds": seconds.map { String(format: "%.1f", $0) } ?? "none",
@@ -37,7 +50,7 @@ extension Gate1AppModel {
                 refreshSelectedItem()
                 recordSavedInterjectionForOnboarding()
                 let interjection = latestInterjectionNeedingTranscription()
-                if let interjection { scheduleTranscription(for: interjection) }
+                transcribeAndRecordSavedSpokenMargin()
                 diagnostics["lastMarginCutShort"] = "\(interjection?.id ?? "unknown") \(cause) \(String(format: "%.1f", seconds ?? 0))s"
                 reportWarning(event == .routeLost
                     ? "Margin saved. It stopped when your headphones disconnected. Tap Play to continue."
@@ -47,7 +60,9 @@ extension Gate1AppModel {
             run { engine in
                 snapshot = try engine.cancelInterjection(resumesSource: false)
                 refreshSelectedItem()
-                reportWarning("The Margin was interrupted before you said anything, so it wasn't kept.")
+                reportWarning(emptyRecording
+                    ? "The Margin was interrupted and the microphone hadn't picked up any sound, so it wasn't kept."
+                    : "The Margin was interrupted before you said anything, so it wasn't kept.")
             }
         }
         // A call's end resumes only the session and place this save or discard left.
