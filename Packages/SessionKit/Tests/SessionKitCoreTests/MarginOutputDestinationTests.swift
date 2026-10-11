@@ -70,20 +70,37 @@ final class MarginOutputDestinationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file), Data("not json".utf8))
     }
 
-    func testNewerBuildValuesFallBackToToday() throws {
+    func testValueFromANewerBuildLoadsPausedInsteadOfDeliveringMore() throws {
         let json = """
         {"version": 7, "destinations": [{"id": "x", "name": "Future", "bookmark": "AAEC", "scope": "starred-this-week",
-        "includesContext": "yes", "text": "summary", "isEnabled": false, "somethingNew": 1}]}
+        "includesContext": false, "text": "original", "isEnabled": true, "somethingNew": 1}]}
         """
-        try FileManager.default.createDirectory(at: store.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(json.utf8).write(to: store.fileURL)
+        try write(json)
         let loaded = try XCTUnwrap(try store.load()?.first)
         XCTAssertEqual(loaded.name, "Future")
         XCTAssertEqual(loaded.bookmark, Data([0, 1, 2]))
         XCTAssertEqual(loaded.scope, .all)
-        XCTAssertTrue(loaded.includesContext)
-        XCTAssertEqual(loaded.text, .cleaned)
-        XCTAssertFalse(loaded.isEnabled, "A known value is kept")
+        XCTAssertFalse(loaded.includesContext, "Readable fields are kept")
+        XCTAssertEqual(loaded.text, .original)
+        XCTAssertFalse(loaded.isEnabled, "An unreadable scope must not start delivering everything")
+    }
+
+    func testUnreadableEnabledFlagLoadsPaused() throws {
+        try write(#"{"destinations": [{"id": "x", "name": "A", "bookmark": "AAEC", "isEnabled": "paused-until-monday"}]}"#)
+        XCTAssertEqual(try store.load()?.first?.isEnabled, false)
+    }
+
+    func testOneUnreadableDestinationDoesNotHideTheOthers() throws {
+        try write("""
+        {"destinations": [{"id": "a", "name": "Good", "bookmark": "AAEC"},
+        {"id": "b", "name": "No bookmark"}, 7, {"id": "c", "name": "Also good", "bookmark": "AAEC"}]}
+        """)
+        XCTAssertEqual(try store.load()?.map(\.id), ["a", "c"])
+    }
+
+    private func write(_ json: String) throws {
+        try FileManager.default.createDirectory(at: store.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(json.utf8).write(to: store.fileURL)
     }
 
     func testMissingOptionalFieldsTakeTheSingleFolderBehavior() throws {
@@ -96,9 +113,9 @@ final class MarginOutputDestinationTests: XCTestCase {
     // MARK: - Migration of today's single folder
 
     private func legacy(
-        bookmark: Data? = Data("bookmark".utf8), name: String? = "Vault", id: String? = "journal-id", enabled: Bool = true
+        bookmark: Data? = Data("bookmark".utf8), id: String? = "journal-id", enabled: Bool = true
     ) -> MarginOutputMigration.LegacySettings {
-        .init(bookmark: bookmark, folderName: name, destinationID: id, isEnabled: enabled)
+        .init(bookmark: bookmark, destinationID: id, isEnabled: enabled)
     }
 
     func testTodaysFolderBecomesOneDestinationWithTheSameBookmarkAndJournalID() throws {

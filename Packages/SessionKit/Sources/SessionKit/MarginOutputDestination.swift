@@ -59,17 +59,24 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         case id, name, bookmark, scope, includesContext, text, isEnabled
     }
 
-    /// A file written by a newer build may hold a value this build doesn't know; that field falls back to today's
-    /// behavior rather than losing the whole destination.
+    /// A missing field takes today's single-folder behavior. A field that is present but unreadable (a newer build
+    /// wrote a value this build doesn't know) is not guessed at: the destination loads paused, so it never delivers
+    /// more than the listener allowed. Unpausing it is the listener's choice.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         bookmark = try container.decode(Data.self, forKey: .bookmark)
-        scope = (try? container.decodeIfPresent(Scope.self, forKey: .scope)) ?? .all
-        includesContext = (try? container.decodeIfPresent(Bool.self, forKey: .includesContext)) ?? true
-        text = (try? container.decodeIfPresent(TextChoice.self, forKey: .text)) ?? .cleaned
-        isEnabled = (try? container.decodeIfPresent(Bool.self, forKey: .isEnabled)) ?? true
+        var unreadable = false
+        func value<T: Decodable>(_ key: CodingKeys, default fallback: T) -> T {
+            do { return try container.decodeIfPresent(T.self, forKey: key) ?? fallback }
+            catch { unreadable = true; return fallback }
+        }
+        scope = value(.scope, default: Scope.all)
+        includesContext = value(.includesContext, default: true)
+        text = value(.text, default: TextChoice.cleaned)
+        isEnabled = value(.isEnabled, default: true)
+        if unreadable { isEnabled = false }
     }
 
     /// The name for the next destination the listener adds, e.g. "Notes folder 2".
@@ -101,11 +108,20 @@ public struct MarginOutputDestinationStore: Sendable {
         init(destinations: [MarginOutputDestination]) { self.destinations = destinations }
 
         private enum CodingKeys: String, CodingKey { case version, destinations }
+        private struct Skipped: Decodable {}
 
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             version = (try? container.decodeIfPresent(Int.self, forKey: .version)) ?? 1
-            destinations = try container.decode([MarginOutputDestination].self, forKey: .destinations)
+            // One destination this build can't read (no id or bookmark, say) must not take the others with it.
+            // It is skipped here, so a save by this build no longer carries it.
+            var elements = try container.nestedUnkeyedContainer(forKey: .destinations)
+            var readable: [MarginOutputDestination] = []
+            while !elements.isAtEnd {
+                if let destination = try? elements.decode(MarginOutputDestination.self) { readable.append(destination) }
+                else { _ = try? elements.decode(Skipped.self) }
+            }
+            destinations = readable
         }
     }
 
@@ -131,16 +147,13 @@ public enum MarginOutputMigration {
     public struct LegacySettings: Equatable, Sendable {
         /// `marginNotesFolderBookmark`; nil when no folder was ever chosen.
         public var bookmark: Data?
-        /// `marginNotesFolderName`: the folder's name, used when the bookmark can't give one.
-        public var folderName: String?
         /// `marginOutputDestinationID`; nil on a build that never wrote one.
         public var destinationID: String?
         /// `automaticMarginOutputEnabled`.
         public var isEnabled: Bool
 
-        public init(bookmark: Data?, folderName: String?, destinationID: String?, isEnabled: Bool) {
+        public init(bookmark: Data?, destinationID: String?, isEnabled: Bool) {
             self.bookmark = bookmark
-            self.folderName = folderName
             self.destinationID = destinationID
             self.isEnabled = isEnabled
         }
@@ -169,6 +182,11 @@ public enum MarginOutputMigration {
     /// The saved destinations, migrating the old single folder the first time. The migrated list is saved at once,
     /// so a later change to the old keys (or removing every destination) is never migrated again. The old keys are
     /// left in place for the previous build.
+    ///
+    /// Call it after `SavedFolderSetting.separateMarginNotesFromSessionExport()`: before that runs, a pre-#930
+    /// install has no notes bookmark yet, and an empty list saved now would never pick up its folder. The app must
+    /// also use `fallbackDestinationID` for the journal key wherever it still falls back, and save a refreshed
+    /// bookmark back to the store when it resolves a stale one.
     public static func loadOrMigrate(store: MarginOutputDestinationStore, legacy: () -> LegacySettings) throws -> [MarginOutputDestination] {
         if let saved = try store.load() { return saved }
         let migrated = destinations(from: legacy())
