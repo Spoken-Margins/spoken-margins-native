@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 import UIKit
 
@@ -8,6 +9,8 @@ struct PlaybackPositionSlider: UIViewRepresentable {
     var range: ClosedRange<Double>
     var onEditingChanged: (Bool) -> Void
     var preparedFraction: Double? = nil
+    /// Chapters and Margins to draw on the bar (#428). Display only; nil draws the plain slider.
+    var barContent: PlaybackBarContent? = nil
     @Environment(\.isEnabled) private var isEnabled
 
     func makeUIView(context: Context) -> TrackingPlaybackSlider {
@@ -22,6 +25,7 @@ struct PlaybackPositionSlider: UIViewRepresentable {
         slider.onEditing = onEditingChanged
         slider.isEnabled = isEnabled
         slider.preparedFraction = preparedFraction
+        slider.barContent = barContent
         if slider.minimumValue != Float(range.lowerBound) {
             slider.minimumValue = Float(range.lowerBound)
         }
@@ -45,6 +49,16 @@ final class TrackingPlaybackSlider: UISlider {
     private(set) var gestureActive = false
     var preparedFraction: Double? { didSet { if oldValue != preparedFraction { setNeedsLayout() } } }
     private let preparedTrack = CALayer()
+    var barContent: PlaybackBarContent? { didSet { if oldValue != barContent { setNeedsLayout() } } }
+    private let bar = PlaybackBarRenderer()
+    private var systemTrackHidden = false
+
+    override var value: Float { didSet { if barContent != nil { setNeedsLayout() } } }
+
+    override func setValue(_ value: Float, animated: Bool) {
+        super.setValue(value, animated: animated)
+        if barContent != nil { setNeedsLayout() }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -57,12 +71,36 @@ final class TrackingPlaybackSlider: UISlider {
         preparedTrack.frame = CGRect(x: track.minX, y: max(track.maxY, thumb.maxY) + 3, width: track.width * CGFloat(min(1, max(0, preparedFraction ?? 0))), height: 3)
         preparedTrack.cornerRadius = 1.5
         CATransaction.commit()
+        layoutBar(track: track)
     }
+
+    /// Paints the chapter segments and Margin diamonds, and hides the system track while the segments stand in for it.
+    private func layoutBar(track: CGRect) {
+        let geometry = PlaybackBarRenderer.Geometry(
+            track: track,
+            lower: thumbRect(forBounds: bounds, trackRect: track, value: minimumValue).midX,
+            upper: thumbRect(forBounds: bounds, trackRect: track, value: maximumValue).midX,
+            thumbX: thumbRect(forBounds: bounds, trackRect: track, value: value).midX,
+            scale: max(1, traitCollection.displayScale),
+            fill: (minimumTrackTintColor ?? tintColor).resolvedColor(with: traitCollection).cgColor
+        )
+        let replacesTrack = bar.update(content: barContent, value: Double(value), geometry: geometry)
+        guard replacesTrack != systemTrackHidden else { return }
+        systemTrackHidden = replacesTrack
+        let image = replacesTrack ? Self.clearTrackImage : nil
+        setMinimumTrackImage(image, for: .normal)
+        setMaximumTrackImage(image, for: .normal)
+    }
+
+    /// A transparent track as tall as the segments, so hiding the system track doesn't change the slider's metrics.
+    private static let clearTrackImage = UIGraphicsImageRenderer(size: CGSize(width: 1, height: PlaybackBarRenderer.trackThickness)).image { _ in }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         preparedTrack.name = "prepared-audio-track"
         layer.addSublayer(preparedTrack)
+        bar.layer.zPosition = -1
+        layer.addSublayer(bar.layer)
         let touch = UILongPressGestureRecognizer(target: self, action: #selector(trackTouch(_:)))
         touch.minimumPressDuration = 0
         touch.allowableMovement = .greatestFiniteMagnitude
