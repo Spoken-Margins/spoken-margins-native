@@ -7,7 +7,8 @@ import SessionKitPersistence
 /// Each note re-reads its item, transcript and Margins from SQLite. With ~200 sessions and ~465 notes that took
 /// about 1.4 s, and it ran on the main actor every 15 s, freezing the UI. The store is thread-safe, and the export
 /// engine is private to the background task, so nothing is shared with the playback engine. `MarginNoteComposer`
-/// does the reading; `sessionIds` limits a pass to the sessions that changed (#1192).
+/// does the reading; `sessionIds` limits a pass to the sessions that changed (#1192), and `content` is the destination's
+/// choice of Margins and note contents (#492).
 enum AutomaticMarginNoteGatherer {
     struct Result: Sendable {
         var notes: [AutomaticMarginWriter.Note]
@@ -15,10 +16,10 @@ enum AutomaticMarginNoteGatherer {
         var elapsedMs: Int
     }
 
-    static func gather(store: SQLiteSessionStore, sessionIds: Set<String>? = nil) async throws -> Result {
+    static func gather(store: SQLiteSessionStore, sessionIds: Set<String>? = nil, content: MarginNoteContent = .standard) async throws -> Result {
         try await Task.detached(priority: .utility) {
             let started = ProcessInfo.processInfo.systemUptime
-            let composed = try MarginNoteComposer.compose(store: store, sessionIds: sessionIds)
+            let composed = try MarginNoteComposer.compose(store: store, sessionIds: sessionIds, content: content)
             return Result(
                 notes: composed.notes.map { .init(id: $0.id, markdown: $0.markdown, fileName: $0.fileName) },
                 sessionCount: composed.sessionCount,

@@ -222,12 +222,20 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertFalse(written[0].contains("Transcript not available yet."))
     }
 
-    private func delivery(_ fixture: (root: URL, store: SQLiteSessionStore, folder: URL), statuses: @escaping @MainActor (MarginOutputStatus) -> Void = { _ in }) -> MarginNotesDelivery {
-        MarginNotesDelivery(
-            isEnabled: { true },
+    /// The one notes folder of Build 29, as a destination whose id is `vault`.
+    private func delivery(
+        _ fixture: (root: URL, store: SQLiteSessionStore, folder: URL),
+        recordGather: @escaping @MainActor (Int, Int, Int) -> Void = { _, _, _ in }
+    ) throws -> MarginOutputCoordinator {
+        let destinations = MarginOutputDestinationStore(fileURL: fixture.root.appendingPathComponent("destinations.json"))
+        if try destinations.load() == nil {
+            try destinations.save([MarginOutputDestination(id: "vault", name: "Vault", bookmark: try MarginOutputCoordinator.FolderAccess.live.makeBookmark(fixture.folder))])
+        }
+        return MarginOutputCoordinator(
+            store: { fixture.store },
             isRecording: { false },
-            target: { .init(store: fixture.store, folder: fixture.folder, destinationID: "vault") },
-            report: statuses,
+            recordGather: recordGather,
+            destinationStore: destinations,
             journalURL: { fixture.root.appendingPathComponent("journal.json") }
         )
     }
@@ -235,21 +243,22 @@ final class PKMWorkflowTests: XCTestCase {
     func testAMarginSavedJustBeforeBackgroundingIsWrittenExactlyOnce() async throws {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        var statuses: [String] = []
-        let delivery = delivery(fixture) { statuses.append($0.message) }
+        let delivery = try delivery(fixture)
         try fixture.store.saveInterjection(spokenMargin(id: "ij-001", sessionId: "session-episode", itemId: "item-episode", transcript: "Said just before switching apps."))
 
         try await XCTUnwrap(delivery.finishBeforeBackground()).value
 
-        XCTAssertEqual(try notes(in: fixture.folder).count, 1, statuses.joined(separator: "\n"))
+        XCTAssertEqual(try notes(in: fixture.folder).count, 1, delivery.statuses["vault"]?.message ?? "no status")
         // More passes, backgrounding again, and a relaunch with a fresh writer add nothing.
         await delivery.pass()
         try await XCTUnwrap(delivery.finishBeforeBackground()).value
-        await self.delivery(fixture).pass()
+        let relaunched = try self.delivery(fixture)
+        await relaunched.pass()
         let written = try notes(in: fixture.folder)
         XCTAssertEqual(written.count, 1)
         XCTAssertTrue(written[0].contains("Said just before switching apps."))
-        XCTAssertFalse(statuses.contains { $0.hasPrefix("Delivery needs attention") }, statuses.joined(separator: "\n"))
+        XCTAssertFalse(delivery.statuses["vault"]?.message.hasPrefix("Delivery needs attention") == true, delivery.statuses["vault"]?.message ?? "")
+        XCTAssertFalse(relaunched.statuses["vault"]?.message.hasPrefix("Delivery needs attention") == true)
     }
 
     /// #1192: a pass every minute used to rebuild every note, changed or not (37 passes, 142 s in 18 minutes).
@@ -257,14 +266,7 @@ final class PKMWorkflowTests: XCTestCase {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         var gathers: [(sessions: Int, notes: Int)] = []
-        let delivery = MarginNotesDelivery(
-            isEnabled: { true },
-            isRecording: { false },
-            target: { .init(store: fixture.store, folder: fixture.folder, destinationID: "vault") },
-            report: { _ in },
-            recordGather: { _, sessions, notes in gathers.append((sessions, notes)) },
-            journalURL: { fixture.root.appendingPathComponent("journal.json") }
-        )
+        let delivery = try delivery(fixture) { _, sessions, notes in gathers.append((sessions, notes)) }
         func ageEverything() {
             var raw: OpaquePointer?
             XCTAssertEqual(sqlite3_open(fixture.root.appendingPathComponent("library.sqlite").path, &raw), SQLITE_OK)
@@ -291,7 +293,7 @@ final class PKMWorkflowTests: XCTestCase {
     func testSavingAMarginStartsAPassWithinFiveSeconds() async throws {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let delivery = delivery(fixture)
+        let delivery = try delivery(fixture)
         try fixture.store.saveInterjection(spokenMargin(id: "ij-002", sessionId: "session-episode", itemId: "item-episode", transcript: "Quick."))
 
         let started = Date()
