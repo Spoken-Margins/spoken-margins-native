@@ -28,6 +28,7 @@ final class PlaybackBarRenderer {
     private static let diamondHalf: CGFloat = 4.5
     private static let crowdedHalf: CGFloat = 7
     private static let layerStep: CGFloat = 1.5
+    private static let sharedBlue = UIColor(red: 0.45, green: 0.70, blue: 1, alpha: 1)
 
     private let trackLayer = CALayer()
     private let marksLayer = CALayer()
@@ -139,7 +140,7 @@ final class PlaybackBarRenderer {
                     addDiamond(at: center, offset: offset, half: Self.crowdedHalf, style: .ghost)
                 }
                 addDiamond(at: center, offset: 0, half: Self.crowdedHalf, style: stack.front.kind.diamondStyle)
-                if let count = stack.countLabel { addCount(count, at: center, scale: g.scale) }
+                if let count = stack.countLabel { addCount(count, at: center, scale: g.scale, style: stack.front.kind.diamondStyle) }
             } else {
                 for (index, kind) in stack.layers.enumerated().reversed() {
                     addDiamond(at: center, offset: CGFloat(index) * Self.layerStep, half: Self.diamondHalf, style: kind.diamondStyle)
@@ -170,7 +171,7 @@ final class PlaybackBarRenderer {
             diamond.lineWidth = 1
         case .shared:
             diamond.fillColor = backdrop.cgColor
-            diamond.strokeColor = UIColor(red: 0.45, green: 0.70, blue: 1, alpha: 1).cgColor
+            diamond.strokeColor = Self.sharedBlue.cgColor
             diamond.lineWidth = 1.5
         case .ghost:
             diamond.fillColor = backdrop.cgColor
@@ -180,13 +181,14 @@ final class PlaybackBarRenderer {
         marksLayer.addSublayer(diamond)
     }
 
-    private func addCount(_ count: String, at center: CGPoint, scale: CGFloat) {
+    /// The count is dark on the amber of an own Margin and light blue on the dark fill of a shared one, so it reads on both.
+    private func addCount(_ count: String, at center: CGPoint, scale: CGFloat, style: DiamondStyle) {
         let label = CATextLayer()
         label.name = "bar-count"
         label.string = count
         label.fontSize = 9
         label.alignmentMode = .center
-        label.foregroundColor = UIColor.black.cgColor
+        label.foregroundColor = (style == .shared ? Self.sharedBlue : UIColor.black).cgColor
         label.contentsScale = scale
         label.frame = CGRect(x: center.x - Self.crowdedHalf, y: center.y - 5.5, width: Self.crowdedHalf * 2, height: 11)
         marksLayer.addSublayer(label)

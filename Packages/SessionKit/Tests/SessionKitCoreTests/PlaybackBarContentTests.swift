@@ -35,6 +35,18 @@ final class PlaybackBarContentTests: XCTestCase {
         XCTAssertEqual(content.marks.map(\.position), [4_200, 9_000])
     }
 
+    func testChaptersComeFromTheMediaChaptersElseTheListeningMapScenes() {
+        let publisher = [chapter("ch-2", 900_000), chapter("ch-1", 0)]
+        let scenes = [chapter("scene-1", 0), chapter("scene-2", 600_000)]
+        XCTAssertEqual(PlaybackBarContent.chapterStartsMs(mediaChapters: publisher, scenes: scenes), [0, 900_000])
+        XCTAssertEqual(PlaybackBarContent.chapterStartsMs(mediaChapters: [], scenes: scenes), [0, 600_000],
+                       "a podcast with only a generated Listening Map still gets chapter segments")
+        let transcriptOnly = [chapter("ch-transcript-1", 0), chapter("item-ch-transcript-2", 300_000)]
+        XCTAssertEqual(PlaybackBarContent.chapterStartsMs(mediaChapters: transcriptOnly, scenes: scenes), [0, 600_000],
+                       "chapters that only mirror the transcript are not chapters")
+        XCTAssertEqual(PlaybackBarContent.chapterStartsMs(mediaChapters: [], scenes: []), [])
+    }
+
     func testASourceWithoutALengthHasNothingToDraw() {
         XCTAssertNil(PlaybackBarContent.media(durationMs: 0, chapterStartsMs: [0, 10], own: [], shared: []))
         XCTAssertNil(PlaybackBarContent.text(length: 0, chapterStartChars: [0, 10], own: [], shared: []))
@@ -56,6 +68,10 @@ final class PlaybackBarContentTests: XCTestCase {
     }
 
     // MARK: Fixtures
+
+    private func chapter(_ id: String, _ startMs: Int) -> MediaTimelineChapter {
+        MediaTimelineChapter(id: id, title: id, startMs: startMs, transcriptSegmentId: "segment")
+    }
 
     private func margin(
         id: String, target: InterjectionTargetType = .item, mediaTimeMs: Int? = nil, startChar: Int = 0

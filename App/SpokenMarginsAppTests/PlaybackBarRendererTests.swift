@@ -65,6 +65,18 @@ final class PlaybackBarRendererTests: XCTestCase {
         XCTAssertEqual(count?.string as? String, "12")
     }
 
+    func testTheCountOnACrowdedSharedStackCanBeReadOnItsDarkFill() throws {
+        let marks = (0..<12).map { mark("s\($0)", 1_800 + Double($0) * 0.1, .shared) }
+        let slider = makeSlider(content: content(chapterStarts: [], marks: marks))
+        let count = try XCTUnwrap(layers(named: "bar-count", in: slider).first as? CATextLayer)
+        XCTAssertEqual(count.string as? String, "12")
+        let colour = try XCTUnwrap(count.foregroundColor)
+        let outline = try XCTUnwrap(layers(named: "bar-diamond", in: slider).compactMap { $0 as? CAShapeLayer }.first { $0.lineWidth == 1.5 })
+        let stroke = try XCTUnwrap(outline.strokeColor)
+        XCTAssertEqual(colour.components, stroke.components, "the count uses the shared Margin's blue, not black on a dark fill")
+        XCTAssertNotEqual(colour.components, UIColor.black.cgColor.components)
+    }
+
     func testDiamondsLineUpWithTheThumbAtTheSamePosition() throws {
         let slider = makeSlider(content: content(chapterStarts: [], marks: [mark("a", 1_800, .own)]), value: 1_800)
         let track = slider.trackRect(forBounds: slider.bounds)

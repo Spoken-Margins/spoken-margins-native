@@ -1276,7 +1276,10 @@ struct PlaybackScreen: View {
         guard model.snapshot.itemId == model.selectedItem.id else { return nil }
         return PlaybackBarContent.media(
             durationMs: mediaDurationMs,
-            chapterStartsMs: visibleMediaChapters.map(\.startMs),
+            chapterStartsMs: PlaybackBarContent.chapterStartsMs(
+                mediaChapters: model.selectedItem.mediaChapters,
+                scenes: model.selectedItem.listeningMapScenes
+            ),
             own: model.selectedItem.interjections,
             shared: activeImportedMargins
         )
