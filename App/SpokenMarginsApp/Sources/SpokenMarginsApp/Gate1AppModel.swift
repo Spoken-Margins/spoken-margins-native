@@ -502,6 +502,9 @@ final class Gate1AppModel: ObservableObject {
 
     private(set) var engine: SessionEngine?
     private(set) var store: SQLiteSessionStore?
+    /// The UI-test seed this launch still has to write; nil once written and for a normal launch. Written even when
+    /// something opened the store before the root view bootstrapped the Library, else the last run's Library shows (#1175).
+    var pendingUITestingSeed: UITestingLaunchSeed? = UITestingHooks.seed.writesLibrary ? UITestingHooks.seed : nil
     lazy var listeningSignals = ListeningSignalsCoordinator(repository: { [weak self] in self?.store })
     private var databaseURLOverride: URL?
     let gate2CompactControls: Gate2CompactControlController
@@ -1285,17 +1288,18 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func bootstrapLibraryIfNeeded() {
-        guard libraryItems.isEmpty, store == nil else { return }
+        guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
         do {
             let store = try requireStore()
             libraryAccessError = nil
             purgeExpiredEpisodeMapPreparationJobs(store: store)
-            switch UITestingHooks.seed {
+            let seed = pendingUITestingSeed ?? UITestingLaunchSeed.none; pendingUITestingSeed = nil
+            switch seed {
             case .none, .keepLibrary: break
             case .fixture: resetAndSeed(); return
             case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
             case .text, .offlinePodcast:
-                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(UITestingHooks.seed, into: store)); return
+                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(seed, into: store)); return
             }
             var rows = try loadLibraryRows(store: store)
             libraryWasEmptyAtLaunch = rows.isEmpty
@@ -1390,14 +1394,9 @@ final class Gate1AppModel: ObservableObject {
         if item.mediaType == "text" { liveSpeechFallbackItemIds.insert(item.id) }
         snapshot = SessionSnapshot()
         libraryItems = try loadLibraryRows(store: store)
-        recentlyDeletedItems = []
-        dismissTrashUndo()
+        recentlyDeletedItems = []; dismissTrashUndo()
         selectedItem = try loadItemDetail(id: item.id, store: store)
-        diagnostics = [
-            "runtimeProfile": selectedProfileId,
-            "uiTestFixture": item.id,
-            "speechRate": String(format: "%.2f", speechRate)
-        ]
+        diagnostics = ["runtimeProfile": selectedProfileId, "uiTestFixture": item.id, "speechRate": String(format: "%.2f", speechRate)]
         reportSuccess("Loaded UI test item \(item.title).")
     }
 
