@@ -196,6 +196,9 @@ public final class EPUBParser: @unchecked Sendable {
             if case .malformedPackage = error { throw EPUBImportError.unsupportedEncryption }
             throw error
         }
+        // Linux's parser reports no error for a document cut off mid-way, so an element that never
+        // closed is a file that can't be trusted to list everything.
+        guard delegate.depth == 0 else { throw EPUBImportError.unsupportedEncryption }
         return EncryptionManifest(resources: delegate.resources)
     }
 
