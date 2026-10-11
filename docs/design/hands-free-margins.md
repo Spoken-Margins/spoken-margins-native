@@ -45,7 +45,7 @@ At the end of the episode, the recap row offers **Replay today's Margins**. Each
 | Source | Paused (not ducked). The anchor is saved first. | `SessionEngine.swift:1256-1295` |
 | Microphone | The session switches to `playAndRecord` with Bluetooth headset input allowed, so AirPods or a car's microphone are used automatically. | `AudioAdapters.swift:3304-3310` |
 | While recording | A full-screen recording view with a timer. Every remote command (AirPods, car, Lock Screen play/pause) is dropped. | `Gate1RootView.swift:19`, `Gate1AppModel.swift:9596-9599` |
-| Finish | Only the on-screen Save & resume button (at the top, out of thumb reach; #148 moves it). | `ExperienceRecordingScreen.swift:107-116` |
+| Finish | Only the on-screen Save & resume button (in the bottom row where Add a Margin was, with Cancel small on its left; #148). | `ExperienceRecordingScreen.swift` (`finishControl`) |
 | Resume | At exactly the saved spot, with no step back. | `SessionEngine.swift:1666-1669` |
 | Afterwards | Transcribed on the device in the background. Podcast anchor evidence is captured either side of the pause. | `Gate1AppModel.swift:12781`, `SessionEngine.swift:1631-1656` |
 | Later | The Margin appears on the timeline. "Play this moment" plays a 30-second lead-in, then the Margin, then carries on. | `MarginMoment.swift:26-60`, `MarginMomentConductor.swift` |
