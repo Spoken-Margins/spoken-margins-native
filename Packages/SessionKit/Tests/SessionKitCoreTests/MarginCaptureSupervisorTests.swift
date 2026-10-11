@@ -216,6 +216,48 @@ final class MarginCaptureSupervisorTests: XCTestCase {
         XCTAssertEqual(supervisor.saveVerdict(reading: reading(capturedMs: 22), nowMs: 34_000), .discardEmpty)
     }
 
+    // MARK: Interrupted by a call, Siri or lost headphones (#771)
+
+    /// What the phone does: the polls saw 22 ms for ten seconds, then the call stops the recorder. Its
+    /// reading afterwards is "stopped, length unknown", which `saveVerdict` keeps. The interruption verdict
+    /// goes by what the polls saw.
+    func testACallAfterTenSecondsOfNothingDiscardsInsteadOfKeepingAnUnmeasuredFile() {
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        var nowMs = 0
+        while nowMs <= 10_000 {
+            _ = supervisor.observe(reading(capturedMs: 22), nowMs: nowMs)
+            nowMs += 250
+        }
+        let afterTheCall = reading(running: false, capturedMs: 22, durationKnown: false)
+        XCTAssertEqual(supervisor.saveVerdict(reading: afterTheCall, nowMs: 10_000), .saveCutShort, "the fresh reading cannot tell")
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 10_000), .discardEmpty)
+    }
+
+    func testACallAfterSpeechKeepsItCutShort() {
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        _ = supervisor.observe(reading(capturedMs: 4_900), nowMs: 5_000)
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 5_100), .saveCutShort)
+        // The recorder reads 0 once it stops; what the polls saw still counts.
+        _ = supervisor.observe(reading(running: false, capturedMs: 0, durationKnown: false), nowMs: 5_250)
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 5_250), .saveCutShort)
+    }
+
+    func testACallBeforeTheJudgingTimeOrWithNoReadingsIsLeftToThePolicy() {
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 60_000), .saveCutShort, "a recorder that can't be read says nothing about audio")
+        _ = supervisor.observe(reading(capturedMs: 0), nowMs: 250)
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 1_000), .saveCutShort, "too brief to judge")
+    }
+
+    func testARestartedRecordingIsJudgedFromTheRestart() {
+        var supervisor = MarginCaptureSupervisor(beganAtMs: 0)
+        _ = supervisor.observe(reading(capturedMs: 4_000), nowMs: 4_000)
+        supervisor.captureRestarted(nowMs: 5_000)
+        _ = supervisor.observe(reading(capturedMs: 0), nowMs: 5_250)
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 5_500), .saveCutShort, "a quarter second into the new recording")
+        XCTAssertEqual(supervisor.interruptionVerdict(nowMs: 7_000), .discardEmpty, "and 2 s in with nothing captured")
+    }
+
     func testAShortRecordingIsTooBriefToJudge() {
         let supervisor = MarginCaptureSupervisor(beganAtMs: 0)
         XCTAssertEqual(supervisor.saveVerdict(reading: reading(capturedMs: 0), nowMs: 1_000), .save)

@@ -711,11 +711,12 @@ class T3PreparationTests(unittest.TestCase):
             self.assertIn('runtime', commands[0])
             self.assertNotIn('--device', commands[0])
 
-    def test_a_clone_boot_uses_the_guard_without_first_boot_tolerance(self):
+    def test_a_clone_boot_gets_the_first_boot_tolerance_because_the_clone_never_booted(self):
+        """#1359: with first_boot=False every cloned T3 boot stopped on SpringBoard's early change."""
         import lane_sim
         with mock.patch.object(lane_sim, 'boot') as boot:
             self.assertIsNone(lane.boot_t3_device('clone', None)[0])
-        self.assertFalse(boot.call_args.kwargs['first_boot'])
+        self.assertTrue(boot.call_args.kwargs['first_boot'])
 
 
 class LostDeviceTests(unittest.TestCase):

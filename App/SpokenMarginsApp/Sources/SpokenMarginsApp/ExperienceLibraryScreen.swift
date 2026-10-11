@@ -8,6 +8,7 @@ struct ExperienceLibraryScreen: View {
 
     @Binding var addSourceRoute: AddSourceRoute?
     @State private var isAudioPreparationQueuePresented = false
+    @State private var collectionItem: LibraryItemRow?
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -48,6 +49,10 @@ struct ExperienceLibraryScreen: View {
         .accessibilityIdentifier("library.screen")
         .sheet(isPresented: $isAudioPreparationQueuePresented) {
             ExperienceAudioPreparationQueueScreen()
+                .environmentObject(model)
+        }
+        .sheet(item: $collectionItem) { item in
+            ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }
     }
@@ -329,6 +334,7 @@ struct ExperienceLibraryScreen: View {
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+                    onAddToCollection: { collectionItem = row },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
                 .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
@@ -353,6 +359,7 @@ private struct ExperienceLibraryCompactRow: View {
     let onComplete: () -> Void
     let onMarkUnfinished: () -> Void
     let onPrepareOffline: () -> Void
+    let onAddToCollection: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -440,6 +447,7 @@ private struct ExperienceLibraryCompactRow: View {
             if row.offlineState != .readyOffline {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
             }
+            Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
@@ -475,6 +483,7 @@ private struct ExperienceLibraryCompactRow: View {
             }
         }
         .accessibilityAction(named: "Prepare Offline", onPrepareOffline)
+        .accessibilityAction(named: "Add to Collection", onAddToCollection)
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }
 
