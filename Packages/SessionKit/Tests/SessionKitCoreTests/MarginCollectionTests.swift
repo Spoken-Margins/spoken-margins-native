@@ -141,7 +141,7 @@ final class MarginCollectionTests: XCTestCase {
         let refresh = String(model[start.lowerBound..<end.lowerBound])
         XCTAssertTrue(refresh.contains(#"diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))""#))
         var remainder = refresh[...]
-        for fragment in ["let entries = try MarginCollection.build(", "sharedMarginRows = entries.sharedRows.map", "marginRows = entries.privateRows.map", "marginNotesDelivery.deliverSoon()", "} catch {"] {
+        for fragment in ["let entries = try MarginCollection.build(", "sharedMarginRows = entries.sharedRows.map", "marginRows = entries.privateRows.map", "marginOutput.deliverSoon()", "} catch {"] {
             let range = try XCTUnwrap(remainder.range(of: fragment), fragment)
             remainder = remainder[range.upperBound...]
         }

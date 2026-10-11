@@ -215,8 +215,8 @@ final class Gate1AppModel: ObservableObject {
 
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
-    @Published private(set) var feedbackEvent: UserFeedbackEvent?
-    @Published private(set) var itemFailures = ItemFailureLog()
+    @Published var feedbackEvent: UserFeedbackEvent?
+    @Published var itemFailures = ItemFailureLog()
     @Published var exportPreview = ""
     @Published private(set) var exportFileURL: URL?
     @Published private(set) var exportShareCandidates: [Interjection] = []
@@ -232,11 +232,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var batchExportFilter: BatchSessionExportFilter = .withInterjections
     @Published var selectedBatchExportSessionIds: Set<String> = []
     @Published private(set) var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
-    /// The notes folder has its own setting (#930); the first launch with it copies the export folder.
-    @Published private(set) var marginNotesFolderName: String = {
-        SavedFolderSetting.separateMarginNotesFromSessionExport()
-        return SavedFolderSetting.marginNotes.name() ?? "No folder selected"
-    }()
     @Published private(set) var batchExportResult: BatchSessionExportResult?
     @Published private(set) var isWritingBatchExport = false
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
@@ -388,19 +383,14 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var sourceLinkImportMessage: String?
     @Published var sourceLinkSafariOffer: OpenInSafariOffer? // #145, set in Gate1AppModel+PasteAndGo.swift
     @Published private(set) var selectedListeningEdition: ListeningEdition?
-    @Published var automaticMarginOutputEnabled = UserDefaults.standard.bool(forKey: "automaticMarginOutputEnabled")
-    @Published var marginOutputStatus = MarginOutputStatus("Choose a folder and send a test note before enabling automatic delivery.")
     @Published private(set) var isImportingReadLater = false
     let readwiseHighlightSync = ReadwiseHighlightSync()
-    private(set) lazy var marginNotesDelivery = MarginNotesDelivery(
-        isEnabled: { [weak self] in self?.automaticMarginOutputEnabled == true && self?.store != nil },
+    /// Margin Output (#492): every notes destination, its settings and its delivery loop.
+    private(set) lazy var marginOutput = MarginOutputCoordinator(
+        store: { [weak self] in self?.store },
         isRecording: { [weak self] in self?.snapshot.isRecording == true },
-        target: { [weak self] in
-            guard let self else { throw CancellationError() }
-            return try self.marginNotesTarget()
-        },
-        report: { [weak self] in self?.marginOutputStatus = $0 },
-        recordGather: { [weak self] in self?.recordAutomaticMarginGather(ms: $0, sessions: $1, notes: $2) }
+        recordGather: { [weak self] in self?.recordAutomaticMarginGather(ms: $0, sessions: $1, notes: $2) },
+        databaseURLOverride: databaseURLOverride
     )
     @Published var listeningMapJSON = ""
     @Published var isGeneratingListeningMap = false
@@ -1266,7 +1256,7 @@ final class Gate1AppModel: ObservableObject {
 
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
         if entersBackground { narrationStartupProtection.appEnteredBackground() }
-        marginNotesDelivery.finishBeforeBackground(); readwiseHighlightSync.stop()
+        marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         syncPlaybackProgressForLifecycle()
         refreshLockScreenSurfacesForLifecycle()
@@ -1411,7 +1401,7 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameActive() {
         narrationStartupProtection.appEnteredForeground()
         openReadyListeningEdition()
-        marginNotesDelivery.start(); readwiseHighlightSync.start { [weak self] in self?.store }
+        marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
         supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
         let refreshedAvailability = localFoundationModelClient.availability()
@@ -1494,7 +1484,7 @@ final class Gate1AppModel: ObservableObject {
             // Library rows refresh asynchronously on navigation. Retrieval must
             // use durable membership so freshly imported items are not omitted.
             let entries = try MarginCollection.build(
-                items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) },
+                items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) }, loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
                 loadInterjections: { try store.loadInterjections(sessionId: $0) },
                 loadImportedLayers: { try store.loadImportedCommentaryLayers() },
                 loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) }
@@ -1506,7 +1496,7 @@ final class Gate1AppModel: ObservableObject {
             marginRows = entries.privateRows.map {
                 MarginRow(interjection: $0.interjection, itemTitle: $0.itemTitle, sessionDate: $0.sessionDate, place: $0.place)
             }
-            marginNotesDelivery.deliverSoon() // A Margin or its transcript may be new (#171).
+            marginOutput.deliverSoon() // A Margin or its transcript may be new (#171).
         } catch {
             diagnostics["marginRefresh"] = "failed:\(String(describing: type(of: error)))"
         }
@@ -2735,6 +2725,11 @@ final class Gate1AppModel: ObservableObject {
     static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
+        let item = try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        return try finishBackgroundBrowserTextImport(item, handoff: handoff)
+    }
+
+    func browserTextImportEngine() throws -> SessionEngine {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -2742,8 +2737,11 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
-        libraryItems = try loadLibraryRows(store: store)
+        return engine
+    }
+
+    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
+        libraryItems = try loadLibraryRows(store: try requireStore())
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
         if let structure = item.documentStructure {
@@ -2751,23 +2749,6 @@ final class Gate1AppModel: ObservableObject {
         }
         markOnboardingSteps(onboardingSteps(for: handoff))
         return item.id
-    }
-
-    private func recordPDFExtractionDiagnostics(_ structure: PDFDocumentStructure) {
-        diagnostics["lastPDFExtractionEngine"] = structure.extractionEngine.rawValue
-        diagnostics["lastPDFAnalysisStatus"] = structure.analysisStatus.rawValue
-        diagnostics["lastPDFPageCount"] = "\(structure.pageCount)"
-        diagnostics["lastPDFAnalyzedPageCount"] = "\(structure.analyzedPageCount)"
-        diagnostics["lastPDFTableCount"] = "\(structure.tables.count)"
-    }
-
-    private func onboardingSteps(for handoff: BrowserTextHandoff) -> Set<OnboardingStep> {
-        switch handoff.captureMode {
-        case .markdownFile, .plainTextFile:
-            return [.addedOwnSource, .addedFromFiles]
-        case .selectedText, .readablePage:
-            return [.addedOwnSource, .addedFromSafari]
-        }
     }
 
     func configureQuickAccessFolder(url: URL) {
@@ -4423,7 +4404,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var hasBatchExportFolder: Bool { SavedFolderSetting.sessionExport.hasFolder() }
-    var hasMarginNotesFolder: Bool { SavedFolderSetting.marginNotes.hasFolder() }
 
     func toggleBatchExportSelection(sessionId: String) {
         if selectedBatchExportSessionIds.contains(sessionId) {
@@ -4582,6 +4562,7 @@ final class Gate1AppModel: ObservableObject {
             // Completion is an item-level fact, not fabricated listening history.
             guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
             listeningSignals.finish(itemId: id)
+            marginOutput.noteCompletion(ofItem: id) // One note per item mode (#587).
             try refreshLibraryRows(store: store)
             if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
             presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())
@@ -5708,19 +5689,6 @@ final class Gate1AppModel: ObservableObject {
             reportSuccess("Export folder set to \(url.lastPathComponent).")
         } catch {
             reportFailure(error, context: "Export folder setup failed")
-        }
-    }
-
-    /// Sets the "Save Margins to Notes Folder" destination. A new destination ID makes delivery treat
-    /// it as a fresh folder, so existing Margins are written there, as the setting says.
-    func configureMarginNotesFolder(url: URL) {
-        do {
-            try SavedFolderSetting.marginNotes.save(folder: url)
-            UserDefaults.standard.set(UUID().uuidString, forKey: "marginOutputDestinationID")
-            marginNotesFolderName = url.lastPathComponent
-            marginOutputStatus = MarginOutputStatus("Notes folder set to \(url.lastPathComponent).")
-        } catch {
-            reportFailure(error, context: "Notes folder setup failed")
         }
     }
 
@@ -8012,28 +7980,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func automaticMarginOutputChanged() {
-        UserDefaults.standard.set(automaticMarginOutputEnabled, forKey: "automaticMarginOutputEnabled")
-        if automaticMarginOutputEnabled { marginNotesDelivery.start() }
-        else { marginNotesDelivery.stop(); marginOutputStatus = MarginOutputStatus("Automatic delivery is off. Exported files remain in your folder.") }
-    }
-
-    func testMarginOutput() {
-        Task {
-            do {
-                guard let folder = resolvedFolderURL(.marginNotes) else { throw EditionError.invalid("Choose an output folder first.") }
-                marginOutputStatus = try await marginNotesDelivery.sendTestNote(to: folder, destinationID: marginOutputDestinationID)
-            } catch { marginOutputStatus = .failure(error.localizedDescription) }
-        }
-    }
-
-    private var marginOutputDestinationID: String {
-        UserDefaults.standard.string(forKey: "marginOutputDestinationID") ?? "initial"
-    }
-    private func marginNotesTarget() throws -> MarginNotesDelivery.Target {
-        guard let store, let folder = resolvedFolderURL(.marginNotes) else { throw EditionError.invalid("Choose or reselect an output folder. Your Margins remain safely in the Library.") }
-        return .init(store: store, folder: folder, destinationID: marginOutputDestinationID)
-    }
     private var automaticMarginGatherMaxMs = 0
 
     private func recordAutomaticMarginGather(ms: Int, sessions: Int, notes: Int) {
@@ -8045,8 +7991,6 @@ final class Gate1AppModel: ObservableObject {
             recordDeveloperDiagnostic("marginOutput.gather", ["ms": String(ms), "sessions": String(sessions), "notes": String(notes)])
         }
     }
-
-    func deliverAutomaticMargins() async { await marginNotesDelivery.pass() }
 
     @discardableResult
     func run(_ operation: (SessionEngine) throws -> Void) -> Bool {
@@ -11227,56 +11171,6 @@ final class Gate1AppModel: ObservableObject {
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return "item-obsidian-\(Int(Date().timeIntervalSince1970))-\(index)-\(base.isEmpty ? "clip" : base)"
-    }
-
-    func reportSuccess(_ message: String) {
-        statusMessage = message
-        lastError = nil
-        diagnostics["lastStatus"] = message
-        diagnostics["recentFailure"] = "none"
-    }
-
-    /// Records a successful outcome and presents it only when the result is not
-    /// otherwise apparent from the current interface.
-    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil) {
-        reportSuccess(message)
-        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action))
-    }
-
-    /// Presents degraded-but-successful behavior without styling it as either a
-    /// normal confirmation or a failure.
-    func reportWarning(_ message: String) {
-        statusMessage = message
-        lastError = nil
-        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
-        diagnostics["lastStatus"] = message
-        diagnostics["recentFailure"] = "none"
-    }
-
-    func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
-        let message: String
-        if let urlError = error as? URLError {
-            message = Self.userFacingMessage(for: urlError)
-        } else if let localized = error as? LocalizedError,
-           let description = localized.errorDescription {
-            message = description
-        } else {
-            message = String(describing: error)
-        }
-        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
-    }
-
-    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
-        statusMessage = "Error"
-        lastError = message
-        presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
-        itemFailures.record(message, itemId: itemId, visibleItemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
-        diagnostics["recentFailure"] = message
-    }
-
-    func presentFeedback(_ event: UserFeedbackEvent) {
-        guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
-        feedbackEvent = event
     }
 
     func refreshSelectedItem() {

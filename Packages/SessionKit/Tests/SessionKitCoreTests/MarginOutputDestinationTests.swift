@@ -85,6 +85,29 @@ final class MarginOutputDestinationTests: XCTestCase {
         XCTAssertFalse(loaded.isEnabled, "An unreadable scope must not start delivering everything")
     }
 
+    func testTheNoteShapeRoundTripsAndAnOlderFileMeansEachMargin() throws {
+        let since = Date(timeIntervalSince1970: 1_777_000_000)
+        let item = MarginOutputDestination(id: "i", name: "Item notes", bookmark: Data([1]), shape: .itemOnCompletion, itemNotesSince: since)
+        try store.save([item])
+        let loaded = try XCTUnwrap(try store.load()?.first)
+        XCTAssertEqual(loaded, item)
+        XCTAssertEqual(loaded.content.shape, .itemOnCompletion)
+        XCTAssertEqual(loaded.content.itemNotesSince, since)
+
+        try write(#"{"destinations": [{"id": "x", "name": "Older", "bookmark": "AAEC"}]}"#)
+        let older = try XCTUnwrap(try store.load()?.first)
+        XCTAssertEqual(older.shape, .eachMargin)
+        XCTAssertNil(older.itemNotesSince)
+        XCTAssertTrue(older.isEnabled)
+    }
+
+    func testAShapeFromANewerBuildLoadsPausedInsteadOfGuessing() throws {
+        try write(#"{"destinations": [{"id": "x", "name": "Future", "bookmark": "AAEC", "shape": "item_weekly_digest"}]}"#)
+        let loaded = try XCTUnwrap(try store.load()?.first)
+        XCTAssertEqual(loaded.shape, .eachMargin)
+        XCTAssertFalse(loaded.isEnabled)
+    }
+
     func testUnreadableEnabledFlagLoadsPaused() throws {
         try write(#"{"destinations": [{"id": "x", "name": "A", "bookmark": "AAEC", "isEnabled": "paused-until-monday"}]}"#)
         XCTAssertEqual(try store.load()?.first?.isEnabled, false)

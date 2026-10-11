@@ -893,9 +893,51 @@ public final class SessionEngine {
         return item
     }
 
+    /// The same import, except a re-imported PDF's upgrade is planned off the main actor, so a long PDF with many
+    /// Margins never freezes the app while the plan runs (#556). Only the plan (reading every session and Margin,
+    /// placing each anchor in the new text) leaves the main actor, and it holds the store and values, never the
+    /// engine. The write is one short transaction back on the main actor, together with the "is the listener
+    /// in this item?" check, as before: a write off the main actor could not be made atomic with the engine's
+    /// state (a paused item opened, or played, between the plan and the write would keep the old text and
+    /// write its old position over the moved one). If the item was opened or anything the plan read changed
+    /// (the store re-checks inside the transaction), nothing is written and the new text becomes its own
+    /// edition, as it does for a PDF that can't move.
+    @MainActor
+    @discardableResult
+    public func importBrowserTextInBackgroundOffMain(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
+        try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
+        var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
+        if case .upgradeCandidate(let job) = outcome {
+            let planned = try await Task.detached(priority: .userInitiated) { try job.plan() }.value
+            if case .success(let upgrade) = planned, currentSession?.itemId != job.existing.id {
+                do {
+                    try job.apply(upgrade)
+                    // The transaction wrote it; the engine re-saves the row in the form it keeps it in.
+                    try saveItem(upgrade.item)
+                    forgetDocumentCaches(itemId: upgrade.item.id)
+                    return upgrade.item
+                } catch StructuredDocumentUpgradeError.changedSincePlanned {}
+            }
+            outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .skip)
+        }
+        guard case .records(let item, let deterministicMap, let document) = outcome else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+        try saveItem(item)
+        if let deterministicMap {
+            try repository.saveListeningMap(deterministicMap)
+        }
+        try saveStructuredDocument(document, itemId: item.id)
+        return item
+    }
+
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
         guard let document, let store = repository as? StructuredDocumentRepository else { return }
         try store.saveStructuredDocument(document, itemId: itemId)
+        forgetDocumentCaches(itemId: itemId)
+    }
+
+    private func forgetDocumentCaches(itemId: String) {
         // The cache may hold "no document" for this item's text (#220 audit 5).
         if listenableCache?.itemId == itemId { listenableCache = nil }
         if exportPageDocumentCache?.itemId == itemId { exportPageDocumentCache = nil }
@@ -3923,6 +3965,53 @@ public final class SessionEngine {
         _ handoff: BrowserTextHandoff,
         structuredDocument: StructuredDocument? = nil
     ) throws -> (Item, ListeningMap?, StructuredDocument?) {
+        guard case .records(let item, let map, let document) = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
+            throw SessionKitError.invalidCommandForState("importBrowserText")
+        }
+        return (item, map, document)
+    }
+
+    /// Where a re-imported PDF's move to the new extraction (C1 M3 step 5) is planned and written.
+    private enum StructuredUpgradeMode {
+        /// Here and now, as the synchronous imports do.
+        case inline
+        /// Hand it back as an `upgradeCandidate` for the caller to run off the main actor.
+        case deferred
+        /// Don't try; the new text becomes its own edition.
+        case skip
+    }
+
+    private enum BrowserTextImportOutcome {
+        case records(Item, ListeningMap?, StructuredDocument?)
+        case upgradeCandidate(StructuredUpgradeJob)
+    }
+
+    /// Everything the upgrade needs, and nothing of the engine's, so the plan can run on any thread. The store is
+    /// `Sendable` (SQLite serializes on its connection lock), and the rest is values.
+    private struct StructuredUpgradeJob: Sendable {
+        let repository: any (SessionRepository & StructuredDocumentRepository)
+        let existing: Item
+        let document: StructuredDocument
+
+        func plan() throws -> Result<StructuredDocumentUpgrade, StructuredDocumentUpgrader.StaysBecause> {
+            try StructuredDocumentUpgrader.plan(
+                existing: existing,
+                document: document,
+                listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
+                repository: repository
+            )
+        }
+
+        func apply(_ upgrade: StructuredDocumentUpgrade) throws {
+            try repository.applyStructuredDocumentUpgrade(upgrade)
+        }
+    }
+
+    private func browserTextImportOutcome(
+        _ handoff: BrowserTextHandoff,
+        structuredDocument: StructuredDocument? = nil,
+        upgrade mode: StructuredUpgradeMode
+    ) throws -> BrowserTextImportOutcome {
         let fallbackTitle = cleanedBrowserTextTitle(handoff.source.title, url: handoff.source.url)
         let sourceExtension = URL(string: handoff.source.url)?.pathExtension.lowercased()
         // A v2 document only comes from a PDF, whatever its URL looks like
@@ -3960,23 +4049,21 @@ public final class SessionEngine {
                 // existing item to it when every Margin and position lands on the same
                 // words (I13 rule 1d). Otherwise it stays, and the new text becomes
                 // its own edition as before.
-                if let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
-                   let store = repository as? any (SessionRepository & StructuredDocumentRepository),
-                   case .success(let upgrade) = try StructuredDocumentUpgrader.plan(
-                       existing: existing,
-                       document: document,
-                       listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
-                       repository: store
-                   ) {
-                    try store.applyStructuredDocumentUpgrade(upgrade)
-                    return (upgrade.item, upgrade.listeningMap, document)
+                if mode != .skip, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
+                   let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
+                    let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
+                    if mode == .deferred { return .upgradeCandidate(job) }
+                    if case .success(let upgrade) = try job.plan() {
+                        try job.apply(upgrade)
+                        return .records(upgrade.item, upgrade.listeningMap, document)
+                    }
                 }
                 let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
                 itemId += "-edition-\(digest)"
             }
             if var existing = try existingItem(id: itemId) {
                 existing.deletedAt = nil
-                return (existing, try repository.loadListeningMap(itemId: itemId), document)
+                return .records(existing, try repository.loadListeningMap(itemId: itemId), document)
             }
         }
         let mapPolicy: DeterministicListeningMapPolicy = isPDF
@@ -4005,7 +4092,7 @@ public final class SessionEngine {
             createdAt: Date(),
             documentStructure: handoff.documentStructure
         )
-        return (item, deterministicMap, document)
+        return .records(item, deterministicMap, document)
     }
 
     private func existingItem(id: String) throws -> Item? {

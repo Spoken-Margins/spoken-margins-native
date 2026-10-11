@@ -711,7 +711,8 @@ struct PlaybackScreen: View {
                             mediaScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback
+                    preparedFraction: model.renderedFractionForPlayback,
+                    barContent: mediaBarContent
                 )
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
@@ -756,7 +757,8 @@ struct PlaybackScreen: View {
                             textScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback
+                    preparedFraction: model.renderedFractionForPlayback,
+                    barContent: textBarContent
                 )
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
@@ -1267,6 +1269,40 @@ struct PlaybackScreen: View {
             return (turn.rawText ?? "").count
         }
         return model.selectedItem.text.count
+    }
+
+    /// The chapters and Margins the bar draws for a playing podcast, where the Timeline lists them (#428).
+    private var mediaBarContent: PlaybackBarContent? {
+        guard model.snapshot.itemId == model.selectedItem.id else { return nil }
+        return PlaybackBarContent.media(
+            durationMs: mediaDurationMs,
+            chapterStartsMs: PlaybackBarContent.chapterStartsMs(
+                mediaChapters: model.selectedItem.mediaChapters,
+                scenes: model.selectedItem.listeningMapScenes
+            ),
+            own: model.selectedItem.interjections,
+            shared: activeImportedMargins
+        )
+    }
+
+    /// The same for a text source. A spoken summary or reply has its own text and no bar content.
+    private var textBarContent: PlaybackBarContent? {
+        guard model.snapshot.itemId == model.selectedItem.id,
+              model.snapshot.targetType != TargetType.assistantTurnTTS.rawValue,
+              model.snapshot.targetType != TargetType.summaryTurnTTS.rawValue
+        else { return nil }
+        return PlaybackBarContent.text(
+            length: textLength,
+            chapterStartChars: model.selectedItem.chapters.map(\.startChar),
+            own: model.selectedItem.interjections,
+            shared: activeImportedMargins
+        )
+    }
+
+    private var activeImportedMargins: [ImportedCommentaryInterjection] {
+        model.selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil }
+            .flatMap { model.selectedItem.importedCommentaryInterjections[$0.id] ?? [] }
     }
 
     private var canonicalTextOffset: Double {

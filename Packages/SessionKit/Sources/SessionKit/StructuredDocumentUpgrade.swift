@@ -15,6 +15,21 @@ public struct StructuredDocumentUpgrade: Sendable {
     public var interjections: [Interjection]
     /// Sessions with their positions moved to the same place in the new text.
     public var sessions: [Session]
+    /// What the plan read. A store that applies the upgrade checks inside its transaction that none of it
+    /// changed, so a plan made off the main thread can't overwrite a Margin saved while it was running.
+    public var basis: Basis?
+
+    public struct Basis: Equatable, Sendable {
+        /// The whole row, not just its text: the write replaces it, so any other field changed meanwhile would be lost.
+        var item: Item
+        var sessions: [Session]
+        var margins: [Interjection]
+    }
+}
+
+public enum StructuredDocumentUpgradeError: Error, Equatable, Sendable {
+    /// The item, its sessions or its Margins changed between planning and applying.
+    case changedSincePlanned
 }
 
 /// Step 5 of C1 M3: when a PDF imported under an older extraction is imported
@@ -32,6 +47,38 @@ public enum StructuredDocumentUpgrader {
         case positionNotPlaced(sessionIds: [String])
     }
 
+    /// Called by a store inside the transaction that applies `upgrade`.
+    public static func requireUnchangedSincePlanned(
+        _ upgrade: StructuredDocumentUpgrade,
+        repository: SessionRepository & StructuredDocumentRepository
+    ) throws {
+        guard let basis = upgrade.basis else { return }
+        guard try currentBasis(itemId: upgrade.item.id, repository: repository) == basis else {
+            throw StructuredDocumentUpgradeError.changedSincePlanned
+        }
+    }
+
+    /// The item row plus every session and Margin on it, in a fixed order; nil when something the
+    /// upgrade cannot carry (imported Margins, prepared audio, a deleted item) is now present.
+    private static func currentBasis(itemId: String, repository: SessionRepository & StructuredDocumentRepository) throws -> StructuredDocumentUpgrade.Basis? {
+        let item: Item
+        do { item = try repository.loadItem(id: itemId) }
+        catch SessionKitError.missingFixture { return nil }
+        guard item.deletedAt == nil,
+              try repository.loadImportedCommentaryLayers(itemId: itemId).isEmpty,
+              try repository.loadPreparedAudioManifests(itemId: itemId).isEmpty else { return nil }
+        let (sessions, margins) = try sessionsAndMargins(itemId: itemId, repository: repository)
+        return StructuredDocumentUpgrade.Basis(item: item, sessions: sessions, margins: margins)
+    }
+
+    private static func sessionsAndMargins(itemId: String, repository: SessionRepository & StructuredDocumentRepository) throws -> ([Session], [Interjection]) {
+        let sessions = try repository.loadSessions(itemId: itemId).sorted { $0.id < $1.id }
+        let margins = try sessions.flatMap { try repository.loadInterjections(sessionId: $0.id) }
+            .filter { $0.itemId == itemId }
+            .sorted { ($0.sessionId, $0.id) < ($1.sessionId, $1.id) }
+        return (sessions, margins)
+    }
+
     public static func plan(
         existing: Item,
         document: StructuredDocument,
@@ -45,9 +92,7 @@ public enum StructuredDocumentUpgrader {
         if try !repository.loadPreparedAudioManifests(itemId: existing.id).isEmpty {
             return .failure(.preparedAudio)
         }
-        let sessions = try repository.loadSessions(itemId: existing.id)
-        let margins = try sessions.flatMap { try repository.loadInterjections(sessionId: $0.id) }
-            .filter { $0.itemId == existing.id }
+        let (sessions, margins) = try sessionsAndMargins(itemId: existing.id, repository: repository)
         let nonText = margins.filter { $0.anchor.anchorType != .text }.map(\.id)
         guard nonText.isEmpty else { return .failure(.nonTextAnchor(marginIds: nonText)) }
 
@@ -105,7 +150,8 @@ public enum StructuredDocumentUpgrader {
         if listeningMap != nil { item.status = "ready" }
         return .success(StructuredDocumentUpgrade(
             item: item, listeningMap: listeningMap, document: document,
-            interjections: movedMargins, sessions: movedSessions
+            interjections: movedMargins, sessions: movedSessions,
+            basis: StructuredDocumentUpgrade.Basis(item: existing, sessions: sessions, margins: margins)
         ))
     }
 }
