@@ -109,6 +109,34 @@ final class ListeningSignalCollectorTests: XCTestCase {
         XCTAssertEqual(recorder.signals().map { $0.source.title }, ["Notes", "Renamed"])
     }
 
+    /// #1340: the item had no followed source when playback began, so the collector cached "none".
+    /// Then the item got the source link of a feed already followed, with the subscriptions untouched
+    /// and no stop in between. Only the item's own fields tell the collector to look again.
+    func testAnItemThatGainsAFollowedSourceMidPlaybackIsCreditedWithoutTheSubscriptionsChanging() throws {
+        try store.saveItem(Item(id: "plain", title: "Plain", mediaType: "article", text: "Words",
+                                externalReference: nil, status: "ready"))
+        let subscriptions = try store.loadFeedSubscriptions()
+        let collector = ListeningSignalCollector(recorder: recorder)
+        for second in 0...2 {
+            collector.playbackProgress(itemId: "plain", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.flush()
+        XCTAssertTrue(recorder.signals().isEmpty, "no followed source yet, so nothing to credit")
+
+        var item = try store.loadItem(id: "plain")
+        item.sourceURL = "https://example.com/feed"
+        try store.saveItem(item)
+        XCTAssertEqual(try store.loadFeedSubscriptions(), subscriptions)
+        for second in 10...12 {
+            collector.playbackProgress(itemId: "plain", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.endListening()
+        collector.flush()
+
+        XCTAssertEqual(recorder.signals().map(\.event), [.listened(seconds: 2)])
+        XCTAssertEqual(recorder.signals().map { $0.source.id }, ["source"])
+    }
+
     /// #1048 (PERSIST-11): the test above renames the subscription between the spells, which makes
     /// the collector re-resolve whatever stopping did. Here nothing about the follows changes, only
     /// the item's link to a feed entry, so a cache that survived the stop would keep the old entry.

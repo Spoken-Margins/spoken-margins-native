@@ -117,7 +117,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     /// Moves every quarantined row this build can decode back into `records`, with the id, kind and bytes it
     /// had when it was set aside (#1052). A row this build still can't decode stays in quarantine untouched,
-    /// as does one whose kind has no rule here or whose id a newer save has since taken in `records`. One
+    /// as does one whose kind has no rule here, whose id a newer save has since taken in `records`, or whose
+    /// listening map or canonical source has a live replacement for the item. One
     /// transaction: a failure puts everything back. No schema change, so an older build still opens the file.
     private func restoreQuarantinedRecords() throws {
         // Nearly every open has nothing set aside. Look first, so those opens never take the write lock.
@@ -150,12 +151,17 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         if Self.sessionScopedRecordKinds.contains(row.kind), let sessionId = columns.sessionId,
            !row.id.hasPrefix("\(sessionId)::") { return false }
         switch row.kind {
+        case "listening_map", "canonical_source":
+            // Their save paths replace every row for the item, even when the id changes.
+            // Keep the listener's replacement live and the old bytes safely set aside.
+            if let itemId = columns.itemId,
+               try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = ? AND item_id = ? LIMIT 1;", values: [row.kind, itemId]) { return false }
         case "imported_commentary_layer":
             // The same packet imported again while this layer was set aside is already in the Library.
-            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", value: row.payload) { return false }
+            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", values: [row.payload]) { return false }
         case "imported_commentary_interjection":
             // Its layer is restored first. One that isn't in the Library leaves the Margin set aside.
-            if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", value: row.payload) { return false }
+            if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", values: [row.payload]) { return false }
         default: break
         }
         var statement: OpaquePointer?
@@ -201,13 +207,15 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return true
     }
 
-    private func liveRecordExists(sql: String, value: String) throws -> Bool {
+    private func liveRecordExists(sql: String, values: [String]) throws -> Bool {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
             throw SessionKitError.persistenceFailed("prepare_quarantine_restore_check")
         }
         defer { sqlite3_finalize(statement) }
-        bind(statement, index: 1, value: value)
+        for (index, value) in values.enumerated() {
+            bind(statement, index: Int32(index + 1), value: value)
+        }
         return sqlite3_step(statement) == SQLITE_ROW
     }
 

@@ -1144,13 +1144,6 @@ struct PlaybackScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("playback.preparedAudio.status")
-                if model.canPlayLiveSpeechInstead {
-                    Button(action: model.playLiveSpeechInstead) {
-                        Label("Play Live Speech Instead", systemImage: "speaker.wave.2")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("playback.liveSpeechFallback.button")
-                }
             }
         }
         .padding(20)

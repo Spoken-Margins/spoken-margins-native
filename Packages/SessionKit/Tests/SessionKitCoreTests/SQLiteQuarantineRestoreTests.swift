@@ -123,6 +123,70 @@ final class SQLiteQuarantineRestoreTests: XCTestCase {
         XCTAssertEqual(try quarantinedRows(), quarantinedBefore, "and the older bytes are kept, not discarded")
     }
 
+    func testAnOldGeneratedMapDoesNotHideAManualMapSavedWhileItWasQuarantined() throws {
+        let writer = try SQLiteSessionStore(path: path)
+        let generated = ListeningMap(id: "map-item-1-generated", itemId: "item-1", overview: "Generated", chapters: [])
+        let manual = ListeningMap(id: "map-item-1-manual", itemId: "item-1", overview: "Manual", chapters: [
+            Chapter(id: "manual-chapter", title: "My chapter", startChar: 0, endChar: 5, percent: 0)
+        ])
+        try writer.saveListeningMap(generated)
+        try quarantineLikeAnOlderBuild(kind: "listening_map", id: generated.id)
+        try writer.saveListeningMap(manual)
+        let liveBefore = try liveRows()
+        let quarantinedBefore = try quarantinedRows()
+
+        for _ in 0..<3 {
+            let store = try SQLiteSessionStore(path: path)
+            XCTAssertEqual(try store.loadListeningMap(itemId: manual.itemId), manual)
+            XCTAssertEqual(try liveRows(), liveBefore, "only the listener's manual map remains live")
+            XCTAssertEqual(try quarantinedRows(), quarantinedBefore, "old map bytes, error and time are retained")
+        }
+    }
+
+    func testAnOldCanonicalSourceStaysQuarantinedWhenAnotherSourceForItsItemIsLive() throws {
+        let writer = try SQLiteSessionStore(path: path)
+        let old = canonicalSource(id: "source-old", itemId: "item-1")
+        let newer = canonicalSource(id: "source-new", itemId: "item-1")
+        try writer.saveCanonicalSource(old)
+        try quarantineLikeAnOlderBuild(kind: "canonical_source", id: old.id)
+        try writer.saveCanonicalSource(newer)
+        let liveBefore = try liveRows()
+        let quarantinedBefore = try quarantinedRows()
+
+        for _ in 0..<3 {
+            let store = try SQLiteSessionStore(path: path)
+            XCTAssertEqual(try store.loadCanonicalSource(itemId: newer.itemId), newer)
+            XCTAssertEqual(try liveRows(), liveBefore, "the save path allows only one source per item")
+            XCTAssertEqual(try quarantinedRows(), quarantinedBefore)
+        }
+    }
+
+    func testMapsAndCanonicalSourcesForOtherItemsDoNotPreventRestoration() throws {
+        let writer = try SQLiteSessionStore(path: path)
+        let map = ListeningMap(id: "map-item-1-generated", itemId: "item-1", overview: "Generated", chapters: [])
+        let source = canonicalSource(id: "source-item-1", itemId: "item-1")
+        try writer.saveListeningMap(map)
+        try writer.saveCanonicalSource(source)
+        let before = try liveRows()
+        try quarantineLikeAnOlderBuild(kind: "listening_map", id: map.id)
+        try quarantineLikeAnOlderBuild(kind: "canonical_source", id: source.id)
+        try writer.saveListeningMap(ListeningMap(id: "map-item-2-manual", itemId: "item-2", overview: "Manual", chapters: []))
+        try writer.saveCanonicalSource(canonicalSource(id: "source-item-2", itemId: "item-2"))
+
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(try store.loadListeningMap(itemId: "item-1"), map)
+        XCTAssertEqual(try store.loadCanonicalSource(itemId: "item-1"), source)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 0)
+        XCTAssertEqual(try liveRows().filter { $0[3] == "item-1" }.map { Array($0[0...4]) },
+                       before.map { Array($0[0...4]) }, "restore the original keys, columns and bytes")
+    }
+
+    private func canonicalSource(id: String, itemId: String) -> CanonicalSourcePackage {
+        CanonicalSourcePackage(id: id, itemId: itemId, sourceDocumentId: "document-\(id)", format: .plainText,
+                               title: id, navigation: [], segments: [], createdAt: Date(timeIntervalSince1970: 1))
+    }
+
     func testItemsSessionsAndImportedMarginsComeBackWithTheColumnsTheirSavePathSets() throws {
         let writer = try SQLiteSessionStore(path: path)
         try insert(kind: "item", id: "item-1", sessionId: nil, itemId: "item-1", payload: item)
