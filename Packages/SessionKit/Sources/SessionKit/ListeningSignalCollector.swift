@@ -14,6 +14,9 @@ public final class ListeningSignalCollector: @unchecked Sendable {
     private var cachedContext: ListeningSignalContext.Value?
     private var cachedSubscriptions: [FeedSubscription]?
     private var cachedItemKey: ItemKey?
+    /// The repository's revision of the item when `cachedItemKey` was read. While it stands still
+    /// the item is not read again, so a long article or PDF is not decoded twice a second.
+    private var cachedItemRevision: Int?
 
     /// The item fields `ListeningSignalContext` reads to find the followed source and feed entry.
     /// An item can gain a source link while the subscriptions stay as they were (#1340), so the
@@ -75,8 +78,17 @@ public final class ListeningSignalCollector: @unchecked Sendable {
             }
             // The item's own source fields can change too (a link added, a Library item matched to
             // a feed you already follow), with the subscriptions untouched, so they are keyed as well.
-            // A read that fails once keeps the last key, so a hiccup doesn't split the interval.
-            let itemKey = (try? repository.loadItem(id: itemId)).map(ItemKey.init) ?? self.cachedItemKey
+            // The item is read only when its repository says it was written since the last read (a
+            // repository that can't say is read every tick). A read that fails once keeps the last
+            // key and tries again next tick, so a hiccup doesn't split the interval.
+            let revision = (repository as? ItemRevisionReading)?.itemRevision(id: itemId)
+            let unchanged = revision != nil && revision == self.cachedItemRevision
+                && self.cachedItemId == itemId && self.cachedRepository === repository
+            var itemKey = self.cachedItemKey
+            if !unchanged, let item = try? repository.loadItem(id: itemId) {
+                itemKey = ItemKey(item)
+                self.cachedItemRevision = revision
+            }
             if self.cachedItemId != itemId || self.cachedRepository !== repository
                 || self.cachedSubscriptions != subscriptions || self.cachedItemKey != itemKey {
                 self.recorder.endListening()
@@ -142,5 +154,6 @@ public final class ListeningSignalCollector: @unchecked Sendable {
         cachedContext = nil
         cachedSubscriptions = nil
         cachedItemKey = nil
+        cachedItemRevision = nil
     }
 }

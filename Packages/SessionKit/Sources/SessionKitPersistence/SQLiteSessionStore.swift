@@ -15,6 +15,12 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     private var transactionDepth = 0
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
+    /// Its own lock, so a caller asking never waits behind a query holding `connectionLock`.
+    private let itemRevisionLock = NSLock()
+    private var itemRevisions: [String: Int] = [:]
+    /// Moved by `reset()`, which can remove any item.
+    private var itemRevisionBase = 0
 
     public init(path: String) throws {
         encoder.dateEncodingStrategy = .iso8601
@@ -89,6 +95,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             try execute("DELETE FROM records;")
             try execute("DELETE FROM quarantined_records;")
         }
+        itemRevisionLock.withLock { itemRevisionBase &+= 1 }
     }
 
     public func quarantinedRecordCount() throws -> Int {
@@ -110,7 +117,20 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func saveItem(_ item: Item) throws {
+        defer { noteItemWritten(item.id) }
         try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+    }
+
+    /// Moves whenever `saveItem`, `deleteItem(s)` or `reset` touched the item through this store, so
+    /// a caller that watches an item's fields can skip reading it while the number stands still.
+    /// It counts this connection's writes: another process writing the same file does not move it.
+    public func itemRevision(id: String) -> Int {
+        itemRevisionLock.withLock { itemRevisionBase &+ (itemRevisions[id] ?? 0) }
+    }
+
+    /// Called after the write, even a failed one, so a half-done write never hides a change.
+    private func noteItemWritten(_ id: String) {
+        itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1 }
     }
 
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
@@ -885,6 +905,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func deleteItem(id: String) throws {
+        defer { noteItemWritten(id) }
         // Turns are saved with a session id and no item id, so they are found through the item's
         // session rows. They go first, as their own statement: a single DELETE that also removed the
         // session rows could evaluate its subquery after those rows were gone and keep the turns
@@ -1318,6 +1339,8 @@ private struct ImportedWatchSyncEvent: Codable {
 /// "structured_document", one row per item and extraction version. No table or
 /// column changes, and schema_version stays 5: Build 29 selects records by kind
 /// and never reads this one, and deleting the item removes its rows.
+extension SQLiteSessionStore: ItemRevisionReading {}
+
 extension SQLiteSessionStore: StructuredDocumentRepository {
     static let structuredDocumentKind = "structured_document"
 
