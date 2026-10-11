@@ -225,6 +225,9 @@ final class MarginOutputCoordinatorTests: XCTestCase {
         let longAgo = Date(timeIntervalSince1970: 1_600_000_000)
         for file in files { try FileManager.default.setAttributes([.modificationDate: longAgo], ofItemAtPath: file.path) }
         let before = try files.map { try Data(contentsOf: $0) }
+        // One Margin's words changed after that write. Its note is the app's own, so migration must rewrite it in
+        // place; under a lost journal id it would be mistaken for a listener edit and kept.
+        try f.addMargin("m-1", text: "Reworded after the update.")
 
         let coordinator = try f.makeCoordinator(nil, legacy: {
             MarginOutputMigration.LegacySettings(bookmark: try? MarginOutputCoordinator.FolderAccess.live.makeBookmark(vault), destinationID: "legacy-id", isEnabled: true)
@@ -235,10 +238,12 @@ final class MarginOutputCoordinatorTests: XCTestCase {
 
         let after = try FileManager.default.contentsOfDirectory(at: vault, includingPropertiesForKeys: [.contentModificationDateKey])
         XCTAssertEqual(after.count, 2, "no duplicate files")
-        XCTAssertEqual(Set(try after.map { try Data(contentsOf: $0) }), Set(before))
-        for file in after {
-            XCTAssertEqual(try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, longAgo, "\(file.lastPathComponent) was rewritten")
-        }
+        let texts = try after.map { try String(contentsOf: $0, encoding: .utf8) }
+        XCTAssertEqual(texts.filter { $0.contains("Reworded after the update.") }.count, 1, "the changed note is rewritten in place")
+        XCTAssertFalse(texts.contains { $0.contains("Before the update.") })
+        let untouched = try XCTUnwrap(after.first { (try? String(contentsOf: $0, encoding: .utf8))?.contains("Also before.") == true })
+        XCTAssertEqual(try Data(contentsOf: untouched), before.first { String(decoding: $0, as: UTF8.self).contains("Also before.") })
+        XCTAssertEqual(try untouched.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate, longAgo, "an unchanged note was rewritten")
         XCTAssertTrue(coordinator.statuses["legacy-id"]?.message.hasPrefix("2 Margins saved to Notes folder") == true, coordinator.statuses["legacy-id"]?.message ?? "")
     }
 

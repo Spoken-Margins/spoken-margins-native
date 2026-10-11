@@ -242,11 +242,14 @@ final class MarginOutputCoordinator: ObservableObject {
                 // Built on a background task (#161); the main actor only waits.
                 let gathered = try await AutomaticMarginNoteGatherer.gather(store: store, sessionIds: sessionIds, content: content)
                 recordGather(gathered.elapsedMs, gathered.sessionCount, gathered.notes.count)
+                // Gathering can take seconds. If the listener paused, removed, repointed or re-scoped this destination
+                // meanwhile, these notes were built for choices that no longer hold: write nothing.
+                guard isCurrent(destination) else { return }
                 let result = try await currentWriter().deliverReportingKeptEdits(gathered.notes, to: folder, destinationID: destination.id)
                 delivered = (gathered.notes.map(\.id), result.keptEditIDs)
             }
             // Removed or paused while it was writing: its planner is not kept, so a later start begins with a full pass.
-            guard let current = self.destination(destination.id), current.isEnabled, current.content == content else { return }
+            guard isCurrent(destination) else { return }
             planner.commit(pass, noteIDs: delivered.noteIDs, keptEditIDs: delivered.keptEditIDs)
             planners[destination.id] = planner
             setStatus(MarginOutputStatus(MarginNoteDelivery.statusLine(
@@ -258,6 +261,12 @@ final class MarginOutputCoordinator: ObservableObject {
         } catch {
             setStatus(.failure("Delivery needs attention: \(error.localizedDescription)"), for: destination.id)
         }
+    }
+
+    /// The destination is still there, still delivering, with the same folder and choices as when the pass began.
+    private func isCurrent(_ started: MarginOutputDestination) -> Bool {
+        guard let now = destination(started.id) else { return false }
+        return now.isEnabled && now.content == started.content && now.bookmark == started.bookmark
     }
 
     private func currentWriter() throws -> AutomaticMarginWriter {
@@ -311,8 +320,11 @@ final class MarginOutputCoordinator: ObservableObject {
                 isEnabled: false
             )
             destinations.append(destination)
+            guard persist() else {
+                destinations.removeLast()
+                return nil
+            }
             folderNames[destination.id] = url.lastPathComponent
-            guard persist() else { return nil }
             statuses[destination.id] = MarginOutputStatus("Folder set to \(url.lastPathComponent). Send a test note, then start delivery.")
             return destination
         } catch {
@@ -375,12 +387,17 @@ final class MarginOutputCoordinator: ObservableObject {
     /// Removes a destination. Files already written stay where they are.
     func remove(_ id: String) {
         guard canSave, destination(id) != nil else { return }
+        let before = destinations
         destinations.removeAll { $0.id == id }
+        guard persist() else {
+            // Still saved on disk, so it must stay on screen: it would come back on the next launch.
+            destinations = before
+            return
+        }
         planners[id] = nil
         statuses[id] = nil
         folderNames[id] = nil
         accessLost.remove(id)
-        persist()
         if !isEnabled { stop() }
     }
 

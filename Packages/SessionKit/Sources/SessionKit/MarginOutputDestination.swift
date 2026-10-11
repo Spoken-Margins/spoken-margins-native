@@ -8,8 +8,8 @@ import Foundation
 ///
 /// `id` is also the key the delivery journal files its entries under, so it must never change once notes have been
 /// written: a new id makes delivery treat the folder as new and rewrite every note. Renaming, pausing and changing
-/// what is included leave it alone. Picking a different folder is the caller's choice (it keeps the id when the
-/// listener is only re-granting access to the same folder, and takes a new one for a different folder).
+/// what is included leave it alone. Re-granting access to a folder, or pointing the destination at another one, keeps the
+/// id too: notes missing from the new folder are simply written, and the writer never replaces a file it didn't write.
 public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendable {
     public enum Scope: String, Codable, CaseIterable, Sendable {
         /// Every Margin.
