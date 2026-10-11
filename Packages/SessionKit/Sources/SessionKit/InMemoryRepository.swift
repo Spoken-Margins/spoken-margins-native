@@ -1,7 +1,9 @@
 import Foundation
 
 public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
-    public var items: [String: Item]
+    /// Any change to the items moves `itemRevision(id:)` for every item: tests change this directly.
+    public var items: [String: Item] { didSet { itemWrites &+= 1 } }
+    private var itemWrites = 0
     public var mapsByItemId: [String: ListeningMap]
     public var sessions: [String: Session]
     public var interjections: [String: Interjection]
@@ -447,6 +449,7 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
     }
 
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
+        try StructuredDocumentUpgrader.requireUnchangedSincePlanned(upgrade, repository: self)
         items[upgrade.item.id] = upgrade.item
         mapsByItemId[upgrade.item.id] = upgrade.listeningMap
         upgrade.interjections.forEach { interjections[$0.id] = $0 }
@@ -464,4 +467,8 @@ extension InMemorySessionRepository: CommunityMapUploadRepository {
 extension InMemorySessionRepository: PublisherAudioRepository {
     public func savePublisherAudio(_ audio: PublisherAudio) throws { publisherAudio[audio.itemId] = audio }
     public func loadPublisherAudio(itemId: String) throws -> PublisherAudio? { publisherAudio[itemId] }
+}
+
+extension InMemorySessionRepository: ItemRevisionReading {
+    public func itemRevision(id: String) -> Int { itemWrites }
 }

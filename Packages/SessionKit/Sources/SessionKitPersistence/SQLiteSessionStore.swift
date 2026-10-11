@@ -13,8 +13,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     private let connectionLock = NSRecursiveLock()
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
+    /// `loadTranscriptTimelineChapters` answers by item, with the stamp of the record they were read from. Guarded by `connectionLock`.
+    private var transcriptChaptersByItem: [String: (stamp: String, chapters: [MediaTimelineChapter])] = [:]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
+    /// Its own lock, so a caller asking never waits behind a query holding `connectionLock`.
+    private let itemRevisionLock = NSLock()
+    private var itemRevisions: [String: Int] = [:]
+    /// Moved by `reset()`, which can remove any item.
+    private var itemRevisionBase = 0
 
     public init(path: String) throws {
         encoder.dateEncodingStrategy = .iso8601
@@ -92,6 +100,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             try execute("DELETE FROM records;")
             try execute("DELETE FROM quarantined_records;")
         }
+        itemRevisionLock.withLock { itemRevisionBase &+= 1 }
     }
 
     public func quarantinedRecordCount() throws -> Int {
@@ -267,7 +276,20 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func saveItem(_ item: Item) throws {
+        defer { noteItemWritten(item.id) }
         try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+    }
+
+    /// Moves whenever `saveItem`, `deleteItem(s)` or `reset` touched the item through this store, so
+    /// a caller that watches an item's fields can skip reading it while the number stands still.
+    /// It counts this connection's writes: another process writing the same file does not move it.
+    public func itemRevision(id: String) -> Int {
+        itemRevisionLock.withLock { itemRevisionBase &+ (itemRevisions[id] ?? 0) }
+    }
+
+    /// Called after the write, even a failed one, so a half-done write never hides a change.
+    private func noteItemWritten(_ id: String) {
+        itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1 }
     }
 
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
@@ -703,6 +725,31 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return transcripts.last
     }
 
+    /// Only the chapters of an item's source transcript timeline (#777). A two-hour episode's timeline holds thousands
+    /// of segments and several megabytes of JSON, so the Margins tab reads just this slice: SQLite cuts it out and only
+    /// the small list is decoded. Even the cut has to parse the whole payload, so the answer is kept per timeline
+    /// record and only re-read when the record changes (its id, `updated_at` or length), not on every refresh.
+    /// Empty when the item has no timeline or the chapters can't be read.
+    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+        let newest = "FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;"
+        var stamp: String?
+        try readTexts(
+            "SELECT id || '|' || updated_at || '|' || length(payload) \(newest)", [itemId], name: "transcript_timeline_stamp"
+        ) { stamp = $0 }
+        guard let stamp else {
+            withConnectionLock { _ = transcriptChaptersByItem.removeValue(forKey: itemId) }
+            return []
+        }
+        if let cached = withConnectionLock({ transcriptChaptersByItem[itemId] }), cached.stamp == stamp { return cached.chapters }
+        var chaptersJSON: String?
+        try readTexts(
+            "SELECT json_extract(payload, '$.timeline.chapters') \(newest)", [itemId], name: "transcript_timeline_chapters"
+        ) { chaptersJSON = $0 }
+        let chapters = chaptersJSON?.data(using: .utf8).flatMap { try? decoder.decode([MediaTimelineChapter].self, from: $0) } ?? []
+        withConnectionLock { transcriptChaptersByItem[itemId] = (stamp: stamp, chapters: chapters) }
+        return chapters
+    }
+
     public func saveAudioAsset(_ asset: AudioAsset) throws {
         try save(kind: "audio_asset", id: asset.id, sessionId: nil, itemId: asset.itemId, value: asset)
     }
@@ -1042,6 +1089,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     public func deleteItem(id: String) throws {
+        defer { noteItemWritten(id) }
         // Turns are saved with a session id and no item id, so they are found through the item's
         // session rows. They go first, as their own statement: a single DELETE that also removed the
         // session rows could evaluate its subquery after those rows were gone and keep the turns
@@ -1471,6 +1519,8 @@ private struct ImportedWatchSyncEvent: Codable {
     var importedAt: Date
 }
 
+extension SQLiteSessionStore: ItemRevisionReading {}
+
 /// I13 documents live in the existing records table as kind
 /// "structured_document", one row per item and extraction version. No table or
 /// column changes, and schema_version stays 5: Build 29 selects records by kind
@@ -1521,6 +1571,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {
+            try StructuredDocumentUpgrader.requireUnchangedSincePlanned(upgrade, repository: self)
             try saveItem(upgrade.item)
             try deleteRecords(kind: "listening_map", itemId: itemId)
             if let map = upgrade.listeningMap {

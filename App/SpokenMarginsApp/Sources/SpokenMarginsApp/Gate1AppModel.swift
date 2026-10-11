@@ -215,8 +215,8 @@ final class Gate1AppModel: ObservableObject {
 
     @Published var statusMessage = "Ready."
     @Published var lastError: String?
-    @Published private(set) var feedbackEvent: UserFeedbackEvent?
-    @Published private(set) var itemFailures = ItemFailureLog()
+    @Published var feedbackEvent: UserFeedbackEvent?
+    @Published var itemFailures = ItemFailureLog()
     @Published var exportPreview = ""
     @Published private(set) var exportFileURL: URL?
     @Published private(set) var exportShareCandidates: [Interjection] = []
@@ -1494,7 +1494,7 @@ final class Gate1AppModel: ObservableObject {
             // Library rows refresh asynchronously on navigation. Retrieval must
             // use durable membership so freshly imported items are not omitted.
             let entries = try MarginCollection.build(
-                items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) },
+                items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) }, loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
                 loadInterjections: { try store.loadInterjections(sessionId: $0) },
                 loadImportedLayers: { try store.loadImportedCommentaryLayers() },
                 loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) }
@@ -2735,6 +2735,11 @@ final class Gate1AppModel: ObservableObject {
     static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
+        let item = try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        return try finishBackgroundBrowserTextImport(item, handoff: handoff)
+    }
+
+    func browserTextImportEngine() throws -> SessionEngine {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -2742,8 +2747,11 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
-        libraryItems = try loadLibraryRows(store: store)
+        return engine
+    }
+
+    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
+        libraryItems = try loadLibraryRows(store: try requireStore())
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
         if let structure = item.documentStructure {
@@ -2751,23 +2759,6 @@ final class Gate1AppModel: ObservableObject {
         }
         markOnboardingSteps(onboardingSteps(for: handoff))
         return item.id
-    }
-
-    private func recordPDFExtractionDiagnostics(_ structure: PDFDocumentStructure) {
-        diagnostics["lastPDFExtractionEngine"] = structure.extractionEngine.rawValue
-        diagnostics["lastPDFAnalysisStatus"] = structure.analysisStatus.rawValue
-        diagnostics["lastPDFPageCount"] = "\(structure.pageCount)"
-        diagnostics["lastPDFAnalyzedPageCount"] = "\(structure.analyzedPageCount)"
-        diagnostics["lastPDFTableCount"] = "\(structure.tables.count)"
-    }
-
-    private func onboardingSteps(for handoff: BrowserTextHandoff) -> Set<OnboardingStep> {
-        switch handoff.captureMode {
-        case .markdownFile, .plainTextFile:
-            return [.addedOwnSource, .addedFromFiles]
-        case .selectedText, .readablePage:
-            return [.addedOwnSource, .addedFromSafari]
-        }
     }
 
     func configureQuickAccessFolder(url: URL) {
@@ -11227,56 +11218,6 @@ final class Gate1AppModel: ObservableObject {
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "-", options: .regularExpression)
             .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         return "item-obsidian-\(Int(Date().timeIntervalSince1970))-\(index)-\(base.isEmpty ? "clip" : base)"
-    }
-
-    func reportSuccess(_ message: String) {
-        statusMessage = message
-        lastError = nil
-        diagnostics["lastStatus"] = message
-        diagnostics["recentFailure"] = "none"
-    }
-
-    /// Records a successful outcome and presents it only when the result is not
-    /// otherwise apparent from the current interface.
-    func reportConfirmation(_ message: String, action: UserFeedbackEvent.Action? = nil) {
-        reportSuccess(message)
-        presentFeedback(UserFeedbackEvent(kind: .success, message: message, action: action))
-    }
-
-    /// Presents degraded-but-successful behavior without styling it as either a
-    /// normal confirmation or a failure.
-    func reportWarning(_ message: String) {
-        statusMessage = message
-        lastError = nil
-        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
-        diagnostics["lastStatus"] = message
-        diagnostics["recentFailure"] = "none"
-    }
-
-    func reportFailure(_ error: Error, context: String? = nil, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
-        let message: String
-        if let urlError = error as? URLError {
-            message = Self.userFacingMessage(for: urlError)
-        } else if let localized = error as? LocalizedError,
-           let description = localized.errorDescription {
-            message = description
-        } else {
-            message = String(describing: error)
-        }
-        reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
-    }
-
-    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
-        statusMessage = "Error"
-        lastError = message
-        presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
-        itemFailures.record(message, itemId: itemId, visibleItemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
-        diagnostics["recentFailure"] = message
-    }
-
-    func presentFeedback(_ event: UserFeedbackEvent) {
-        guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
-        feedbackEvent = event
     }
 
     func refreshSelectedItem() {
