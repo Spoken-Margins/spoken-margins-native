@@ -18,11 +18,13 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   same next, tier and tests) runs once. After an INCONCLUSIVE report, asking again runs again.
 - T2 builds for simulator and device (unsigned) through scripts/xcodebuild-lane, on an explicit request.
 - T3 runs the named app-hosted tests, plus every app test class the base branch's test-scope.py
-  suggests for the PR's diff (#351), through verify-tests.py on a fresh iOS 26 simulator, created
-  for the job and deleted afterwards. The report lists the classes it added and how long each plan took. It is booted under the lane's boot rules (scripts/lane_sim.py):
+  suggests for the PR's diff (#351), through verify-tests.py on an iOS 26 simulator cloned from a
+  clean template that completed its first boot (#1330), then deleted afterwards. One build prepares
+  both plans before the job takes a simulator slot. Tests hold no build slot. The report lists the
+  classes it added and how long each plan took. It is booted under the lane's boot rules (scripts/lane_sim.py):
   one boot at a time, no builds meanwhile, no retry after a failed boot, a stop at the first crash
-  during boot, and a long wait for the first boot's data migration. The job holds the Mac's one
-  simulator slot throughout, so it never runs alongside a Test Desk job. A crash flood stops the run.
+  during boot, and a long wait for the template's first boot's data migration. The job holds a Mac-wide
+  simulator slot from cloning through deletion. A crash flood stops the run.
 - A timeout interrupts the whole process group, so no xcodebuild keeps running outside the slots.
 - The automerge label asks for the checks a finished PR needs, with no request comment (the
   ready-queue plan, decision 3). The base branch's scripts/test-scope.py classifies the PR's
@@ -1475,15 +1477,15 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
     return summaries, statuses, ran, details
 
 
-def first_boot(udid: str, log) -> tuple:
-    """Boot the fresh simulator under the lane's boot rules (scripts/lane_sim.py).
+def boot_t3_device(udid: str, log) -> tuple:
+    """Boot the clone under the lane's boot rules (scripts/lane_sim.py).
 
     Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
     """
     import lane_sim
     info = {}
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
+        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=False)
     except lane_sim.BootError as error:
         return str(error), info
     return None, info
@@ -1521,13 +1523,37 @@ def run_t3(tests: list[str], request_id: str, evidence: Path,
     return verdict, where, ran, scope + details, crashes, cc
 
 
+def prepare_t3_build(grouped, runtime, evidence):
+    """Both T3 plans use SpokenMarginsAppBehavior; prepare it before taking a simulator slot."""
+    python = ROOT / '.venv/bin/python'
+    output = evidence / 'verify-build'
+    command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py',
+               '--plan', next(iter(grouped)), '--build-only', '--runtime', runtime, '--output', str(output)]
+    started = time.monotonic()
+    with (evidence / 'verify-build.log').open('w') as log:
+        finished = run_bounded(command, log, T3_TIMEOUT)
+    manifest = _read_manifest(output)
+    if finished is None:
+        manifest.update(status='timed out', error='the runner build budget ran out; interrupted')
+    if manifest.get('status') == 'verified':
+        return 'PASS', [f'shared build before simulator boot took {duration(time.monotonic() - started)} '
+                        f'(reused: {manifest.get("reused_build", False)}); evidence: {output}/manifest.json']
+    summary = summarize_manifest(manifest)
+    verdict = t3_verdict([summary], [manifest.get('status', 'missing')])
+    return verdict, [f'Build before simulator boot: {manifest.get("error") or "no verified build manifest"}; '
+                     f'evidence: {output}/manifest.json', *failed_step_errors(manifest, output)]
+
+
 def _run_t3_grouped(grouped, request_id, evidence):
-    """Take the simulator slot and run the grouped selectors on a fresh device."""
+    """Build first, then take the simulator slot and run the grouped selectors on a clone."""
     import lane_sim
     runtime = lane_sim.newest_runtime()
     if not runtime:
         return ('INCONCLUSIVE', 'no simulator', 'nothing', [f'No iOS {lane_sim.IOS_MAJOR} simulator runtime is installed.'],
                 'none', '')
+    verdict, build_details = prepare_t3_build(grouped, runtime, evidence)
+    if verdict != 'PASS':
+        return verdict, 'no simulator', 'nothing', build_details, 'none', ''
     from lane_slots import acquire_simulator_slot, release_handle
     try:
         slot = acquire_simulator_slot(f'runner T3 {request_id}', out=sys.stdout, max_wait=RUNNER_SLOT_WAIT)
@@ -1535,7 +1561,10 @@ def _run_t3_grouped(grouped, request_id, evidence):
         return ('INCONCLUSIVE', 'no simulator', 'nothing', ['The Mac\'s simulator slots stayed busy (a Test Desk job or '
                 f'another run, and no room for a second simulator), so this run did not start one: {error}'], 'none', '')
     try:
-        return _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+        verdict, where, ran, details, crashes, cc = _t3_on_fresh_device(grouped, request_id, evidence, runtime)
+        return verdict, where, ran, build_details + details, crashes, cc
+    except (lane_sim.BootError, OSError, subprocess.SubprocessError) as error:
+        return 'INCONCLUSIVE', 'no simulator', 'nothing', build_details + [f'Template or clone failed: {error}'], 'none', ''
     finally:
         release_handle(slot)
 
@@ -1551,13 +1580,16 @@ def _t3_on_fresh_device(grouped, request_id, evidence, runtime):
 
 def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     import lane_sim
-    udid = lane_sim.create_temporary(RUNNER_SIMULATOR_PREFIX + request_id)
-    where = f'fresh iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
+    clone_started = time.monotonic()
+    with (evidence / 'simulator-clone.log').open('w') as log:
+        udid = lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+    clone_seconds = time.monotonic() - clone_started
+    where = f'cloned iPhone 17, {runtime.rsplit(".", 1)[-1].replace("iOS-", "iOS ").replace("-", ".")}'
     python = ROOT / '.venv/bin/python'
 
     def run_plan(plan, selectors, output):
         command = [str(python if python.exists() else sys.executable), 'scripts/verify-tests.py', '--plan', plan,
-                   '--device', udid, '--output', str(output)]
+                   '--device', udid, '--require-build', '--output', str(output)]
         for selector in selectors:
             command += ['--only-testing', selector]
         with (evidence / f'verify-{plan}.log').open('w') as log:
@@ -1570,10 +1602,10 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
     try:
         boot_started = time.monotonic()
         with (evidence / 'first-boot.log').open('w') as log:
-            problem, boot_info = first_boot(udid, log)
+            problem, boot_info = boot_t3_device(udid, log)
         boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
-            details = [f'The fresh simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
+            details = [f'The cloned simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
             if boot_info.get('period') == 'two-simulator' and 'not ready after' in problem \
                     and lane_sim.back_to_one_simulator(f'a two-simulator T3 boot ({request_id}) timed out: {problem}'):
                 details.append('This boot ran while two simulators were up, so the lane is back to one simulator '
@@ -1583,12 +1615,14 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                                crash_window=boot_info.get('boot_window'))
         summaries, statuses, ran, details = run_plans(grouped, run_plan, evidence,
                                                       lambda: lane_sim.is_available(udid))
-        details.insert(0, f'first boot of the fresh simulator took {duration(boot_seconds)} (memory pressure at boot: '
+        details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
                           f'{boot_info.get("period", "one-simulator")} period)')
         if boot_info.get('tolerated'):
             details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
                               f'#184): {boot_info["tolerated"]}')
+        details.append(f'template preparation and simulator clone took {duration(clone_seconds)}; '
+                       f'evidence: {evidence}/simulator-clone.log')
     finally:
         lane_sim.release(udid)
     watched = lane_sim.unsafe_devices().get(udid)

@@ -23,6 +23,74 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
+    def test_test_without_building_does_not_take_a_build_slot(self):
+        # #1330: even an empty test run used to queue behind compilers and hold their slot.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'app')
+            with patch.object(verification, 'build_slot', return_value=contextlib.nullcontext()) as slot, \
+                    patch.object(verification.subprocess, 'Popen') as process:
+                process.return_value.wait.return_value = 0
+                run.command('xcode-tests', ['xcodebuild', 'test-without-building'])
+            slot.assert_not_called()
+            with patch.object(verification, 'build_slot', return_value=contextlib.nullcontext()) as slot, \
+                    patch.object(verification.subprocess, 'Popen') as process:
+                process.return_value.wait.return_value = 0
+                run.command('build-for-testing', ['xcodebuild', 'build-for-testing'])
+            slot.assert_called_once()
+
+    def test_build_only_never_selects_or_boots_a_simulator_and_stale_build_is_refused(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            commands = []
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'simulator') as simulator, \
+                    patch.object(verification.lane_sim, 'boot') as boot, \
+                    patch.object(verification.Run, 'command',
+                                 side_effect=lambda name, args, **kw: commands.append(name)):
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                with self.assertRaisesRegex(RuntimeError, 'missing or stale'):
+                    run.xcode_build('app', 'runtime1', require_build=True)
+                self.assertNotIn('build-for-testing', commands)
+                run.xcode_build('app', 'runtime1')
+                run.xcode_build('adapters', 'runtime1', require_build=True)
+                self.assertEqual(commands.count('build-for-testing'), 1)
+                with self.assertRaisesRegex(RuntimeError, 'missing or stale'):
+                    run.xcode_build('adapters', 'runtime2', require_build=True)
+                simulator.assert_not_called()
+                boot.assert_not_called()
+
+    def test_both_behavior_plans_reuse_one_build_and_inputs_invalidate_it(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            commands = []
+            device = {'udid': 'U', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs') as identity, \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'simulator', return_value=(device, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.Run, 'command',
+                                 side_effect=lambda name, args, **kw: commands.append((name, args))):
+                for index, plan in enumerate(('app', 'adapters', 'app')):
+                    if index == 2:
+                        identity.return_value = 'changed-inputs'
+                    run = verification.Run(Path(temporary) / f'run-{index}', plan)
+                    run.xcode(plan, 'U', rebuild=False)
+                    if index == 1:
+                        self.assertTrue(run.manifest['reused_build'])
+                builds = [args for name, args in commands if name == 'build-for-testing']
+                self.assertEqual(len(builds), 2)  # one for both plans, one after the source changed
+                self.assertTrue(all('-testPlan' not in args for args in builds))
+                self.assertTrue(all('generic/platform=iOS Simulator' in args for args in builds))
+                tests = [args for name, args in commands if name == 'xcode-tests']
+                self.assertEqual([args[args.index('-testPlan') + 1] for args in tests],
+                                 ['AppBehavior', 'AudioAdapters', 'AppBehavior'])
+
     def setUp(self):
         # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
         # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
