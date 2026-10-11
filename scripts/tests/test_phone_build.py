@@ -231,7 +231,7 @@ if "build-for-testing" in args:
     sys.exit(0)
 commit = next(a.split("=", 1)[1] for a in args if a.startswith("SM_BUILD_COMMIT="))
 app = os.path.join(derived, "Build/Products/Release-iphoneos/SpokenMarginsApp.app")
-os.makedirs(app)
+os.makedirs(app, exist_ok=True)
 shutil.copy("/usr/bin/true", os.path.join(app, "SpokenMarginsApp"))
 info = {"CFBundleExecutable": "SpokenMarginsApp", "CFBundleIdentifier": "com.example.fake",
         "CFBundleVersion": "29", "CFBundlePackageType": "APPL"}
@@ -254,9 +254,16 @@ with open(os.environ["FAKE_LOG"], "a") as log:
     log.write("gh " + " ".join(args) + "\n")
 tip = os.environ["FAKE_TIP"]
 if args[:1] == ["api"] and args[1].endswith("/issues/12/comments"):
-    print("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
-          "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now."
-          % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7]))
+    if os.environ.get("FAKE_SAFE_REMERGE"):
+        print("**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next without re-testing.**\n"
+              "- Tested this PR merged with next at `7654321`. Ran: host tests (--plan fast).\n"
+              "- next hasn't moved since (the test ran in the automerge run held for T3).\n"
+              "- So the re-merge `%s` goes to next not re-tested. The Test Desk tests next's merged tip end to end."
+              % tip[:7])
+    else:
+        print("**Merge check (triage desk) on `1234567`: %s.**\n- Tested the merge commit `%s`.\n"
+              "- Ran: --plan fast and both builds.\n- Pushing `%s` to next now."
+              % (os.environ.get("FAKE_MERGE_VERDICT", "PASS"), tip[:7], tip[:7]))
 elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
     for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
                  "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
@@ -344,7 +351,7 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('-allowProvisioningUpdates', builds)
         self.assertNotIn('build-for-testing', builds)  # the runner already tested this commit
         self.assertIn(f'Commit {self.tip[:7]} is ready: 2 things to try.', builds)  # the owner's notification
-        self.assertFalse(any((self.phone / '.work').iterdir()))  # scratch worktree and DerivedData gone
+        self.assertFalse(any((self.phone / '.work').iterdir()))  # temporary logs gone; cache persists
         self.assertNotIn('.work', self.git('worktree', 'list'))
 
     def test_plan_starts_at_the_installed_build(self):
@@ -402,6 +409,11 @@ class PhoneBuildTests(unittest.TestCase):
     def test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks(self):
         self.build_the_merge_commit(runs_checks=False)
 
+    def test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks(self):
+        self.build_the_merge_commit(runs_checks=False, FAKE_SAFE_REMERGE='1')
+        checks = json.loads((self.phone / 'latest/build.json').read_text())['checks']
+        self.assertIn('safely re-merged', checks)
+
     def test_a_merge_check_that_pushed_another_commit_does_not_count_so_the_host_checks_run(self):
         # The PR was re-merged after the runner's test (its comment says "Pushing `<sha7>`" of the old merge).
         self.build_the_merge_commit(runs_checks=True, FAKE_TIP='deadbee' + '0' * 33)
@@ -458,6 +470,28 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertIn('nothing to do', done.stdout)
         self.assertFalse(self.log.exists())
 
+    def test_release_cache_and_source_survive_and_are_reused_for_the_next_tip(self):
+        self.assertEqual(self.run_build().returncode, 0)
+        cache = self.phone / '.cache'
+        derived = cache / 'dd-release'
+        self.assertTrue((derived / 'Build/Products/Release-iphoneos/SpokenMarginsApp.app').exists())
+        source = cache / 'src/scripts/setup-worktree.sh'
+        unchanged = source.stat().st_mtime_ns
+        marker = derived / 'incremental-marker'
+        marker.write_text('keep compiled intermediates')
+        self.git('commit', '-q', '--allow-empty', '-m', 'Merge pull request #12: another tested change')
+        self.tip = self.git('rev-parse', 'HEAD')
+        done = self.run_build(FAKE_TIP=self.tip)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual(marker.read_text(), 'keep compiled intermediates')
+        self.assertEqual(source.stat().st_mtime_ns, unchanged)
+        self.assertEqual(self.git('-C', str(cache / 'src'), 'rev-parse', 'HEAD'), self.tip)
+        self.assertEqual(json.loads((self.phone / 'latest/build.json').read_text())['sha'], self.tip)
+        releases = [line for line in self.log.read_text().splitlines() if '-configuration Release' in line]
+        self.assertEqual(len(releases), 2)
+        self.assertTrue(all(f'-derivedDataPath {derived}' in line for line in releases))
+        self.assertFalse(any((self.phone / '.work').iterdir()))
+
     def test_guards_skip_on_memory_or_disk(self):
         done = self.run_build(SM_LANE_MEMORY_PRESSURE='2')
         self.assertEqual(done.returncode, 75)
@@ -477,6 +511,122 @@ class PhoneBuildTests(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(self.phone)}):
             module.prune()
         self.assertEqual(sorted(p.name for p in self.phone.iterdir()), sorted(names[2:] + ['installed.txt']))
+
+
+class PhoneBuildCoalescingTests(unittest.TestCase):
+    def setUp(self):
+        self.module = load_phone_build()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.phone = Path(self.tmp.name)
+        self.sha = 'ab' * 20
+        self.now = datetime.datetime(2026, 10, 10, 12, tzinfo=datetime.timezone.utc)
+        self.addCleanup(unittest.mock.patch.stopall)
+        unittest.mock.patch.dict(os.environ, {'SM_PHONE_DIR': str(self.phone), 'SM_PHONE_NO_FETCH': '1'}).start()
+        clock = unittest.mock.patch.object(self.module.datetime, 'datetime', wraps=datetime.datetime).start()
+        clock.now.return_value = self.now
+        self.module.git = unittest.mock.Mock(return_value=self.sha)
+        self.module.latest_build = unittest.mock.Mock(return_value={})
+        self.module.latest_verdict = unittest.mock.Mock(return_value=None)
+        self.module.guard_reason = unittest.mock.Mock(return_value=None)
+        self.module.clear_work = unittest.mock.Mock()
+        self.module.build = unittest.mock.Mock(return_value=0)
+
+    def attempt(self, minutes, filename='last-attempt.json', result='built'):
+        (self.phone / filename).write_text(json.dumps({
+            'sha': 'cd' * 20, 'result': result,
+            'at': (self.now - datetime.timedelta(minutes=minutes)).isoformat()}))
+
+    def test_changed_tips_coalesce_until_an_hour_after_the_previous_build(self):
+        self.attempt(20)
+        self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.module.build.assert_not_called()
+        self.module.guard_reason.assert_not_called()
+        self.module.clear_work.assert_not_called()
+
+    def test_hour_boundary_and_first_build_run(self):
+        for minutes in (None, 60, 70):
+            with self.subTest(minutes=minutes):
+                (self.phone / 'last-start.json').unlink(missing_ok=True)
+                if minutes is not None:
+                    self.attempt(minutes)
+                self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.assertEqual(self.module.build.call_count, 3)
+
+    def test_owner_request_bypasses_the_hourly_delay(self):
+        self.attempt(5)
+        self.assertEqual(self.module.main(['--commit', self.sha]), 0)
+        self.module.build.assert_called_once_with(self.sha)
+
+    def test_integration_pass_can_build_early_but_fail_and_inconclusive_cannot(self):
+        self.attempt(5)
+        for outcome in ('FAIL', 'INCONCLUSIVE', 'PASS'):
+            with self.subTest(outcome=outcome):
+                self.module.latest_verdict.return_value = f'Lane report integration-{self.sha[:7]} — {outcome}'
+                self.assertEqual(self.module.main(['--if-changed']), 0)
+                self.assertEqual(self.module.build.call_count, int(outcome == 'PASS'))
+        self.module.latest_verdict.assert_called_with(self.sha)
+
+    def test_start_is_saved_before_build_and_new_tips_do_not_reset_the_timer(self):
+        def build(sha):
+            state = json.loads((self.phone / 'last-start.json').read_text())
+            self.assertEqual(state['sha'], sha)
+            self.assertEqual(state['at'], self.now.isoformat(timespec='seconds'))
+            return 1
+        self.module.build.side_effect = build
+        self.assertEqual(self.module.main(['--if-changed']), 1)
+        self.module.git.return_value = 'ef' * 20
+        self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.module.build.assert_called_once_with(self.sha)
+
+    def test_guards_do_not_consume_the_hour_and_failed_tip_is_not_retried(self):
+        self.module.guard_reason.return_value = 'low disk'
+        self.assertEqual(self.module.main(['--if-changed']), 75)
+        self.assertFalse((self.phone / 'last-start.json').exists())
+        self.attempt(70, result='failed: signing')
+        self.module.git.return_value = 'cd' * 20
+        self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.module.build.assert_not_called()
+
+    def test_in_progress_start_takes_precedence_over_older_completion(self):
+        self.attempt(120)
+        self.attempt(10, filename='last-start.json')
+        self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.module.build.assert_not_called()
+
+    def test_old_local_timestamps_and_unavailable_github_still_coalesce(self):
+        local = datetime.datetime.fromtimestamp(self.now.timestamp() - 10 * 60)
+        (self.phone / 'last-attempt.json').write_text(json.dumps({'at': local.isoformat()}))
+        self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.module.build.assert_not_called()
+
+    def test_invalid_or_future_state_does_not_stall_builds(self):
+        for at in ('not a date', None, (self.now + datetime.timedelta(hours=1)).isoformat()):
+            with self.subTest(at=at):
+                (self.phone / 'last-start.json').write_text(json.dumps({'at': at}))
+                self.assertEqual(self.module.main(['--if-changed']), 0)
+        self.assertEqual(self.module.build.call_count, 3)
+
+
+class PhoneBuildMergeEvidenceTests(unittest.TestCase):
+    def test_runner_safe_remerge_skips_duplicate_checks_only_for_its_named_commit(self):
+        module = load_phone_build()
+        sha = 'ab' * 20
+        module.git = unittest.mock.Mock(return_value='Merge pull request #12: tested change')
+        recorded = ('**Merge check (triage desk) on `1234567`: PASS, re-merged onto the newest next '
+                    'without re-testing.**\n'
+                    '- Tested this PR merged with next at `7654321`. Ran: host tests (--plan fast).\n'
+                    '- next has since moved to `1111111`, and its commits touch none of this PR\'s files '
+                    'and no build inputs: `2222222`.\n'
+                    f'- So the re-merge `{sha[:7]}` goes to next not re-tested. '
+                    'The Test Desk tests next\'s merged tip end to end.\n'
+                    '_Posted by the lane runner (scripts/lane-runner.py)._')
+        for body, accepts in ((recorded, True), (recorded.replace('PASS,', 'FAIL,'), False),
+                              (recorded.replace(sha[:7], 'deadbee'), False),
+                              (recorded.replace('goes to next', 'goes to main'), False)):
+            with self.subTest(body=body):
+                module.gh = unittest.mock.Mock(return_value=body)
+                self.assertEqual(module.runner_tested(sha) is not None, accepts)
 
 
 class ListenerRuleTests(unittest.TestCase):
