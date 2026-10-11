@@ -447,6 +447,7 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
     }
 
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
+        try StructuredDocumentUpgrader.requireUnchangedSincePlanned(upgrade, repository: self)
         items[upgrade.item.id] = upgrade.item
         mapsByItemId[upgrade.item.id] = upgrade.listeningMap
         upgrade.interjections.forEach { interjections[$0.id] = $0 }
