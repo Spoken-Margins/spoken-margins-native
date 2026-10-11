@@ -1494,7 +1494,7 @@ final class Gate1AppModel: ObservableObject {
             // Library rows refresh asynchronously on navigation. Retrieval must
             // use durable membership so freshly imported items are not omitted.
             let entries = try MarginCollection.build(
-                items: store.listItems(), sessions: store.loadSessions(),
+                items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) },
                 loadInterjections: { try store.loadInterjections(sessionId: $0) },
                 loadImportedLayers: { try store.loadImportedCommentaryLayers() },
                 loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) }
@@ -1504,7 +1504,7 @@ final class Gate1AppModel: ObservableObject {
                                 placement: sharedMarginPlacementPasses.pass(itemId: $0.layer.itemId))
             }
             marginRows = entries.privateRows.map {
-                MarginRow(interjection: $0.interjection, itemTitle: $0.itemTitle, sessionDate: $0.sessionDate)
+                MarginRow(interjection: $0.interjection, itemTitle: $0.itemTitle, sessionDate: $0.sessionDate, place: $0.place)
             }
             marginNotesDelivery.deliverSoon() // A Margin or its transcript may be new (#171).
         } catch {
