@@ -106,10 +106,7 @@ struct ExperienceMarginsScreen: View {
 
     /// Export Sessions starts with only the scoped collection's sessions selected.
     private func openBatchExport() {
-        model.openBatchExport()
-        guard let scope = model.marginCollectionQuery.collection, model.screen == .batchExport else { return }
-        model.selectedBatchExportSessionIds = Set(model.visibleBatchExportRows
-            .filter { scope.contains(itemID: $0.session.itemId) }.map(\.id))
+        model.openBatchExport(scopedTo: model.marginCollectionQuery.collection)
     }
 
     private var filterBar: some View {
