@@ -13,6 +13,32 @@ public final class ListeningSignalCollector: @unchecked Sendable {
     private var cachedRepository: (any SessionRepository)?
     private var cachedContext: ListeningSignalContext.Value?
     private var cachedSubscriptions: [FeedSubscription]?
+    private var cachedItemKey: ItemKey?
+
+    /// The item fields `ListeningSignalContext` reads to find the followed source and feed entry.
+    /// An item can gain a source link while the subscriptions stay as they were (#1340), so the
+    /// cache keys on these too. Everything else on the item, its text included, is ignored.
+    private struct ItemKey: Equatable {
+        var title: String
+        var externalReference: String?
+        var sourceTitle: String?
+        var sourceURL: String?
+        var mediaURL: String?
+        var durationMs: Int?
+        var episodeGUID: String?
+        var createdAt: Date?
+
+        init(_ item: Item) {
+            title = item.title
+            externalReference = item.externalReference
+            sourceTitle = item.sourceTitle
+            sourceURL = item.sourceURL
+            mediaURL = item.media?.url
+            durationMs = item.media?.durationMs
+            episodeGUID = item.episodeGUID
+            createdAt = item.createdAt
+        }
+    }
 
     public convenience init(recorder: ListeningSignalRecorder) {
         let importedEntries = ListeningSignalImportedEntries(beside: recorder)
@@ -47,13 +73,18 @@ public final class ListeningSignalCollector: @unchecked Sendable {
                 self.closeListening()
                 return
             }
+            // The item's own source fields can change too (a link added, a Library item matched to
+            // a feed you already follow), with the subscriptions untouched, so they are keyed as well.
+            // A read that fails once keeps the last key, so a hiccup doesn't split the interval.
+            let itemKey = (try? repository.loadItem(id: itemId)).map(ItemKey.init) ?? self.cachedItemKey
             if self.cachedItemId != itemId || self.cachedRepository !== repository
-                || self.cachedSubscriptions != subscriptions {
+                || self.cachedSubscriptions != subscriptions || self.cachedItemKey != itemKey {
                 self.recorder.endListening()
                 self.cachedContext = self.resolve(itemId, repository)
                 self.cachedItemId = itemId
                 self.cachedRepository = repository
                 self.cachedSubscriptions = subscriptions
+                self.cachedItemKey = itemKey
             }
             guard let context = self.cachedContext else { return }
             self.recorder.noteListening(source: context.source, item: context.item, at: at)
@@ -110,5 +141,6 @@ public final class ListeningSignalCollector: @unchecked Sendable {
         cachedRepository = nil
         cachedContext = nil
         cachedSubscriptions = nil
+        cachedItemKey = nil
     }
 }
