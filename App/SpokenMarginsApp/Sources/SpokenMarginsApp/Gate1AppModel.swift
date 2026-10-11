@@ -1495,6 +1495,7 @@ final class Gate1AppModel: ObservableObject {
             // use durable membership so freshly imported items are not omitted.
             let entries = try MarginCollection.build(
                 items: store.listItems(), sessions: store.loadSessions(), loadMap: { try? store.loadListeningMap(itemId: $0) },
+                loadMediaChapters: { (try? store.loadTranscriptTimelineChapters(itemId: $0)) ?? [] },
                 loadInterjections: { try store.loadInterjections(sessionId: $0) },
                 loadImportedLayers: { try store.loadImportedCommentaryLayers() },
                 loadImportedInterjections: { try store.loadImportedCommentaryInterjections(layerId: $0) }

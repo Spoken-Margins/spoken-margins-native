@@ -703,6 +703,19 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return transcripts.last
     }
 
+    /// Only the chapters of an item's source transcript timeline (#777). A two-hour episode's timeline holds thousands
+    /// of segments, so the Margins tab reads just this slice: SQLite cuts it out and only the small list is decoded.
+    /// Empty when the item has no timeline or the chapters can't be read.
+    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+        var chaptersJSON: String?
+        try readTexts(
+            "SELECT json_extract(payload, '$.timeline.chapters') FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;",
+            [itemId], name: "transcript_timeline_chapters"
+        ) { chaptersJSON = $0 }
+        guard let data = chaptersJSON?.data(using: .utf8) else { return [] }
+        return (try? decoder.decode([MediaTimelineChapter].self, from: data)) ?? []
+    }
+
     public func saveAudioAsset(_ asset: AudioAsset) throws {
         try save(kind: "audio_asset", id: asset.id, sessionId: nil, itemId: asset.itemId, value: asset)
     }
