@@ -159,4 +159,21 @@ final class MarginPlaceIndexTests: XCTestCase {
         XCTAssertEqual(places[entries[0].id]?.chapterName, "Chapter of one")
         XCTAssertEqual(places[entries[1].id]?.chapterName, "Chapter of two")
     }
+
+    func testBuildCarriesEachMarginsPlaceOnlyWhenGivenAWayToReadMaps() throws {
+        let source = item("item", text: "Intro line.\nSecond line.")
+        let session = Session(
+            id: "s", itemId: "item", createdAt: nil, updatedAt: nil, status: "in_progress", phase: .itemPlayback,
+            currentTargetType: .itemTextTTS, currentTargetId: "item", position: Position(), completionPercent: 0, playbackRate: 1)
+        let margin = entry("m", startChar: 14).interjection
+        func build(_ loadMap: ((String) -> ListeningMap?)?) throws -> MarginCollection.Entries {
+            try MarginCollection.build(
+                items: [source], sessions: [session], loadMap: loadMap,
+                loadInterjections: { _ in [margin] }, loadImportedLayers: { [] }, loadImportedInterjections: { _ in [] })
+        }
+        let withMaps = try build { _ in self.map("item", [self.chapter("Start", 0)]) }
+        XCTAssertEqual(withMaps.privateRows.first?.place, MarginPlaces.Place(chapterName: "Start", paragraph: 2))
+        XCTAssertNil(try build(nil).privateRows.first?.place)
+        XCTAssertEqual(try build(nil).privateRows.first?.id, withMaps.privateRows.first?.id)
+    }
 }

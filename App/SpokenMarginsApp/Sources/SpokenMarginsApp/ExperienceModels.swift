@@ -315,14 +315,6 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     }
 }
 
-extension MarginRow {
-    /// The Margins tab's rows, each with the chapter and paragraph it was made in (#777).
-    static func rows(from entries: [MarginCollection.PrivateEntry], items: [Item], loadMap: (String) -> ListeningMap?) -> [MarginRow] {
-        let places = MarginPlaces.places(for: entries, items: items, loadMap: loadMap)
-        return entries.map { MarginRow(interjection: $0.interjection, itemTitle: $0.itemTitle, sessionDate: $0.sessionDate, place: places[$0.id]) }
-    }
-}
-
 struct SharedMarginRow: Identifiable, Equatable, Sendable {
     let interjection: ImportedCommentaryInterjection
     let layer: ImportedCommentaryLayer
