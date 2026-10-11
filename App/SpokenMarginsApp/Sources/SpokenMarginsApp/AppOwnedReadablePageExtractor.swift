@@ -35,6 +35,11 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
     private static let maximumHTMLBytes: Int64 = 1 * 1_024 * 1_024
     /// A shared ChatGPT page is already over half that before the chat: the site's own session data comes first (#874).
     private static let maximumSharedChatHTMLBytes: Int64 = 8 * 1_024 * 1_024
+    /// WebKit content rules for an ordinary page: block its images, styles, scripts, fonts, media, fetches and
+    /// popups, so the reader gets the page's HTML without running or downloading anything else.
+    static let readablePageContentRules = """
+    [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
+    """
     private var webView: WKWebView?
     private var requestedURL: URL?
     private var continuation: CheckedContinuation<BrowserTextHandoff, Error>?
@@ -87,9 +92,7 @@ final class AppOwnedReadablePageExtractor: NSObject, WKNavigationDelegate, Reada
                 forMainFrameOnly: true,
                 in: .defaultClient
             ))
-            rules = """
-            [{"trigger":{"url-filter":".*","resource-type":["image","style-sheet","script","font","media","raw","svg-document","popup"]},"action":{"type":"block"}}]
-            """
+            rules = Self.readablePageContentRules
             ruleListIdentifier = "spoken-margins-readable-page.v1"
         }
         guard let ruleList = try await WKContentRuleListStore.default().compileContentRuleList(

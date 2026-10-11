@@ -102,7 +102,7 @@ extension Gate2LiveActivityAttributes.ContentState {
 
     /// The status in words. A Margin whose microphone is not capturing never reads "Recording".
     var statusLabel: String {
-        guard isRecording else { return status.capitalized }
+        guard isRecording else { return isLoadingAudio ? "Loading…" : status.capitalized }
         switch microphone {
         case .capturing: return status.capitalized
         case .starting: return "Starting mic"
@@ -112,7 +112,15 @@ extension Gate2LiveActivityAttributes.ContentState {
 
     func surfaceSymbol(isStale: Bool) -> String {
         if isRecording { return recordingSymbol }
-        return offersResume(isStale: isStale) ? "pause.fill" : "waveform"
+        if offersResume(isStale: isStale) { return "pause.fill" }
+        // Accepted but not yet heard: an hourglass, not a waveform that claims sound (#943).
+        return isLoadingAudio ? "hourglass" : "waveform"
+    }
+
+    /// The one-word state on the card: "LOADING" until audio is confirmed, never "STARTING" or "PLAY".
+    var headlineWord: String {
+        if isRecording { return recordingWord }
+        return isLoadingAudio ? "LOADING" : status.uppercased()
     }
 }
 
@@ -139,18 +147,19 @@ private struct Gate2LiveActivitySmallView: View {
     let isStale: Bool
 
     private var isPlaying: Bool {
-        !isStale && (state.status == "playing" || state.status == "starting")
+        !isStale && state.isAudioRunning
     }
 
     private var stateText: String {
         if state.isRecording { return state.recordingWord }
         if state.offersResume(isStale: isStale) { return "TAP TO RESUME" }
         if isPlaying { return "PLAY" }
-        return state.status.uppercased()
+        return state.headlineWord
     }
 
     private var stateImage: String {
         if state.isRecording { return state.recordingSymbol }
+        if state.isLoadingAudio { return "hourglass" }
         return isPlaying ? "waveform" : "pause.fill"
     }
 
@@ -219,7 +228,7 @@ private struct Gate2LiveActivityView: View {
                         .minimumScaleFactor(0.82)
                 }
                 Spacer()
-                Text(state.isRecording ? state.recordingWord : state.status.uppercased())
+                Text(state.headlineWord)
                     .font(.caption.weight(.bold).monospaced())
                     .foregroundStyle(state.isRecording ? state.recordingTint : .white)
             }

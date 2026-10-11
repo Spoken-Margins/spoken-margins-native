@@ -71,7 +71,7 @@ final class TranscriptionFailureWordingTests: XCTestCase {
         )
         XCTAssertEqual(
             TranscriptionFailureWording.marginStatus(transcriptionStatus: "pending", speechRecognitionOff: true),
-            "Transcription is pending"
+            "Transcribing…"
         )
         XCTAssertNil(TranscriptionFailureWording.marginStatus(transcriptionStatus: "transcribed", speechRecognitionOff: true))
     }
@@ -102,7 +102,7 @@ final class TranscriptionFailureWordingTests: XCTestCase {
         XCTAssertEqual(attention("complete", context: true, missing: true), "Context needs retry")
         XCTAssertEqual(attention("complete", missing: true), "Recording is unavailable")
         XCTAssertEqual(attention("failed"), "Transcription needs retry")
-        XCTAssertEqual(attention("pending"), "Transcription is pending")
+        XCTAssertEqual(attention("pending"), "Transcribing…")
         XCTAssertEqual(attention("complete"), "Margin needs attention")
     }
 }

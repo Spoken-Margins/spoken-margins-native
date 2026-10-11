@@ -46,6 +46,12 @@ for entry in expected {
         fail("\(itemId): listening map missing")
     }
     guard sessions.contains(where: { $0.id == sessionId }) else { fail("\(itemId): session \(sessionId) missing") }
+    // An article that plays its publisher's recording is stored as a plain article being read (#547).
+    if let target = entry["sessionTargetType"] as? String,
+       sessions.first(where: { $0.id == sessionId })?.currentTargetType.rawValue != target {
+        fail("\(itemId): session \(sessionId) is not stored as \(target)")
+    }
+    if entry["itemHasNoMedia"] as? Bool == true, item.media != nil { fail("\(itemId): the article has media of its own") }
     let margins: [Interjection]
     do { margins = try store.loadInterjections(sessionId: sessionId) } catch { fail("\(itemId): Margins don't load: \(error)") }
     guard let margin = margins.first(where: { $0.id == marginId }) else { fail("\(itemId): Margin \(marginId) missing") }

@@ -15,11 +15,13 @@ import signal
 import subprocess
 import sys
 import time
+from xml.etree import ElementTree
 from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
 import lane_sim
+import sessionkit_pass
 import lane_sim_pool
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
@@ -190,6 +192,36 @@ def test_records(log):
     return records
 
 
+def xunit_records(path):
+    """Test results from a `swift test --xunit-output` file, keyed like test_records (Module/Class/method).
+
+    `swift test --parallel` doesn't print a line per passing test, so its results come from this file.
+    A missing or unreadable file gives no records, which the caller's reconcile reports as a failure."""
+    try:
+        suite = ElementTree.parse(path).getroot()
+    except (OSError, ElementTree.ParseError):
+        return {}
+    records = {}
+    for case in suite.iter('testcase'):
+        module, _, name = case.get('classname', '').partition('.')
+        method = case.get('name', '').removesuffix('()')
+        if not (re.fullmatch(r'\w+', module) and re.fullmatch(r'\w+', name) and re.fullmatch(r'test\w+', method)):
+            continue
+        status = ('failed' if case.find('failure') is not None or case.find('error') is not None
+                  else 'skipped' if case.find('skipped') is not None else 'passed')
+        identifier = f'{module}/{name}/{method}'
+        try:
+            seconds = float(case.get('time', 0))
+        except ValueError:
+            seconds = 0.0
+        if identifier in records:  # a repeated case keeps its worst result
+            previous = records[identifier]
+            status = next(s for s in ('failed', 'skipped', 'passed') if s in (previous['status'], status))
+            seconds += previous['seconds']
+        records[identifier] = {'status': status, 'seconds': seconds}
+    return records
+
+
 def xcresult_test_records(payload):
     """Read individual XCTest results, independent of interleaved application stdout."""
     records = {}
@@ -305,7 +337,8 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
 # app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
-# Packages/ and App/ (re-measured 2026-10-09). A diff that touches those inputs (and no lane path) runs just
+# Packages/ and App/; the SessionKit pass key's reader guard reads every Swift file of the package (re-measured
+# 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
 # `python -m unittest discover -s scripts/tests` there and on a full checkout: the classes that fail only in
@@ -314,7 +347,8 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
-                       'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit')
+                       'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
+                       'test_sessionkit_pass')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
@@ -412,6 +446,10 @@ def stop_process_group(process, grace=10):
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+# SessionKitCoreTests run in parallel (#1328); the other two targets hold the real-time AVFoundation tests and
+# stay serial. A parallel run that fails for any reason is run again serially, and that result decides.
+PARALLEL_CORE_TIMEOUT = 300
+PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
 # detached checkout of it, so the 180 s command default left no room: built beside a simulator job, the step
 # was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
@@ -495,7 +533,7 @@ class Run:
         return False
 
     def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
-                startup=None):
+                startup=None, record_source=None):
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
         self.manifest['steps'].append(entry)
@@ -564,6 +602,7 @@ class Run:
             except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
                 # A startup stall is reported as its own reason below, not as the step running out of budget.
                 entry['interrupted'] = not isinstance(stopped, StartupStall)
+                entry['signalled'] = isinstance(stopped, KeyboardInterrupt)  # the lane stopped this run, not the step's own limit
                 stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
@@ -593,9 +632,9 @@ class Run:
                               f'the tests passed on launch {attempt} but the stall is undiagnosed, so this is not a PASS '
                               f'(samples under {name}-stall-*/)')
         if tests:
-            records = test_records(text)
+            records = record_source() if record_source else test_records(text)
             payload = None
-            entry['test_evidence'] = 'log'
+            entry['test_evidence'] = 'xunit' if record_source else 'log'
             if '-resultBundlePath' in args:
                 bundle = args[args.index('-resultBundlePath') + 1]
                 entry['result_bundle'] = bundle
@@ -695,16 +734,43 @@ class Run:
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
+        # Lane runs skip the SessionKit build and tests when this exact tree (the package, what its tests read,
+        # the toolchain and the test runner) already passed them on this Mac (#1328). Only a run given the PR's
+        # changed paths skips; one without them runs every step.
+        identity = None if in_codex_sandbox() else sessionkit_pass.toolchain()
+        pass_key = sessionkit_pass.key(ROOT, identity)
+        earlier = sessionkit_pass.find(state_dir(), pass_key) if self.changed else None
+        if earlier:
+            why = (f'the same SessionKit inputs, toolchain and test runner passed all {earlier.get("tests", "its")} tests '
+                   f'at {earlier.get("passed_at")} (commit {str(earlier.get("head"))[:7]})')
+            self.manifest['sessionkit_pass'] = {'reused': pass_key, **earlier}
+            self.manifest.setdefault('notes', []).append('SessionKit build and tests skipped: ' + why)
+            self.skip('package-build', why)
+            self.skip('package', why)
+        else:
+            self.package_steps(expected)
+            if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
+                sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError('Inputs changed during fast verification')
+
+    def package_steps(self, expected):
+        """Build SessionKit and run its tests: SessionKitCoreTests in parallel (#1328), the rest serially."""
         # The build gets its own limit, so a cold build under load can't use up the tests' time (#844).
         # The tests' limit covers about 1,000 tests, including real-time AVPlayer tests that took
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
-        self.command('package-build', ['bash', 'scripts/run-sessionkit-tests.sh', '--build-only'],
-                     timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         audio = self.manifest['audio_output'] = host_audio.audio_output()
+        # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
+        core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
+        split = bool(core) and not in_codex_sandbox()
         try:
-            self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh', '--skip-build'],
+            if split:
+                self.package_core(core)
+            self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
                          timeout=PACKAGE_TEST_TIMEOUT,
-                         expected=expected, tests=True,
+                         expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
@@ -721,8 +787,27 @@ class Run:
                 raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}; {error}')
             raise
 
-        if input_identity() != self.manifest['input_sha256']:
-            raise RuntimeError('Inputs changed during fast verification')
+    def package_core(self, expected):
+        """SessionKitCoreTests with `swift test --parallel`. Anything wrong with that run (a failing test, a missing
+        or unreadable result file, a timeout) is run again serially, and the serial run decides: parallel
+        tests can fail on shared state that serial runs never meet, and the result file's format is SwiftPM's."""
+        xunit = self.output / 'package-core.xunit.xml'
+        try:
+            self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
+                         timeout=PARALLEL_CORE_TIMEOUT, expected=expected, tests=True,
+                         record_source=lambda: xunit_records(xunit))
+            return
+        except RuntimeError as error:
+            step = self.manifest['steps'][-1]
+            if step.get('signalled'):
+                raise  # the lane is stopping this run: a serial run would outlive it
+            step['superseded'] = 'run again serially'
+            self.manifest.setdefault('notes', []).append(
+                f'SessionKitCoreTests: the parallel run failed, so they ran again serially ({str(error)[:300]})')
+            self.save()
+            print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
+        self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
+                     timeout=PACKAGE_TEST_TIMEOUT, expected=expected, tests=True)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -737,6 +822,35 @@ class Run:
         for folder in ops_test_folders(base):
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
             self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
+
+    def simulator(self, device, ios=None):
+        """The destination, and whether this run created it (its first boot gets the lane's tolerance).
+
+        --device is used as given. Otherwise the dedicated Test Runner, created when missing, and
+        replaced when the lane has marked it unsafe: it is this script's own device, and refusing it
+        stopped every integration run on next for a day (#1325). A T3 gets a fresh device each run too.
+        """
+        def listed():
+            return json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+
+        if device:
+            return select_simulator(listed(), device, ios), False
+        chosen, template = dedicated_simulator(listed(), ios)
+        marked = lane_sim.unsafe_devices().get(chosen['udid']) if chosen else None
+        if marked:
+            print(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) is on the lane\'s unsafe list ({marked["reason"]}); '
+                  'replacing it with a fresh one', flush=True)
+            subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']], cwd=ROOT, capture_output=True, timeout=60)
+            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=120)
+            chosen, template = dedicated_simulator(listed(), ios)
+        if chosen is not None:
+            return chosen, False
+        self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
+                     template['deviceTypeIdentifier'], template['runtime']], timeout=60)
+        chosen, _ = dedicated_simulator(listed(), ios)
+        if chosen is None:
+            raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        return chosen, True
 
     def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None):
         if input_identity() != self.manifest['input_sha256']:
@@ -753,18 +867,7 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
-        devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-        if device:
-            chosen = select_simulator(devices, device, ios)
-        else:
-            chosen, template = dedicated_simulator(devices, ios)
-            if chosen is None:
-                self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
-                             template['deviceTypeIdentifier'], template['runtime']], timeout=60)
-                devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-                chosen, _ = dedicated_simulator(devices, ios)
-                if chosen is None:
-                    raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
         self.command('generate', ['xcodegen', 'generate'])
@@ -802,7 +905,8 @@ class Run:
                 self.manifest['steps'].append(entry)
                 self.save()
                 try:
-                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout), 3),
+                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout,
+                                                             first_boot=created), 3),
                                  exit_code=0, errors=[])
                 except lane_sim.BootError as error:
                     entry.update(exit_code=1, errors=[str(error)])

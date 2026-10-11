@@ -694,6 +694,25 @@ final class LocalFoundationModelsTests: XCTestCase {
         XCTAssertTrue(zip(draft.chapters, draft.chapters.dropFirst()).allSatisfy { lhs, rhs in
             lhs.endChar <= rhs.startChar
         })
+        // #1044 APO-12: the break lands where the topic changes, not wherever the size limit falls.
+        let firstBeta = try XCTUnwrap(source.range(of: "Beta"))
+        XCTAssertEqual(draft.chapters.count, 2, "one chapter per topic: \(draft.chapters.map(\.startChar))")
+        XCTAssertEqual(draft.chapters.dropFirst().first?.startChar, source.distance(from: source.startIndex, to: firstBeta.lowerBound))
+        XCTAssertEqual(draft.chapters.dropFirst().first?.text.hasPrefix("Beta"), true)
+    }
+
+    func testPlannerKeepsOneTopicInOneChapterBelowTheHardLimit() throws {
+        // About 5,100 characters of one topic: past the 2,500-character minimum, short of the 6,000 hard limit.
+        let source = String(repeating: "Alpha context evidence structure. ", count: 150)
+        let planner = LocalListeningMapPlanner { text in
+            let lowered = text.lowercased()
+            return [Double(lowered.components(separatedBy: "alpha").count - 1),
+                    Double(lowered.components(separatedBy: "beta").count - 1)]
+        }
+
+        let draft = try planner.makeDraft(text: source, timeline: nil)
+
+        XCTAssertEqual(draft.chapters.count, 1, "split without a topic change: \(draft.chapters.map(\.startChar))")
     }
 
     func testPlannerCarriesExactMediaNavigationAnchorsIntoDraft() throws {

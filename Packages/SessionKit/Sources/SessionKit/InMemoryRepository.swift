@@ -368,6 +368,14 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
     public func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection? {
         resolvedListeningMapProjections[itemId]
     }
+    public func removeCommunityMap(itemId: String) throws {
+        portableListeningMapProposals = portableListeningMapProposals.filter {
+            !($0.value.itemId == itemId && CommunityMapConverter.isCommunityProposal(id: $0.key))
+        }
+        if let projection = resolvedListeningMapProjections[itemId], CommunityMapConverter.isCommunityProjection(projection) {
+            resolvedListeningMapProjections[itemId] = nil
+        }
+    }
     public func saveEpisodeMapPreparationJob(_ job: EpisodeMapPreparationJob) throws {
         episodeMapPreparationJobs[job.id] = job
     }

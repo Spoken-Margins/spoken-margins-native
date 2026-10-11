@@ -164,7 +164,8 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
                 duration: result.duration,
                 sampleRate: result.sampleRate,
                 renderDuration: result.renderDuration,
-                sessionLoadCount: result.sessionLoadCount
+                sessionLoadCount: result.sessionLoadCount,
+                trimmedSilence: result.trimmedSilence
             )
         }
     }
@@ -212,8 +213,9 @@ final class RenderedSpeechDiskCache: @unchecked Sendable {
         synthesisSteps: Int
     ) -> URL {
         // v2: v1 entries can hold iOS-voice stand-ins cached as Supertonic before #311; they now
-        // miss once and age out under the cache limit (#363 audit).
-        let payload = "supertonic-v2\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
+        // miss once and age out under the cache limit (#363 audit). v3: v2 entries still carry the
+        // model's silence before and after the speech, so they miss once and render trimmed (#586).
+        let payload = "supertonic-v3\u{1f}\(voice.rawValue)\u{1f}\(language)\u{1f}\(speed)\u{1f}\(synthesisSteps)\u{1f}\(text)"
         let digest = SHA256.hash(data: Data(payload.utf8))
             .map { String(format: "%02x", $0) }
             .joined()
@@ -329,6 +331,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// `stopReason` is set only with `.stopped`: the code that stopped generation (#314).
     typealias GenerationStateHandler = @Sendable (_ state: RenderedSpeechGenerationState, _ stopReason: String?) -> Void
     typealias GenerationProgressHandler = @Sendable (RenderedSpeechGenerationProgress) -> Void
+    /// A new longest gap between one chunk ending and the next playing (#586).
+    typealias ChunkHandOverGapHandler = @Sendable (ChunkHandOverGapRecorder.Gap) -> Void
     /// One line on how fast chunks render against how fast they play, after each chunk the phone renders (#540).
     typealias RenderPaceHandler = @Sendable (_ summary: String) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
@@ -403,6 +407,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onFallback: FallbackHandler?
     private let onGenerationStateChange: GenerationStateHandler?
     private let onGenerationProgress: GenerationProgressHandler?
+    private let onChunkHandOverGap: ChunkHandOverGapHandler?
     private let onPreparedAudio: PreparedAudioHandler?
     private let preparedChunkLookup: PreparedChunkLookup?
     private let onPreparationPlan: PreparationPlanHandler?
@@ -414,6 +419,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)?
     private let observesPlayerLifecycle: Bool
     private let onDeviceRenderingAllowed: @Sendable () -> Bool
+    /// Plays the cue that introduces the iOS voice when it takes over a passage (#934). nil in tests that don't listen.
+    private let voiceChangeCue: (@Sendable () -> Void)?
     private let lock = NSLock()
     private let maxCharacters: Int
     private let startupBufferChunkCount: Int
@@ -436,6 +443,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var activeAudioURL: URL?
     private var activeAudioDuration: TimeInterval = 0
     private var generation = UUID()
+    /// Guarded by `lock`.
+    private var handOverGaps = ChunkHandOverGapRecorder()
     private var currentTargetId: String?
     private var currentStartOffset = 0
     private var currentChunkLength = 0
@@ -461,6 +470,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Chunks the guard gave to the iOS voice. While any remain, the whole article isn't
     /// assembled into the item's audio, so the next play can try Supertonic again (#363 audit).
     private var standInOffsets: Set<Int> = []
+    /// Decides which passage gets the voice-change cue, per generation (#934).
+    private var voiceChangeCueDecider = NarrationVoiceChangeCue()
+    private var voiceChangeCueGeneration: UUID?
     private var initialPlaybackOffset: Int?
     private var initialRequestedSpokenOffset: Int?
     private var failedRenderReasons: [Int: String] = [:]
@@ -565,11 +577,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioSessionActivator: (@Sendable () throws -> Void)? = nil,
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
         observesPlayerLifecycle: Bool = true,
+        voiceChangeCue: (@Sendable () -> Void)? = nil,
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { SupertonicResourcePolicy.allowsRendering() },
         fallbackClient: AudioPlaybackClient? = nil,
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
         onGenerationProgress: GenerationProgressHandler? = nil,
+        onChunkHandOverGap: ChunkHandOverGapHandler? = nil,
         onPreparationPlan: PreparationPlanHandler? = nil,
         onPreparedChunk: PreparedChunkHandler? = nil,
         articleText: ArticleTextLookup? = nil,
@@ -609,6 +623,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.audioSessionActivator = audioSessionActivator
         self.audioPlayerStarter = audioPlayerStarter
         self.observesPlayerLifecycle = observesPlayerLifecycle
+        self.voiceChangeCue = voiceChangeCue
         self.onDeviceRenderingAllowed = onDeviceRenderingAllowed
         self.interruptionHandler = interruptionHandler
         self.maxCharacters = maxCharacters
@@ -616,6 +631,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.preparedAudioDirectory = preparedAudioDirectory
         self.onGenerationStateChange = onGenerationStateChange
         self.onGenerationProgress = onGenerationProgress
+        self.onChunkHandOverGap = onChunkHandOverGap
         self.onPreparationPlan = onPreparationPlan
         self.onPreparedChunk = onPreparedChunk
         self.preparedChunkLookup = preparedChunkLookup
@@ -937,18 +953,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    /// Supertonic is a user-selected voice. Backgrounding during its initial
-    /// two-chunk buffer must never silently change the voice; playback remains
-    /// pending until the selected renderer can continue.
-    @discardableResult
-    func ensurePlaybackStartsBeforeBackgrounding() -> Bool {
-        false
-    }
-
     func pause() throws {
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
             shouldResumeAfterInterruption = false
+            handOverGaps.discardPending()
             return (fallbackIsActive, player)
         }
         if snapshot.0 {
@@ -1136,7 +1145,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func playbackItemFinished(_ item: AVPlayerItem) {
         guard lock.withLock({ player?.currentItem === item && transportIntent == .playing }) else { return }
         removePlaybackEndObserver()
-        let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?) in
+        let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?, RenderedSpeechChunkBoundary) in
             // Set with the finished player detached, so the monitor never sees the old player as the next one.
             handOverHoldRequested = handOverHold != nil
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
@@ -1159,7 +1168,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 cached,
                 currentChunkBoundary.transitionDelay,
                 generation,
-                finishedURL
+                finishedURL,
+                currentChunkBoundary
             )
         }
         holdBackgroundTimeForHandOver()
@@ -1186,6 +1196,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             try? releaseBackgroundAudio()
             reportGenerationState(stateAfterPlayback.0, stopReason: stateAfterPlayback.1)
             return
+        }
+        lock.withLock {
+            handOverGaps.chunkFinished(
+                at: ProcessInfo.processInfo.systemUptime,
+                generation: snapshot.5,
+                boundary: snapshot.7,
+                nextChunkWasReady: snapshot.3 != nil
+            )
         }
         if let cached = snapshot.3 {
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
@@ -1814,7 +1832,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         _ audioURL: URL,
         duration: TimeInterval,
         request: RenderRequest,
-        delay: TimeInterval = 0
+        delay requestedDelay: TimeInterval = 0
     ) {
         let shouldPlay = lock.withLock {
             generation == request.generation && transportIntent == .playing
@@ -1829,6 +1847,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             return
         }
+        // The first passage the iOS voice takes over from the chosen voice is introduced by a chime. The passage waits
+        // for it, so its own clock and the offsets Margins anchor to don't move (#934).
+        let cueLeadIn = lock.withLock { () -> TimeInterval in
+            if voiceChangeCueGeneration != request.generation {
+                voiceChangeCueGeneration = request.generation
+                voiceChangeCueDecider = NarrationVoiceChangeCue()
+            }
+            return voiceChangeCueDecider.leadIn(forStandIn: standInOffsets.contains(request.startOffset))
+        }
+        if cueLeadIn > 0, let voiceChangeCue { voiceChangeCue() }
+        let delay = requestedDelay + (voiceChangeCue == nil ? 0 : cueLeadIn)
         do {
             // Keep the session continuous between ready chunks so opted-in
             // background audio does not swell at each sentence boundary.
@@ -2552,6 +2581,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             activateSystemFallback(request: request, reason: "supertonic_playback_failed")
             return
         }
+        let longestGap = lock.withLock {
+            handOverGaps.chunkStarted(at: ProcessInfo.processInfo.systemUptime, generation: request.generation)
+        }
+        if let longestGap { onChunkHandOverGap?(longestGap) }
         if let audioPlayerStarter {
             audioPlayerStarter(nextPlayer, rate)
         } else {
@@ -2889,6 +2922,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard transportIntent == .playing else { return (false, false, nil) }
             transportIntent = .paused
             shouldResumeAfterInterruption = allowsAutomaticResume
+            handOverGaps.discardPending()
             return (true, fallbackIsActive, player)
         }
         // A lost route while nothing plays (Bluetooth dropping between listens) isn't worth a log entry.
@@ -2984,6 +3018,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             transportIntent = .paused
             // The listener's pause or play, and a system interruption that already asked to resume, keep their say.
             if announcesPause { shouldResumeAfterInterruption = false }
+            handOverGaps.discardPending()
             playbackFailure = nil
             pendingStartTargetId = nil
             startedTargetId = nil

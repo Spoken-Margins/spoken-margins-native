@@ -87,14 +87,15 @@ def failing_tests(output: Path, tree: Path) -> tuple[str, str, list[str]] | None
 
     kind is 'swift' (identifiers like SessionKitTests/Class/testMethod) or 'python' (module.Class.method,
     importable with `folder`, relative to the tree, on sys.path)."""
-    steps = [step for step in _manifest(output).get('steps', []) if step.get('errors')]
+    # A step marked superseded was run again (the parallel SessionKitCoreTests run, #1328): the rerun decides.
+    steps = [step for step in _manifest(output).get('steps', []) if step.get('errors') and not step.get('superseded')]
     if not steps:
         return None
     step = steps[-1]
     if step.get('interrupted'):
         return None
     name = step.get('name', '')
-    if name == 'package':
+    if name in ('package', 'package-core', 'package-core-serial'):
         # Only test failures: "Missing:" tests, a crash or an unexpected skip aren't a test to re-run.
         if not all(error.startswith(('Failed: ', 'Process exit ')) for error in step['errors']):
             return None

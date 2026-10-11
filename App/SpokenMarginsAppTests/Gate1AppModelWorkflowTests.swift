@@ -1,6 +1,8 @@
+import AVFoundation
 import Combine
 import XCTest
 @testable import SessionKit
+import SessionKitAudio
 import SessionKitPersistence
 @testable import SpokenMarginsApp
 import SQLite3
@@ -287,6 +289,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.exportShareCandidates.isEmpty)
     }
 
+    /// #1043 APM-12: the Margins tab's "export this item" was tested with one session, so any pick of session
+    /// passed. After "play again" the newest session is empty; the export must still open the session that
+    /// holds the Margins.
+    func testItemMarginsExportUsesTheSessionWithMarginsWhenTheNewestHasNone() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "item-export-session-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "First private thought")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Second selected thought")
+        let withMargins = try XCTUnwrap(model.snapshot.sessionId)
+        model.startNewSession(id: "item-pill")
+        let newest = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(newest, withMargins)
+        // Both sessions are saved within the same second, so make the empty one sort first for certain.
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        var newer = try XCTUnwrap(store.loadSession(id: newest))
+        newer.updatedAt = Date().addingTimeInterval(60)
+        try store.saveSession(newer)
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
+        XCTAssertEqual(try store.loadSessions(itemId: "item-pill").first?.id, newest, "the newest session has no Margins")
+
+        model.openMarginItemExport(itemID: row.interjection.itemId)
+
+        XCTAssertEqual(model.screen, .export)
+        XCTAssertEqual(model.exportSessionId, withMargins)
+        XCTAssertEqual(Set(model.exportShareCandidates.map(\.sessionId)), [withMargins])
+        XCTAssertEqual(model.exportShareCandidates.count, 2)
+        model.prepareExportShareInterjections()
+        XCTAssertEqual(model.sharingState.drafts.count, 2)
+        XCTAssertEqual(model.snapshot.sessionId, newest, "opening the export leaves the playing session alone")
+    }
+
     func testChapterFromCompletedSessionStartsReplayWithoutChangingCompletedHistory() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -516,19 +558,54 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelSleepTimer()
     }
 
-    func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+    /// #1043 APM-05: the expiry tests ran with nothing playing, so the pause the timer exists for never ran.
+    func testTimedSleepTimerExpiryPausesThePlayingSource() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive)
+        XCTAssertTrue(audio.isPlaying)
         model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
         guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
             return XCTFail("Expected armed sleep timer")
         }
-        model.snapshot.isRecording = true
+
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(-1))
+        XCTAssertTrue(audio.isPlaying, "nothing pauses before the deadline")
+
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(1))
+        XCTAssertEqual(model.sleepTimerState, .inactive)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertFalse(audio.isPlaying, "the timer said it paused playback, so the player must have stopped")
+    }
+
+    func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
+        guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
         model.reconcileSleepTimer(now: deadline.addingTimeInterval(1))
         XCTAssertEqual(model.sleepTimerState, .expiryDeferred(mode: .minutes15))
+        XCTAssertTrue(model.snapshot.isRecording, "the timer never cuts a Margin off")
 
-        model.snapshot.isRecording = false
+        model.finishInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertTrue(audio.isPlaying, "the source plays on after the Margin is saved")
         model.reconcileSleepTimer(now: deadline.addingTimeInterval(2))
         XCTAssertEqual(model.sleepTimerState, .inactive)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertFalse(audio.isPlaying, "the deferred expiry pauses the source once the Margin is saved")
     }
 
     func testEndOfChapterSleepTimerIsUnavailableForMaplessAndLastChapterPositions() {
@@ -712,6 +789,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let originalURL = directory.appending(path: "private-original.m4a")
         let originalBytes = Data([0x53, 0x4D, 0x01, 0x35])
         try originalBytes.write(to: originalURL)
+        // The model writes cleaned copies under the real Application Support; remove every folder this test adds.
+        let shareRevisions = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        ).appending(path: "SpokenMargins/ShareRevisions", directoryHint: .isDirectory)
+        let revisionsBefore = Set((try? FileManager.default.contentsOfDirectory(atPath: shareRevisions.path)) ?? [])
+        defer {
+            let after = (try? FileManager.default.contentsOfDirectory(atPath: shareRevisions.path)) ?? []
+            for name in after where !revisionsBefore.contains(name) {
+                try? FileManager.default.removeItem(at: shareRevisions.appending(path: name))
+            }
+        }
         let probe = BulkSharePreparationProbe()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
@@ -754,13 +842,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
                 && $0.representationChoice == .cleaned
                 && $0.approvedTranscript == "Keep words."
         })
-        XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes)
+        let cleanedURLs = model.sharingState.drafts.compactMap(\.cleanedAudioURL)
+        XCTAssertEqual(try Data(contentsOf: originalURL), originalBytes, "the owner's recording is untouched")
+        XCTAssertEqual(cleanedURLs.count, 53)
+        XCTAssertEqual(Set(cleanedURLs.map(\.standardizedFileURL.path)).count, 53, "each Margin gets its own cleaned copy")
+        for url in cleanedURLs {
+            XCTAssertNotEqual(url.standardizedFileURL.path, originalURL.standardizedFileURL.path)
+            XCTAssertNotEqual(url.deletingLastPathComponent().standardizedFileURL.path, directory.standardizedFileURL.path)
+            XCTAssertEqual(try Data(contentsOf: url), BulkSharePreparationProbe.cleanedBytes)
+        }
 
         let firstID = try XCTUnwrap(model.sharingState.drafts.first?.id)
         model.undoShareDraftEdit(firstID)
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep um words.")
         model.redoShareDraftEdit(firstID)
         XCTAssertEqual(model.sharingState.drafts[0].approvedTranscript, "Keep words.")
+        // Redo renders the cleaned copy again in the background; let it land before the folder cleanup runs.
+        try await waitFor("the redo render to finish", timeoutNanoseconds: 5_000_000_000) {
+            !model.sharingState.drafts[0].isPreparingCleanup
+        }
     }
 
     func testTurningOffAutomaticCleanupRestoresAutomaticallyCleanedDrafts() async throws {
@@ -820,17 +920,21 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Gate1AppModel.marginPlaybackRate(itemPlaybackRate: .nan), 1)
     }
 
+    /// #1043 APM-08: the test asserted straight after Cancel, so the render still in flight never came back, and
+    /// the guard that stops a stale render writing onto the cancelled draft never ran. Here the render ignores the
+    /// cancel (as an export already under way does), finishes afterwards and writes its file. The draft must stay
+    /// as Cancel left it, and the stale cleaned copy must be deleted.
     func testCancellingBulkSharePreparationMakesInFlightMarginEligibleAgain() async throws {
         let sourceURL = FileManager.default.temporaryDirectory
             .appending(path: "bulk-margin-cancel-\(UUID().uuidString).m4a")
         try Data([0x01]).write(to: sourceURL)
         defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let render = HeldCleanupRender()
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
             shareMarginSilenceAnalysisHandler: { _, _ in [] },
-            shareMarginAudioCleanupHandler: { _, _, _ in
-                try await Task.sleep(for: .seconds(5))
-                return 625
+            shareMarginAudioCleanupHandler: { _, destinationURL, _ in
+                try await render.render(destinationURL: destinationURL)
             }
         )
         model.resetAndSeed()
@@ -847,14 +951,50 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         try await waitFor("bulk render to begin") {
             model.sharingState.drafts.first?.isPreparingCleanup == true
         }
+        var heldDestination: URL?
+        for _ in 0..<200 where heldDestination == nil {
+            heldDestination = await render.heldDestination
+            if heldDestination == nil { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        let destination = try XCTUnwrap(heldDestination, "the renderer was handed its destination")
+        defer { try? FileManager.default.removeItem(at: destination.deletingLastPathComponent()) }
 
         model.cancelBulkSharePreparation()
 
         XCTAssertFalse(model.sharingState.isBulkPreparing)
         XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 0)
         XCTAssertEqual(model.bulkSharePreparationEligibleCount, 1)
-        XCTAssertFalse(try XCTUnwrap(model.sharingState.drafts.first).currentEditState.automaticCleanupEnabled)
-        XCTAssertNil(model.sharingState.drafts.first?.cleanup)
+        let cancelled = try XCTUnwrap(model.sharingState.drafts.first)
+        XCTAssertFalse(cancelled.currentEditState.automaticCleanupEnabled)
+        XCTAssertNil(cancelled.cleanup)
+
+        await render.finish()
+        var returned = false
+        for _ in 0..<200 where !returned {
+            returned = await render.hasReturned
+            if !returned { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        XCTAssertTrue(returned, "the stale render came back after Cancel")
+        // Checked by the renderer as it returns: the model's cleanup runs on the main actor as soon as the render
+        // returns, which can be before this test's poll sees `hasReturned`, so the file may already be gone here.
+        let wroteCopy = await render.wroteCopy
+        XCTAssertTrue(wroteCopy, "it wrote its cleaned copy")
+        // The cancelled preparation comes back to the main actor and, past its guard, deletes the stale copy.
+        try await waitFor("the stale cleaned copy to be deleted", timeoutNanoseconds: 3_000_000_000) {
+            !FileManager.default.fileExists(atPath: destination.path)
+        }
+
+        let draft = try XCTUnwrap(model.sharingState.drafts.first)
+        XCTAssertNil(draft.cleanedAudioURL, "a cancelled render must not attach its copy")
+        XCTAssertNil(draft.cleanedAudioDurationMs)
+        XCTAssertEqual(draft.representationChoice, cancelled.representationChoice)
+        XCTAssertNil(draft.preparationMessage)
+        XCTAssertFalse(draft.isPreparingCleanup)
+        XCTAssertFalse(draft.currentEditState.automaticCleanupEnabled)
+        XCTAssertNil(draft.cleanup)
+        XCTAssertFalse(model.sharingState.isBulkPreparing)
+        XCTAssertEqual(model.sharingState.bulkPreparationCompleted, 0)
+        XCTAssertEqual(model.bulkSharePreparationEligibleCount, 1, "the Margin is still eligible for the next run")
     }
 
     func testBulkSharePreparationFallsBackToOriginalVoiceWhenRenderingFails() async throws {
@@ -1277,6 +1417,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.chapters.count, 5)
     }
 
+    /// #1043 APM-10: the practice-Margin step was checked once, before any tap. It must stay open through Add
+    /// Margin (button and compact control), through Cancel, and through a Finish whose save fails; only a saved
+    /// Margin completes it.
     func testGuidedOnboardingAdvancesOnlyFromCompletedProductActions() throws {
         let priorTermsVersion = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceVersionKey)
         let priorTermsDate = UserDefaults.standard.object(forKey: SpokenMarginsTerms.acceptanceDateKey)
@@ -1285,9 +1428,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             restoreUserDefault(priorTermsDate, forKey: SpokenMarginsTerms.acceptanceDateKey)
         }
         SpokenMarginsTerms.recordAcceptance()
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            recordingClient: NoopRecordingClient(),
+            recordingClient: recorder,
             interjectionTranscriptionHandler: { _ in "A practice note." }
         )
         model.resetOnboardingProgressForTesting()
@@ -1301,6 +1446,35 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.shouldShowGuidedOnboardingCoach)
         XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection)
         XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection))
+
+        func assertPracticeStepStillOpen(_ moment: String) {
+            XCTAssertFalse(model.isOnboardingStepComplete(.firstInterjection), moment)
+            XCTAssertEqual(model.guidedOnboardingStage, .practiceInterjection, moment)
+        }
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        assertPracticeStepStillOpen("after Add Margin")
+        model.cancelInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        assertPracticeStepStillOpen("after Cancel")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        XCTAssertTrue(model.snapshot.isRecording)
+        assertPracticeStepStillOpen("after Add Margin from the compact control")
+        model.dispatchGate2CompactCommand(.cancelInterjection)
+        assertPracticeStepStillOpen("after Cancel from the compact control")
+
+        recorder.refusesToFinish = true
+        model.beginInterjection()
+        model.finishInterjection()
+        XCTAssertNotNil(model.lastError, "the failed save is reported")
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "nothing was saved")
+        assertPracticeStepStillOpen("after a Finish whose save failed")
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        assertPracticeStepStillOpen("after a compact Finish whose save failed")
+        model.cancelInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        recorder.refusesToFinish = false
+        XCTAssertEqual(recorder.finishCount, 2, "both Finishes reached the recorder")
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.snapshot.isRecording)
@@ -1402,10 +1576,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.dispatchGate2CompactCommand(.cancelInterjection)
     }
 
-    func testFinishAndCancelAreTheOnlyRecordingExits() {
+    func testFinishAndCancelAreTheOnlyRecordingExits() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),
-            recordingClient: NoopRecordingClient()
+            recordingClient: recorder
         )
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -1415,7 +1593,11 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.recordingNavigationIsLocked)
+        XCTAssertEqual(recorder.beginCount, 1, "the microphone was asked to start once")
         model.dispatchGate2CompactCommand(.finishInterjection)
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(model.selectedItem.interjections.first?.audioPath, recorder.savedPaths.first)
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
         XCTAssertNil(model.recordingPresentationContext)
@@ -1427,7 +1609,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.recordingNavigationIsLocked)
+        XCTAssertEqual(recorder.beginCount, 2)
         model.dispatchGate2CompactCommand(.cancelInterjection)
+        XCTAssertEqual(recorder.cancelCount, 1, "cancel discards the recording")
+        XCTAssertEqual(recorder.finishCount, 1, "cancel never saves")
 
         XCTAssertFalse(model.recordingNavigationIsLocked)
         XCTAssertNil(model.recordingPresentationContext)
@@ -1437,6 +1622,88 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.count, savedCount)
         model.openHome()
         XCTAssertEqual(model.screen, .home)
+    }
+
+    /// #1043 APM-01 (and #937's shape): with a recorder that never fails, nothing checked what the listener is
+    /// left with when the microphone won't start. The recording screen must close, the source play on, and
+    /// nothing be saved; the next tap, with a working microphone, records.
+    func testAMicrophoneThatWontStartClosesTheRecordingScreenAndPlaysOn() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        recorder.refusesToStart = true
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
+        model.resetAndSeed()
+        model.importTitle = "Microphone Refuses"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        XCTAssertTrue(audio.isPlaying)
+        let playsBefore = audio.playedOffsets.count
+
+        model.beginInterjection()
+
+        XCTAssertEqual(recorder.beginCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 1, "the failed start lets go of the microphone")
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertNil(model.recordingPresentationContext, "no recording screen over a microphone that never started")
+        XCTAssertFalse(model.recordingNavigationIsLocked)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertNotNil(model.lastError, "the listener is told the Margin did not start")
+        XCTAssertTrue(audio.isPlaying, "the source plays on")
+        XCTAssertGreaterThan(audio.playedOffsets.count, playsBefore)
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty)
+
+        recorder.refusesToStart = false
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(recorder.beginCount, 2)
+        model.cancelInterjection()
+        XCTAssertEqual(recorder.cancelCount, 2)
+    }
+
+    /// #1043 APM-03: the recording tests never looked at a saved Margin's audio. Each Margin here must point at
+    /// its own non-empty recording that the app can find and decode, and transcription must be given that file.
+    func testSpokenMarginsAreSavedAsTheirOwnPlayableRecordings() async throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        let transcribed = TranscribedAudioPaths()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            interjectionTranscriptionHandler: { path in
+                transcribed.append(path)
+                return "A spoken Margin."
+            }
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+
+        for _ in 0..<2 {
+            model.beginInterjection()
+            XCTAssertTrue(model.snapshot.isRecording)
+            model.finishInterjection()
+            XCTAssertFalse(model.snapshot.isRecording)
+        }
+
+        XCTAssertEqual(recorder.finishCount, 2)
+        XCTAssertEqual(Set(recorder.savedPaths).count, 2, "each Margin keeps its own recording")
+        let margins = model.selectedItem.interjections
+        XCTAssertEqual(margins.count, 2)
+        XCTAssertEqual(Set(margins.compactMap(\.audioPath)), Set(recorder.savedPaths))
+        for margin in margins {
+            XCTAssertEqual(margin.audioStatus, "saved")
+            let path = try XCTUnwrap(margin.audioPath)
+            let url = try XCTUnwrap(model.resolvedInterjectionAudioURL(for: path), "the app finds the file the recorder wrote")
+            XCTAssertEqual(url.standardizedFileURL.path, recorder.supportDirectory.appending(path: path).standardizedFileURL.path)
+            let file = try AVAudioFile(forReading: url)
+            XCTAssertGreaterThan(file.length, 0, "the saved Margin has audio behind it")
+        }
+        try await waitFor("both Margins to reach transcription", timeoutNanoseconds: 5_000_000_000) {
+            transcribed.all.count == 2
+        }
+        XCTAssertEqual(Set(transcribed.all), Set(recorder.savedPaths), "transcription is given each Margin's own file")
     }
 
     func testOpeningMarginFromAnotherSessionDoesNotReplaceNowPlaying() {
@@ -2003,6 +2270,40 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(model.selectedItem.sessions.isEmpty, "Restoring an item should restore its existing sessions")
     }
 
+    /// #1043 APM-09: the trash tests ran on a player with no state, and the model resets its own snapshot, so
+    /// a trashed item that kept playing with no screen to stop it passed. Here the player says whether it plays.
+    func testTrashingThePlayingItemStopsItsAudioAndKeepsItsPlace() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let root = FileManager.default.temporaryDirectory.appending(path: "trash-playing-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.importTitle = "Trash While Playing"
+        model.importText = "One. Two. Three."
+        model.importTextItem()
+        let itemID = try XCTUnwrap(model.snapshot.itemId)
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertTrue(audio.isPlaying)
+
+        model.moveItemToTrash(id: "item-pill")
+        XCTAssertTrue(audio.isPlaying, "trashing another item leaves this one playing")
+        XCTAssertEqual(model.snapshot.sessionId, sessionID)
+
+        let stoppedAt = "One. ".count
+        audio.currentOffset = stoppedAt
+        model.moveItemToTrash(id: itemID)
+
+        XCTAssertFalse(audio.isPlaying, "a trashed item must not keep playing with no screen to stop it")
+        XCTAssertTrue(model.recentlyDeletedItems.contains { $0.id == itemID })
+        let saved = try XCTUnwrap(SQLiteSessionStore(path: databaseURL.path).loadSession(id: sessionID))
+        XCTAssertEqual(saved.status, "in_progress", "Undo brings the session back resumable")
+        XCTAssertEqual(saved.position.charOffset, stoppedAt, "the place it stopped at is saved")
+    }
+
     func testLibraryUnfinishedPreferenceTransitionRunsOnceAndPreservesSpecificChoices() throws {
         let suite = "library-preferences-" + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -2543,6 +2844,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             try saveSpokenMargin(store: store, itemId: "item-pill", sessionId: doomedSession),
         ]
         let live = try saveSpokenMargin(store: store, itemId: liveID, sessionId: liveSession)
+        let doomedFiles = try givePreparedAudioAndEpisodeMap(store: store, itemId: "item-pill")
+        let liveFiles = try givePreparedAudioAndEpisodeMap(store: store, itemId: liveID)
         model.moveItemToTrash(id: "item-pill")
 
         model.permanentlyDeleteItem(id: "item-pill")
@@ -2552,6 +2855,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
+        assertDeleted(doomedFiles, kept: liveFiles)
         XCTAssertTrue(try store.loadInterjections(itemId: "item-pill").isEmpty)
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
     }
@@ -2584,6 +2888,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             doomed.append(try saveSpokenMargin(store: store, itemId: id, sessionId: sessions[id]!))
         }
         let live = try saveSpokenMargin(store: store, itemId: liveID, sessionId: sessions[liveID]!)
+        let doomedFiles = try trashed.map { try givePreparedAudioAndEpisodeMap(store: store, itemId: $0) }
+        let liveFiles = try givePreparedAudioAndEpisodeMap(store: store, itemId: liveID)
         trashed.forEach { model.moveItemToTrash(id: $0) }
         XCTAssertEqual(Set(model.recentlyDeletedItems.map(\.id)), Set(trashed))
 
@@ -2594,8 +2900,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "\(file.lastPathComponent) is gone with its item")
         }
         XCTAssertTrue(FileManager.default.fileExists(atPath: live.path), "a live item's recording is never touched")
+        doomedFiles.forEach { assertDeleted($0, kept: liveFiles) }
         XCTAssertTrue(try trashed.allSatisfy { try store.loadInterjections(itemId: $0).isEmpty })
         XCTAssertEqual(try store.loadInterjections(itemId: liveID).count, 1)
+    }
+
+    /// #1043 APM-13: the other files a permanent delete must take with an item. Prepared narration in
+    /// Application Support/PreparedSupertonicAudio, named by the item's media, and the item's episode-map
+    /// folder under SpokenMargins/EpisodeMaps, both where the app writes them. Removed when the test ends.
+    private func givePreparedAudioAndEpisodeMap(store: SQLiteSessionStore, itemId: String) throws -> (narration: URL, episodeMap: URL) {
+        let support = try FileManager.default
+            .url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let audioFolder = support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioFolder, withIntermediateDirectories: true)
+        let narration = audioFolder.appending(path: "test-1043-\(UUID().uuidString).caf")
+        try Data("prepared narration".utf8).write(to: narration)
+        addTeardownBlock { try? FileManager.default.removeItem(at: narration) }
+        var item = try store.loadItem(id: itemId)
+        item.media = ItemMedia(sourceType: .generatedTTSPrerendered, url: narration.absoluteString, durationMs: 1_000)
+        try store.saveItem(item)
+
+        let episodeMap = support
+            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
+            .appending(path: PodcastAnchorEvidencePaths.safeComponent(itemId), directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: episodeMap, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: episodeMap.appending(path: "map.json"))
+        addTeardownBlock { try? FileManager.default.removeItem(at: episodeMap) }
+        return (narration, episodeMap)
+    }
+
+    private func assertDeleted(
+        _ doomed: (narration: URL, episodeMap: URL),
+        kept live: (narration: URL, episodeMap: URL),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let files = FileManager.default
+        XCTAssertFalse(files.fileExists(atPath: doomed.narration.path), "the deleted item's prepared narration is gone", file: file, line: line)
+        XCTAssertFalse(files.fileExists(atPath: doomed.episodeMap.path), "the deleted item's episode map is gone", file: file, line: line)
+        XCTAssertTrue(files.fileExists(atPath: live.narration.path), "a live item's prepared narration stays", file: file, line: line)
+        XCTAssertTrue(files.fileExists(atPath: live.episodeMap.path), "a live item's episode map stays", file: file, line: line)
     }
 
     private func startAndEndSession(_ model: Gate1AppModel, itemId: String) throws -> String {
@@ -2623,11 +2967,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         return file
     }
 
-    func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() {
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+    /// #1043 APM-06: with a player that reports no position, "resume where I stopped" and "start over" looked the
+    /// same. The player here reports a place two sentences in, and the resume must start there, from memory and
+    /// after a relaunch reads the session back from SQLite.
+    func testStoppingTextPlaybackKeepsSessionInProgressAndResumable() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
+        let root = FileManager.default.temporaryDirectory.appending(path: "resume-position-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let audio = WorkflowRecordingAudioClient()
+        let model = Gate1AppModel(audioPlaybackClient: audio, databaseURLOverride: databaseURL)
         model.resetAndSeed()
-        model.startItem(id: "item-pill")
+        model.importTitle = "Resume Position"
+        model.importText = "One. Two. Three. Four."
+        model.importTextItem()
         let sessionId = model.snapshot.sessionId
+        let stoppedAt = "One. Two. ".count
+        audio.currentOffset = stoppedAt
 
         model.endSession()
 
@@ -2640,6 +2998,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let saved = model.selectedItem.sessions.first(where: { $0.id == sessionId })
         XCTAssertEqual(saved?.status, "in_progress")
         XCTAssertLessThan(saved?.completionPercent ?? 100, 100)
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        XCTAssertEqual(try XCTUnwrap(store.loadSession(id: try XCTUnwrap(sessionId))).position.charOffset, stoppedAt)
         model.dismissFeedback()
         if let saved {
             model.resumeSession(saved)
@@ -2647,6 +3007,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, sessionId)
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertNil(model.feedbackEvent)
+        XCTAssertEqual(audio.playedOffsets.last, stoppedAt, "resume starts where the listener stopped, not at the top")
+        XCTAssertEqual(model.snapshot.currentTextStart, stoppedAt)
+        model.endSession()
+
+        let relaunchedAudio = WorkflowRecordingAudioClient()
+        let relaunched = Gate1AppModel(audioPlaybackClient: relaunchedAudio, databaseURLOverride: databaseURL)
+        relaunched.bootstrapLibraryIfNeeded()
+        relaunched.resumeSession(try XCTUnwrap(store.loadSession(id: try XCTUnwrap(sessionId))))
+        XCTAssertEqual(relaunched.snapshot.sessionId, sessionId)
+        XCTAssertEqual(relaunchedAudio.playedOffsets.last, stoppedAt, "a relaunched app resumes from the stored place")
     }
 
     func testHomePlayResumesLatestSessionWithoutCreatingAnother() throws {
@@ -2943,18 +3313,60 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             databaseURLOverride: databaseURL
         )
         firstModel.resetAndSeed()
-        firstModel.startItem(id: "item-pill")
-        firstModel.pause()
-        let sessionID = try XCTUnwrap(firstModel.snapshot.sessionId)
+        // #1043 APM-07: with one session in the database any selection rule passed. Four sessions here, each one
+        // the answer of a different wrong rule: the oldest (first/last flipped), a newer finished one (resumable
+        // filter dropped) and the newest on a trashed item (Library filter dropped).
+        func listen(title: String?) throws -> (session: String, item: String) {
+            if let title {
+                firstModel.importTitle = title
+                firstModel.importText = "One. Two. Three."
+                firstModel.importTextItem()
+            } else {
+                firstModel.startItem(id: "item-pill")
+            }
+            firstModel.pause()
+            return (try XCTUnwrap(firstModel.snapshot.sessionId), try XCTUnwrap(firstModel.snapshot.itemId))
+        }
+        let oldest = try listen(title: nil)
+        let expected = try listen(title: "Newer unfinished")
+        let finished = try listen(title: "Finished since")
+        let trashed = try listen(title: "Trashed since")
+        firstModel.moveItemToTrash(id: trashed.item)
+        XCTAssertEqual(Set([oldest.item, expected.item, finished.item, trashed.item]).count, 4)
 
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        func stamp(_ sessionID: String, at seconds: TimeInterval, finished: Bool = false) throws {
+            var session = try XCTUnwrap(store.loadSession(id: sessionID))
+            session.updatedAt = Date(timeIntervalSince1970: seconds)
+            if finished {
+                session.status = "finished"
+                session.phase = .finished
+                session.completionPercent = 100
+            } else {
+                session.status = "in_progress"
+                if session.phase == .abandoned || session.phase == .finished { session.phase = .itemPlayback }
+            }
+            try store.saveSession(session)
+        }
+        try stamp(oldest.session, at: 1_000)
+        try stamp(expected.session, at: 3_000)
+        try stamp(finished.session, at: 4_000, finished: true)
+        try stamp(trashed.session, at: 5_000)
+
+        let relaunchedAudio = WorkflowRecordingAudioClient()
         let relaunchedModel = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
+            audioPlaybackClient: relaunchedAudio,
             databaseURLOverride: databaseURL
         )
         relaunchedModel.bootstrapLibraryIfNeeded()
 
-        XCTAssertEqual(relaunchedModel.snapshot.sessionId, sessionID)
+        XCTAssertEqual(relaunchedModel.snapshot.sessionId, expected.session,
+                       "the newest unfinished session on an item still in the Library")
+        XCTAssertEqual(relaunchedModel.diagnostics["restoredSession"], expected.session)
+        XCTAssertEqual(relaunchedModel.selectedItem.id, expected.item)
         XCTAssertEqual(relaunchedModel.snapshot.status, .paused)
+        XCTAssertTrue(relaunchedAudio.playedOffsets.isEmpty, "relaunch never starts the player")
+        XCTAssertFalse(relaunchedAudio.isPlaying)
         XCTAssertTrue(relaunchedModel.shouldShowMiniPlayer)
         XCTAssertEqual(relaunchedModel.diagnostics["restoredSessionMode"], "paused_without_autoplay")
     }
@@ -3373,6 +3785,92 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.cancelInterjection()
     }
 
+    /// #1043 APM-02: every Margin after the first starts on the "already granted" path, and no test could reach
+    /// it: a test recorder jumped straight to recording, and the path read iOS's answer rather than the test's.
+    /// With the permission granted, Add Margin must record one turn after the tap, and never ask again.
+    func testAnAlreadyGrantedMicrophoneRecordsAfterTheTapWithoutAskingAgain() async throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        let gate = MarginPermissionTestGate()
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .granted }
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.pause()
+
+        model.beginInterjection()
+        XCTAssertEqual(model.statusMessage, "Starting Margin...", "the tap is acknowledged before the recorder starts")
+        XCTAssertTrue(model.isRequestingRecordingPermission)
+        XCTAssertEqual(recorder.beginCount, 0)
+        try await waitFor("the granted path to start recording") { model.snapshot.isRecording }
+
+        XCTAssertEqual(recorder.beginCount, 1)
+        XCTAssertEqual(gate.requests, 0, "a granted microphone is never asked again")
+        XCTAssertFalse(model.microphonePrimer.isShowing)
+        XCTAssertFalse(model.isRequestingRecordingPermission)
+        XCTAssertNotNil(model.recordingPresentationContext)
+        XCTAssertEqual(model.diagnostics["lastMicrophonePermissionResult"], "granted")
+        model.cancelInterjection()
+        XCTAssertEqual(recorder.cancelCount, 1)
+    }
+
+    /// #1043 APM-02: the compact controls (Live Activity, widget, Lock Screen URL) had their own permission
+    /// wrapper, skipped whenever a test injected a recorder. Granted records without asking; denied asks,
+    /// records nothing and says why.
+    func testCompactControlRecordsWithAGrantedMicrophoneAndRefusesADeniedOne() async throws {
+        let recorder = try CountingToneRecordingClient()
+        defer { recorder.removeSavedFiles() }
+        let gate = MarginPermissionTestGate()
+        let granted = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            microphonePermissionRequest: { await gate.request() },
+            microphonePermissionStatus: { .granted }
+        )
+        granted.resetAndSeed()
+        granted.declineCurrentTerms()
+        granted.startItem(id: "item-pill")
+        granted.pause()
+
+        granted.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
+        XCTAssertTrue(granted.isRequestingRecordingPermission, "other compact commands wait while the start is pending")
+        try await waitFor("the compact control to start recording") { granted.snapshot.isRecording }
+        XCTAssertEqual(recorder.beginCount, 1)
+        XCTAssertEqual(gate.requests, 0)
+        XCTAssertFalse(granted.isRequestingRecordingPermission)
+        XCTAssertNil(granted.lastError)
+        granted.dispatchGate2CompactCommand(.cancelInterjection)
+        XCTAssertFalse(granted.snapshot.isRecording)
+
+        let deniedGate = MarginPermissionTestGate()
+        let denied = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: recorder,
+            microphonePermissionRequest: { await deniedGate.request() },
+            microphonePermissionStatus: { .denied }
+        )
+        denied.resetAndSeed()
+        denied.declineCurrentTerms()
+        denied.startItem(id: "item-pill")
+        denied.pause()
+
+        denied.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
+        try await waitFor("the compact control to ask") { deniedGate.continuation != nil }
+        XCTAssertEqual(deniedGate.requests, 1, "a microphone that isn't granted is asked")
+        XCTAssertTrue(denied.isRequestingRecordingPermission)
+        deniedGate.finish(false)
+        try await waitFor("the refusal to land") { !denied.isRequestingRecordingPermission }
+        XCTAssertFalse(denied.snapshot.isRecording)
+        XCTAssertEqual(recorder.beginCount, 1, "nothing tried to record")
+        XCTAssertEqual(denied.lastError, "Microphone access is required to record Margins from compact controls.")
+        XCTAssertFalse(denied.recordingNavigationIsLocked)
+    }
+
     /// #783: dismissing the line cancels that Margin like Cancel does; the next try shows it again.
     func testCancellingThePrimerCancelsTheMarginAndShowsItAgainNextTime() async throws {
         let gate = MarginPermissionTestGate()
@@ -3685,6 +4183,17 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.currentTextStart, "One sentence. ".count)
         XCTAssertEqual(audio.playedOffsets.last, "One sentence. ".count)
+    }
+
+    /// A fresh simulator has never accepted the Terms, so its default bundled voice holds text playback behind the
+    /// Terms sheet and nothing plays. Tests that need a playing text source accept them first, before the model is
+    /// made (it reads them at init), and put the earlier answer back with the returned closure, so they pass in
+    /// any order.
+    private func acceptTerms() -> () -> Void {
+        let keys = [SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
+        let prior = keys.map { UserDefaults.standard.object(forKey: $0) }
+        SpokenMarginsTerms.recordAcceptance()
+        return { zip(keys, prior).forEach { self.restoreUserDefault($1, forKey: $0) } }
     }
 
     private func restoreUserDefault(_ value: Any?, forKey key: String) {
@@ -4627,14 +5136,28 @@ private actor BulkSharePreparationProbe {
     private var maximumConcurrentRenders = 0
     private var renderCount = 0
 
+    /// What this renderer writes as the cleaned copy, so a test can tell it from the original recording.
+    static let cleanedBytes = Data("cleaned voice".utf8)
+
+    /// Behaves like `InterjectionAudioCleanupRenderer` on the filesystem: it clears whatever is at the destination,
+    /// then writes the cleaned copy there. A model that handed over the recording as its own destination would
+    /// lose the owner's original here, as it would on the phone (#1043 APM-04).
     func render(
         sourceURL: URL,
         destinationURL: URL,
         decisions: [InterjectionCleanupDecision]
     ) async throws -> Int {
-        _ = sourceURL
-        _ = destinationURL
         XCTAssertFalse(decisions.isEmpty)
+        XCTAssertNotEqual(
+            destinationURL.standardizedFileURL.path, sourceURL.standardizedFileURL.path,
+            "the cleaned copy must never be written over the recording"
+        )
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: destinationURL.path) {
+            try fileManager.removeItem(at: destinationURL)
+        }
+        try fileManager.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Self.cleanedBytes.write(to: destinationURL)
         activeRenders += 1
         maximumConcurrentRenders = max(maximumConcurrentRenders, activeRenders)
         defer { activeRenders -= 1 }
@@ -4645,6 +5168,33 @@ private actor BulkSharePreparationProbe {
 
     func snapshot() -> (renderCount: Int, maximumConcurrentRenders: Int) {
         (renderCount, maximumConcurrentRenders)
+    }
+}
+
+/// A cleanup render that finishes only when the test lets it, and ignores cancellation, as an export already
+/// under way does. It then writes its copy at the destination it was given (#1043 APM-08).
+private actor HeldCleanupRender {
+    private var release: CheckedContinuation<Void, Never>?
+    private(set) var heldDestination: URL?
+    private(set) var hasReturned = false
+    /// The copy was on disk when the render returned, before the model could react to it.
+    private(set) var wroteCopy = false
+
+    func render(destinationURL: URL) async throws -> Int {
+        await withCheckedContinuation { continuation in
+            release = continuation
+            heldDestination = destinationURL
+        }
+        try FileManager.default.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try BulkSharePreparationProbe.cleanedBytes.write(to: destinationURL)
+        wroteCopy = FileManager.default.fileExists(atPath: destinationURL.path)
+        hasReturned = true
+        return 625
+    }
+
+    func finish() {
+        release?.resume()
+        release = nil
     }
 }
 
@@ -4764,6 +5314,8 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
     var configuredSpeechRates: [Float] = []
     var configuredSpeechVoices: [String?] = []
     var currentOffset: Int?
+    /// Whether the player was last told to play or to stop. `stop()` falls back to `pause()`, so both clear it.
+    private(set) var isPlaying = false
     private var activeTargetId: String?
 
     func prepareSpeechText(_ text: String) throws -> String {
@@ -4783,9 +5335,12 @@ private final class WorkflowRecordingAudioClient: AudioPlaybackClient {
         activeTargetId = targetId
         currentOffset = charOffset
         playedOffsets.append(charOffset)
+        isPlaying = true
     }
 
-    func pause() throws {}
+    func pause() throws {
+        isPlaying = false
+    }
 
     func currentCharOffset() -> Int? {
         currentOffset
@@ -4894,6 +5449,61 @@ private final class WorkflowCompletionAudioClient: AudioPlaybackClient {
         completedTargetId = activeTargetId
         lock.unlock()
     }
+}
+
+/// A recorder that counts every call and, like `SystemRecordingClient`, leaves a real AAC file in
+/// Application Support/SpokenMargins/interjections and returns its path from there. The tests that used
+/// `NoopRecordingClient` could not see whether the microphone was ever asked to start, or whether a saved
+/// Margin had any audio behind it (#1043 APM-01, APM-03).
+private final class CountingToneRecordingClient: RecordingClient {
+    let supportDirectory: URL
+    private let tone: UITestingToneRecordingClient
+    /// The next starts throw, as `AVAudioRecorder.record()` returning false or a call holding the session does.
+    var refusesToStart = false
+    /// The next finishes throw before anything is saved, as a recorder whose file can't be closed would.
+    var refusesToFinish = false
+    private(set) var beginCount = 0
+    private(set) var finishCount = 0
+    private(set) var cancelCount = 0
+    private(set) var savedPaths: [String] = []
+
+    init() throws {
+        supportDirectory = try FileManager.default.url(
+            for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+        )
+        tone = UITestingToneRecordingClient(supportDirectory: supportDirectory)
+    }
+
+    func beginRecording() throws {
+        beginCount += 1
+        if refusesToStart { throw SessionKitError.persistenceFailed("recording_failed") }
+        try tone.beginRecording()
+    }
+
+    func finishRecording(audioRef: String?) throws -> String {
+        finishCount += 1
+        if refusesToFinish { throw SessionKitError.persistenceFailed("recording_finish_failed") }
+        let path = try tone.finishRecording(audioRef: audioRef)
+        savedPaths.append(path)
+        return path
+    }
+
+    func cancelRecording() throws {
+        cancelCount += 1
+        try tone.cancelRecording()
+    }
+
+    func removeSavedFiles() {
+        for path in savedPaths { try? FileManager.default.removeItem(at: supportDirectory.appending(path: path)) }
+    }
+}
+
+/// The audio paths the transcription step was handed, read from the test.
+private final class TranscribedAudioPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [String] = []
+    func append(_ path: String) { lock.withLock { paths.append(path) } }
+    var all: [String] { lock.withLock { paths } }
 }
 
 @MainActor
