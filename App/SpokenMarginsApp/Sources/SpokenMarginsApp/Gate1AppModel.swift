@@ -11445,7 +11445,7 @@ final class Gate1AppModel: ObservableObject {
             importedCommentaryInterjections: importedInterjections,
             sharedMarginPlacement: sharedMarginPlacementPasses.pass(itemId: item.id),
             turns: turns
-        )
+        ).includingTimelineSource(try? store.loadStructuredDocument(itemId: id))
     }
 
     func requireStore() throws -> SQLiteSessionStore {
