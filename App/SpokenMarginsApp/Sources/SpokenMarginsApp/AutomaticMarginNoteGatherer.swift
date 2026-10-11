@@ -20,7 +20,7 @@ enum AutomaticMarginNoteGatherer {
             let started = ProcessInfo.processInfo.systemUptime
             let composed = try MarginNoteComposer.compose(store: store, sessionIds: sessionIds)
             return Result(
-                notes: composed.notes.map { .init(id: $0.id, markdown: $0.markdown) },
+                notes: composed.notes.map { .init(id: $0.id, markdown: $0.markdown, fileName: $0.fileName) },
                 sessionCount: composed.sessionCount,
                 elapsedMs: Int((ProcessInfo.processInfo.systemUptime - started) * 1000)
             )
