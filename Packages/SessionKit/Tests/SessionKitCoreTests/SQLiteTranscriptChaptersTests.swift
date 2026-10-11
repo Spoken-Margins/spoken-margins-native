@@ -69,4 +69,17 @@ final class SQLiteTranscriptChaptersTests: XCTestCase {
         XCTAssertEqual(try store.loadTranscriptTimeline(itemId: "podcast")?.timeline.chapters.map(\.title), ["New"])
         XCTAssertEqual(try store.loadTranscriptTimelineChapters(itemId: "podcast").map(\.title), ["New"])
     }
+
+    /// The answer is kept between Margins-tab refreshes, so a re-saved timeline (the same record id, in the same
+    /// second) and a deleted item must still show up in the next answer.
+    func testAChangedOrRemovedTimelineIsNotServedFromTheKeptAnswer() throws {
+        let store = try makeStore()
+        try store.saveTranscriptTimeline(timeline(itemId: "podcast", chapters: [chapter("Short", 0)]))
+        XCTAssertEqual(try store.loadTranscriptTimelineChapters(itemId: "podcast").map(\.title), ["Short"])
+        XCTAssertEqual(try store.loadTranscriptTimelineChapters(itemId: "podcast").map(\.title), ["Short"])
+        try store.saveTranscriptTimeline(timeline(itemId: "podcast", chapters: [chapter("A much longer chapter title", 0), chapter("Second", 9_000)]))
+        XCTAssertEqual(try store.loadTranscriptTimelineChapters(itemId: "podcast").map(\.title), ["A much longer chapter title", "Second"])
+        try store.saveTranscriptTimeline(timeline(itemId: "podcast", chapters: []))
+        XCTAssertEqual(try store.loadTranscriptTimelineChapters(itemId: "podcast"), [])
+    }
 }

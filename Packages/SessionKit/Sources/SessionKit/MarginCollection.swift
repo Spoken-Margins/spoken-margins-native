@@ -109,7 +109,7 @@ public enum MarginCollection {
         }
         guard loadMap != nil || loadMediaChapters != nil else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
         let places = MarginPlaces.places(
-            for: privateRows, items: items, loadMap: loadMap ?? { _ in nil }, loadMediaChapters: loadMediaChapters ?? { _ in [] })
+            for: privateRows, items: items, loadMap: loadMap, loadMediaChapters: loadMediaChapters ?? { _ in [] })
         let placedRows = privateRows.map { entry -> PrivateEntry in
             var placed = entry
             placed.place = places[entry.id]

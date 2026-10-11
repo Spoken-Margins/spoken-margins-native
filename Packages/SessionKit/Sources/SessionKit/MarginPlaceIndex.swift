@@ -133,20 +133,21 @@ public enum MarginPlaces {
     /// - A Margin with a clock time gets the name of the publisher chapter its time falls in, from `loadMediaChapters`.
     ///   It never looks at `loadMap`: a publisher-chapter map numbers its chapters (`startChar` is the chapter's
     ///   index), so its offsets can't be compared with a Margin's.
-    /// - `loadMap`: the item's listening map, nil when it has none or it can't be read.
+    /// - `loadMap`: the item's listening map, nil when it has none or it can't be read. Pass nil for the whole
+    ///   argument to leave text Margins without a place.
     /// - `loadMediaChapters`: the item's chapters with their start times, empty when it has none. Asked only for items
     ///   that have a Margin with a clock time.
     public static func places(
         for entries: [MarginCollection.PrivateEntry],
         items: [Item],
-        loadMap: (String) -> ListeningMap?,
+        loadMap: ((String) -> ListeningMap?)?,
         loadMediaChapters: (String) -> [MediaTimelineChapter] = { _ in [] }
     ) -> [String: Place] {
         let itemsById = Dictionary(items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var result: [String: Place] = [:]
         for (itemId, group) in Dictionary(grouping: entries.filter { $0.interjection.targetType == .item }, by: \.interjection.itemId) {
             let atText = group.filter { $0.interjection.anchor.mediaTimeMs == nil }
-            if let furthest = atText.map({ $0.interjection.anchor.startChar }).max() {
+            if let loadMap, let furthest = atText.map({ $0.interjection.anchor.startChar }).max() {
                 let index = MarginPlaceIndex(
                     chapters: loadMap(itemId)?.chapters ?? [], text: itemsById[itemId]?.text, readingUpTo: furthest)
                 for entry in atText {
