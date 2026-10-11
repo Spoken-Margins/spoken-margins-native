@@ -57,12 +57,19 @@ final class MarginPlaceIndexTests: XCTestCase {
     }
 
     func testBlankLinesAndLeadingBlanksDoNotCountAsParagraphs() {
-        let text = "\n\n  Alpha\r\n\r\n\n   Beta\n"
+        let text = "\n\n  Alpha\n \n\n   Beta\n"
         let index = MarginPlaceIndex(chapters: [], text: text)
         let beta = text.distance(from: text.startIndex, to: text.range(of: "Beta")!.lowerBound)
         XCTAssertEqual(index.paragraph(atChar: 0), 1)
         XCTAssertEqual(index.paragraph(atChar: beta), 2)
         XCTAssertEqual(index.paragraph(atChar: beta + 3), 2)
+    }
+
+    func testAParagraphNumberOnlyReadsTheTextAsFarAsItIsAsked() {
+        let text = "One.\nTwo.\nThree.\nFour."
+        let index = MarginPlaceIndex(chapters: [], text: text, readingUpTo: 6)
+        XCTAssertEqual(index.paragraph(atChar: 0), 1)
+        XCTAssertEqual(index.paragraph(atChar: 6), 2)
     }
 
     func testOffsetsCountCharactersNotBytes() {
@@ -112,17 +119,27 @@ final class MarginPlaceIndexTests: XCTestCase {
         XCTAssertEqual(places[entries[2].id], MarginPlaces.Place(chapterName: "End", paragraph: 3))
     }
 
-    func testAMediaMarginGetsAChapterButNeverAParagraph() {
-        let entries = [entry("m", mediaTimeMs: 61_000, startChar: 120)]
+    /// A publisher-chapter map stores each chapter's index as its `startChar` (0, 1, 2), so a podcast Margin's
+    /// offset can't be compared with it: this one would read "Intro" if it were.
+    func testAMediaMarginHasNoPlaceHere() {
+        let entries = [entry("m", mediaTimeMs: 1_200_000, startChar: 0), entry("n", mediaTimeMs: 1_300_000, startChar: 15_000)]
+        let chapters = [chapter("Intro", 0), chapter("Ads", 1), chapter("Interview", 2)]
         let places = MarginPlaces.places(
-            for: entries, items: [item("item", text: "One.\nTwo.")],
-            loadMap: { _ in self.map("item", [self.chapter("Cold open", 100)]) })
-        XCTAssertEqual(places[entries[0].id], MarginPlaces.Place(chapterName: "Cold open", paragraph: nil))
+            for: entries, items: [item("item", text: "One.\nTwo.")], loadMap: { _ in self.map("item", chapters) })
+        XCTAssertTrue(places.isEmpty)
+    }
+
+    func testTextMarginsOnAMixedItemStillGetTheirPlace() {
+        let entries = [entry("m", mediaTimeMs: 1_000, startChar: 0), entry("t", startChar: 6)]
+        let places = MarginPlaces.places(
+            for: entries, items: [item("item", text: "One.\nTwo.")], loadMap: { _ in self.map("item", [self.chapter("Start", 0)]) })
+        XCTAssertNil(places[entries[0].id])
+        XCTAssertEqual(places[entries[1].id], MarginPlaces.Place(chapterName: "Start", paragraph: 2))
     }
 
     func testAnItemWithNoMapAndNoTextHasNoPlaceAndIsLeftOut() {
-        let entries = [entry("m", mediaTimeMs: 61_000, startChar: 120)]
-        let places = MarginPlaces.places(for: entries, items: [item("item", text: "One.")], loadMap: { _ in nil })
+        let entries = [entry("t", startChar: 3)]
+        let places = MarginPlaces.places(for: entries, items: [item("item", text: nil)], loadMap: { _ in nil })
         XCTAssertTrue(places.isEmpty)
     }
 
