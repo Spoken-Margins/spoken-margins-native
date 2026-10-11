@@ -31,7 +31,8 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
     /// A security-scoped bookmark for the folder. Opaque here; the app creates and resolves it.
     public var bookmark: Data
     public var scope: Scope
-    /// Whether each note carries its source context (reference, anchor and title).
+    /// Whether each note carries the passage around its Margin (the "Context before" and "Context after" sections).
+    /// The title, source link and position stay either way: a note that can't say where it came from is no use.
     public var includesContext: Bool
     public var text: TextChoice
     /// False while paused: nothing is delivered, but the folder, settings and journal stay.
@@ -79,6 +80,11 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         if unreadable { isEnabled = false }
     }
 
+    /// What this destination's notes hold.
+    public var content: MarginNoteContent {
+        MarginNoteContent(scope: scope, includesContext: includesContext, text: text)
+    }
+
     /// The name for the next destination the listener adds, e.g. "Notes folder 2".
     public static func nextName(base: String = MarginOutputMigration.migratedName, existing: [MarginOutputDestination]) -> String {
         let taken = Set(existing.map { $0.name.lowercased() })
@@ -87,6 +93,23 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         while taken.contains("\(base) \(number)".lowercased()) { number += 1 }
         return "\(base) \(number)"
     }
+}
+
+/// What goes into the notes for one destination: which Margins, and what each note carries. `standard` is what the
+/// single notes folder always wrote, so a destination left at its defaults produces byte-identical notes and the
+/// writer rewrites nothing.
+public struct MarginNoteContent: Equatable, Sendable {
+    public var scope: MarginOutputDestination.Scope
+    public var includesContext: Bool
+    public var text: MarginOutputDestination.TextChoice
+
+    public init(scope: MarginOutputDestination.Scope = .all, includesContext: Bool = true, text: MarginOutputDestination.TextChoice = .cleaned) {
+        self.scope = scope
+        self.includesContext = includesContext
+        self.text = text
+    }
+
+    public static let standard = MarginNoteContent()
 }
 
 /// The destinations as one JSON file in Application Support. It stays out of the database so the previous build

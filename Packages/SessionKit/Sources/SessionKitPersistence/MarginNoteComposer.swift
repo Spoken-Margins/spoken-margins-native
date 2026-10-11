@@ -32,9 +32,13 @@ public enum MarginNoteComposer {
     /// marked complete gets one note holding all its Margins, across all its sessions, not only the ones in scope.
     /// `completedSince` limits that to items completed at or after it, so turning the mode on doesn't write a note
     /// for every item already finished.
+    ///
+    /// `content` is a destination's choice (#492): all Margins or only starred ones, with or without the passage around
+    /// each, and the cleaned or the original transcript. It shapes a Margin note; an item note (#587) keeps its own form.
     public static func compose(
         store: SQLiteSessionStore, sessionIds: Set<String>? = nil,
-        shape: MarginNotesShape = .eachMargin, completedSince: Date? = nil
+        shape: MarginNotesShape = .eachMargin, completedSince: Date? = nil,
+        content: MarginNoteContent = .standard
     ) throws -> Composed {
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(id: "margin-output", displayName: "Margin output", capabilities: [:]),
@@ -48,7 +52,7 @@ public enum MarginNoteComposer {
         }
         switch shape {
         case .eachMargin:
-            return Composed(notes: try marginNotes(sessions: sessions, store: store, engine: engine), sessionCount: sessions.count)
+            return Composed(notes: try marginNotes(sessions: sessions, content: content, store: store, engine: engine), sessionCount: sessions.count)
         case .itemOnCompletion:
             return Composed(
                 notes: try itemNotes(sessions: sessions, shape: shape, completedSince: completedSince, store: store, engine: engine),
@@ -90,23 +94,40 @@ public enum MarginNoteComposer {
         return notes
     }
 
-    private static func marginNotes(sessions: [Session], store: SQLiteSessionStore, engine: SessionEngine) throws -> [Note] {
+    private static func marginNotes(sessions: [Session], content: MarginNoteContent, store: SQLiteSessionStore, engine: SessionEngine) throws -> [Note] {
         var notes: [Note] = []
         for session in sessions {
             try Task.checkCancellation()
             guard let item = try? store.loadItem(id: session.itemId), item.deletedAt == nil else { continue }
             for margin in try store.loadInterjections(sessionId: session.id) where margin.status == "active" {
+                if content.scope == .starred, margin.isStarredForSharing != true { continue }
                 // Every spoken Margin gets a note, even before or without a transcript (#171).
                 guard SessionExportMarkdownRenderer.writesMarginNote(
                     captureKind: margin.captureKind, text: margin.cleanedTranscript ?? margin.transcript
                 ) else { continue }
-                let export = try engine.buildExport(options: .marginNote(sessionId: session.id, marginId: margin.id))
+                var export = try engine.buildExport(options: .marginNote(sessionId: session.id, marginId: margin.id))
+                shape(&export, for: margin, content: content)
                 let markdown = SessionExportMarkdownRenderer.renderMargin(export, createdAt: margin.recordedAt(in: session))
                 guard !markdown.isEmpty else { continue }
                 notes.append(Note(id: session.id + ":" + margin.id, markdown: markdown))
             }
         }
         return notes
+    }
+
+    /// Applies a destination's choices to the export a Margin note is rendered from. The default changes nothing.
+    /// A written Margin has only the words the listener typed, so "original" only differs for a spoken one, and it
+    /// falls back to the cleaned text when the recognizer's own is missing.
+    private static func shape(_ export: inout SessionExport, for margin: Interjection, content: MarginNoteContent) {
+        guard export.interjections.count == 1 else { return }
+        if !content.includesContext {
+            export.interjections[0].anchorBefore = ""
+            export.interjections[0].anchorAfter = ""
+        }
+        if content.text == .original, margin.captureKind != .written,
+           let original = margin.transcript, !original.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            export.interjections[0].transcript = original
+        }
     }
 }
 
