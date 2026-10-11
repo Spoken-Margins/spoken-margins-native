@@ -8,8 +8,8 @@ import Foundation
 ///
 /// `id` is also the key the delivery journal files its entries under, so it must never change once notes have been
 /// written: a new id makes delivery treat the folder as new and rewrite every note. Renaming, pausing and changing
-/// what is included leave it alone. Picking a different folder is the caller's choice (it keeps the id when the
-/// listener is only re-granting access to the same folder, and takes a new one for a different folder).
+/// what is included leave it alone. Re-granting access to a folder, or pointing the destination at another one, keeps the
+/// id too: notes missing from the new folder are simply written, and the writer never replaces a file it didn't write.
 public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendable {
     public enum Scope: String, Codable, CaseIterable, Sendable {
         /// Every Margin.
@@ -31,11 +31,17 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
     /// A security-scoped bookmark for the folder. Opaque here; the app creates and resolves it.
     public var bookmark: Data
     public var scope: Scope
-    /// Whether each note carries its source context (reference, anchor and title).
+    /// Whether each note carries the passage around its Margin (the "Context before" and "Context after" sections).
+    /// The title, source link and position stay either way: a note that can't say where it came from is no use.
     public var includesContext: Bool
     public var text: TextChoice
     /// False while paused: nothing is delivered, but the folder, settings and journal stay.
     public var isEnabled: Bool
+    /// A note for each Margin as it's made (today's), or one note per item when it is marked complete (#587).
+    public var shape: MarginNotesShape
+    /// When the listener chose one note per item. Only items completed after it get a note, so turning the mode on
+    /// doesn't write one for every item already finished. Nil in the per-Margin shape.
+    public var itemNotesSince: Date?
 
     public init(
         id: String = UUID().uuidString,
@@ -44,7 +50,9 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         scope: Scope = .all,
         includesContext: Bool = true,
         text: TextChoice = .cleaned,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        shape: MarginNotesShape = .eachMargin,
+        itemNotesSince: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -53,10 +61,12 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         self.includesContext = includesContext
         self.text = text
         self.isEnabled = isEnabled
+        self.shape = shape
+        self.itemNotesSince = itemNotesSince
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, bookmark, scope, includesContext, text, isEnabled
+        case id, name, bookmark, scope, includesContext, text, isEnabled, shape, itemNotesSince
     }
 
     /// A missing field takes today's single-folder behavior. A field that is present but unreadable (a newer build
@@ -76,7 +86,14 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         includesContext = value(.includesContext, default: true)
         text = value(.text, default: TextChoice.cleaned)
         isEnabled = value(.isEnabled, default: true)
+        shape = value(.shape, default: MarginNotesShape.eachMargin)
+        itemNotesSince = value(.itemNotesSince, default: Date?.none)
         if unreadable { isEnabled = false }
+    }
+
+    /// What this destination's notes hold.
+    public var content: MarginNoteContent {
+        MarginNoteContent(scope: scope, includesContext: includesContext, text: text, shape: shape, itemNotesSince: itemNotesSince)
     }
 
     /// The name for the next destination the listener adds, e.g. "Notes folder 2".
@@ -87,6 +104,32 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         while taken.contains("\(base) \(number)".lowercased()) { number += 1 }
         return "\(base) \(number)"
     }
+}
+
+/// What goes into the notes for one destination: which Margins, and what each note carries. `standard` is what the
+/// single notes folder always wrote, so a destination left at its defaults produces byte-identical notes and the
+/// writer rewrites nothing.
+public struct MarginNoteContent: Equatable, Sendable {
+    public var scope: MarginOutputDestination.Scope
+    public var includesContext: Bool
+    public var text: MarginOutputDestination.TextChoice
+    /// The shape of the notes (#587). In `.itemOnCompletion` the item note keeps its own form, so scope, context and
+    /// text above shape Margin notes only.
+    public var shape: MarginNotesShape
+    public var itemNotesSince: Date?
+
+    public init(
+        scope: MarginOutputDestination.Scope = .all, includesContext: Bool = true, text: MarginOutputDestination.TextChoice = .cleaned,
+        shape: MarginNotesShape = .eachMargin, itemNotesSince: Date? = nil
+    ) {
+        self.scope = scope
+        self.includesContext = includesContext
+        self.text = text
+        self.shape = shape
+        self.itemNotesSince = itemNotesSince
+    }
+
+    public static let standard = MarginNoteContent()
 }
 
 /// The destinations as one JSON file in Application Support. It stays out of the database so the previous build
