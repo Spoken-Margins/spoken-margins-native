@@ -893,25 +893,30 @@ public final class SessionEngine {
         return item
     }
 
-    /// The same import, except a re-imported PDF's upgrade (planning, then the one SQLite transaction) runs
-    /// off the main actor, so a long PDF with many Margins never freezes the app (#556). The engine is only
-    /// touched on the main actor: the work that leaves it holds the store and values, never the engine.
-    /// The store re-checks inside the transaction that nothing the plan read has changed; if something has
-    /// (a Margin saved while it ran), nothing is written and the new text becomes its own edition, as it does
-    /// for a PDF that can't move.
+    /// The same import, except a re-imported PDF's upgrade is planned off the main actor, so a long PDF with many
+    /// Margins never freezes the app while the plan runs (#556). Only the plan (reading every session and Margin,
+    /// placing each anchor in the new text) leaves the main actor, and it holds the store and values, never the
+    /// engine. The write is one short transaction back on the main actor, together with the "is the listener
+    /// in this item?" check, as before: a write off the main actor could not be made atomic with the engine's
+    /// state (a paused item opened, or played, between the plan and the write would keep the old text and
+    /// write its old position over the moved one). If the item was opened or anything the plan read changed
+    /// (the store re-checks inside the transaction), nothing is written and the new text becomes its own
+    /// edition, as it does for a PDF that can't move.
     @MainActor
     @discardableResult
     public func importBrowserTextInBackgroundOffMain(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) async throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         if case .upgradeCandidate(let job) = outcome {
-            let planned = try await Task.detached(priority: .userInitiated) { try job.run() }.value
-            if case .success(let upgrade) = planned {
-                // Written by the transaction; the engine only re-saves the row in the form it keeps it in.
-                try saveItem(upgrade.item)
-                forgetDocumentCaches(itemId: upgrade.item.id)
-                try reloadOpenItem(afterUpgradeOf: upgrade.item.id)
-                return upgrade.item
+            let planned = try await Task.detached(priority: .userInitiated) { try job.plan() }.value
+            if case .success(let upgrade) = planned, currentSession?.itemId != job.existing.id {
+                do {
+                    try job.apply(upgrade)
+                    // The transaction wrote it; the engine re-saves the row in the form it keeps it in.
+                    try saveItem(upgrade.item)
+                    forgetDocumentCaches(itemId: upgrade.item.id)
+                    return upgrade.item
+                } catch StructuredDocumentUpgradeError.changedSincePlanned {}
             }
             outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .skip)
         }
@@ -924,20 +929,6 @@ public final class SessionEngine {
         }
         try saveStructuredDocument(document, itemId: item.id)
         return item
-    }
-
-    /// The listener can open this item (inspect a paused session) while the upgrade is planned off the main
-    /// actor; that only loads state into the engine and writes nothing, so the transaction's re-check can't see it.
-    /// The engine then holds the old text and position, and the next pause would write that position over the
-    /// moved one. Reload what the engine holds for the item from the store.
-    func reloadOpenItem(afterUpgradeOf itemId: String) throws {
-        if currentItem?.id == itemId {
-            currentItem = try repository.loadItem(id: itemId)
-            currentMap = try repository.loadListeningMap(itemId: itemId)
-        }
-        if let session = currentSession, session.itemId == itemId, let moved = try repository.loadSession(id: session.id) {
-            currentSession = moved
-        }
     }
 
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
@@ -3986,20 +3977,24 @@ public final class SessionEngine {
         case upgradeCandidate(StructuredUpgradeJob)
     }
 
-    /// Everything the upgrade needs, and nothing of the engine's, so it can run on any thread. The store is
+    /// Everything the upgrade needs, and nothing of the engine's, so the plan can run on any thread. The store is
     /// `Sendable` (SQLite serializes on its connection lock), and the rest is values.
     private struct StructuredUpgradeJob: Sendable {
         let repository: any (SessionRepository & StructuredDocumentRepository)
         let existing: Item
         let document: StructuredDocument
 
-        func run() throws -> Result<StructuredDocumentUpgrade, StructuredDocumentUpgrader.StaysBecause> {
-            try StructuredDocumentUpgrader.planAndApply(
+        func plan() throws -> Result<StructuredDocumentUpgrade, StructuredDocumentUpgrader.StaysBecause> {
+            try StructuredDocumentUpgrader.plan(
                 existing: existing,
                 document: document,
                 listeningMap: StructuredDocumentImport.listeningMap(for: document, title: existing.title, itemId: existing.id),
                 repository: repository
             )
+        }
+
+        func apply(_ upgrade: StructuredDocumentUpgrade) throws {
+            try repository.applyStructuredDocumentUpgrade(upgrade)
         }
     }
 
@@ -4049,7 +4044,8 @@ public final class SessionEngine {
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
                     let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
                     if mode == .deferred { return .upgradeCandidate(job) }
-                    if case .success(let upgrade) = try job.run() {
+                    if case .success(let upgrade) = try job.plan() {
+                        try job.apply(upgrade)
                         return .records(upgrade.item, upgrade.listeningMap, document)
                     }
                 }

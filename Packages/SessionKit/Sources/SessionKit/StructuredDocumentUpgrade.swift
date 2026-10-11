@@ -45,26 +45,6 @@ public enum StructuredDocumentUpgrader {
         case nonTextAnchor(marginIds: [String])
         case marginNotPlaced(marginIds: [String])
         case positionNotPlaced(sessionIds: [String])
-        /// A Margin, session or audio render landed between planning and writing (only possible off the main thread).
-        case changedWhilePlanning
-    }
-
-    /// Plans and writes the upgrade without touching engine state, so a caller can run it off the main thread.
-    /// The store re-checks the plan's inputs inside the write's transaction; if any changed, nothing is written.
-    public static func planAndApply(
-        existing: Item,
-        document: StructuredDocument,
-        listeningMap: ListeningMap?,
-        repository: SessionRepository & StructuredDocumentRepository
-    ) throws -> Result<StructuredDocumentUpgrade, StaysBecause> {
-        let planned = try plan(existing: existing, document: document, listeningMap: listeningMap, repository: repository)
-        guard case .success(let upgrade) = planned else { return planned }
-        do {
-            try repository.applyStructuredDocumentUpgrade(upgrade)
-            return .success(upgrade)
-        } catch StructuredDocumentUpgradeError.changedSincePlanned {
-            return .failure(.changedWhilePlanning)
-        }
     }
 
     /// Called by a store inside the transaction that applies `upgrade`.
