@@ -96,6 +96,19 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         XCTAssertEqual(try fixture.stored(), before, "the v1 item, Margins and positions are untouched")
     }
 
+    @MainActor
+    func testAnItemThatIsPlayingIsNotUpgradedOffMainEither() async throws {
+        let fixture = try makeFixture()
+        try fixture.addReadingSession()
+        _ = try fixture.engine.startSession(itemId: fixture.v1.id)
+        let before = try fixture.stored()
+
+        let reimported = try await fixture.reimportOffMain()
+
+        XCTAssertNotEqual(reimported.id, fixture.v1.id, "the new text becomes its own edition")
+        XCTAssertEqual(try fixture.stored(), before)
+    }
+
     // MARK: A Margin saved between planning and writing
 
     func testTheStoreRefusesAPlanWhenAMarginWasSavedAfterItWasMade() throws {
@@ -110,6 +123,22 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         }
 
         XCTAssertEqual(try fixture.stored(), before, "nothing was written, so the late Margin still counts in the old text")
+    }
+
+    func testTheStoreRefusesAPlanWhenAnotherFieldOfTheItemChangedAfterItWasMade() throws {
+        let fixture = try makeFixture()
+        try fixture.addReadingSession()
+        guard case .success(let upgrade) = try fixture.plan() else { return XCTFail("fixture should move") }
+        var renamed = try fixture.store.loadItem(id: fixture.v1.id)
+        renamed.title = "Renamed while the plan ran"
+        try fixture.store.saveItem(renamed)
+        let before = try fixture.stored()
+
+        XCTAssertThrowsError(try fixture.store.applyStructuredDocumentUpgrade(upgrade)) {
+            XCTAssertEqual($0 as? StructuredDocumentUpgradeError, .changedSincePlanned)
+        }
+
+        XCTAssertEqual(try fixture.stored(), before, "the rename is not reverted by a plan made from the old row")
     }
 
     func testTheStoreRefusesAPlanWhenASessionWasStartedAfterItWasMade() throws {

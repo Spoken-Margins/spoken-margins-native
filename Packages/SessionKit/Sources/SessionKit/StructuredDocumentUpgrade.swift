@@ -20,7 +20,8 @@ public struct StructuredDocumentUpgrade: Sendable {
     public var basis: Basis?
 
     public struct Basis: Equatable, Sendable {
-        var itemText: String?
+        /// The whole row, not just its text: the write replaces it, so any other field changed meanwhile would be lost.
+        var item: Item
         var sessions: [Session]
         var margins: [Interjection]
     }
@@ -77,7 +78,7 @@ public enum StructuredDocumentUpgrader {
         }
     }
 
-    /// The item text plus every session and Margin on it, in a fixed order; nil when something the
+    /// The item row plus every session and Margin on it, in a fixed order; nil when something the
     /// upgrade cannot carry (imported Margins, prepared audio, a deleted item) is now present.
     private static func currentBasis(itemId: String, repository: SessionRepository & StructuredDocumentRepository) throws -> StructuredDocumentUpgrade.Basis? {
         let item: Item
@@ -87,7 +88,7 @@ public enum StructuredDocumentUpgrader {
               try repository.loadImportedCommentaryLayers(itemId: itemId).isEmpty,
               try repository.loadPreparedAudioManifests(itemId: itemId).isEmpty else { return nil }
         let (sessions, margins) = try sessionsAndMargins(itemId: itemId, repository: repository)
-        return StructuredDocumentUpgrade.Basis(itemText: item.text, sessions: sessions, margins: margins)
+        return StructuredDocumentUpgrade.Basis(item: item, sessions: sessions, margins: margins)
     }
 
     private static func sessionsAndMargins(itemId: String, repository: SessionRepository & StructuredDocumentRepository) throws -> ([Session], [Interjection]) {
@@ -170,7 +171,7 @@ public enum StructuredDocumentUpgrader {
         return .success(StructuredDocumentUpgrade(
             item: item, listeningMap: listeningMap, document: document,
             interjections: movedMargins, sessions: movedSessions,
-            basis: StructuredDocumentUpgrade.Basis(itemText: existing.text, sessions: sessions, margins: margins)
+            basis: StructuredDocumentUpgrade.Basis(item: existing, sessions: sessions, margins: margins)
         ))
     }
 }
