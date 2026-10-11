@@ -173,7 +173,7 @@ final class MarginLoudnessLevelerTests: XCTestCase {
 
     // MARK: Helpers
 
-    private static func hash(_ url: URL) throws -> String {
+    static func hash(_ url: URL) throws -> String {
         SHA256.hash(data: try Data(contentsOf: url)).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -185,7 +185,7 @@ final class MarginLoudnessLevelerTests: XCTestCase {
         return (0..<Int(file.processingFormat.channelCount)).map { Array(UnsafeBufferPointer(start: buffer.floatChannelData![$0], count: frames)) }
     }
 
-    private static func write(_ channels: [[Float]], to url: URL, aac: Bool) throws {
+    static func write(_ channels: [[Float]], to url: URL, aac: Bool) throws {
         let rate = 48_000.0
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: rate, channels: AVAudioChannelCount(channels.count)))
         let settings: [String: Any] = aac
@@ -203,7 +203,7 @@ final class MarginLoudnessLevelerTests: XCTestCase {
     }
 
     /// Seeded syllable-like bursts over background noise, 5 s at 48 kHz, scaled to `lufs` when given.
-    private static func speechLike(seed: UInt64, lufs: Double?, speechDBFS: Double = -20, noiseDBFS: Double = -85, wordsPerSecond: Double = 3.5) -> [Float] {
+    static func speechLike(seed: UInt64, lufs: Double?, speechDBFS: Double = -20, noiseDBFS: Double = -85, wordsPerSecond: Double = 3.5) -> [Float] {
         let rate = 48_000.0
         var state = seed &* 0x9E3779B97F4A7C15 | 1
         func random() -> Double {

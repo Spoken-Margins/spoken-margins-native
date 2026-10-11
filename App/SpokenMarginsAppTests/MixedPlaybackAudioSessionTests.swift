@@ -105,6 +105,52 @@ final class MixedPlaybackAudioSessionTests: XCTestCase {
         XCTAssertTrue(session.categoryOptions.contains(.mixWithOthers))
     }
 
+    /// APA-02 (#1042), the iOS voice half: the iOS voice reads articles when Supertonic isn't chosen or falls back,
+    /// and it wasn't among the adapters here. On the real session, speaking lowers other audio; pausing, stopping
+    /// and reaching the end stop lowering it, while mixing stays on so the other app isn't interrupted. The speech
+    /// itself runs at volume 0.
+    func testIOSVoiceLowersOtherAudioOnlyWhileSpeakingOnTheRealSession() async throws {
+        let session = AVAudioSession.sharedInstance()
+        defer { try? session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers]) }
+        try session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: 0.5)
+        defer { try? client.stop() }
+        try client.setPlaybackVolume(0)
+        try client.setMixesWithOtherAudio(true)
+        try client.setLowersBackgroundAudio(true)
+        _ = try client.prepareSpeechText(String(repeating: "The iOS voice reads this article long enough to pause it. ", count: 12))
+
+        try client.play(targetId: "long", from: 0)
+        XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "speaking lowers other audio")
+        XCTAssertTrue(session.categoryOptions.contains(.mixWithOthers))
+
+        try client.pause()
+        XCTAssertFalse(session.categoryOptions.contains(.duckOthers), "paused, other audio is no longer lowered")
+        XCTAssertTrue(session.categoryOptions.contains(.mixWithOthers), "and still mixes, so the other app isn't interrupted")
+        XCTAssertEqual(session.category, .playback)
+
+        try client.play(targetId: "long", from: client.currentCharOffset() ?? 0)
+        XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "resuming lowers other audio again")
+        try client.setLowersBackgroundAudio(false)
+        XCTAssertFalse(session.categoryOptions.contains(.duckOthers), "turning the setting off while speaking takes effect at once")
+        try client.setLowersBackgroundAudio(true)
+        XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "and turning it on again does too")
+
+        try client.stop()
+        XCTAssertFalse(session.categoryOptions.contains(.duckOthers), "stopped, other audio is no longer lowered")
+
+        _ = try client.prepareSpeechText("Short.")
+        try client.play(targetId: "short", from: 0)
+        XCTAssertTrue(session.categoryOptions.contains(.duckOthers), "precondition: the short article lowers other audio")
+        let deadline = ContinuousClock.now + .seconds(20)
+        while !client.isPlaybackComplete(targetId: "short"), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "short"), "the iOS voice read the short article to its end")
+        XCTAssertFalse(session.categoryOptions.contains(.duckOthers), "the end of the article stops lowering other audio")
+        XCTAssertTrue(session.categoryOptions.contains(.mixWithOthers))
+    }
+
     func testReleasingDuckingDoesNotChangeRecordingSession() throws {
         let session = AVAudioSession.sharedInstance()
         defer { try? session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers]) }

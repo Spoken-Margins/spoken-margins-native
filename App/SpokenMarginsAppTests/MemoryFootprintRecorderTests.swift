@@ -114,6 +114,26 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         XCTAssertLessThan(footprintGrowth, 16 * megabyte, "but clean file pages aren't in the footprint, so the reader isn't reading the resident size")
     }
 
+    /// #586: the longest chunk hand-over gap is recorded once per run, and a gap that is no longer is
+    /// never written again, so a replaced dictionary has to get the line back at once.
+    func testRefreshDiagnosticsDoesNotDropTheLongestHandOverGap() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let stall = "2.40s after comma, waited for next chunk"
+        model.runtimeDiagnostics.recordChunkHandOverGap(.init(seconds: 2.4, boundary: .comma, nextChunkWasReady: false))
+        model.runtimeDiagnostics.recordChunkHandOverGap(.init(seconds: 0.3, boundary: .sentence, nextChunkWasReady: true))
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], stall, "a shorter gap doesn't replace it")
+
+        model.refreshDiagnostics() // the Settings button: replaces the whole dictionary
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], stall)
+
+        model.resetAndSeed() // replaces it too
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], stall)
+
+        model.runtimeDiagnostics.recordChunkHandOverGap(.init(seconds: 3.1, boundary: .sentence, nextChunkWasReady: false))
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], "3.10s after sentence, waited for next chunk", "a longer gap does")
+    }
+
     func testRefreshDiagnosticsDoesNotDropTheMemoryLines() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()

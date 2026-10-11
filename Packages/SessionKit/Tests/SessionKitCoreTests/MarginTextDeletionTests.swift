@@ -19,7 +19,7 @@ final class MarginTextDeletionTests: XCTestCase {
         super.tearDown()
     }
 
-    func testDeletingTheTranscriptRemovesEveryCopyOfTheWordsAndQueuesRetranscriptionOfARecording() throws {
+    func testDeletingTheTranscriptRemovesEveryCopyOfTheWordsAndOffersRetranscriptionOfARecording() throws {
         let (store, engine) = try makeEngine()
         let recorded = marginRecord(sessionId: "session-A", audioPath: "interjections/A.m4a", words: "Spoken in A")
         let otherSession = marginRecord(sessionId: "session-B", audioPath: "interjections/B.m4a", words: "Spoken in B")
@@ -32,7 +32,8 @@ final class MarginTextDeletionTests: XCTestCase {
         XCTAssertNil(afterDelete.transcript)
         XCTAssertNil(afterDelete.cleanedTranscript, "the cleaned copy is the same words")
         XCTAssertNil(afterDelete.displayText, "the Margin list shows displayText, so it must not keep showing the deleted words")
-        XCTAssertEqual(afterDelete.transcriptionStatus, "pending", "the recording is still there and can be transcribed again")
+        XCTAssertEqual(afterDelete.transcriptionStatus, "failed",
+                       "no work is queued, so it must not read as pending (#942); the recording is still there for Retry")
         var unchangedApartFromText = afterDelete
         unchangedApartFromText.transcript = recorded.transcript
         unchangedApartFromText.cleanedTranscript = recorded.cleanedTranscript

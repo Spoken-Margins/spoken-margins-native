@@ -17,15 +17,27 @@ import SessionKit
 ///
 /// The chime stops as soon as its start resolves, so it never runs over the first words. Since the regular check can
 /// be 500 ms late, the cue asks for one more check part-way through the chime (audit of #580).
+///
+/// One chime and then silence still reads as a stall when the wait is long, so a start that is still silent
+/// `PlaybackWaitingCue.delay` after the chime also gets a quiet repeating waiting sound (three soft pops, every
+/// `PlaybackWaitingCue.period`). It is scheduled on the audio clock at the moment the chime plays and loops in the
+/// audio player, so it keeps going after the app leaves the screen. It stops with the chime: on the first word, a
+/// pause, a failure or another item, and it gives up after `PlaybackWaitingCue.limit`.
 @MainActor
 final class PlaybackStartCue: ObservableObject {
     private var watch = PlaybackStartWatch()
     private var cueTask: Task<Void, Never>?
     private var player: AVAudioPlayer?
+    private var waitingPlayer: AVAudioPlayer?
     private let now: () -> Date
+    private let waitingCueDelay: TimeInterval
+    private let waitingCuePeriod: TimeInterval
+    private let waitingCueLimit: TimeInterval
     /// Tests replace the chime; it returns what the cue did.
     private let playChime: (@MainActor () -> String)?
-    /// Tests replace stopping the chime.
+    /// Tests replace scheduling the waiting sound (seconds from now to its first repetition); it returns what the cue did.
+    private let scheduleWaitingCue: (@MainActor (TimeInterval) -> String)?
+    /// Tests replace stopping the chime and the waiting sound.
     private let stopChimeOverride: (@MainActor () -> Void)?
     /// Brings the snapshot up to date with the player before the cue decides; in the app, one model progress tick.
     private let checkNow: (@MainActor () -> Void)?
@@ -40,12 +52,20 @@ final class PlaybackStartCue: ObservableObject {
         snapshots: AnyPublisher<SessionSnapshot, Never>? = nil,
         now: @escaping () -> Date = Date.init,
         playChime: (@MainActor () -> String)? = nil,
+        scheduleWaitingCue: (@MainActor (TimeInterval) -> String)? = nil,
+        waitingCueDelay: TimeInterval = PlaybackWaitingCue.delay,
+        waitingCuePeriod: TimeInterval = PlaybackWaitingCue.period,
+        waitingCueLimit: TimeInterval = PlaybackWaitingCue.limit,
         stopChime: (@MainActor () -> Void)? = nil,
         checkNow: (@MainActor () -> Void)? = nil,
         record: @escaping @MainActor (String, String) -> Void
     ) {
         self.now = now
         self.playChime = playChime
+        self.scheduleWaitingCue = scheduleWaitingCue
+        self.waitingCueDelay = waitingCueDelay
+        self.waitingCuePeriod = waitingCuePeriod
+        self.waitingCueLimit = waitingCueLimit
         self.stopChimeOverride = stopChime
         self.checkNow = checkNow
         self.record = record
@@ -97,10 +117,37 @@ final class PlaybackStartCue: ObservableObject {
             let result = self.playChime?() ?? self.playSoftChime()
             self.record("lastPlaybackStartCue", "\(waiting):" + result)
             guard result == "played" else { return }
+            // The waiting sound is placed on the audio clock now, so it still sounds if the app is in the background.
+            let chimedAt = ContinuousClock.now
+            let waitingResult = self.scheduleWaitingCue?(self.waitingCueDelay) ?? self.scheduleWaitingLoop(after: self.waitingCueDelay)
+            self.record("lastWaitingCue", "\(waiting):" + waitingResult)
             // Speech that begins under the chime stops it here, not at the next regular check.
             try? await Task.sleep(for: .seconds(Self.checkDuringChime))
             guard !Task.isCancelled else { return }
             self.checkNow?()
+            guard waitingResult == "scheduled" else { return }
+            await self.keepWaitingCueHonest(for: waiting, chimedAt: chimedAt)
+        }
+    }
+
+    /// Checks the player just before and just into each repetition, so a repetition doesn't start or run on after
+    /// the first words (the regular check can be 500 ms late), and ends the sound when the start has hung too long.
+    private func keepWaitingCueHonest(for itemId: String, chimedAt: ContinuousClock.Instant) async {
+        var repetition = 0
+        while !Task.isCancelled {
+            let begins = chimedAt + .seconds(waitingCueDelay + Double(repetition) * waitingCuePeriod)
+            if begins - chimedAt >= .seconds(waitingCueLimit) {
+                stopChime()
+                record("lastWaitingCue", "\(itemId):gave_up")
+                return
+            }
+            try? await Task.sleep(until: begins - .milliseconds(100), clock: .continuous)
+            guard !Task.isCancelled else { return }
+            checkNow?()
+            try? await Task.sleep(until: begins + .milliseconds(250), clock: .continuous)
+            guard !Task.isCancelled else { return }
+            checkNow?()
+            repetition += 1
         }
     }
 
@@ -111,6 +158,24 @@ final class PlaybackStartCue: ObservableObject {
         if let stopChimeOverride { stopChimeOverride(); return }
         player?.stop()
         player = nil
+        waitingPlayer?.stop() // also cancels a repetition that is scheduled but hasn't begun
+        waitingPlayer = nil
+    }
+
+    private func scheduleWaitingLoop(after delay: TimeInterval) -> String {
+        #if os(iOS)
+        guard AVAudioSession.sharedInstance().category == .playback else { return "skipped:session_not_playback" }
+        #endif
+        do {
+            let player = try AVAudioPlayer(data: PlaybackWaitingCue.wavData())
+            player.numberOfLoops = -1
+            player.volume = 1
+            player.prepareToPlay()
+            self.waitingPlayer = player
+            return player.play(atTime: player.deviceCurrentTime + delay) ? "scheduled" : "skipped:player_refused"
+        } catch {
+            return "skipped:\(error.localizedDescription)"
+        }
     }
 
     private func playSoftChime() -> String {

@@ -37,6 +37,14 @@
       }
     },
     {
+      "command": "seekText",
+      "args": { "charOffset": 40 },
+      "expect": {
+        "status": "playing",
+        "landedOnSemanticBoundary": false
+      }
+    },
+    {
       "command": "beginInterjection",
       "expect": {
         "phase": "recording_interjection",

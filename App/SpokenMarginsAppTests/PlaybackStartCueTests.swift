@@ -1,3 +1,4 @@
+import AVFoundation
 import Combine
 import XCTest
 import SessionKit
@@ -247,6 +248,206 @@ final class PlaybackStartCueTests: XCTestCase {
         cue.observe(snapshot("article", .paused))
 
         XCTAssertFalse(chiming)
+    }
+
+    /// APA-13 (#1042): every test above replaces the chime and its stop, so the real player never ran. Here the cue
+    /// plays its own chime on a `.playback` session, and speech starting stops that player, not a stand-in.
+    func testTheRealChimePlaysOnAPlaybackSessionAndStopsWhenSpeechStarts() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let priorCategory = session.category, priorMode = session.mode, priorOptions = session.categoryOptions
+        defer { try? session.setCategory(priorCategory, mode: priorMode, options: priorOptions) }
+        try session.setCategory(.playback, mode: .spokenAudio, options: [.mixWithOthers])
+        weak var watched: PlaybackStartCue?
+        var heldPlayer: AVAudioPlayer?
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            record: { [unowned self] key, value in
+                self.recorded[key] = value
+                // Runs right after the real player starts. The 0.21 s chime could end by itself before a slow
+                // simulator checks it, so it loops silently here: only a stop can end it. The test also holds the
+                // player, so letting go of it can't pass for stopping it.
+                guard key == "lastPlaybackStartCue", let cue = watched, let player = self.chimePlayer(of: cue) else { return }
+                player.volume = 0
+                player.numberOfLoops = -1
+                heldPlayer = player
+            }
+        )
+        watched = cue
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { recorded["lastPlaybackStartCue"] != nil }
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:played", "the real player took the chime")
+        let player = try XCTUnwrap(heldPlayer, "the cue keeps its chime player while it plays")
+        XCTAssertTrue(player.isPlaying, "the chime is playing")
+
+        cue.observe(snapshot("article", .playing))
+
+        XCTAssertFalse(player.isPlaying, "speech starting stopped the chime's player")
+        XCTAssertNil(chimePlayer(of: cue), "and the cue let it go")
+    }
+
+    /// The chime never configures the session: on a recording session it stays silent and says why.
+    func testTheRealChimeStaysSilentWhenTheSessionIsNotPlayback() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let priorCategory = session.category, priorMode = session.mode, priorOptions = session.categoryOptions
+        defer { try? session.setCategory(priorCategory, mode: priorMode, options: priorOptions) }
+        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [])
+        let cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { recorded["lastPlaybackStartCue"] != nil }
+
+        XCTAssertEqual(recorded["lastPlaybackStartCue"], "article:skipped:session_not_playback")
+        XCTAssertNil(chimePlayer(of: cue))
+        XCTAssertEqual(session.category, .playAndRecord, "the recording session is left as it was")
+    }
+
+    /// APA-13 (#1042): the app builds its cue with `init(model:pinned:)`, whose check before the chime is one model
+    /// progress tick. No test reached that wiring. Here the model's snapshot says "starting" while its engine has no
+    /// start at all, and the request is already 0.8 s old, so the cue is due at once, before the model's own
+    /// 500 ms tick. Only the cue's check can bring the snapshot up to date in time to skip the chime.
+    func testTheAppsCueChecksTheModelBeforeChiming() async throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let cue = PlaybackStartCue(model: model, pinned: PinnedDiagnostics(diagnostics: model.runtimeDiagnostics))
+        var stale = snapshot("article", .starting)
+        stale.playbackRequestedAt = Date().addingTimeInterval(-1)
+
+        model.snapshot = stale
+        try await waitUntil { model.snapshot.status != .starting }
+        try await Task.sleep(for: .milliseconds(100))
+
+        XCTAssertNotEqual(model.snapshot.status, .starting, "the check brought the snapshot up to date")
+        XCTAssertNil(model.diagnostics["lastPlaybackStartCue"], "so no chime played over a start that had already resolved")
+        withExtendedLifetime(cue) {}
+    }
+
+    /// The cue's own chime player, read the way other app tests read a model's private player.
+    private func chimePlayer(of cue: PlaybackStartCue) -> AVAudioPlayer? {
+        Mirror(reflecting: cue).children.first { $0.label == "player" }?.value as? AVAudioPlayer
+    }
+
+    // MARK: Waiting sound (#357 follow-up)
+
+    private var waitingScheduled: [TimeInterval] = []
+    private var waitingActive = false
+    private var checks = 0
+
+    /// A cue whose chime and waiting sound are recorded instead of played. `onCheck` runs inside each fresh check.
+    private func makeWaitingCue(
+        limit: TimeInterval = 60, onCheck: (@MainActor (PlaybackStartCue) -> Void)? = nil
+    ) -> PlaybackStartCue {
+        var cue: PlaybackStartCue!
+        cue = PlaybackStartCue(
+            now: { [unowned self] in self.clock },
+            playChime: { [unowned self] in self.chimes += 1; return "played" },
+            scheduleWaitingCue: { [unowned self] delay in
+                self.waitingScheduled.append(delay)
+                self.waitingActive = true
+                return "scheduled"
+            },
+            waitingCueDelay: 0.3,
+            waitingCuePeriod: 0.2,
+            waitingCueLimit: limit,
+            stopChime: { [unowned self] in self.waitingActive = false },
+            checkNow: { [unowned self] in
+                self.checks += 1
+                onCheck?(cue)
+            },
+            record: { [unowned self] key, value in self.recorded[key] = value }
+        )
+        return cue
+    }
+
+    /// A silent start that has been chimed gets the waiting sound, scheduled for the delay after the chime.
+    func testSilentStartGetsAWaitingSoundAfterTheChime() async throws {
+        let cue = makeWaitingCue()
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { waitingScheduled.count == 1 }
+
+        XCTAssertEqual(chimes, 1)
+        XCTAssertEqual(waitingScheduled, [0.3])
+        XCTAssertTrue(waitingActive)
+        XCTAssertEqual(recorded["lastWaitingCue"], "article:scheduled")
+        cue.observe(snapshot("article", .paused)) // ends the cue's checks
+    }
+
+    /// Audio that starts before the chime is due gets neither the chime nor the waiting sound.
+    func testQuickStartHasNoWaitingSound() async throws {
+        let cue = makeWaitingCue()
+
+        cue.observe(snapshot("article", .starting))
+        clock += 0.3
+        cue.observe(snapshot("article", .playing))
+        try await Task.sleep(for: .seconds(1.2))
+
+        XCTAssertEqual(waitingScheduled, [])
+        XCTAssertFalse(waitingActive)
+        XCTAssertNil(recorded["lastWaitingCue"])
+    }
+
+    /// The waiting sound stops at once on the first word, a pause, a failure or another item.
+    func testWaitingSoundStopsWhenTheStartResolves() async throws {
+        for resolution: PlaybackStatus in [.playing, .paused, .failed, .recording] {
+            waitingScheduled = []
+            waitingActive = false
+            let cue = makeWaitingCue()
+
+            cue.observe(snapshot("article", .starting))
+            clock += 1
+            try await waitUntil { waitingActive }
+            cue.observe(snapshot("article", resolution))
+
+            XCTAssertFalse(waitingActive, "a start that ends as \(resolution.rawValue) stops the waiting sound")
+        }
+    }
+
+    func testAnotherItemStartingStopsTheWaitingSound() async throws {
+        let cue = makeWaitingCue()
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { waitingActive }
+        cue.observe(snapshot("podcast", .starting))
+
+        XCTAssertFalse(waitingActive, "the old start's sound ends; the new start has its own chime to come")
+        cue.observe(snapshot("podcast", .paused)) // ends the new start's pending chime
+    }
+
+    /// The cue checks the player just before and just into each repetition, so a late first word stops the sound
+    /// within a repetition instead of at the next regular 500 ms tick.
+    func testFirstWordFoundByTheCheckBeforeARepetitionStopsTheSound() async throws {
+        let cue = makeWaitingCue { [unowned self] cue in
+            // The check before the chime and the one during it see silence; the one before the first repetition sees speech.
+            if self.checks >= 3 { cue.observe(self.snapshot("article", .playing)) }
+        }
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { checks >= 3 }
+
+        XCTAssertFalse(waitingActive)
+        XCTAssertEqual(recorded["firstAudioMs:article"], "1000")
+        try await Task.sleep(for: .seconds(0.6))
+        XCTAssertEqual(checks, 3, "a resolved start is not checked again")
+    }
+
+    /// A start that never resolves stops repeating, and the diagnostics say so.
+    func testHungStartGivesUpOnTheWaitingSound() async throws {
+        let cue = makeWaitingCue(limit: 0.9)
+
+        cue.observe(snapshot("article", .starting))
+        clock += 1
+        try await waitUntil { recorded["lastWaitingCue"] == "article:gave_up" }
+
+        XCTAssertFalse(waitingActive)
     }
 
     /// Waits for the cue's timer on a loaded simulator, where a fixed sleep can end before it fires.

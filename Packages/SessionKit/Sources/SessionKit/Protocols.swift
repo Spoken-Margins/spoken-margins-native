@@ -116,6 +116,9 @@ public protocol EpisodeMapRepository {
     func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact]
     func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws
     func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection?
+    /// Removes a community map's proposal and projection (#553), found by their ids; nothing else.
+    /// Called when the publisher's own chapters arrive, which a community map never outlives.
+    func removeCommunityMap(itemId: String) throws
     func saveEpisodeMapPreparationJob(_ job: EpisodeMapPreparationJob) throws
     func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob]
     func deleteEpisodeMapPreparationJob(id: String) throws
@@ -444,4 +447,9 @@ public extension AIProviderClient {
             return false
         }
     }
+}
+
+extension EpisodeMapRepository {
+    /// Stores that never hold community maps have nothing to remove.
+    public func removeCommunityMap(itemId: String) throws {}
 }
