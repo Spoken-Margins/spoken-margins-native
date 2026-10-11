@@ -99,8 +99,9 @@ struct ExperienceMarginsScreen: View {
     }
 
     private func loadCollections() {
-        collections = (try? model.store?.loadItemCollections()) ?? []
-        model.marginCollectionQuery.refreshCollection(from: collections)
+        guard let stored = try? model.store?.loadItemCollections() else { return }
+        collections = stored
+        model.marginCollectionQuery.refreshCollection(from: stored)
     }
 
     /// Export Sessions starts with only the scoped collection's sessions selected.

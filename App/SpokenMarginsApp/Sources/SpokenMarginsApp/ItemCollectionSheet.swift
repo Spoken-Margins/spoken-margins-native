@@ -41,7 +41,7 @@ struct ItemCollectionSheet: View {
                             Button("Rename", systemImage: "pencil") { beginRename(collection) }
                             Button("Delete Collection", systemImage: "trash", role: .destructive) { delete(collection) }
                         }
-                        .swipeActions(edge: .trailing) {
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                             Button("Delete", role: .destructive) { delete(collection) }
                             Button("Rename") { beginRename(collection) }.tint(AppColors.ochre)
                         }
@@ -80,20 +80,28 @@ struct ItemCollectionSheet: View {
     }
 
     private func load() {
-        collections = (try? model.store?.loadItemCollections()) ?? []
-        model.marginCollectionQuery.refreshCollection(from: collections)
+        // A failed read keeps what is shown, so an active Margins scope isn't dropped by a blip.
+        guard let stored = try? model.store?.loadItemCollections() else { return }
+        collections = stored
+        model.marginCollectionQuery.refreshCollection(from: stored)
     }
 
     /// Saves one change, then reloads so the sheet and the Margins scope show what is stored.
-    private func commit(_ change: (SQLiteSessionStore) throws -> Void) {
-        guard let store = model.store else { return model.reportFailure("The Library isn't ready yet.") }
+    @discardableResult
+    private func commit(_ change: (SQLiteSessionStore) throws -> Void) -> Bool {
+        guard let store = model.store else {
+            model.reportFailure("The Library isn't ready yet.")
+            return false
+        }
+        defer { load() }
         do {
             try change(store)
             problem = nil
+            return true
         } catch {
             model.reportFailure(error, context: "Collection change failed")
+            return false
         }
-        load()
     }
 
     private func toggle(_ collection: ItemCollection) {
@@ -109,8 +117,7 @@ struct ItemCollectionSheet: View {
                 : "You already have a collection with that name."
             return
         }
-        commit { try $0.saveItemCollection(created) }
-        newName = ""
+        if commit({ try $0.saveItemCollection(created) }) { newName = "" }
     }
 
     private func beginRename(_ collection: ItemCollection) {
