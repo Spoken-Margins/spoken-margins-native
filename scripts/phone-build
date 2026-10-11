@@ -4,17 +4,18 @@
 Usage:
   scripts/phone-build                 build origin/next's tip now
   scripts/phone-build --commit <sha>  build that commit instead
-  scripts/phone-build --if-changed    build only if next's tip differs from `latest` (for launchd or a tick)
+  scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now
 
 What it does:
-- Builds a signed Release app for a physical iPhone in a temporary detached worktree, through
-  scripts/xcodebuild-lane (so it waits for a Mac-wide build slot), with its own DerivedData,
+- Builds a signed Release app for a physical iPhone in a persistent detached worktree, through
+  scripts/xcodebuild-lane (so it waits for a Mac-wide build slot), with persistent Release DerivedData,
   automatic signing and -allowProvisioningUpdates. SM_BUILD_COMMIT puts the commit in the app's
   Info.plist, so Settings > Version names it once that key is on next.
 - Output: ~/SpokenMargins-phone/<date-time>-<sha7>/ with the .app, build.json, build.log and
   test-plan.md, and a `latest` symlink to the newest good build. Keeps the three newest builds;
-  older ones, the temporary worktree and its DerivedData are deleted.
+  older ones and temporary logs are deleted. .cache/src and .cache/dd-release stay at stable paths
+  so unchanged source files and compiled intermediates can be reused by the next build.
 - test-plan.md lists the listener-facing PRs merged since the build the owner last installed
   (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command; a commit built
   on the Mac before it reached next still counts), each with
@@ -32,13 +33,15 @@ What it does:
   one in the issue's comments wins; a comment saying "Owner check: none" or "leave this off the owner's plans"
   keeps the issue out. They share the ten minutes with the new changes; the rest are listed with links.
 
-Gates (the owner's rule, 2026-09-30: rebuild whenever next's tip changes and the automated checks
-pass; bugs are fine, crashes the runners would catch are not):
+Gates (hourly coalescing, #1329; bugs are fine, crashes the runners would catch are not):
 - One phone build at a time (a lock in ~/SpokenMargins-phone). A second run exits at once.
+- --if-changed starts at most once an hour, unless the current tip has an integration PASS on #184.
+  Explicit builds without --if-changed bypass that delay. Deferred tips do not reset the hour.
 - Memory pressure must be normal, and free disk at least 10 GB plus 4 GB per running build
   (counting this one). Otherwise it skips and exits 75; the next trigger tries again.
-- Checks on the exact commit: a tip the lane runner pushed after testing it (its "Merge check"
-  comment says so) has passed host tests; its author built both targets, and the iPhone build
+- Checks: a tip the lane runner pushed after testing it, or a safe re-merge of a tested PR (its
+  "Merge check" names the resulting commit), has passed the lane's host-test gate; its author built
+  both targets, and the iPhone build
   below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
   merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
@@ -79,6 +82,7 @@ DISK_PER_BUILD_GB = 4
 PLAN_CHECKS = 8          # about a minute each, plus the install: roughly ten minutes
 EXIT_SKIPPED = 75        # EX_TEMPFAIL: a guard said not now
 APP_NAME = 'SpokenMarginsApp.app'
+BUILD_INTERVAL_SECONDS = 3600
 SIGNING_HINTS = [
     ('errSecInternalComponent', 'The keychain is locked or asked for permission. Unlock the Mac, run '
      'scripts/phone-build once from Terminal, and click "Always Allow" when macOS asks for the keychain.'),
@@ -218,10 +222,13 @@ def guard_reason() -> str | None:
 
 
 def runner_tested(sha: str) -> str | None:
-    """How the lane runner tested this exact commit before pushing it to next, or None.
+    """Evidence that the lane's host-test gate covers this commit, or None.
 
     The runner merges a PR as "Merge pull request #N: ..." and first posts a "Merge check (triage
     desk)" comment on it that says "Pushing `<sha7>` to next" (scripts/lane-runner.py merge_check).
+    It can also safely re-merge an already-tested PR when next hasn't moved or its changes touch
+    neither the PR's files nor build inputs. That report explicitly names the resulting re-merge;
+    it is sufficient here too. The Test Desk checks interactions on next's merged tip.
     """
     subject = git('log', '-1', '--format=%s', sha)
     found = re.match(r'Merge pull request #(\d+): ', subject)
@@ -236,7 +243,32 @@ def runner_tested(sha: str) -> str | None:
             ran = re.search(r'- Ran: (.+?)\.?\n', body)
             return f'the lane runner tested this merge commit before pushing it (PR #{found.group(1)}' + \
                 (f'; ran {ran.group(1)})' if ran else ')')
+        if (': PASS, re-merged onto the newest next without re-testing.' in body.split('\n', 1)[0]
+                and f'- So the re-merge `{sha[:7]}` goes to next not re-tested.' in body):
+            return (f'the lane runner tested PR #{found.group(1)} and safely re-merged it without '
+                    'repeating host tests; the Test Desk tests next\'s merged tip end to end')
     return None
+
+
+def coalesce_reason(sha: str) -> str | None:
+    """Hold automatic builds until an hour after the last start, without delaying an integration PASS.
+
+    Fall back to last-attempt for existing installations that have not recorded a start yet.
+    Timestamps without a zone are the old script's local times; timestamp() handles both formats.
+    """
+    previous = read_json(phone_dir() / 'last-start.json') or read_json(phone_dir() / 'last-attempt.json')
+    try:
+        started = datetime.datetime.fromisoformat(previous['at']).timestamp()
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        return None
+    elapsed = datetime.datetime.now(datetime.timezone.utc).timestamp() - started
+    if not 0 <= elapsed < BUILD_INTERVAL_SECONDS:
+        return None
+    verdict = latest_verdict(sha)
+    if verdict and re.search(r' — PASS\b', verdict):
+        return None
+    minutes = int((BUILD_INTERVAL_SECONDS - elapsed + 59) // 60)
+    return f'coalescing next\'s changes; next phone build in about {minutes} min, or after integration PASS'
 
 
 # ---- test plan -----------------------------------------------------------------------------------
@@ -1046,11 +1078,16 @@ def record_attempt(sha: str, result: str) -> None:
 def build(sha: str) -> int:
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     work = phone_dir() / '.work' / f'{stamp}-{sha[:7]}'
-    src, derived, log = work / 'src', work / 'dd', work / 'build.log'
+    cache = phone_dir() / '.cache'
+    src, derived, log = cache / 'src', cache / 'dd-release', work / 'build.log'
     work.mkdir(parents=True)
     try:
-        say(f'checking out {sha[:7]} in a temporary worktree')
-        git('worktree', 'add', '--detach', str(src), sha)
+        cache.mkdir(exist_ok=True)
+        say(f'checking out {sha[:7]} in the persistent phone-build worktree')
+        if src.exists():
+            git('checkout', '--detach', sha, cwd=src)
+        else:
+            git('worktree', 'add', '--detach', str(src), sha)
         pointers = [p for p in (src / 'App/SpokenMarginsApp/Resources/Supertonic/onnx').glob('*.onnx')
                     if p.stat().st_size < 1024 and p.read_bytes().startswith(b'version https://git-lfs')]
         if pointers:
@@ -1062,7 +1099,7 @@ def build(sha: str) -> int:
         project = ['-project', 'SpokenMarginsNative.xcodeproj', '-scheme', 'SpokenMarginsApp']
         checks = runner_tested(sha)
         if not checks:
-            say('the runner did not test this exact commit; running host tests and the simulator build here first')
+            say('no lane host-test evidence for this commit; running host tests and the simulator build here first')
             if run_logged([str(src / '.venv/bin/python'), 'scripts/verify-tests.py', '--plan', 'fast',
                            '--output', str(work / 'fast')], src, log) != 0:
                 raise BuildFailed('host tests (--plan fast) failed')
@@ -1118,7 +1155,6 @@ def build(sha: str) -> int:
             notify('Spoken Margins: phone build needs you', str(failure).split('Signing needs the owner: ', 1)[-1])
         return 1
     finally:
-        remove_worktree(src)
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -1129,7 +1165,7 @@ class BuildFailed(Exception):
 def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--commit', help='build this commit instead of origin/next')
-    parser.add_argument('--if-changed', action='store_true', help='skip unless next moved since latest')
+    parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
     args = parser.parse_args(argv)
     phone_dir().mkdir(parents=True, exist_ok=True)
@@ -1142,29 +1178,35 @@ def main(argv) -> int:
         say(f'rewrote {write_plan(folder, info["sha"], info.get("checks", "unknown"), bool(info.get("commit_in_app")))}')
         share_files(folder, info['sha'])
         return 0
-    lock = open(phone_dir() / '.phone-build.lock', 'a+')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        say('another phone build is running; nothing to do')
-        return 0
-    if not os.environ.get('SM_PHONE_NO_FETCH'):
-        git('fetch', 'origin', BRANCH, '-q', check=False)
-    sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
-    if args.if_changed:
-        if latest_build().get('sha') == sha:
-            say(f'latest is already {sha[:7]}; nothing to do')
+    with open(phone_dir() / '.phone-build.lock', 'a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            say('another phone build is running; nothing to do')
             return 0
-        attempt = read_json(phone_dir() / 'last-attempt.json')
-        if attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
-            say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer next')
-            return 0
-    reason = guard_reason()
-    if reason:
-        say(f'skipped: {reason}')
-        return EXIT_SKIPPED
-    clear_work()
-    return build(sha)
+        if not os.environ.get('SM_PHONE_NO_FETCH'):
+            git('fetch', 'origin', BRANCH, '-q', check=False)
+        sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
+        if args.if_changed:
+            if latest_build().get('sha') == sha:
+                say(f'latest is already {sha[:7]}; nothing to do')
+                return 0
+            attempt = read_json(phone_dir() / 'last-attempt.json')
+            if attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
+                say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer next')
+                return 0
+            reason = coalesce_reason(sha)
+            if reason:
+                say(reason)
+                return 0
+        reason = guard_reason()
+        if reason:
+            say(f'skipped: {reason}')
+            return EXIT_SKIPPED
+        clear_work()
+        (phone_dir() / 'last-start.json').write_text(json.dumps({
+            'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')
+        return build(sha)
 
 
 if __name__ == '__main__':
