@@ -294,6 +294,14 @@ struct MarginRow: Identifiable, Equatable, Sendable {
         )
     }
 
+    /// The row's second line: where the Margin was made, then the day (#777). Responses and summaries keep their label.
+    func placeDescription(now: Date = Date()) -> String {
+        guard interjection.targetType == .item else { return "\(targetDescription) · \(interjection.roughPercent)%" }
+        return MarginRowWording.placeLine(
+            mediaTimeMs: interjection.anchor.mediaTimeMs, roughPercent: interjection.roughPercent,
+            createdAt: interjection.createdAt, now: now)
+    }
+
     var targetDescription: String {
         switch interjection.targetType {
         case .item: "Source"
