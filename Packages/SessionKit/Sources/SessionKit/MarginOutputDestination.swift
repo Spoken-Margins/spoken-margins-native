@@ -37,6 +37,11 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
     public var text: TextChoice
     /// False while paused: nothing is delivered, but the folder, settings and journal stay.
     public var isEnabled: Bool
+    /// A note for each Margin as it's made (today's), or one note per item when it is marked complete (#587).
+    public var shape: MarginNotesShape
+    /// When the listener chose one note per item. Only items completed after it get a note, so turning the mode on
+    /// doesn't write one for every item already finished. Nil in the per-Margin shape.
+    public var itemNotesSince: Date?
 
     public init(
         id: String = UUID().uuidString,
@@ -45,7 +50,9 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         scope: Scope = .all,
         includesContext: Bool = true,
         text: TextChoice = .cleaned,
-        isEnabled: Bool = true
+        isEnabled: Bool = true,
+        shape: MarginNotesShape = .eachMargin,
+        itemNotesSince: Date? = nil
     ) {
         self.id = id
         self.name = name
@@ -54,10 +61,12 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         self.includesContext = includesContext
         self.text = text
         self.isEnabled = isEnabled
+        self.shape = shape
+        self.itemNotesSince = itemNotesSince
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, bookmark, scope, includesContext, text, isEnabled
+        case id, name, bookmark, scope, includesContext, text, isEnabled, shape, itemNotesSince
     }
 
     /// A missing field takes today's single-folder behavior. A field that is present but unreadable (a newer build
@@ -77,12 +86,14 @@ public struct MarginOutputDestination: Codable, Equatable, Identifiable, Sendabl
         includesContext = value(.includesContext, default: true)
         text = value(.text, default: TextChoice.cleaned)
         isEnabled = value(.isEnabled, default: true)
+        shape = value(.shape, default: MarginNotesShape.eachMargin)
+        itemNotesSince = value(.itemNotesSince, default: Date?.none)
         if unreadable { isEnabled = false }
     }
 
     /// What this destination's notes hold.
     public var content: MarginNoteContent {
-        MarginNoteContent(scope: scope, includesContext: includesContext, text: text)
+        MarginNoteContent(scope: scope, includesContext: includesContext, text: text, shape: shape, itemNotesSince: itemNotesSince)
     }
 
     /// The name for the next destination the listener adds, e.g. "Notes folder 2".
@@ -102,11 +113,20 @@ public struct MarginNoteContent: Equatable, Sendable {
     public var scope: MarginOutputDestination.Scope
     public var includesContext: Bool
     public var text: MarginOutputDestination.TextChoice
+    /// The shape of the notes (#587). In `.itemOnCompletion` the item note keeps its own form, so scope, context and
+    /// text above shape Margin notes only.
+    public var shape: MarginNotesShape
+    public var itemNotesSince: Date?
 
-    public init(scope: MarginOutputDestination.Scope = .all, includesContext: Bool = true, text: MarginOutputDestination.TextChoice = .cleaned) {
+    public init(
+        scope: MarginOutputDestination.Scope = .all, includesContext: Bool = true, text: MarginOutputDestination.TextChoice = .cleaned,
+        shape: MarginNotesShape = .eachMargin, itemNotesSince: Date? = nil
+    ) {
         self.scope = scope
         self.includesContext = includesContext
         self.text = text
+        self.shape = shape
+        self.itemNotesSince = itemNotesSince
     }
 
     public static let standard = MarginNoteContent()

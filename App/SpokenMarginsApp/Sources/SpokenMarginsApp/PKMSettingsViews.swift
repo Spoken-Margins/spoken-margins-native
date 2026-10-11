@@ -126,6 +126,19 @@ struct MarginOutputDestinationScreen: View {
                     Button(row.needsAccess ? "Reselect Folder" : "Change Folder", systemImage: "folder.badge.gearshape") { choosingFolder = true }
                     if row.needsAccess { FailureMessageLabel("Needs folder access").font(.footnote) }
                 }
+                Section("Notes") {
+                    Picker("Shape", selection: Binding(
+                        get: { row.destination.shape },
+                        set: { coordinator.setShape(of: id, $0) }
+                    )) {
+                        ForEach(MarginNotesShape.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    if row.destination.shape == .itemOnCompletion {
+                        Text("One note per item, written when you mark it complete. It holds every Margin from your listening, with the item’s properties. Items you finished before choosing this don’t get one. Finishing an item by listening is picked up within about half an hour.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
                 Section("Contents") {
                     Picker("Margins", selection: Binding(
                         get: { row.destination.scope },
@@ -145,7 +158,9 @@ struct MarginOutputDestinationScreen: View {
                         Text("Cleaned").tag(MarginOutputDestination.TextChoice.cleaned)
                         Text("Original").tag(MarginOutputDestination.TextChoice.original)
                     }
-                    Text("Source context is the passage around each Margin. The title, source link and position are always included. Changing a choice rewrites the notes this app wrote, never ones you edited.")
+                    Text(row.destination.shape == .itemOnCompletion
+                         ? "These choices shape notes for single Margins. A note for a whole item keeps its own form."
+                         : "Source context is the passage around each Margin. The title, source link and position are always included. Changing a choice rewrites the notes this app wrote, never ones you edited.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("Delivery") {

@@ -201,6 +201,22 @@ final class MarginNotePassPlannerTests: XCTestCase {
         XCTAssertEqual(try runPass(at: start.addingTimeInterval(-3600)).scope, .everything, "a clock set backwards can hide changes")
     }
 
+    /// An item note (`item:<id>`) isn't tied to one session, so a session pass can't tell by prefix that it was rebuilt.
+    func testAnItemNoteTheListenerDeletedStopsCountingAsEditedWhenItIsWrittenAgain() throws {
+        try addSession(1)
+        let first = try planner.plan(store: store, targetKey: target)
+        planner.commit(first, noteIDs: ["item:item-1", "session-1:ij-1-1"], keptEditIDs: ["item:item-1"])
+        XCTAssertEqual(planner.folderSummary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 1))
+        try ageEverything()
+
+        try saveMargin(session: 1, margin: 2, text: "Another thought.")
+        let second = try planner.plan(store: store, targetKey: target)
+        XCTAssertEqual(second.scope, .sessions(["session-1"]))
+        planner.commit(second, noteIDs: ["item:item-1"], keptEditIDs: [])
+
+        XCTAssertEqual(planner.folderSummary, MarginNoteDelivery.Summary(saved: 1, keptEdits: 0), "the file was written again, so it is no longer an edit")
+    }
+
     func testTheFolderSummaryCountsEveryNoteAndEveryEditedNote() throws {
         try addSession(1, margins: 2); try addSession(2)
         try runPass(kept: ["session-1:ij-1-1"])

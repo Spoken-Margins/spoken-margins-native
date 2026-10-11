@@ -37,9 +37,11 @@ public enum MarginNoteComposer {
     /// each, and the cleaned or the original transcript. It shapes a Margin note; an item note (#587) keeps its own form.
     public static func compose(
         store: SQLiteSessionStore, sessionIds: Set<String>? = nil,
-        shape: MarginNotesShape = .eachMargin, completedSince: Date? = nil,
+        shape: MarginNotesShape? = nil, completedSince: Date? = nil,
         content: MarginNoteContent = .standard
     ) throws -> Composed {
+        let shape = shape ?? content.shape
+        let completedSince = completedSince ?? content.itemNotesSince
         let engine = SessionEngine(
             profile: RuntimeCapabilityProfile(id: "margin-output", displayName: "Margin output", capabilities: [:]),
             repository: store
@@ -230,7 +232,10 @@ public struct MarginNotePassPlanner: Sendable {
             let prefixes = sessionIds.map { $0 + ":" }
             func isRebuilt(_ id: String) -> Bool { prefixes.contains { id.hasPrefix($0) } }
             knownNoteIDs = knownNoteIDs.filter { !isRebuilt($0) }.union(noteIDs)
-            keptEditIDs = keptEditIDs.filter { !isRebuilt($0) }.union(kept)
+            // A note handed over this pass and not kept is no longer an edit: the listener deleted or reverted the file.
+            // An item note isn't tied to one session, so the prefix test above can't see it.
+            let rewritten = Set(noteIDs).subtracting(kept)
+            keptEditIDs = keptEditIDs.filter { !isRebuilt($0) && !rewritten.contains($0) }.union(kept)
         case .nothing:
             break
         }

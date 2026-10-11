@@ -51,6 +51,12 @@ final class MarginOutputCoordinatorTests: XCTestCase {
             ))
         }
 
+        func complete(_ itemId: String, at date: Date) throws {
+            var item = try store.loadItem(id: itemId)
+            item.sourceCompletedAt = date
+            try store.saveItem(item)
+        }
+
         func access() -> MarginOutputCoordinator.FolderAccess {
             var access = MarginOutputCoordinator.FolderAccess.live
             let live = access.resolve
@@ -272,6 +278,56 @@ final class MarginOutputCoordinatorTests: XCTestCase {
         XCTAssertTrue(rewritten.contains("Untouched."))
         XCTAssertFalse(rewritten.contains("## Context before"), "the next pass applies the new choice at once, not after the 30 minute repair")
         XCTAssertTrue(coordinator.statuses["v"]?.message.contains("1 note you edited was left as is") == true, coordinator.statuses["v"]?.message ?? "")
+    }
+
+    /// #587: one note per item, written when the listener marks it complete. Completing writes no Margin row, so only
+    /// the coordinator's hint makes the next pass look at the item.
+    func testOneNotePerItemIsWrittenOnCompletionAndRewrittenInPlaceWhenCompletedAgain() async throws {
+        let f = try Fixture()
+        try f.addMargin("m-1", text: "First thought.")
+        try f.addMargin("m-2", text: "Second thought.")
+        let vault = try f.folder("Vault")
+        let coordinator = try f.makeCoordinator([MarginOutputDestination(
+            id: "items", name: "Items", bookmark: try f.bookmark(vault),
+            shape: .itemOnCompletion, itemNotesSince: Date(timeIntervalSince1970: 1_700_000_000)
+        )])
+        try await Task.sleep(for: .milliseconds(2_200)) // Let the Margins age out of the 2 second re-read window.
+        await coordinator.pass()
+        XCTAssertEqual(try f.notes(in: vault).count, 0, "an item that isn't complete gets no note")
+
+        try f.complete("item-1", at: Date(timeIntervalSince1970: 1_800_000_000))
+        coordinator.noteCompletion(ofItem: "item-1")
+        await coordinator.pass()
+        let first = try f.notes(in: vault)
+        XCTAssertEqual(first.count, 1, coordinator.statuses["items"]?.message ?? "")
+        let firstNote = try XCTUnwrap(first.first)
+        XCTAssertTrue(firstNote.contains("First thought.") && firstNote.contains("Second thought."), "one note holds every Margin")
+        XCTAssertTrue(coordinator.statuses["items"]?.message.hasPrefix("1 item note saved to Items") == true, coordinator.statuses["items"]?.message ?? "")
+
+        // Marked unfinished, then complete again later: the same file is rewritten, never a second one.
+        try f.complete("item-1", at: Date(timeIntervalSince1970: 1_800_090_000))
+        coordinator.noteCompletion(ofItem: "item-1")
+        await coordinator.pass()
+        let second = try f.notes(in: vault)
+        XCTAssertEqual(second.count, 1, "no duplicate")
+        XCTAssertNotEqual(second.first, firstNote, "the completion date moved")
+    }
+
+    func testChoosingOneNotePerItemSkipsItemsAlreadyFinishedAndEachMarginIsStillTheDefault() async throws {
+        let f = try Fixture()
+        try f.addMargin("m-1", text: "An old thought.")
+        try f.complete("item-1", at: Date(timeIntervalSince1970: 1_700_000_000))
+        let vault = try f.folder("Vault")
+        let coordinator = try f.makeCoordinator([MarginOutputDestination(id: "d", name: "Vault", bookmark: try f.bookmark(vault))])
+        XCTAssertEqual(coordinator.destinations.first?.shape, .eachMargin)
+
+        coordinator.setShape(of: "d", .itemOnCompletion)
+
+        XCTAssertEqual(coordinator.destinations.first?.shape, .itemOnCompletion)
+        XCTAssertNotNil(coordinator.destinations.first?.itemNotesSince)
+        await coordinator.pass()
+        XCTAssertEqual(try f.notes(in: vault).count, 0, "an item finished before the mode was chosen gets no note")
+        XCTAssertEqual(try f.makeCoordinator(nil).destinations.first?.shape, .itemOnCompletion, "the choice is saved")
     }
 
     func testTwoDestinationsOnOneFolderDoNotOverwriteEachOther() async throws {

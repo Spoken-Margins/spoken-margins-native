@@ -2,7 +2,7 @@ import Foundation
 
 /// The shape of "Save Margins to Notes Folder" (#587): a note for each Margin as it's made (the default, as before),
 /// or one note per item, written when the listener marks it complete or finishes it.
-public enum MarginNotesShape: String, CaseIterable, Sendable {
+public enum MarginNotesShape: String, CaseIterable, Codable, Sendable {
     case eachMargin = "each_margin"
     case itemOnCompletion = "item_on_completion"
 

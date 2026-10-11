@@ -231,10 +231,12 @@ final class MarginOutputCoordinator: ObservableObject {
             }
             claimedFolders[path] = destination.name
             let content = destination.content
-            var planner = planners[destination.id] ?? MarginNotePassPlanner()
             // The choices are part of the key, so changing one rebuilds every note instead of waiting for the repair pass.
-            let key = [destination.id, path, content.scope.rawValue, String(content.includesContext), content.text.rawValue].joined(separator: "|")
-            let pass = try planner.plan(store: store, targetKey: key)
+            let key = [
+                destination.id, path, content.scope.rawValue, String(content.includesContext), content.text.rawValue,
+                content.shape.rawValue, String(content.itemNotesSince?.timeIntervalSince1970 ?? 0),
+            ].joined(separator: "|")
+            let pass = try (planners[destination.id] ?? MarginNotePassPlanner()).plan(store: store, targetKey: key)
             var delivered: (noteIDs: [String], keptEditIDs: Set<String>) = ([], [])
             if pass.scope != .nothing {
                 var sessionIds: Set<String>?
@@ -250,11 +252,12 @@ final class MarginOutputCoordinator: ObservableObject {
             }
             // Removed or paused while it was writing: its planner is not kept, so a later start begins with a full pass.
             guard isCurrent(destination) else { return }
-            planner.commit(pass, noteIDs: delivered.noteIDs, keptEditIDs: delivered.keptEditIDs)
-            planners[destination.id] = planner
+            // Committed in place: a completion noted while this pass was writing stays in the planner for the next one.
+            planners[destination.id, default: MarginNotePassPlanner()].commit(pass, noteIDs: delivered.noteIDs, keptEditIDs: delivered.keptEditIDs)
             setStatus(MarginOutputStatus(MarginNoteDelivery.statusLine(
-                planner.folderSummary, folderName: destination.name,
-                checkedAt: Date().formatted(date: .omitted, time: .shortened)
+                planners[destination.id]?.folderSummary ?? .init(), folderName: destination.name,
+                checkedAt: Date().formatted(date: .omitted, time: .shortened),
+                noun: content.shape == .itemOnCompletion ? ("item note", "item notes") : ("Margin", "Margins")
             )), for: destination.id)
         } catch is NeedsFolderAccess {
             // Already marked; the other destinations carry on.
@@ -368,6 +371,28 @@ final class MarginOutputCoordinator: ObservableObject {
             if let text { $0.text = text }
         }
         deliverSoon()
+    }
+
+    /// Chooses a note for each Margin, or one note per item when it is marked complete (#587). Choosing the second shape
+    /// remembers when, so items already finished don't each get a note.
+    func setShape(of id: String, _ shape: MarginNotesShape) {
+        guard let current = destination(id), current.shape != shape else { return }
+        update(id, save: true) {
+            $0.shape = shape
+            $0.itemNotesSince = shape == .itemOnCompletion ? Date() : nil
+        }
+        deliverSoon()
+    }
+
+    /// An item was marked complete (#587). That writes no Margin row, so tell the destinations that write item notes.
+    /// Finishing an item by listening isn't reported here; the 30-minute repair pass picks it up.
+    func noteCompletion(ofItem itemId: String) {
+        var asked = false
+        for destination in destinations where destination.isEnabled && destination.shape == .itemOnCompletion {
+            planners[destination.id]?.noteCompletion(ofItem: itemId)
+            asked = true
+        }
+        if asked { deliverSoon() }
     }
 
     /// Pauses a destination or starts it again. Pausing keeps its folder, choices and journal.

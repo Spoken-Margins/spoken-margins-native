@@ -4562,6 +4562,7 @@ final class Gate1AppModel: ObservableObject {
             // Completion is an item-level fact, not fabricated listening history.
             guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
             listeningSignals.finish(itemId: id)
+            marginOutput.noteCompletion(ofItem: id) // One note per item mode (#587).
             try refreshLibraryRows(store: store)
             if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
             presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())

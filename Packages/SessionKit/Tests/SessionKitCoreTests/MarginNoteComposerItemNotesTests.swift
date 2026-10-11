@@ -98,6 +98,16 @@ final class MarginNoteComposerItemNotesTests: XCTestCase {
         XCTAssertTrue(note.markdown.contains("Second thought."))
     }
 
+    func testADestinationsShapeAndStartDateDriveTheComposer() throws {
+        try addTwoSessionItem(1, completedAt: completedAt.addingTimeInterval(-3600))
+        try addTwoSessionItem(2, completedAt: completedAt.addingTimeInterval(60))
+        let destination = MarginOutputDestination(name: "Items", bookmark: Data([1]), shape: .itemOnCompletion, itemNotesSince: completedAt)
+        let composed = try MarginNoteComposer.compose(store: store, content: destination.content)
+        XCTAssertEqual(composed.notes.map(\.id), ["item:item-2"], "only an item completed after the mode was chosen, and no per-Margin notes")
+        let perMargin = try MarginNoteComposer.compose(store: store, content: MarginOutputDestination(name: "Margins", bookmark: Data([1])).content)
+        XCTAssertEqual(perMargin.notes.count, 4)
+    }
+
     func testAnItemNotCompleteWritesNothing() throws {
         try addTwoSessionItem(completedAt: nil)
         XCTAssertTrue(try MarginNoteComposer.compose(store: store, shape: .itemOnCompletion).notes.isEmpty)
