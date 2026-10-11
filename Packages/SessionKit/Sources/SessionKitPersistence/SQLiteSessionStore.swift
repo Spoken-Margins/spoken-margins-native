@@ -13,6 +13,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     private let connectionLock = NSRecursiveLock()
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
+    /// `loadTranscriptTimelineChapters` answers by item, with the stamp of the record they were read from. Guarded by `connectionLock`.
+    private var transcriptChaptersByItem: [String: (stamp: String, chapters: [MediaTimelineChapter])] = [:]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
@@ -721,6 +723,31 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     public func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline? {
         let transcripts: [SourceTranscriptTimeline] = try loadByItem(kind: "source_transcript_timeline", itemId: itemId)
         return transcripts.last
+    }
+
+    /// Only the chapters of an item's source transcript timeline (#777). A two-hour episode's timeline holds thousands
+    /// of segments and several megabytes of JSON, so the Margins tab reads just this slice: SQLite cuts it out and only
+    /// the small list is decoded. Even the cut has to parse the whole payload, so the answer is kept per timeline
+    /// record and only re-read when the record changes (its id, `updated_at` or length), not on every refresh.
+    /// Empty when the item has no timeline or the chapters can't be read.
+    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+        let newest = "FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;"
+        var stamp: String?
+        try readTexts(
+            "SELECT id || '|' || updated_at || '|' || length(payload) \(newest)", [itemId], name: "transcript_timeline_stamp"
+        ) { stamp = $0 }
+        guard let stamp else {
+            withConnectionLock { _ = transcriptChaptersByItem.removeValue(forKey: itemId) }
+            return []
+        }
+        if let cached = withConnectionLock({ transcriptChaptersByItem[itemId] }), cached.stamp == stamp { return cached.chapters }
+        var chaptersJSON: String?
+        try readTexts(
+            "SELECT json_extract(payload, '$.timeline.chapters') \(newest)", [itemId], name: "transcript_timeline_chapters"
+        ) { chaptersJSON = $0 }
+        let chapters = chaptersJSON?.data(using: .utf8).flatMap { try? decoder.decode([MediaTimelineChapter].self, from: $0) } ?? []
+        withConnectionLock { transcriptChaptersByItem[itemId] = (stamp: stamp, chapters: chapters) }
+        return chapters
     }
 
     public func saveAudioAsset(_ asset: AudioAsset) throws {

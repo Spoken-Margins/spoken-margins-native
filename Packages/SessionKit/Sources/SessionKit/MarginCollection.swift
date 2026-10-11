@@ -72,11 +72,13 @@ public enum MarginCollection {
 
     /// Reads remain in the caller's synchronous closures, in the original order.
     /// No partial result escapes if any read throws.
-    /// - `loadMap`: an item's listening map, nil when it has none. Without it the entries carry no `place`.
+    /// - `loadMap`: an item's listening map, nil when it has none. Without it, text Margins carry no `place`.
+    /// - `loadMediaChapters`: an item's chapters with start times. Without it, Margins with a clock time carry no `place`.
     public static func build(
         items: [Item],
         sessions: [Session],
         loadMap: ((String) -> ListeningMap?)? = nil,
+        loadMediaChapters: ((String) -> [MediaTimelineChapter])? = nil,
         loadInterjections: (String) throws -> [Interjection],
         loadImportedLayers: () throws -> [ImportedCommentaryLayer],
         loadImportedInterjections: (String) throws -> [ImportedCommentaryInterjection]
@@ -112,8 +114,9 @@ public enum MarginCollection {
             }
             return lhs.id < rhs.id
         }
-        guard let loadMap else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
-        let places = MarginPlaces.places(for: privateRows, items: items, loadMap: loadMap)
+        guard loadMap != nil || loadMediaChapters != nil else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
+        let places = MarginPlaces.places(
+            for: privateRows, items: items, loadMap: loadMap, loadMediaChapters: loadMediaChapters ?? { _ in [] })
         let placedRows = privateRows.map { entry -> PrivateEntry in
             var placed = entry
             placed.place = places[entry.id]
