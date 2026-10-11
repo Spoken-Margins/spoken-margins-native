@@ -2642,7 +2642,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func importSourceLinkInBackground(_ handoff: SourceLinkHandoff, feedEntry: FeedEntry? = nil, subscription: FeedSubscription? = nil) async throws -> String? {
+    func importSourceLinkInBackground(_ handoff: SourceLinkHandoff, feedEntry: FeedEntry? = nil, subscription: FeedSubscription? = nil) async throws -> String? {
         let trimmed = handoff.inputURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if handoff.sourceSurface == "share_sheet_pdf_file",
            let fileURL = URL(string: trimmed),
@@ -8983,7 +8983,7 @@ final class Gate1AppModel: ObservableObject {
         return priorMode != ttsMode
     }
 
-    private func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
+    func loadLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
         LibraryRowBuilder.rows(from: try LibraryReadSnapshot.read(store: store), context: startupAudioContext)
     }
 
@@ -11517,7 +11517,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func requireStore() throws -> SQLiteSessionStore {
+    func requireStore() throws -> SQLiteSessionStore {
         if let store { return store }
         let url = try databaseURL()
         let store = try SQLiteSessionStore(path: url.path)
