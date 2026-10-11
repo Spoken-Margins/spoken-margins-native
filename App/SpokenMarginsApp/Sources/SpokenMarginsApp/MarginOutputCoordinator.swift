@@ -389,7 +389,7 @@ final class MarginOutputCoordinator: ObservableObject {
     func noteCompletion(ofItem itemId: String) {
         var asked = false
         for destination in destinations where destination.isEnabled && destination.shape == .itemOnCompletion {
-            planners[destination.id]?.noteCompletion(ofItem: itemId)
+            planners[destination.id, default: MarginNotePassPlanner()].noteCompletion(ofItem: itemId)
             asked = true
         }
         if asked { deliverSoon() }
