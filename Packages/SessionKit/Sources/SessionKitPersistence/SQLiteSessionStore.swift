@@ -1335,12 +1335,12 @@ private struct ImportedWatchSyncEvent: Codable {
     var importedAt: Date
 }
 
+extension SQLiteSessionStore: ItemRevisionReading {}
+
 /// I13 documents live in the existing records table as kind
 /// "structured_document", one row per item and extraction version. No table or
 /// column changes, and schema_version stays 5: Build 29 selects records by kind
 /// and never reads this one, and deleting the item removes its rows.
-extension SQLiteSessionStore: ItemRevisionReading {}
-
 extension SQLiteSessionStore: StructuredDocumentRepository {
     static let structuredDocumentKind = "structured_document"
 

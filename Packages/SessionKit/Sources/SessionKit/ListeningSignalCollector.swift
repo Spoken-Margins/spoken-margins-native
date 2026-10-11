@@ -85,9 +85,11 @@ public final class ListeningSignalCollector: @unchecked Sendable {
             let unchanged = revision != nil && revision == self.cachedItemRevision
                 && self.cachedItemId == itemId && self.cachedRepository === repository
             var itemKey = self.cachedItemKey
-            if !unchanged, let item = try? repository.loadItem(id: itemId) {
-                itemKey = ItemKey(item)
-                self.cachedItemRevision = revision
+            if !unchanged {
+                let item = try? repository.loadItem(id: itemId)
+                itemKey = item.map(ItemKey.init) ?? itemKey
+                // A failed read leaves no revision behind, so the next tick reads again.
+                self.cachedItemRevision = item == nil ? nil : revision
             }
             if self.cachedItemId != itemId || self.cachedRepository !== repository
                 || self.cachedSubscriptions != subscriptions || self.cachedItemKey != itemKey {
