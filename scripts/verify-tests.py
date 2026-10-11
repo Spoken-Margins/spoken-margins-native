@@ -624,12 +624,17 @@ class Run:
             if result and last['attempt'] == attempt:  # the final launch itself stalled
                 errors.append(f'Test runner printed no test output in {attempt} launch(es) of {startup["seconds"]}s '
                               f'(last log line: {last["last_log_line"]}); host-app samples under {name}-stall-*/')
+            elif not result and len(entry['startup_stalls']) == 1:
+                # #705, owner's call 2026-10-11: one stall that the first retry recovered, with every requested
+                # test then passing (the checks below still hold the step to that), counts as a PASS. The stall
+                # stays on record: the lane runner logs each one on #705 as evidence of the cause.
+                entry['startup_recovered'] = True
+                print(f'warning: {name} recovered after 1 startup stall of {startup["seconds"]}s; '
+                      f'samples under {name}-stall-*/', flush=True)
             elif not result:
-                # #705: the tests ran on the second launch, so their results are kept above. But the stall's
-                # cause is unknown, and a PR must not go from INCONCLUSIVE to PASS on a retry that hides it
-                # (Codex audit of debe880). The step stays INCONCLUSIVE until the samples explain the stall.
+                # More than one stall before a pass is not covered by that call: the step stays INCONCLUSIVE.
                 errors.append(f'Recovered after {len(entry["startup_stalls"])} startup stall(s) of {startup["seconds"]}s; '
-                              f'the tests passed on launch {attempt} but the stall is undiagnosed, so this is not a PASS '
+                              f'the tests passed on launch {attempt} but the stalls are undiagnosed, so this is not a PASS '
                               f'(samples under {name}-stall-*/)')
         if tests:
             records = record_source() if record_source else test_records(text)

@@ -1022,25 +1022,59 @@ class VerificationTests(unittest.TestCase):
 
     def test_run_that_never_starts_its_tests_is_diagnosed_and_launched_again(self):
         # #705: the adapters step sat 300 s with no Test Suite line, 0 tests, exit 124. One stalled launch is
-        # recorded and the same command runs again; the second launch's real test result is kept as evidence.
-        # The stall's cause is unknown, so the step stays INCONCLUSIVE rather than turning into a PASS
-        # (Codex audit of debe880, P1).
+        # recorded and the same command runs again. Owner's call 2026-10-11: when that retry passes every
+        # requested test, the step passes, with the stall kept on record for the lane runner to log on #705.
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'adapters')
             calls, startup = self.watch()
-            with self.assertRaisesRegex(RuntimeError, r'Recovered after 1 startup stall\(s\) of 1s.*not a PASS'):
-                run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
-                            timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
-                            startup=startup)
+            run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
             step = run.manifest['steps'][-1]
             self.assertEqual(step['exit_code'], 0)
-            self.assertEqual(step['counts']['passed'], 1)  # the retry's real result is evidence
+            self.assertEqual(step['counts']['passed'], 1)  # the retry's real result
             self.assertEqual(step['startup_attempts'], 2)
+            self.assertTrue(step['startup_recovered'])
             self.assertEqual([(s['attempt'], s['last_log_line'], s['processes']) for s in step['startup_stalls']],
                              [(1, 'Writing result bundle at path:', 2)])
             self.assertEqual((calls['diagnose'], calls['reset']), (['xcode-tests-stall-1'], [1]))
             self.assertLess(step['seconds'], 30)  # not the 60 s the stalled launch would have slept
-            self.assertEqual(len(step['errors']), 1)
+            self.assertEqual(step['errors'], [])
+
+    def test_recovered_stall_still_fails_when_a_requested_test_did_not_pass(self):
+        # The PASS is for a retry that passes every requested test; a missing test is still an error.
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+            with self.assertRaisesRegex(RuntimeError, r'SpeechTests/testOther'):
+                run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                            timeout=60, tests=True, startup=startup,
+                            expected={'SpokenMarginsAppTests/SpeechTests/testBundled',
+                                      'SpokenMarginsAppTests/SpeechTests/testOther'})
+
+    def test_two_stalls_before_a_pass_stay_an_error(self):
+        # Only one stall that the first retry recovers is covered by the 2026-10-11 call.
+        script = (
+            'import os, sys, time\n'
+            'marker = sys.argv[1]\n'
+            'count = len(os.listdir(marker))\n'
+            'if count < 2:\n'
+            '    open(os.path.join(marker, str(count)), "w").close()\n'
+            '    print("Writing result bundle at path:", flush=True)\n'
+            '    time.sleep(60)\n'
+            'print("Test Suite \'Selected tests\' started at now.", flush=True)\n'
+            'print("Test Case \'-[SpokenMarginsAppTests.SpeechTests testBundled]\' passed (0.1 seconds).", flush=True)\n')
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = Path(temporary) / 'seen'
+            marker.mkdir()
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch(retries=2)
+            with self.assertRaisesRegex(RuntimeError, r'Recovered after 2 startup stall\(s\) of 1s.*not a PASS'):
+                run.command('xcode-tests', [sys.executable, '-c', script, str(marker)], timeout=60,
+                            expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True, startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertNotIn('startup_recovered', step)
+            self.assertEqual([s['attempt'] for s in step['startup_stalls']], [1, 2])
 
     def test_run_that_stalls_on_every_launch_reports_why_within_its_budget(self):
         with tempfile.TemporaryDirectory() as temporary:
