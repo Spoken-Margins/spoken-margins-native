@@ -121,6 +121,12 @@ final class MarginCaptureWatcher {
         supervisor?.saveVerdict(reading: reading(), nowMs: nowMs()) ?? .save
     }
 
+    /// Whether the recording a call or lost headphones just stopped holds anything. Not a fresh reading:
+    /// the recorder is already stopped (see `MarginCaptureSupervisor.interruptionVerdict`).
+    func interruptionVerdict() -> MarginCaptureSupervisor.SaveVerdict {
+        supervisor?.interruptionVerdict(nowMs: nowMs()) ?? .saveCutShort
+    }
+
     func stop() {
         pollTask?.cancel()
         pollTask = nil
