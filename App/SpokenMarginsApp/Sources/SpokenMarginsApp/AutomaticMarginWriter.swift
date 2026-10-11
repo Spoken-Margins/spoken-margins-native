@@ -5,8 +5,18 @@ import SessionKit
 /// retries after interruption reconcile either the old or intended new bytes.
 /// A note the listener edited is left as is and counted, not reported as a failure (#581).
 actor AutomaticMarginWriter {
-    struct Entry: Codable { var previous: String?; var intended: String }
-    struct Note: Sendable { let id: String; let markdown: String }
+    /// `fileName` is the name the note was first written under, kept only for notes that ask for a name (#587), so a
+    /// journal written by an earlier build decodes as it was and a Margin note's entry stays as it was.
+    struct Entry: Codable {
+        var previous: String?
+        var intended: String
+        var fileName: String?
+        init(previous: String?, intended: String, fileName: String? = nil) {
+            self.previous = previous; self.intended = intended; self.fileName = fileName
+        }
+    }
+    /// `fileName` is the name an item note asks for; nil gives `Margin-<digest of id>.md`.
+    struct Note: Sendable { let id: String; let markdown: String; var fileName: String? = nil }
     let journalURL: URL
     init(journalURL: URL) { self.journalURL = journalURL }
 
@@ -30,9 +40,12 @@ actor AutomaticMarginWriter {
         for note in notes {
             let id = ListeningEdition.digest(note.id)
             let key = destinationID + ":" + id
-            let file = folder.appendingPathComponent("Margin-\(id).md")
-            let digest = ListeningEdition.digest(note.markdown)
             let old = journal[key]
+            // An item's title can change after its note was written; the first name stays, so the note is rewritten
+            // in place and no second copy appears (#587).
+            let requestedName = old?.fileName ?? note.fileName
+            let file = folder.appendingPathComponent(requestedName ?? "Margin-\(id).md")
+            let digest = ListeningEdition.digest(note.markdown)
             var coordinationError: NSError?
             var writeError: Error?
             var keptEdit = false
@@ -44,7 +57,7 @@ actor AutomaticMarginWriter {
                     switch MarginNoteDelivery.action(existing: actual, intended: digest, journalPrevious: old?.previous, journalIntended: old?.intended) {
                     case .upToDate:
                         if old == nil {
-                            journal[key] = Entry(previous: actual, intended: digest)
+                            journal[key] = Entry(previous: actual, intended: digest, fileName: requestedName)
                             try FileManager.default.createDirectory(at: journalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                             try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
                         }
@@ -55,7 +68,7 @@ actor AutomaticMarginWriter {
                     case .write:
                         break
                     }
-                    journal[key] = Entry(previous: actual, intended: digest)
+                    journal[key] = Entry(previous: actual, intended: digest, fileName: requestedName)
                     try FileManager.default.createDirectory(at: journalURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                     try JSONEncoder().encode(journal).write(to: journalURL, options: .atomic)
                     try Data(note.markdown.utf8).write(to: coordinated, options: .atomic)

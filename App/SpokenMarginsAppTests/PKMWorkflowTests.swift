@@ -32,6 +32,36 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(delivered.count, 2, "One conflict must not prevent independent delivery")
     }
 
+    /// #587: an item note asks for its own file name and keeps the first one when the item is renamed, so completing
+    /// again rewrites the same file. A Margin note still gets `Margin-<digest>.md`, and a journal from an earlier build
+    /// (no file name in its entries) still decodes.
+    func testItemNotesKeepTheirFirstFileNameAndMarginNotesAreNamedAsBefore() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folder = root.appendingPathComponent("vault")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = root.appendingPathComponent("journal.json")
+        try Data(#"{"old:entry": {"previous": null, "intended": "abc"}}"#.utf8).write(to: journal)
+        let writer = AutomaticMarginWriter(journalURL: journal)
+        func names() throws -> [String] {
+            try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        }
+
+        _ = try await writer.deliver([
+            .init(id: "item:item-1", markdown: "First", fileName: "Old title — Margins 1a2b3c.md"),
+            .init(id: "session-a:margin-1", markdown: "A Margin"),
+        ], to: folder, destinationID: "vault")
+        XCTAssertEqual(try names(), ["Margin-\(ListeningEdition.digest("session-a:margin-1")).md", "Old title — Margins 1a2b3c.md"])
+
+        // The item was renamed and completed again, in a new app launch.
+        let restarted = AutomaticMarginWriter(journalURL: journal)
+        _ = try await restarted.deliver([
+            .init(id: "item:item-1", markdown: "Second", fileName: "New title — Margins 1a2b3c.md"),
+        ], to: folder, destinationID: "vault")
+        XCTAssertEqual(try names().count, 2, "no second copy under the new title")
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("Old title — Margins 1a2b3c.md"), encoding: .utf8), "Second")
+    }
+
     /// Build 29 wrote Margin notes without a properties block (#491). The writer must rewrite its
     /// own unedited notes once to gain the block, and still never overwrite a note edited outside the app.
     func testMarginNotesGainPropertiesOnceWithoutOverwritingEditedNotes() async throws {
