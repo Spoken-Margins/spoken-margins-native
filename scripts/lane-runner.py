@@ -1480,12 +1480,15 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
 def boot_t3_device(udid: str, log) -> tuple:
     """Boot the clone under the lane's boot rules (scripts/lane_sim.py).
 
+    A clone has never booted as itself, so it gets the first-boot tolerance (one SpringBoard change in the
+    first 30 s, #184). Without it every clone boot stopped on that change from 06:00 UTC on 2026-10-11 (#1359).
+
     Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
     """
     import lane_sim
     info = {}
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=False)
+        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
     except lane_sim.BootError as error:
         return str(error), info
     return None, info
