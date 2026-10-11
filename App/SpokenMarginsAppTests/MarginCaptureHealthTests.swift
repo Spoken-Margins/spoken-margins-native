@@ -158,6 +158,9 @@ final class MarginCaptureHealthTests: XCTestCase {
         let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22))
         harness.run(seconds: 10)
         let marginCount = harness.model.selectedItem.interjections.count
+        // What the phone does: iOS stops the recorder, and its file has not been measured yet.
+        harness.recorder.stoppedButReports = true
+        harness.recorder.durationUnknown = true
 
         harness.recorder.onInterruption?(.interruptionBegan, 10)
         for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
@@ -179,6 +182,8 @@ final class MarginCaptureHealthTests: XCTestCase {
         let harness = Harness(recorder: recorder)
         harness.run(seconds: 5)
         let marginCount = harness.model.selectedItem.interjections.count
+        recorder.stoppedButReports = true
+        recorder.durationUnknown = true
 
         recorder.onInterruption?(.interruptionBegan, 5)
         for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
@@ -187,7 +192,7 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
         XCTAssertEqual(harness.model.selectedItem.interjections.count, marginCount + 1)
-        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=save"), true)
+        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=save_cut_short;"), true)
     }
 
     func testARestartThatWorksShowsRecordingOnceAudioArrives() {

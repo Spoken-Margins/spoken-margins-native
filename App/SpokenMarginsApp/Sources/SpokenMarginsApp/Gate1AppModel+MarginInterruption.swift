@@ -20,11 +20,12 @@ extension Gate1AppModel {
     ) {
         let seconds = snapshot.isRecording ? (recordedSeconds ?? 0) : nil
         var action = holder.policy.handle(event, recordedSeconds: seconds, pausedSource: .paused(in: snapshot))
-        // The recorder's seconds are wall time. Ask the watcher what the microphone really took in, as
-        // Save does, so a call during a recording that never captured audio doesn't keep an empty Margin.
+        // The recorder's seconds are wall time. Ask the watcher what the microphone took in while it ran, so a
+        // call during a recording that never captured audio doesn't keep an empty Margin. Not a fresh reading,
+        // as Save takes: iOS has stopped the recorder, and a stopped recorder with an unmeasured file reads "keep".
         var emptyRecording = false
         if action == .saveCutShort {
-            let verdict = captureWatcher.saveVerdict()
+            let verdict = captureWatcher.interruptionVerdict()
             recordFinalCaptureDiagnostics(verdict.rawValue)
             if verdict == .discardEmpty {
                 emptyRecording = true
