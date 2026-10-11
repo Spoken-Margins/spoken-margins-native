@@ -100,8 +100,9 @@ public enum HandsFreeMarginCommand: Equatable, Sendable {
 /// A small state machine fed by a trigger, voice levels, tone and save completions, and
 /// interruption and route events, on an injected clock. It returns commands and owns nothing:
 /// no audio session, no recorder, no player. Saying nothing makes a flag; a press finishes at
-/// once and keeps faint words as the silence timer does; a call keeps the Margin only with at least a second of speech; removed headphones save
-/// and leave the source paused.
+/// once and keeps faint words as the silence timer does; a call keeps the Margin only with at
+/// least a second of speech; removed headphones save what was said, faint words included, and
+/// leave the source paused.
 public final class HandsFreeMarginCoordinator {
     public enum Phase: Equatable, Sendable {
         case idle
