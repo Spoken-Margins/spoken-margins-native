@@ -55,6 +55,15 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     }
     #endif
 
+    /// Whether a launch with this seed replaces the Library's contents. `.none` and
+    /// `.keepLibrary` load the Library as it is.
+    public var writesLibrary: Bool {
+        switch self {
+        case .none, .keepLibrary: return false
+        case .fixture, .text, .offlinePodcast, .importedPDF: return true
+        }
+    }
+
     /// The single Item this seed adds, when it adds one of its own.
     public var item: Item? {
         switch self {

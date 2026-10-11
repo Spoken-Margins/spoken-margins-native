@@ -510,9 +510,9 @@ class Run:
             if not reports.is_dir():
                 raise RuntimeError('Simulator crash reports are unavailable')
             self.crash_baseline = crash_snapshot(reports)
-        # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
+        # Only compilation needs a build slot. Tests run under the simulator slot (#1330).
         slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}', max_wait=BUILD_SLOT_WAIT_SECONDS) \
-            if args[0] == 'xcodebuild' else contextlib.nullcontext()
+            if args[0] == 'xcodebuild' and 'test-without-building' not in args else contextlib.nullcontext()
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
@@ -771,7 +771,46 @@ class Run:
             raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
         return chosen, True
 
-    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None):
+    def xcode_build(self, plan, runtime, rebuild=False, require_build=False):
+        """Build every test plan of the scheme once, without a running simulator (#1330).
+
+        The plan selects tests, not binaries. Omitting -testPlan from build-for-testing emits the
+        scheme's test plans together; test-without-building still names the exact plan and selectors.
+        """
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError('Inputs changed before Xcode verification')
+        scheme = PLANS[plan][0]
+        if not require_build:
+            self.command('generate', ['xcodegen', 'generate'])
+        identity = input_identity()
+        toolchain = capture(['xcodebuild', '-version']) + '\n' + platform.machine() + '\nSDK ' + capture(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'])
+        cache_key = hashlib.sha256(('all-test-plans-v1' + identity + toolchain + runtime + scheme).encode()).hexdigest()
+        derived = ROOT / '.build/verification' / scheme
+        derived.mkdir(parents=True, exist_ok=True)
+        stamp = derived / 'scheme.build.json'
+        base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
+                '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(derived)]
+        self.manifest.update(input_sha256=identity, toolchain=toolchain, build_key=cache_key)
+        try:
+            reused = not rebuild and json.loads(stamp.read_text()).get('key') == cache_key
+        except (OSError, ValueError):
+            reused = False
+        self.manifest['reused_build'] = reused
+        if not reused:
+            if require_build:
+                raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
+            stamp.unlink(missing_ok=True)
+            self.command('build-for-testing', base + ['build-for-testing'], timeout=900)
+        if input_identity() != identity:
+            raise RuntimeError('Inputs changed during the build; evidence is not for one source state')
+        if not reused:
+            stamp.write_text(json.dumps({'key': cache_key}) + '\n')
+        self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
+                     str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
+        return derived, identity
+
+    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
+              require_build=False):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -789,26 +828,9 @@ class Run:
         chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
-        self.command('generate', ['xcodegen', 'generate'])
-        identity = input_identity()
-        toolchain = capture(['xcodebuild', '-version']) + '\n' + platform.machine() + '\nSDK ' + capture(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'])
-        cache_key = hashlib.sha256((identity + toolchain + chosen['runtime'] + scheme + name).encode()).hexdigest()
-        derived = ROOT / '.build/verification' / scheme
-        stamp = derived / f'{name}.build.json'
+        derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
         base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
                 '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)]
-        self.manifest.update(input_sha256=identity, toolchain=toolchain, build_key=cache_key)
-        reused = not rebuild and stamp.exists() and json.loads(stamp.read_text()).get('key') == cache_key
-        self.manifest['reused_build'] = reused
-        if not reused:
-            stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + ['build-for-testing'], timeout=900)
-        if input_identity() != identity:
-            raise RuntimeError('Inputs changed during the build; evidence is not for one source state')
-        if not reused:
-            stamp.write_text(json.dumps({'key': cache_key}) + '\n')
-        self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
-                     str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         booted_here = chosen['state'] != 'Booted'
         # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
         # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
@@ -877,6 +899,9 @@ def main():
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
     parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
+    parser.add_argument('--build-only', action='store_true', help='Build all plans of the Xcode scheme; do not boot or test')
+    parser.add_argument('--runtime', help='Simulator runtime identifier for --build-only')
+    parser.add_argument('--require-build', action='store_true', help='Refuse tests unless the prepared scheme build is current')
     parser.add_argument('--output', type=Path, help='New evidence directory')
     parser.add_argument('--changed-files', type=Path, metavar='FILE',
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
@@ -885,6 +910,10 @@ def main():
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
     args = parser.parse_args()
+    if args.build_only and (args.plan not in PLANS or not args.runtime):
+        parser.error('--build-only needs an Xcode --plan and --runtime')
+    if args.build_only and (args.device or args.require_build or args.only_testing):
+        parser.error('--build-only takes no --device, --require-build or --only-testing')
     if errors := validate():
         parser.error('; '.join(errors))
     from test_inventory import scripted_journeys  # only the journeys plan reads the list
@@ -906,17 +935,21 @@ def main():
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan, read_changed_files(args.changed_files) if args.plan == 'fast' else None)
         try:
-            if args.plan in ('fast', 'release'):
+            if args.build_only:
+                run.xcode_build(args.plan, args.runtime, args.rebuild)
+            elif args.plan in ('fast', 'release'):
                 run.fast()
-            if args.plan != 'fast':
+            if args.plan != 'fast' and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
                               journeys['gating'] + journeys['probation'], probation=journeys['probation'],
-                              simulator_slot_fd=args.simulator_slot_fd)
+                              simulator_slot_fd=args.simulator_slot_fd,
+                              **({'require_build': True} if args.require_build else {}))
                 else:
                     run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing,
-                              simulator_slot_fd=args.simulator_slot_fd)
+                              simulator_slot_fd=args.simulator_slot_fd,
+                              **({'require_build': True} if args.require_build else {}))
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = passed_status()

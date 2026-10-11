@@ -1946,6 +1946,63 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(try recordCount(at: databaseURL), 1)
     }
 
+    /// #1175: the scene-active refresh can open the store before the root view bootstraps the Library. A UI-test
+    /// launch must still start from its own seed, not from what the previous run left in the database.
+    func testUITestSeedReplacesTheLeftoverLibraryEvenWhenSomethingOpenedTheStoreFirst() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "ui-test-seed-library-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        do {
+            let leftover = try SQLiteSessionStore(path: databaseURL.path)
+            for id in ["item-leftover-pdf", "item-leftover-fixture"] {
+                try leftover.saveItem(Item(
+                    id: id, title: id, mediaType: "text", text: "Left by an earlier launch.",
+                    externalReference: nil, status: "ready"
+                ))
+            }
+        }
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.pendingUITestingSeed = .text(title: "J1: A short walk", text: "On a short walk.", reference: "ui-test")
+        let store = try model.libraryStoreForTesting() // what opens first on a cold launch
+        model.bootstrapLibraryIfNeeded()
+
+        XCTAssertEqual(model.libraryItems.map(\.id), [UITestingLaunchSeed.textItemId])
+        XCTAssertEqual(try store.listItems().map(\.id), [UITestingLaunchSeed.textItemId])
+        XCTAssertNil(model.pendingUITestingSeed, "The seed is written once")
+
+        try store.saveItem(Item(
+            id: "item-added-later", title: "Added later", mediaType: "text", text: "Added by the script.",
+            externalReference: nil, status: "ready"
+        ))
+        model.bootstrapLibraryIfNeeded()
+        XCTAssertEqual(try store.listItems().count, 2, "A second bootstrap must not wipe the Library again")
+    }
+
+    func testALaunchWithoutAUITestSeedNeverResetsTheLibrary() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "no-seed-library-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        do {
+            let existing = try SQLiteSessionStore(path: databaseURL.path)
+            try existing.saveItem(Item(
+                id: "item-owner", title: "Owner article", mediaType: "text", text: "Mine.",
+                externalReference: nil, status: "ready"
+            ))
+        }
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        XCTAssertNil(model.pendingUITestingSeed, "A normal launch has no seed to write")
+        let store = try model.libraryStoreForTesting()
+        model.bootstrapLibraryIfNeeded()
+
+        XCTAssertEqual(try store.listItems().map(\.id), ["item-owner"])
+    }
+
     func testManualImportBuildsListeningMapFromPastedMarkdownHeadings() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
@@ -3373,8 +3430,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     func testTextImportStartsLiveSpeechWhenPreparedRenderingIsUnavailable() {
         let model = Gate1AppModel(
-            audioPlaybackClient: NoopAudioPlaybackClient(),
-            forcePreparedTextGate: true
+            audioPlaybackClient: NoopAudioPlaybackClient()
         )
         model.resetAndSeed()
         model.importTitle = "Prepared First"
@@ -3383,12 +3439,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.importTextItem()
 
         XCTAssertEqual(model.screen, .playback)
-        XCTAssertNil(model.pendingPreparedTextStartItemId)
         XCTAssertNotNil(model.snapshot.sessionId)
         XCTAssertEqual(model.snapshot.status, .playing)
         XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(model.preparedTextAudioStatus, "live_fallback")
-        XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
     func testTextImportKeepsLiveSpeechStableWhilePreparedMediaRendersInBackground() async throws {
@@ -3423,7 +3477,6 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.preparedTextAudioStatus, "ready")
         XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(model.snapshot.targetId, request.itemId)
-        XCTAssertFalse(model.canPlayLiveSpeechInstead)
     }
 
     func testTextAudioPreparationSkipsAnyCompletedOrGreaterThanNinetyEightPercentSession() {

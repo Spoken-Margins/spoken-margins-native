@@ -22,11 +22,17 @@ public actor PodcastNameSearch {
 
     private let resolver: ITunesSearchSourceResolver
     private let pause: Duration
+    private let sleep: @Sendable (Duration) async throws -> Void
     private var latest = 0
 
-    public init(resolver: ITunesSearchSourceResolver, pause: Duration = PodcastNameSearch.defaultPause) {
+    public init(
+        resolver: ITunesSearchSourceResolver,
+        pause: Duration = PodcastNameSearch.defaultPause,
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    ) {
         self.resolver = resolver
         self.pause = pause
+        self.sleep = sleep
     }
 
     /// Whether `query` is long enough to search for, after trimming.
@@ -41,7 +47,7 @@ public actor PodcastNameSearch {
         let generation = latest
         guard Self.isSearchable(query) else { return nil }
         do {
-            try await Task.sleep(for: pause)
+            try await sleep(pause)
         } catch {
             return nil
         }

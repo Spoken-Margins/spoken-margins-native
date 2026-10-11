@@ -31,6 +31,9 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         // Allow brief independent transactions to finish instead of dropping a save.
         sqlite3_busy_timeout(db, 1_000)
         try migrate()
+        // A record an older build couldn't read was set aside, not lost. If this build can read it, put it back (#1052).
+        // Best effort: a failure here leaves the rows quarantined and must not stop the Library opening.
+        try? restoreQuarantinedRecords()
     }
 
     deinit {
@@ -102,6 +105,160 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
                 throw SessionKitError.persistenceFailed("step_quarantine_count")
             }
             return Int(sqlite3_column_int64(statement, 0))
+        }
+    }
+
+    /// The `records` columns a restored row needs. `quarantined_records` doesn't keep them, so they are
+    /// read back off the decoded value, the way each kind's save path sets them.
+    private struct RestoredColumns {
+        var sessionId: String?
+        var itemId: String?
+    }
+
+    /// Moves every quarantined row this build can decode back into `records`, with the id, kind and bytes it
+    /// had when it was set aside (#1052). A row this build still can't decode stays in quarantine untouched,
+    /// as does one whose kind has no rule here, whose id a newer save has since taken in `records`, or whose
+    /// listening map or canonical source has a live replacement for the item. One
+    /// transaction: a failure puts everything back. No schema change, so an older build still opens the file.
+    private func restoreQuarantinedRecords() throws {
+        // Nearly every open has nothing set aside. Look first, so those opens never take the write lock.
+        guard try quarantinedRecordCount() > 0 else { return }
+        try withTransaction {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT kind, id, payload, quarantined_at FROM quarantined_records ORDER BY kind = 'imported_commentary_layer' DESC, kind, id;", -1, &statement, nil) == SQLITE_OK else {
+                // Layers first: an imported Margin takes its item from its layer.
+                throw SessionKitError.persistenceFailed("prepare_quarantine_restore_read")
+            }
+            var rows: [(kind: String, id: String, payload: String, quarantinedAt: String)] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let kind = sqlite3_column_text(statement, 0), let id = sqlite3_column_text(statement, 1),
+                      let payload = sqlite3_column_text(statement, 2), let at = sqlite3_column_text(statement, 3) else { continue }
+                rows.append((String(cString: kind), String(cString: id), String(cString: payload), String(cString: at)))
+            }
+            sqlite3_finalize(statement)
+            for row in rows {
+                guard let data = row.payload.data(using: .utf8),
+                      let columns = restoredColumns(kind: row.kind, from: data),
+                      try restoreRecord(row, columns: columns) else { continue }
+                try deleteQuarantinedRow(kind: row.kind, id: row.id)
+            }
+        }
+    }
+
+    /// Whether the row went back. A live row with the same kind and id wins: it was saved after this one was set aside.
+    private func restoreRecord(_ row: (kind: String, id: String, payload: String, quarantinedAt: String), columns: RestoredColumns) throws -> Bool {
+        // A session-scoped row with the old un-prefixed id would sit beside the `session::id` row later saves write.
+        if Self.sessionScopedRecordKinds.contains(row.kind), let sessionId = columns.sessionId,
+           !row.id.hasPrefix("\(sessionId)::") { return false }
+        switch row.kind {
+        case "listening_map", "canonical_source":
+            // Their save paths replace every row for the item, even when the id changes.
+            // Keep the listener's replacement live and the old bytes safely set aside.
+            if let itemId = columns.itemId,
+               try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = ? AND item_id = ? LIMIT 1;", values: [row.kind, itemId]) { return false }
+        case "imported_commentary_layer":
+            // The same packet imported again while this layer was set aside is already in the Library.
+            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", values: [row.payload]) { return false }
+        case "imported_commentary_interjection":
+            // Its layer is restored first. One that isn't in the Library leaves the Margin set aside.
+            if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", values: [row.payload]) { return false }
+        default: break
+        }
+        var statement: OpaquePointer?
+        // `updated_at` isn't kept in quarantine; the time it was set aside is the closest, and keeps lists in order.
+        let sql = """
+        INSERT INTO records(kind, id, session_id, item_id, payload, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+        ON CONFLICT(kind, id) DO NOTHING;
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: row.kind)
+        bind(statement, index: 2, value: row.id)
+        bind(statement, index: 3, value: columns.sessionId)
+        bind(statement, index: 4, value: columns.itemId)
+        bind(statement, index: 5, value: row.payload)
+        bind(statement, index: 6, value: row.quarantinedAt)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_quarantine_restore")
+        }
+        guard sqlite3_changes(db) == 1 else { return false }
+        if row.kind == "imported_commentary_interjection" {
+            // Saved with the item of the layer it belongs to.
+            var itemStatement: OpaquePointer?
+            let itemSQL = """
+            UPDATE records SET item_id = (
+                SELECT layer.item_id FROM records AS layer
+                WHERE layer.kind = 'imported_commentary_layer' AND layer.id = json_extract(records.payload, '$.layerId')
+            ) WHERE kind = ? AND id = ?;
+            """
+            guard sqlite3_prepare_v2(db, itemSQL, -1, &itemStatement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_quarantine_restore_item")
+            }
+            defer { sqlite3_finalize(itemStatement) }
+            bind(itemStatement, index: 1, value: row.kind)
+            bind(itemStatement, index: 2, value: row.id)
+            guard sqlite3_step(itemStatement) == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_quarantine_restore_item")
+            }
+        }
+        return true
+    }
+
+    private func liveRecordExists(sql: String, values: [String]) throws -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore_check")
+        }
+        defer { sqlite3_finalize(statement) }
+        for (index, value) in values.enumerated() {
+            bind(statement, index: Int32(index + 1), value: value)
+        }
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func deleteQuarantinedRow(kind: String, id: String) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM quarantined_records WHERE kind = ? AND id = ?;", -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore_delete")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: kind)
+        bind(statement, index: 2, value: id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_quarantine_restore_delete")
+        }
+    }
+
+    /// The columns for `kind`, or nil when this build can't decode `data` as that kind or has no rule for it.
+    /// Scope: the Margin and Library kinds below. Others (watch hand-offs, offline reservations, preparation jobs and manifests) stay
+    /// quarantined until they get a rule. A kind joins this list with its save path's `session_id` and `item_id`, copied exactly.
+    private func restoredColumns(kind: String, from data: Data) -> RestoredColumns? {
+        func columns<T: Decodable>(_ type: T.Type, session: (T) -> String? = { _ in nil }, item: (T) -> String?) -> RestoredColumns? {
+            guard let value = try? decoder.decode(T.self, from: data) else { return nil }
+            return RestoredColumns(sessionId: session(value), itemId: item(value))
+        }
+        switch kind {
+        case "item": return columns(Item.self, item: { $0.id })
+        case "listening_map": return columns(ListeningMap.self, item: { $0.itemId })
+        case "session": return columns(Session.self, session: { $0.id }, item: { $0.itemId })
+        case "interjection": return columns(Interjection.self, session: { $0.sessionId }, item: { $0.itemId })
+        case "turn": return columns(ConversationTurn.self, session: { $0.sessionId }, item: { _ in nil })
+        case "ai_job": return columns(AIJob.self, session: { $0.sessionId }, item: { $0.itemId })
+        case "interjection_share_revision": return columns(InterjectionShareRevision.self, session: { $0.sessionId }, item: { $0.itemId })
+        case "imported_commentary_layer": return columns(ImportedCommentaryLayer.self, item: { $0.itemId })
+        case "imported_commentary_interjection": return columns(ImportedCommentaryInterjection.self, item: { _ in nil })
+        case "canonical_source": return columns(CanonicalSourcePackage.self, item: { $0.itemId })
+        case "audio_asset": return columns(AudioAsset.self, item: { $0.itemId })
+        case "source_transcript_timeline": return columns(SourceTranscriptTimeline.self, item: { $0.itemId })
+        case "podcast_download": return columns(PodcastDownloadRecord.self, item: { $0.itemId })
+        case "owned_offline_asset": return columns(OwnedOfflineAsset.self, item: { $0.itemId })
+        case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
+        case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
+        case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        default: return nil
         }
     }
 

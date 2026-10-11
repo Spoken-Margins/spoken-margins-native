@@ -356,24 +356,24 @@ class T3Tests(unittest.TestCase):
 
         import lane_sim
         with mock.patch.object(lane, 'time', fake_time), \
-                mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+                mock.patch.object(lane_sim, 'clone_temporary', return_value='U'), \
                 mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
-                mock.patch.object(lane, 'first_boot', side_effect=boot), \
+                mock.patch.object(lane, 'boot_t3_device', side_effect=boot), \
                 mock.patch.object(lane, 'run_plans', side_effect=tests), \
                 tempfile.TemporaryDirectory() as temporary:
             verdict, _, _, details, _, _ = lane._t3_on_fresh_device({'app': ['T/A']}, 'r', Path(temporary),
                                                                      'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
-        self.assertEqual((verdict, details[0]), ('PASS', 'first boot of the fresh simulator took 1m05s (memory pressure '
+        self.assertEqual((verdict, details[0]), ('PASS', 'boot of the cloned simulator took 1m05s (memory pressure '
                                                          'at boot: warn, after waiting 600s; one-simulator period)'))
 
     def test_a_tolerated_change_and_a_late_crash_report_are_reported_without_changing_the_verdict(self):
         import lane_sim
-        with mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+        with mock.patch.object(lane_sim, 'clone_temporary', return_value='U'), \
                 mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={'U': {
                     'reason': 'late crash report for a crash during boot: SpringBoard-x.ips'}}), \
-                mock.patch.object(lane, 'first_boot', return_value=(None, {
+                mock.patch.object(lane, 'boot_t3_device', return_value=(None, {
                     'pressure': 'normal', 'pressure_waited': 0, 'tolerated': 'SpringBoard restarted (pid 1 -> 2)',
                     'boot_window': (0.0, 1.0)})), \
                 mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
@@ -388,11 +388,11 @@ class T3Tests(unittest.TestCase):
 
     def _t3_with(self, boot, plans, back_to_one):
         import lane_sim
-        with mock.patch.object(lane_sim, 'create_temporary', return_value='U'), \
+        with mock.patch.object(lane_sim, 'clone_temporary', return_value='U'), \
                 mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
                 mock.patch.object(lane_sim, 'back_to_one_simulator', back_to_one), \
-                mock.patch.object(lane, 'first_boot', return_value=boot), \
+                mock.patch.object(lane, 'boot_t3_device', return_value=boot), \
                 mock.patch.object(lane, 'run_plans', return_value=plans), \
                 tempfile.TemporaryDirectory() as temporary:
             return lane._t3_on_fresh_device({'app': ['T/A']}, 'r7', Path(temporary),
@@ -472,7 +472,7 @@ class T3Tests(unittest.TestCase):
     def test_a_t3_request_without_tests_or_with_unknown_tests_does_not_boot_anything(self):
         import lane_sim
         with mock.patch.object(lane_sim, 'newest_runtime', side_effect=AssertionError('no simulator should be made')), \
-                mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('no simulator should be made')):
+                mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('no simulator should be made')):
             self.assertEqual(lane.run_t3([], 'r', Path('/tmp'))[0], 'INCONCLUSIVE')
             self.assertEqual(lane.run_t3(['NoSuchTestClassAnywhere'], 'r', Path('/tmp'))[0], 'FAIL')
 
@@ -527,12 +527,12 @@ class T3VerifyTestsLaunchTests(unittest.TestCase):
     def run_t3(self, grouped, timeout=None):
         import lane_sim
         patches = [mock.patch.object(lane, 'ROOT', self.root),
-                   mock.patch.object(lane_sim, 'create_temporary', return_value=self.UDID),
+                   mock.patch.object(lane_sim, 'clone_temporary', return_value=self.UDID),
                    mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release'),
                    mock.patch.object(lane_sim, 'unsafe_devices', return_value={}),
                    mock.patch.object(lane_sim, 'is_available', return_value=True),
                    mock.patch.object(lane_sim, 'back_to_one_simulator', return_value=False),
-                   mock.patch.object(lane, 'first_boot', return_value=(None, {'pressure': 'normal',
+                   mock.patch.object(lane, 'boot_t3_device', return_value=(None, {'pressure': 'normal',
                                                                                 'period': 'one-simulator'}))]
         if timeout is not None:
             patches.append(mock.patch.object(lane, 'T3_TIMEOUT', timeout))
@@ -547,9 +547,9 @@ class T3VerifyTestsLaunchTests(unittest.TestCase):
                                               'adapters': ['AudioTests/GammaTests']})
         self.assertEqual(verdict, 'PASS')
         self.assertEqual([launch['argv'] for launch in self.launches()], [
-            ['--plan', 'app', '--device', self.UDID, '--output', str(self.evidence / 'verify-app'),
+            ['--plan', 'app', '--device', self.UDID, '--require-build', '--output', str(self.evidence / 'verify-app'),
              '--only-testing', 'AppTests/AlphaTests', '--only-testing', 'AppTests/BetaTests/testOne'],
-            ['--plan', 'adapters', '--device', self.UDID, '--output', str(self.evidence / 'verify-adapters'),
+            ['--plan', 'adapters', '--device', self.UDID, '--require-build', '--output', str(self.evidence / 'verify-adapters'),
              '--only-testing', 'AudioTests/GammaTests']])
         # `scripts/verify-tests.py` is a relative path, so the child must start in the checkout
         self.assertEqual({launch['cwd'] for launch in self.launches()}, {str(self.root.resolve())})
@@ -638,17 +638,17 @@ class RunnerDeviceTests(unittest.TestCase):
         seen = {}
         name = lane.RUNNER_SIMULATOR_PREFIX + 'pr7-r7'
 
-        def create(created):
+        def create(created, runtime, **kw):
             seen['at create'] = lane.runner_device_claimed(created)
             return 'U'
 
         def release(udid):
             seen['at delete'] = lane.runner_device_claimed(name)
 
-        with mock.patch.object(lane_sim, 'create_temporary', side_effect=create), \
+        with mock.patch.object(lane_sim, 'clone_temporary', side_effect=create), \
                 mock.patch.object(lane_sim, 'start_watcher'), mock.patch.object(lane_sim, 'release', side_effect=release), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
-                mock.patch.object(lane, 'first_boot', return_value=(None, {})), \
+                mock.patch.object(lane, 'boot_t3_device', return_value=(None, {})), \
                 mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})], ['verified'],
                                                                    ['A (1 passed)'], [])), \
                 tempfile.TemporaryDirectory() as temporary:
@@ -657,6 +657,65 @@ class RunnerDeviceTests(unittest.TestCase):
         self.assertEqual(seen, {'at create': True, 'at delete': True})
         self.assertFalse(lane.runner_device_claimed(name))
         self.assertEqual(list(Path(self.state.name).glob('runner-device-*')), [])
+
+
+class T3PreparationTests(unittest.TestCase):
+    def test_build_finishes_before_the_simulator_slot_is_taken(self):
+        import lane_sim
+        import lane_slots
+        events = []
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.object(lane_sim, 'newest_runtime', return_value='runtime'), \
+                mock.patch.object(lane, 'prepare_t3_build',
+                                  side_effect=lambda *a: events.append('build') or ('PASS', ['prepared'])), \
+                mock.patch.object(lane_slots, 'acquire_simulator_slot',
+                                  side_effect=lambda *a, **kw: events.append('slot') or 'slot'), \
+                mock.patch.object(lane_slots, 'release_handle', side_effect=lambda *a: events.append('release')), \
+                mock.patch.object(lane, '_t3_on_fresh_device',
+                                  side_effect=lambda *a: events.append('clone/boot/tests') or
+                                  ('PASS', 'clone', 'ran', [], 'none', '')):
+            result = lane._run_t3_grouped({'app': ['T/A'], 'adapters': ['T/B']}, 'r', Path(temporary))
+        self.assertEqual(events, ['build', 'slot', 'clone/boot/tests', 'release'])
+        self.assertEqual(result[3], ['prepared'])
+
+    def test_a_failed_or_timed_out_build_does_not_take_a_simulator_slot(self):
+        import lane_sim
+        import lane_slots
+        for verdict in ('FAIL', 'INCONCLUSIVE'):
+            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as temporary, \
+                    mock.patch.object(lane_sim, 'newest_runtime', return_value='runtime'), \
+                    mock.patch.object(lane, 'prepare_t3_build', return_value=(verdict, ['failed'])), \
+                    mock.patch.object(lane_slots, 'acquire_simulator_slot') as slot, \
+                    mock.patch.object(lane_sim, 'clone_temporary') as clone:
+                self.assertEqual(lane._run_t3_grouped({'app': ['T/A']}, 'r', Path(temporary))[0], verdict)
+                slot.assert_not_called()
+                clone.assert_not_called()
+
+    def test_both_plans_launch_one_shared_generic_build(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            evidence = Path(temporary)
+            commands = []
+
+            def run(command, log, timeout):
+                commands.append(command)
+                output = evidence / 'verify-build'
+                output.mkdir()
+                (output / 'manifest.json').write_text(json.dumps({'status': 'verified', 'steps': []}))
+                return 0
+
+            with mock.patch.object(lane, 'run_bounded', side_effect=run):
+                result = lane.prepare_t3_build({'app': ['T/A'], 'adapters': ['T/B']}, 'runtime', evidence)
+            self.assertEqual(result[0], 'PASS')
+            self.assertEqual(len(commands), 1)
+            self.assertIn('--build-only', commands[0])
+            self.assertIn('runtime', commands[0])
+            self.assertNotIn('--device', commands[0])
+
+    def test_a_clone_boot_uses_the_guard_without_first_boot_tolerance(self):
+        import lane_sim
+        with mock.patch.object(lane_sim, 'boot') as boot:
+            self.assertIsNone(lane.boot_t3_device('clone', None)[0])
+        self.assertFalse(boot.call_args.kwargs['first_boot'])
 
 
 class LostDeviceTests(unittest.TestCase):

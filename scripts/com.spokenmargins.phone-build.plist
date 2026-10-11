@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  The rolling phone build's trigger (#384): every 10 minutes, build next's tip if it changed since
-  ~/SpokenMargins-phone/latest. scripts/phone-build does the rest (one build at a time, memory and
-  disk guards, the checks gate, a failed commit is not retried). Not installed by the PR.
+  The rolling phone build's poll (#384, #1329): every 10 minutes, check next's tip. scripts/phone-build
+  coalesces changed tips to at most one start per hour, or sooner after an integration PASS. Owner
+  requests without --if-changed build immediately. The script keeps its Release cache and handles
+  one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
 
   Install (once, from the main checkout):
     cp scripts/com.spokenmargins.phone-build.plist ~/Library/LaunchAgents/

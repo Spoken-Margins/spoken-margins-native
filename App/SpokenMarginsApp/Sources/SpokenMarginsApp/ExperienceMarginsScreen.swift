@@ -151,7 +151,7 @@ struct ExperienceMarginsScreen: View {
                                         .foregroundStyle(AppColors.text)
                                         .multilineTextAlignment(.leading)
                                         .lineLimit(3)
-                                    Text(row.needsAttention ? row.attentionDescription : "\(row.targetDescription) · \(row.interjection.roughPercent)%")
+                                    Text(row.needsAttention ? row.attentionDescription : row.placeDescription())
                                         .font(.caption)
                                         .foregroundStyle(AppColors.secondaryText)
                                 }
@@ -165,7 +165,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("My Margin. \(row.preview). \(group.itemTitle). \(row.sessionDate?.formatted(date: .abbreviated, time: .shortened) ?? "Listening session")")
+                        .accessibilityLabel("My Margin. \(row.preview). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(group.itemTitle).")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
@@ -230,7 +230,9 @@ struct ExperienceMarginsScreen: View {
         let rowsByItem = Dictionary(grouping: filteredRows, by: \.interjection.itemId)
         return orderedItemIDs.compactMap { itemID in
             guard let rows = rowsByItem[itemID], let first = rows.first else { return nil }
-            return MarginGroup(itemID: itemID, itemTitle: first.itemTitle, rows: rows)
+            // Within an item, Margins read in the order they were heard (#777).
+            let heardInOrder = rows.sorted { MarginSourceOrder.isOrderedBefore($0.interjection, $1.interjection) }
+            return MarginGroup(itemID: itemID, itemTitle: first.itemTitle, rows: heardInOrder)
         }
     }
 
