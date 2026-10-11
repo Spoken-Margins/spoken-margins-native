@@ -1571,6 +1571,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {
+            try StructuredDocumentUpgrader.requireUnchangedSincePlanned(upgrade, repository: self)
             try saveItem(upgrade.item)
             try deleteRecords(kind: "listening_map", itemId: itemId)
             if let map = upgrade.listeningMap {

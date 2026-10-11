@@ -2735,6 +2735,11 @@ final class Gate1AppModel: ObservableObject {
     static func isRemotePDFHandoff(_ handoff: SourceLinkHandoff) -> Bool { handoff.isRemotePDF }
 
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
+        let item = try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
+        return try finishBackgroundBrowserTextImport(item, handoff: handoff)
+    }
+
+    func browserTextImportEngine() throws -> SessionEngine {
         let store = try requireStore()
         if engine == nil {
             installEngine(try makeEngine(store: store))
@@ -2742,8 +2747,11 @@ final class Gate1AppModel: ObservableObject {
         guard let engine else {
             throw SessionKitError.persistenceFailed("Browser text importer is unavailable.")
         }
-        let item = try engine.importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
-        libraryItems = try loadLibraryRows(store: store)
+        return engine
+    }
+
+    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
+        libraryItems = try loadLibraryRows(store: try requireStore())
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
         diagnostics["lastBackgroundBrowserTextImport"] = item.id
         if let structure = item.documentStructure {
@@ -2751,23 +2759,6 @@ final class Gate1AppModel: ObservableObject {
         }
         markOnboardingSteps(onboardingSteps(for: handoff))
         return item.id
-    }
-
-    private func recordPDFExtractionDiagnostics(_ structure: PDFDocumentStructure) {
-        diagnostics["lastPDFExtractionEngine"] = structure.extractionEngine.rawValue
-        diagnostics["lastPDFAnalysisStatus"] = structure.analysisStatus.rawValue
-        diagnostics["lastPDFPageCount"] = "\(structure.pageCount)"
-        diagnostics["lastPDFAnalyzedPageCount"] = "\(structure.analyzedPageCount)"
-        diagnostics["lastPDFTableCount"] = "\(structure.tables.count)"
-    }
-
-    private func onboardingSteps(for handoff: BrowserTextHandoff) -> Set<OnboardingStep> {
-        switch handoff.captureMode {
-        case .markdownFile, .plainTextFile:
-            return [.addedOwnSource, .addedFromFiles]
-        case .selectedText, .readablePage:
-            return [.addedOwnSource, .addedFromSafari]
-        }
     }
 
     func configureQuickAccessFolder(url: URL) {
