@@ -151,14 +151,15 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.model.recordingCaptureHealth, .capturing, "the state resets for the next Margin")
     }
 
-    /// #771 audit P2: a call after five seconds on the clock, with a microphone that took in 22 ms, must not
-    /// save an empty voice as a Margin. The interruption path asks the watcher, as Save does.
+    /// #771 audit P2: a call after ten seconds on the clock, with a microphone that took in 22 ms, must not
+    /// save an empty voice as a Margin. The interruption path asks the watcher, as Save does. (Ten seconds,
+    /// because each automatic restart resets the supervisor's clock and it judges only after 1.5 s on it.)
     func testACallDuringARecordingThatTookInNothingSavesNoMargin() async throws {
         let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22))
-        harness.run(seconds: 5)
+        harness.run(seconds: 10)
         let marginCount = harness.model.selectedItem.interjections.count
 
-        harness.recorder.onInterruption?(.interruptionBegan, 5)
+        harness.recorder.onInterruption?(.interruptionBegan, 10)
         for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
 
         XCTAssertFalse(harness.model.snapshot.isRecording)
