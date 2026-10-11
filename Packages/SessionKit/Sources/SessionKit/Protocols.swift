@@ -33,6 +33,15 @@ public protocol ItemRepository {
     func saveListeningMap(_ map: ListeningMap) throws
 }
 
+/// A repository that can say, without reading the item, whether an item was saved or deleted
+/// through it since the last time you asked. The number means nothing on its own: only a change
+/// between two reads does. Callers that watch an item's fields (the listening-signal collector)
+/// re-read the item only when it moves, instead of decoding its text on every playback tick.
+/// A repository without it is simply read each time.
+public protocol ItemRevisionReading: AnyObject {
+    func itemRevision(id: String) -> Int
+}
+
 public protocol ListeningSessionRepository {
     func saveSession(_ session: Session) throws
     func loadSession(id: String) throws -> Session?

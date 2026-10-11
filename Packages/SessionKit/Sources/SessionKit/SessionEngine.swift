@@ -1790,7 +1790,9 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func finishInterjection(audioRef: String?) throws -> SessionSnapshot {
+    /// - Parameter resumesSource: false leaves the source paused at the Margin's place, for a
+    ///   Margin a call or lost headphones ended (#771); the listener's Save resumes it.
+    public func finishInterjection(audioRef: String?, resumesSource: Bool = true) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession,
               let anchor = recordingAnchor,
@@ -1800,7 +1802,7 @@ public final class SessionEngine {
         }
         if let pending = storedMarginFinish, pending.interjection.sessionId == session.id {
             // The Margin was stored by an earlier Save whose later steps failed (#1121).
-            return try finishStoredMargin(session, anchor: anchor, targetType: targetType)
+            return try finishStoredMargin(session, anchor: anchor, targetType: targetType, resumesSource: resumesSource)
         }
         storedMarginFinish = nil // left over from another session
         let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
@@ -1857,12 +1859,12 @@ public final class SessionEngine {
             interjection: interjection,
             capturesPostResumeEvidence: shouldCapturePostResumePodcastEvidence
         )
-        return try finishStoredMargin(session, anchor: anchor, targetType: targetType)
+        return try finishStoredMargin(session, anchor: anchor, targetType: targetType, resumesSource: resumesSource)
     }
 
     /// Everything after the Margin is stored. Each step that has run is remembered, so a Save that failed part way
     /// can be tried again without storing the Margin, capturing evidence or scheduling transcription twice (#1121).
-    private func finishStoredMargin(_ session: Session, anchor: Anchor, targetType: InterjectionTargetType) throws -> SessionSnapshot {
+    private func finishStoredMargin(_ session: Session, anchor: Anchor, targetType: InterjectionTargetType, resumesSource: Bool) throws -> SessionSnapshot {
         guard var pending = storedMarginFinish else {
             throw SessionKitError.invalidCommandForState("finishInterjection")
         }
@@ -1881,7 +1883,9 @@ public final class SessionEngine {
                     captureDelayMs: SparseFingerprintSchedule.seekDebounceMs
                 )
                 let capturedPreWindow = audio.captureBufferedPreInterjectionAudioSample(evidenceRequest)
-                let armedPostWindow = audio.armPostResumeAudioSample(evidenceRequest)
+                // A paused source has no resume to sample: an armed window would time out over a long
+                // call (#771), so only the window before the Margin runs.
+                let armedPostWindow = resumesSource && audio.armPostResumeAudioSample(evidenceRequest)
                 if !capturedPreWindow && !armedPostWindow {
                     pending.interjection.podcastAnchorEvidenceCaptureStatus = .unavailable
                     pending.interjection.podcastAnchorEvidenceFailureReason = "decoded_playback_sample_unavailable"
@@ -1891,7 +1895,7 @@ public final class SessionEngine {
                 } else if !capturedPreWindow || !armedPostWindow {
                     // One window still runs; record the one that didn't so a later success can't hide it.
                     pending.interjection.podcastAnchorEvidenceFailureReason = PodcastAnchorCaptureDiagnostics.appendingFailureReason(
-                        capturedPreWindow ? "post_window_not_armed" : "pre_window_not_captured",
+                        capturedPreWindow ? (resumesSource ? "post_window_not_armed" : "post_window_skipped_source_paused") : "pre_window_not_captured",
                         to: pending.interjection.podcastAnchorEvidenceFailureReason
                     )
                     storedMarginFinish = pending
@@ -1925,7 +1929,9 @@ public final class SessionEngine {
         }
         currentSession = session
         try persistSession(session)
-        if externallyStreamedTurnId == session.currentTargetId {
+        if !resumesSource {
+            publish(status: .paused, phase: session.phase)
+        } else if externallyStreamedTurnId == session.currentTargetId {
             publish(status: .starting, phase: session.phase)
         } else {
             try playCurrentTarget(session)
@@ -1935,8 +1941,9 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// - Parameter resumesSource: as for `finishInterjection`.
     @discardableResult
-    public func cancelInterjection() throws -> SessionSnapshot {
+    public func cancelInterjection(resumesSource: Bool = true) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
@@ -1956,7 +1963,9 @@ public final class SessionEngine {
         }
         currentSession = session
         try persistSession(session)
-        if externallyStreamedTurnId == session.currentTargetId {
+        if !resumesSource {
+            publish(status: .paused, phase: session.phase)
+        } else if externallyStreamedTurnId == session.currentTargetId {
             publish(status: .starting, phase: session.phase)
         } else {
             try playCurrentTarget(session)
