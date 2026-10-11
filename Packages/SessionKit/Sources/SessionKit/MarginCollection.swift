@@ -51,6 +51,8 @@ public enum MarginCollection {
         public let interjection: Interjection
         public let itemTitle: String
         public let sessionDate: Date?
+        /// The chapter and paragraph the Margin was made at, when `build` was given a way to read listening maps (#777).
+        public var place: MarginPlaces.Place? = nil
 
         public var id: String { "\(interjection.sessionId)::\(interjection.id)" }
     }
@@ -70,9 +72,11 @@ public enum MarginCollection {
 
     /// Reads remain in the caller's synchronous closures, in the original order.
     /// No partial result escapes if any read throws.
+    /// - `loadMap`: an item's listening map, nil when it has none. Without it the entries carry no `place`.
     public static func build(
         items: [Item],
         sessions: [Session],
+        loadMap: ((String) -> ListeningMap?)? = nil,
         loadInterjections: (String) throws -> [Interjection],
         loadImportedLayers: () throws -> [ImportedCommentaryLayer],
         loadImportedInterjections: (String) throws -> [ImportedCommentaryInterjection]
@@ -108,7 +112,14 @@ public enum MarginCollection {
             }
             return lhs.id < rhs.id
         }
-        return Entries(privateRows: privateRows, sharedRows: sharedRows)
+        guard let loadMap else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
+        let places = MarginPlaces.places(for: privateRows, items: items, loadMap: loadMap)
+        let placedRows = privateRows.map { entry -> PrivateEntry in
+            var placed = entry
+            placed.place = places[entry.id]
+            return placed
+        }
+        return Entries(privateRows: placedRows, sharedRows: sharedRows)
     }
 
     public static func sourceContext(anchorBefore: String?, anchorAfter: String?) -> String? {
