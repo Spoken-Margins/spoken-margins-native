@@ -54,6 +54,8 @@ final class TrackingPlaybackSlider: UISlider {
     private var systemTrackHidden = false
 
     override var value: Float { didSet { if barContent != nil { setNeedsLayout() } } }
+    override var minimumValue: Float { didSet { if barContent != nil { setNeedsLayout() } } }
+    override var maximumValue: Float { didSet { if barContent != nil { setNeedsLayout() } } }
 
     override func setValue(_ value: Float, animated: Bool) {
         super.setValue(value, animated: animated)

@@ -93,6 +93,7 @@ final class PlaybackBarRendererTests: XCTestCase {
         slider.maximumValue = 3_600
         slider.barContent = content
         slider.setValue(value, animated: false)
+        slider.setNeedsLayout()
         slider.layoutIfNeeded()
         return slider
     }
