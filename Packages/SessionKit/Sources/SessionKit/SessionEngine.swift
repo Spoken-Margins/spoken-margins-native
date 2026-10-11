@@ -910,6 +910,7 @@ public final class SessionEngine {
                 // Written by the transaction; the engine only re-saves the row in the form it keeps it in.
                 try saveItem(upgrade.item)
                 forgetDocumentCaches(itemId: upgrade.item.id)
+                try reloadOpenItem(afterUpgradeOf: upgrade.item.id)
                 return upgrade.item
             }
             outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .skip)
@@ -923,6 +924,20 @@ public final class SessionEngine {
         }
         try saveStructuredDocument(document, itemId: item.id)
         return item
+    }
+
+    /// The listener can open this item (inspect a paused session) while the upgrade is planned off the main
+    /// actor; that only loads state into the engine and writes nothing, so the transaction's re-check can't see it.
+    /// The engine then holds the old text and position, and the next pause would write that position over the
+    /// moved one. Reload what the engine holds for the item from the store.
+    func reloadOpenItem(afterUpgradeOf itemId: String) throws {
+        if currentItem?.id == itemId {
+            currentItem = try repository.loadItem(id: itemId)
+            currentMap = try repository.loadListeningMap(itemId: itemId)
+        }
+        if let session = currentSession, session.itemId == itemId, let moved = try repository.loadSession(id: session.id) {
+            currentSession = moved
+        }
     }
 
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {

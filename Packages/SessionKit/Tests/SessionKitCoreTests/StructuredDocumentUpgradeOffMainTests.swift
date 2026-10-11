@@ -109,6 +109,43 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         XCTAssertEqual(try fixture.stored(), before)
     }
 
+    /// The audit's path: the listener opens the item (inspecting a paused session writes nothing) while the upgrade is
+    /// planned, so the engine holds the old text and position when the transaction commits.
+    func testAnItemOpenedWhileTheUpgradeWasPlannedIsReloadedAfterIt() throws {
+        let fixture = try makeFixture()
+        try fixture.addReadingSession()
+        try fixture.engine.inspectSession(sessionId: "session-reading")
+        let oldPosition = try XCTUnwrap(fixture.engine.currentSession).position.charOffset
+        guard case .success(let upgrade) = try fixture.plan() else { return XCTFail("fixture should move") }
+        try fixture.store.applyStructuredDocumentUpgrade(upgrade)
+        XCTAssertEqual(fixture.engine.currentItem?.text, fixture.v1.text, "fixture check: the engine still holds the old text")
+
+        try fixture.engine.reloadOpenItem(afterUpgradeOf: fixture.v1.id)
+
+        let newText = try XCTUnwrap(fixture.document.text)
+        XCTAssertEqual(fixture.engine.currentItem?.text, newText)
+        XCTAssertEqual(fixture.engine.currentMap?.itemId, fixture.v1.id)
+        XCTAssertEqual(fixture.engine.currentMap, try fixture.store.loadListeningMap(itemId: fixture.v1.id))
+        let position = try XCTUnwrap(fixture.engine.currentSession).position.charOffset
+        XCTAssertNotEqual(position, oldPosition, "fixture check: the position moved with the text")
+        XCTAssertTrue(newText.dropFirst(position).hasPrefix("Sleep improved"), "the engine's position counts in the new text")
+    }
+
+    /// The same path through the real import: a main-actor task that opens the session runs while the plan is away.
+    /// Whether it lands before or after the commit, the engine ends on the stored text and position.
+    @MainActor
+    func testOpeningTheItemDuringTheOffMainImportLeavesTheEngineOnTheNewText() async throws {
+        let fixture = try makeFixture()
+        try fixture.addReadingSession()
+        Task { @MainActor in _ = try? fixture.engine.inspectSession(sessionId: "session-reading") }
+
+        _ = try await fixture.reimportOffMain()
+
+        let stored = try fixture.stored()
+        XCTAssertEqual(fixture.engine.currentItem?.text, stored.item.text)
+        XCTAssertEqual(fixture.engine.currentSession?.position.charOffset, stored.sessions.first?.position.charOffset)
+    }
+
     // MARK: A Margin saved between planning and writing
 
     func testTheStoreRefusesAPlanWhenAMarginWasSavedAfterItWasMade() throws {

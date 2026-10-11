@@ -88,6 +88,8 @@ extension Gate1AppModel {
         let item = try await browserTextImportEngine().importBrowserTextInBackgroundOffMain(
             Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument
         )
+        // The listener may have opened this item while the upgrade ran; the screen would still show the old text.
+        if selectedItem.id == item.id { selectedItem = try loadItemDetail(id: item.id, store: try requireStore()) }
         return try finishBackgroundBrowserTextImport(item, handoff: handoff)
     }
 

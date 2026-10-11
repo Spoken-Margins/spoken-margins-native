@@ -11333,7 +11333,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["uiTestSummaryFixture"] = interjection.id
     }
 
-    private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
+    func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         var map = try store.loadListeningMap(itemId: id)
         let canonicalSource = try store.loadCanonicalSource(itemId: id)
