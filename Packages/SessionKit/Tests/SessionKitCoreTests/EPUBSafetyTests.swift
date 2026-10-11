@@ -167,6 +167,111 @@ final class EPUBSafetyTests: XCTestCase {
         }
     }
 
+    /// Font obfuscation (Sigil, Calibre and InDesign write it) scrambles only the embedded fonts. The
+    /// chapters are plain text, so the book imports.
+    func testAnEPUBWithOnlyObfuscatedFontsImportsWithItsTextIntact() throws {
+        var entries = validEntries()
+        entries["OPS/fonts/body.otf"] = "obfuscated font bytes"
+        entries["META-INF/encryption.xml"] = encryptionXML([("http://www.idpf.org/2008/embedding", "OPS/fonts/body.otf")])
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let result = try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source")
+        XCTAssertEqual(result.package.segments.map(\.text), ["Café opening", "Hello & welcome."])
+    }
+
+    func testSeveralFontEntriesAndNoChapterEntryImport() throws {
+        var entries = validEntries()
+        entries["OPS/fonts/body.otf"] = "font"
+        entries["OPS/fonts/bold.ttf"] = "font"
+        entries["OPS/images/cover.png"] = "image"
+        entries["META-INF/encryption.xml"] = encryptionXML([
+            ("http://www.idpf.org/2008/embedding", "OPS/fonts/body.otf"),
+            ("http://ns.adobe.com/pdf/enc#RC", "OPS/fonts/bold.ttf"),
+            // An unknown method on a resource that isn't text still imports.
+            ("http://example.com/unknown-scheme", "OPS/images/cover.png"),
+        ])
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertEqual(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source").package.segments.count, 2)
+    }
+
+    func testAChapterEntryAmongFontEntriesIsRejected() throws {
+        var entries = validEntries()
+        entries["OPS/fonts/body.otf"] = "font"
+        entries["META-INF/encryption.xml"] = encryptionXML([
+            ("http://www.idpf.org/2008/embedding", "OPS/fonts/body.otf"),
+            ("http://www.w3.org/2001/04/xmlenc#aes128-cbc", "OPS/chapter.xhtml"),
+        ])
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source")) {
+            XCTAssertEqual($0 as? EPUBImportError, .unsupportedEncryption)
+        }
+    }
+
+    /// The same spine item written another way is still that spine item.
+    func testAChapterEntryIsMatchedWhateverItsSpelling() throws {
+        for uri in ["OPS/chap%74er.xhtml", "OPS/CHAPTER.XHTML", "./OPS/chapter.xhtml", "/OPS/chapter.xhtml", "OPS//./chapter.xhtml", "OPS/fonts/../chapter.xhtml", "OPS/chapter.xhtml#top"] {
+            var entries = validEntries()
+            entries["META-INF/encryption.xml"] = encryptionXML([("http://www.idpf.org/2008/embedding", uri)])
+            let url = try makeEPUB(entries: entries)
+            defer { try? FileManager.default.removeItem(at: url) }
+            XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source"), uri) {
+                XCTAssertEqual($0 as? EPUBImportError, .unsupportedEncryption, uri)
+            }
+        }
+    }
+
+    func testEncryptingThePackageDocumentOrNavigationIsRejected() throws {
+        for uri in ["OPS/package.opf", "OPS/nav.xhtml", "META-INF/container.xml"] {
+            var entries = validEntries()
+            entries["META-INF/encryption.xml"] = encryptionXML([("http://www.w3.org/2001/04/xmlenc#aes128-cbc", uri)])
+            let url = try makeEPUB(entries: entries)
+            defer { try? FileManager.default.removeItem(at: url) }
+            XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source"), uri) {
+                XCTAssertEqual($0 as? EPUBImportError, .unsupportedEncryption, uri)
+            }
+        }
+    }
+
+    func testAnEntryThatNamesNoResourceIsRejected() throws {
+        var entries = validEntries()
+        entries["META-INF/encryption.xml"] = """
+        <?xml version="1.0"?><encryption xmlns="urn:oasis:names:tc:opendocument:xmlns:container" xmlns:enc="http://www.w3.org/2001/04/xmlenc#"><enc:EncryptedData><enc:EncryptionMethod Algorithm="http://www.idpf.org/2008/embedding"/></enc:EncryptedData></encryption>
+        """
+        let url = try makeEPUB(entries: entries)
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source")) {
+            XCTAssertEqual($0 as? EPUBImportError, .unsupportedEncryption)
+        }
+    }
+
+    func testABlankOrEntryFreeEncryptionFileImportsButAMalformedOneIsRejected() throws {
+        for blank in ["  \n", "<?xml version=\"1.0\"?><encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\"/>"] {
+            var entries = validEntries()
+            entries["META-INF/encryption.xml"] = blank
+            let url = try makeEPUB(entries: entries)
+            defer { try? FileManager.default.removeItem(at: url) }
+            XCTAssertEqual(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source").package.segments.count, 2, blank)
+        }
+        for broken in ["<encryption><EncryptedData", "not xml at all", "<encryption><EncryptedData></encryption>"] {
+            var entries = validEntries()
+            entries["META-INF/encryption.xml"] = broken
+            let url = try makeEPUB(entries: entries)
+            defer { try? FileManager.default.removeItem(at: url) }
+            XCTAssertThrowsError(try EPUBParser().parse(url: url, itemId: "book", sourceDocumentId: "source"), broken) {
+                XCTAssertEqual($0 as? EPUBImportError, .unsupportedEncryption, broken)
+            }
+        }
+    }
+
+    private func encryptionXML(_ resources: [(method: String, uri: String)]) -> String {
+        let entries = resources.map {
+            "<enc:EncryptedData><enc:EncryptionMethod Algorithm=\"\($0.method)\"/><enc:CipherData><enc:CipherReference URI=\"\($0.uri)\"/></enc:CipherData></enc:EncryptedData>"
+        }.joined()
+        return "<?xml version=\"1.0\"?><encryption xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" xmlns:enc=\"http://www.w3.org/2001/04/xmlenc#\">\(entries)</encryption>"
+    }
+
     func testMissingContainerDoesNotPublishPartialPackage() throws {
         let url = try makeEPUB(entries: ["mimetype": "application/epub+zip"])
         defer { try? FileManager.default.removeItem(at: url) }
