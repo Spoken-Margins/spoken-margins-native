@@ -164,4 +164,39 @@ final class SQLiteQuarantineRestoreTests: XCTestCase {
         XCTAssertEqual(try StoreRawSQL.rows(versionSQL, at: path), versionBefore)
         XCTAssertEqual(versionBefore, [["schema_version", "5"]])
     }
+
+    func testASessionMarginWithTheOldUnprefixedIdIsLeftInQuarantine() throws {
+        try seed(margins: [])
+        try insert(kind: "interjection", id: "note-legacy", sessionId: "session-1", itemId: "item-1", payload: margin("note-legacy"))
+        try quarantineLikeAnOlderBuild(kind: "interjection", id: "note-legacy")
+        let quarantinedBefore = try quarantinedRows()
+
+        _ = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(try quarantinedRows(), quarantinedBefore, "a bare id would sit beside the session::id row later saves write")
+        XCTAssertEqual(try StoreRawSQL.ids(kind: "interjection", at: path), [])
+    }
+
+    func testAPacketImportedAgainWhileItsLayerWasSetAsideIsNotShownTwice() throws {
+        let writer = try SQLiteSessionStore(path: path)
+        try insert(kind: "item", id: "item-1", sessionId: nil, itemId: "item-1", payload: item)
+        func layer(_ id: String) -> ImportedCommentaryLayer {
+            ImportedCommentaryLayer(id: id, itemId: "item-1", packageDigest: "digest-1", packageId: "package-1",
+                                    itemIdentity: SharedItemIdentity(itemType: .pdf, title: "Article", durationMs: nil),
+                                    importedAt: Date(timeIntervalSince1970: 1_700_000_000))
+        }
+        func margin(_ id: String, layer: String) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(id: id, layerId: layer, packageScopedId: "m1", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                           anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Words.")
+        }
+        _ = try writer.importCommentaryLayer(layer("layer-old"), interjections: [margin("margin-old", layer: "layer-old")])
+        try quarantineLikeAnOlderBuild(kind: "imported_commentary_layer", id: "layer-old")
+        try quarantineLikeAnOlderBuild(kind: "imported_commentary_interjection", id: "margin-old")
+        _ = try writer.importCommentaryLayer(layer("layer-new"), interjections: [margin("margin-new", layer: "layer-new")])
+
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(try store.loadImportedCommentaryLayers().map(\.id), ["layer-new"])
+        XCTAssertEqual(try quarantinedRows().map { $0[1] }, ["margin-old", "layer-old"], "set aside, not deleted")
+    }
 }

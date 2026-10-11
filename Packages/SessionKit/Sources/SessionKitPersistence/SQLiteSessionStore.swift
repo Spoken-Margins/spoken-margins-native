@@ -120,6 +120,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// as does one whose kind has no rule here or whose id a newer save has since taken in `records`. One
     /// transaction: a failure puts everything back. No schema change, so an older build still opens the file.
     private func restoreQuarantinedRecords() throws {
+        // Nearly every open has nothing set aside. Look first, so those opens never take the write lock.
+        guard try quarantinedRecordCount() > 0 else { return }
         try withTransaction {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, "SELECT kind, id, payload, quarantined_at FROM quarantined_records ORDER BY kind = 'imported_commentary_layer' DESC, kind, id;", -1, &statement, nil) == SQLITE_OK else {
@@ -144,6 +146,18 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
 
     /// Whether the row went back. A live row with the same kind and id wins: it was saved after this one was set aside.
     private func restoreRecord(_ row: (kind: String, id: String, payload: String, quarantinedAt: String), columns: RestoredColumns) throws -> Bool {
+        // A session-scoped row with the old un-prefixed id would sit beside the `session::id` row later saves write.
+        if Self.sessionScopedRecordKinds.contains(row.kind), let sessionId = columns.sessionId,
+           !row.id.hasPrefix("\(sessionId)::") { return false }
+        switch row.kind {
+        case "imported_commentary_layer":
+            // The same packet imported again while this layer was set aside is already in the Library.
+            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", value: row.payload) { return false }
+        case "imported_commentary_interjection":
+            // Its layer is restored first. One that isn't in the Library leaves the Margin set aside.
+            if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", value: row.payload) { return false }
+        default: break
+        }
         var statement: OpaquePointer?
         // `updated_at` isn't kept in quarantine; the time it was set aside is the closest, and keeps lists in order.
         let sql = """
@@ -187,6 +201,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return true
     }
 
+    private func liveRecordExists(sql: String, value: String) throws -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore_check")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: value)
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
     private func deleteQuarantinedRow(kind: String, id: String) throws {
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, "DELETE FROM quarantined_records WHERE kind = ? AND id = ?;", -1, &statement, nil) == SQLITE_OK else {
@@ -201,7 +225,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     }
 
     /// The columns for `kind`, or nil when this build can't decode `data` as that kind or has no rule for it.
-    /// A kind joins this list with its save path's `session_id` and `item_id`, copied exactly.
+    /// Scope: the Margin and Library kinds below. Others (watch hand-offs, offline reservations, preparation jobs and manifests) stay
+    /// quarantined until they get a rule. A kind joins this list with its save path's `session_id` and `item_id`, copied exactly.
     private func restoredColumns(kind: String, from data: Data) -> RestoredColumns? {
         func columns<T: Decodable>(_ type: T.Type, session: (T) -> String? = { _ in nil }, item: (T) -> String?) -> RestoredColumns? {
             guard let value = try? decoder.decode(T.self, from: data) else { return nil }
