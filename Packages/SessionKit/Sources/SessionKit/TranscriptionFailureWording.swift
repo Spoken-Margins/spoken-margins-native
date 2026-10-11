@@ -70,7 +70,8 @@ public enum TranscriptionFailureWording {
                 ? "No transcript: Speech Recognition is off. Turn it on in Settings."
                 : "Transcription needs retry"
         case "pending":
-            return "Transcription is pending"
+            // Only live work is "pending": a launch settles the orphans as "failed" (#942).
+            return "Transcribing…"
         default:
             return nil
         }

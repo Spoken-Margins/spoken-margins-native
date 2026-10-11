@@ -186,26 +186,46 @@ struct Build23RecipientSharingExperience: View {
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
 
-                Text("This verified package stays ready while you add the matching source. Import remains unavailable until the source is resolved.")
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                Button {
-                    coordinator.send(.requestMissingSource)
-                    if let request = coordinator.pendingRecipientSourceRequest {
-                        onRequestMissingSource(request)
-                    }
-                } label: {
-                    Label("Add Source", systemImage: "plus")
-                        .frame(maxWidth: .infinity)
+                if snapshot.isPrivatePodcastSource {
+                    Build23PrivateFeedRecoveryPanel(
+                        recovery: coordinator.episodeRecovery,
+                        episodeTitle: snapshot.itemTitle,
+                        recover: { coordinator.recoverSharedEpisode(feedLink: $0) },
+                        choose: { coordinator.chooseRecoveredEpisode($0) }
+                    )
+                } else {
+                    Text("This verified package stays ready while you add the matching source. Import remains unavailable until the source is resolved.")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .filledActionButton()
-                .accessibilityHint("Opens Add Source and keeps this package ready to resume")
+
+                if snapshot.isPrivatePodcastSource {
+                    Button(action: requestMissingSource) {
+                        Label("Add the Episode Another Way", systemImage: "plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .accessibilityHint("Opens Add Source and keeps this package ready to resume")
+                } else {
+                    Button(action: requestMissingSource) {
+                        Label("Add Source", systemImage: "plus")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .filledActionButton()
+                    .accessibilityHint("Opens Add Source and keeps this package ready to resume")
+                }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("A matching source is required for \(snapshot.itemTitle)")
+    }
+
+    private func requestMissingSource() {
+        coordinator.send(.requestMissingSource)
+        if let request = coordinator.pendingRecipientSourceRequest {
+            onRequestMissingSource(request)
+        }
     }
 
     @ViewBuilder

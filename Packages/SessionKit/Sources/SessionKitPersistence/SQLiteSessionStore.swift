@@ -159,6 +159,21 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try loadByItem(kind: "interjection", itemId: itemId)
     }
 
+    /// Settles the voice Margins left "pending" by an earlier run of the app as "failed", so they offer Retry
+    /// instead of promising work no one will do (#942). Call it once at launch, before any transcription of
+    /// this run can start. Returns how many Margins it changed. Only the status of those Margins is written.
+    @discardableResult
+    public func settleOrphanedTranscriptions() throws -> Int {
+        // "pending" is also an AI-job and turn status, so a text match only narrows the rows to decode.
+        let candidates: [Interjection] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? AND payload LIKE '%\"pending\"%';",
+            ["interjection"]
+        )
+        let settled = candidates.compactMap(OrphanedTranscription.settled)
+        for margin in settled { try saveInterjection(margin) }
+        return settled.count
+    }
+
     /// Every audio path any stored Margin names, read from the stored JSON itself: live rows, rows that no
     /// longer decode as a Margin, and rows already moved to quarantine. It is the check that no Margin
     /// still uses a recording before the recording is deleted (#1035), so it fails closed: a row it can't
@@ -667,6 +682,39 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try withTransaction {
             try deleteRecords(kind: "resolved_listening_map_projection", itemId: projection.itemId)
             try save(kind: "resolved_listening_map_projection", id: projection.id, sessionId: nil, itemId: projection.itemId, value: projection)
+        }
+    }
+
+    /// Stores a community map's proposal and projection together, only if the item still has no
+    /// proposal and no projection (#553). Both records or neither: a proposal without its projection
+    /// would stop the episode asking again and give Skim nothing. Existing record kinds only.
+    /// Returns false, and writes nothing, when the item got a map of its own meanwhile.
+    public func saveCommunityMap(
+        proposal: PortableListeningMapProposalArtifact,
+        projection: ResolvedListeningMapProjection
+    ) throws -> Bool {
+        try withTransaction {
+            guard try loadPortableListeningMapProposals(itemId: projection.itemId).isEmpty,
+                  try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil,
+                  // A friend's map not placed yet (its audio may still be downloading) comes first.
+                  try !loadImportedCommentaryLayers(itemId: projection.itemId).contains(where: \.holdsListeningMap)
+            else { return false }
+            try savePortableListeningMapProposal(proposal, itemId: projection.itemId)
+            try saveResolvedListeningMapProjection(projection)
+            return true
+        }
+    }
+
+    public func removeCommunityMap(itemId: String) throws {
+        try withTransaction {
+            for proposal in try loadPortableListeningMapProposals(itemId: itemId)
+            where CommunityMapConverter.isCommunityProposal(id: proposal.id) {
+                try deleteRecord(kind: "portable_listening_map_proposal", id: proposal.id)
+            }
+            if let projection = try loadResolvedListeningMapProjection(itemId: itemId),
+               CommunityMapConverter.isCommunityProjection(projection) {
+                try deleteRecords(kind: "resolved_listening_map_projection", itemId: itemId)
+            }
         }
     }
 

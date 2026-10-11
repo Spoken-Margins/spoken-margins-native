@@ -23,6 +23,16 @@ spec.loader.exec_module(verification)
 
 
 class VerificationTests(unittest.TestCase):
+    def setUp(self):
+        # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
+        # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
+        state = tempfile.TemporaryDirectory()
+        self.addCleanup(state.cleanup)
+        for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
+                        patch.object(verification.sessionkit_pass, 'toolchain', return_value=None)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
     def crash_reports(self, *names):
         reports = iter([Path(name) for name in names])
         return lambda *args: next(reports, None)

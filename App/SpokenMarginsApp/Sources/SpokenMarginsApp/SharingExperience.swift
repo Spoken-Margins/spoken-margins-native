@@ -1,6 +1,7 @@
 import AVFoundation
 import SessionKit
 import SessionKitAudio
+import SessionKitFeeds
 import SessionKitSharing
 import SwiftUI
 import UIKit
@@ -197,6 +198,9 @@ struct SpokenMarginsPackageImportView: View {
         case .reference:
             return "Spoken Margins will reconstruct this linked item and then resolve the shared anchors. Nothing will play automatically."
         case .recipientSupplied:
+            if SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest) {
+                return "These Margins came from a private podcast feed, so the episode is not included. Add the same episode to your library, for example by pasting your own feed link in the import screen, then reopen this .spokenmargins file."
+            }
             return "The item is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
         }
     }
