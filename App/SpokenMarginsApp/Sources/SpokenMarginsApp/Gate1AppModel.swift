@@ -5012,7 +5012,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func finishInterjection() {
-        guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
+        guard let verdict = verdictForSavingRecording() else { return } // DO NOT MERGE: mutation for #1291 APO-03
         run { engine in
             defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
             snapshot = try engine.finishInterjection(audioRef: nil)
