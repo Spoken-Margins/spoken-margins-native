@@ -29,6 +29,7 @@ final class J7PDFJourneyUITests: XCTestCase {
 
     func testListenToAPDFAndReopenAMargin() throws {
         var marginPercent = 0
+        var firstPassageID = ""
 
         try XCTContext.runActivity(named: "J7 step 1: The imported PDF is in the Library and plays") { _ in
             app.launch()
@@ -44,6 +45,10 @@ final class J7PDFJourneyUITests: XCTestCase {
             let title = app.buttons["playback.title"].firstMatch.label
             XCTAssertTrue(title.contains("Walking Notes"), "A different item is playing: \(title)")
             try waitUntilPlaying("The PDF never reached the playing state")
+            XCTAssertTrue(element("playback.now.passage").waitForExistence(timeout: 5), "The PDF live passage is missing")
+            XCTAssertTrue(currentPassage.waitForExistence(timeout: 5), "The PDF has no highlighted current sentence")
+            firstPassageID = currentPassage.identifier
+            screenshot("J7 PDF passage, first moment")
             let first = try percent()
             waitUntil("The PDF's position did not advance while playing", timeout: 15) {
                 self.currentPercent().map { $0 > first } ?? false
@@ -60,6 +65,11 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPercent().map { $0 >= 25 } ?? false
             }
             let playingPercent = try percent()
+            XCTAssertTrue(element("playback.now.passage").exists, "The PDF passage disappeared after seeking")
+            waitUntil("The PDF passage stayed at its opening sentence after seeking", timeout: 5) {
+                self.currentPassage.exists && self.currentPassage.identifier != firstPassageID
+            }
+            screenshot("J7 PDF passage, later moment")
             tap("playback.write.button")
             XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 5), "Write a Margin did not open")
             let anchor = element("writtenMargin.anchor")
@@ -98,6 +108,18 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false
             }
         }
+    }
+
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private var currentPassage: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value == %@",
+                                         "playback.now.passage.sentence.", "Current sentence")).firstMatch
     }
 
     private var playPause: XCUIElement { app.buttons["playback.play.button"] }
