@@ -2081,7 +2081,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.importTextItem()
 
         XCTAssertEqual(model.selectedItem.title, "Structured Notes")
-        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["Source Heading", "First Claim", "Counterpoint", "Conclusion"])
+        // The lone `#` is the text's own title, not a section (#1468): the chapters are the `##` headings.
+        XCTAssertEqual(model.selectedItem.chapters.map(\.title), ["First Claim", "Counterpoint", "Conclusion"])
         XCTAssertEqual(model.selectedItem.chapters.first?.startChar, 0)
         XCTAssertEqual(model.selectedItem.chapters.last?.endChar, model.selectedItem.text.count)
         XCTAssertTrue(zip(model.selectedItem.chapters, model.selectedItem.chapters.dropFirst()).allSatisfy {
@@ -3404,7 +3405,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         )
         model.resetAndSeed()
         model.importTitle = "Deterministic Map Source"
-        model.importText = "# Opening\n\nA first section.\n\n## Next Topic\n\nA second section."
+        model.importText = "# Opening\n\nA first section.\n\n## Next Topic\n\nA second section.\n\n## Last Topic\n\nA third section."
         model.importTextItem()
 
         XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "deterministic_headings")

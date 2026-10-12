@@ -1938,7 +1938,7 @@ final class Gate1AppModel: ObservableObject {
                 contents: importText,
                 titleOverride: enteredTitle.isEmpty ? nil : enteredTitle
             )
-            let deterministicMap = parsed.deterministicListeningMap(itemId: itemId, policy: .canonicalHeadings)
+            let deterministicMap = parsed.deterministicListeningMap(itemId: itemId, policy: .authoredSections)
             let item = Item(
                 id: itemId,
                 title: enteredTitle.isEmpty ? parsed.title : enteredTitle,
