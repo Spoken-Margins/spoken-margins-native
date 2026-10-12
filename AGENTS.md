@@ -67,6 +67,7 @@ Replace this section when the focus changes; do not append to it.
   - `SessionKitSharing`: packets, import/export.
 - `Contracts/`: JSON schemas, fixtures and product docs bundled with the app. `Contracts/docs/recovery-mvp.md` is the product boundary.
 - `docs/`: durable product and architecture notes. `docs/archive/` holds historical process documents; don't treat them as instructions.
+  - `docs/areas.md`: the four product areas and what "excellent" means in each. Read the issue's area before scoping it or calling it done.
 - `project.yml`: XcodeGen spec. The `.xcodeproj` is generated from it with `xcodegen generate`, and both are committed.
 
 ## How to work
