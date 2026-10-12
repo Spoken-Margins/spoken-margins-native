@@ -4068,7 +4068,7 @@ public final class SessionEngine {
         }
         let mapPolicy: DeterministicListeningMapPolicy = isPDF
             ? .canonicalHeadings
-            : .adaptiveListeningSections
+            : handoff.captureMode == .markdownFile ? .authoredSections : .adaptiveListeningSections
         let deterministicMap = document.map { StructuredDocumentImport.listeningMap(for: $0, title: title, itemId: itemId) }
             ?? parsedMarkdown?.deterministicListeningMap(
                 itemId: itemId,
