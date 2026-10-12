@@ -335,7 +335,7 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
                                                                     [])) as checks:
             verdict, where, ran, details = lane.run_auto(github, github.pull(), 5, 'next', self.head, base,
                                                          self.evidence / f'run{len(github.posted)}', github.comments(),
-                                                         context=context, checked=checked)
+                                                         context=context, checked=checked, labels=github.labels)
         github.comment(lane.report(f'pr5-r{len(github.posted)}', verdict, self.head, context.tested_base, 'auto', where,
                                    1, ran, details, 'none', '/e', 'owner',
                                    lane.identity('auto', self.head, context.tested_base, [])))
@@ -367,6 +367,7 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         self.assertIn(f'merged into next as {merged[:7]}', details[-1])
         self.assertEqual(subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1',
                                                  merged], text=True).split()[1:], [tested, self.head])
+        self.assertIn(f'(tested merged with next at {tested[:7]})', github.posted[-1].partition('\n')[2])
         self.assertIn(lane.checks_note(self.head, tested, HOST_RAN, 'no simulator (compile only)'), hold_report)
         merge_check = next(body for body in github.posted if body.startswith(lane.MERGE_CHECK))
         self.assertIn('without re-testing', merge_check)
@@ -386,6 +387,8 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
         merge_check = next(body for body in github.posted if body.startswith(lane.MERGE_CHECK))
         self.assertIn('Reuses the earlier PASS', merge_check)
         self.assertIn('touch none of this PR\'s files and no build inputs', merge_check)
+        # the report names the next the checks ran with, not the newer one it merged onto
+        self.assertIn(f'(tested merged with next at {tested[:7]})', github.posted[-1].partition('\n')[2])
 
     def moved_next_runs_the_checks_again(self, name, text):
         github, tested = self.held_then_audited()
@@ -427,6 +430,61 @@ class AuditHeldChecksStandAfterTheAuditTests(RealGitLaneTests):
             checks, details, _ = self.rearmed_run(github)
         checks.assert_not_called()
         self.assertEqual(len(calls), 2)
+        self.assertIn('merged into next as', details[-1])
+        self.assertIn('the push to next was refused', details[1])
+        self.assertIn(f'not re-tested: next\'s 1 commit since the tested {tested[:7]}', details[1])
+        merge_checks = [body for body in github.posted if body.startswith(lane.MERGE_CHECK)]
+        self.assertEqual(len(merge_checks), 2)  # one per push attempt, each saying it reuses the earlier PASS
+        self.assertTrue(all('Reuses the earlier PASS' in body for body in merge_checks), merge_checks)
+
+    def test_a_refused_push_that_needs_a_retest_does_not_claim_the_earlier_pass(self):
+        github, tested = self.held_then_audited()
+        original = lane.push_merge
+        calls = []
+
+        def push(tree, sha, base):
+            calls.append(sha)
+            if len(calls) == 1:  # next moves onto a build input just before the push
+                (self.other / 'scripts').mkdir(exist_ok=True)
+                self.commit(self.other, 'scripts/verify-tests.py', 'print(1)\n')
+                self.push_next()
+                return False, '! [rejected] next -> next (fetch first)'
+            return original(tree, sha, base)
+        with mock.patch.object(lane, 'push_merge', side_effect=push):
+            checks, details, _ = self.rearmed_run(github)
+        checks.assert_called_once()  # tested again on the newest next
+        self.assertIn('merged into next as', details[-1])
+        merge_checks = [body for body in github.posted if body.startswith(lane.MERGE_CHECK)]
+        self.assertIn('Reuses the earlier PASS', merge_checks[0])
+        self.assertNotIn('Reuses the earlier PASS', merge_checks[1])
+
+    def test_the_hot_file_ratchet_runs_again_with_the_labels_the_pr_has_now(self):
+        github = self.github()
+        github.labels.add('hot-file-ok')
+        self.run_automerge(github)  # the first run passed with hot-file-ok
+        github._comments.append(self.audited_head_comment())
+        github.labels.discard('hot-file-ok')
+
+        def ratchet(tree, base, labels):
+            return [] if 'hot-file-ok' in labels else ['Gate1AppModel.swift grows past its ceiling']
+        with mock.patch.object(lane, 'hot_file_violations', side_effect=ratchet):
+            checks, details, tested = self.rearmed_run(github)
+        checks.assert_not_called()
+        self.assertTrue(github.posted[-1].startswith('Lane report pr5-r1 — FAIL'), github.posted[-1])
+        self.assertIn('hot-file ratchet — Gate1AppModel.swift grows past its ceiling', details[-1])
+        self.assertEqual(self.rev(self.origin, 'next'), tested)  # nothing pushed
+
+    def test_a_reused_run_held_again_still_reuses_the_original_pass_after_the_audit(self):
+        github = self.github()
+        checks, _, tested = self.run_automerge(github)  # held: no audit yet
+        checks.assert_called_once()
+        checks, details, _ = self.rearmed_run(github)  # re-armed too early: still no audit
+        checks.assert_not_called()
+        self.assertTrue(any(line.startswith('not merged by the runner: ') for line in details), details)
+        self.assertEqual(lane.audit_held_checks(github.comments(), self.head)['next'], tested)  # not the newer next
+        github._comments.append(self.audited_head_comment())
+        checks, details, _ = self.rearmed_run(github)
+        checks.assert_not_called()
         self.assertIn('merged into next as', details[-1])
 
     def test_a_hold_report_is_trusted_only_as_the_runner_s_own_newest_pass_on_the_head(self):
@@ -490,6 +548,28 @@ class AutomergeJobPassesTheAuditHeldChecksTests(unittest.TestCase):
     def test_a_pr_with_no_hold_report_tests_as_before(self):
         auto = self.run_auto_job(FakeGitHub(labels=('automerge',)))
         self.assertIsNone(auto.call_args.kwargs['checked'])
+
+    def held_github(self):
+        wanted = lane.identity('auto', HEAD, MERGE, [])
+        held = comment(lane.report('pr5-r40', 'PASS', HEAD, MERGE, 'auto', 'x', 1, 'host tests', [
+            lane.checks_note(HEAD, MERGE, 'host tests', 'x'), 'not merged by the runner: it touches the lane and has no '
+            'Codex or Claude audit comment yet.'], 'none', '/e', 'owner', wanted), login='github-actions[bot]')
+        return FakeGitHub(labels=('automerge',), comments=[held, CLEAN_AUDIT])
+
+    def run_on_build_runner(self, github, moves):
+        self.role = 'build'
+        with mock.patch.object(lane, 'run_auto', return_value=('PASS', 'x', 'host tests', [])), \
+                mock.patch.object(lane, 'untested_moves', return_value=moves), \
+                mock.patch.object(lane, 'wait_for_room_to_test_on_host', return_value=(None, None)) as wait:
+            self.run_main(github, HEAD, 'PASS', '--mode', 'auto')
+        return wait
+
+    def test_a_run_that_only_reuses_the_pass_waits_for_no_room(self):
+        # Waiting 90 minutes for room, then reporting INCONCLUSIVE, would be the newest report and lose the PASS.
+        self.run_on_build_runner(self.held_github(), ([], '')).assert_not_called()
+
+    def test_a_run_that_has_to_test_again_still_waits_for_room(self):
+        self.run_on_build_runner(self.held_github(), (None, 'its commits touch build inputs')).assert_called_once()
 
 
 if __name__ == '__main__':

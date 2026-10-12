@@ -1035,6 +1035,16 @@ class AutoRunContext:
         self.tested_base = tested_base
 
 
+def checks_stand(checked: dict | None, base_sha: str, head: str) -> bool:
+    """Whether run_auto will let <checked> stand on <base_sha>: next's commits since touch nothing the checks read."""
+    if not checked:
+        return False
+    try:
+        return untested_moves(ROOT, checked['next'], base_sha, head)[0] is not None
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
              context: AutoRunContext | None = None,
@@ -1089,6 +1099,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
                 return verdict, where, ran, [tested] + notes + checks
             tested_base, reused = base_sha, None
         elif scope is None:  # the held run's checks stand; the audit hold still reads the diff's scope
+            if context is not None:  # the report says which next the checks ran with, not the newest
+                context.tested_base = tested_base
             scope = diff_scope(ROOT, base)
             # The ratchet reads the labels, which may have changed since: hot-file-ok taken off (#926 audit).
             too_big = hot_file_violations(ROOT, base, set(labels))
@@ -2350,7 +2362,11 @@ def main(argv=None) -> int:
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     on_build_runner = os.environ.get('SM_LANE_RUNNER_ROLE') == 'build'
     no_room, beside = None, None
-    if request['tier'] == 'auto' and on_build_runner:  # host tests only (NO_APP_BUILD_PER_PR): the host rules
+    audit_checked = audit_held_checks(comments, head) if request['tier'] == 'auto' else None
+    # A run that only reuses the audit-held PASS runs no tests, so it needs no room (#1461): waiting for one could
+    # end in an INCONCLUSIVE report that is the newest and takes the PASS away.
+    if request['tier'] == 'auto' and on_build_runner and not checks_stand(audit_checked, base_sha, head):
+        # host tests only (NO_APP_BUILD_PER_PR): the host rules
         no_room, beside = wait_for_room_to_test_on_host()
         if beside:
             print(f'[lane] {beside}', flush=True)
@@ -2375,7 +2391,7 @@ def main(argv=None) -> int:
         elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
                                                     comments, labels, context=context,
-                                                    checked=audit_held_checks(comments, head))
+                                                    checked=audit_checked)
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
