@@ -118,6 +118,11 @@ public final class SessionEngine {
     /// the notes-folder gatherer decodes it once per paper rather than once per Margin.
     private var exportPageDocumentCache: (itemId: String, text: String?, document: StructuredDocument?)?
 
+    /// Test seam (#1452): runs on the main actor once a re-imported PDF's off-main upgrade plan is back and before
+    /// the "is the listener in this item?" check, so a test can open the item at exactly the point the check
+    /// guards, with no dependence on how the scheduler orders main-actor tasks. Nil in the app.
+    var afterStructuredUpgradePlannedForTesting: (() throws -> Void)?
+
     private struct PlaybackProgress {
         var sourcePercent: Int
         var currentPercent: Int
@@ -909,6 +914,7 @@ public final class SessionEngine {
         var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         if case .upgradeCandidate(let job) = outcome {
             let planned = try await Task.detached(priority: .userInitiated) { try job.plan() }.value
+            try afterStructuredUpgradePlannedForTesting?()
             if case .success(let upgrade) = planned, currentSession?.itemId != job.existing.id {
                 do {
                     try job.apply(upgrade)
