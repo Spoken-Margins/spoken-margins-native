@@ -4,8 +4,9 @@ public enum DeterministicListeningMapPolicy: Equatable, Sendable {
     /// For every text source that has headings (web article, pasted text, Markdown or text file): the
     /// chapters are the author's headings at one level, in order, with the author's titles (#1468).
     /// A section is never merged into another however short it is (#1435). Only a very long one is
-    /// split, at its sub-headings where it has them. A source with fewer than two headings at any
-    /// level gets no map here, and the generated map takes over.
+    /// split, at its sub-headings where it has them. Substantial text before the first heading, with
+    /// the title heading that heads it, is a chapter of its own (#1435). A source with fewer than two
+    /// headings at any level gets no map here, and the generated map takes over.
     case authoredSections
     case canonicalHeadings
 }
@@ -82,7 +83,28 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
             && !canonicalPrefix.isEmpty
             && Self.normalizedTitle(canonicalPrefix) != Self.normalizedTitle(title)
 
+        // Text before the first chapter heading is a chapter of its own when it's substantial: the
+        // listener hears the title and its preamble as that, not as the start of the first section, and
+        // the first section starts at its own heading (#1435). It is named by the title heading that
+        // heads it (the lone `#`), else by the item's title. A line or two of preamble is folded into
+        // the first chapter, as before.
+        let leadChapterEnd: Int? = {
+            guard adaptive, let first = selected.first, first.startChar > 0 else { return nil }
+            let words = String(text.prefix(first.startChar)).split(whereSeparator: \.isWhitespace).count
+            return words >= Self.minimumLeadWords ? first.startChar : nil
+        }()
+
         var drafts: [DraftChapter] = []
+        if let leadChapterEnd {
+            let titleHeading = headings.first { $0.startChar == 0 && $0.level < (selected.first?.level ?? 1) }
+            drafts.append(DraftChapter(
+                baseTitle: titleHeading?.title ?? title,
+                partNumber: 1,
+                level: 0,
+                startChar: 0,
+                endChar: leadChapterEnd
+            ))
+        }
         if hasAuthoredFrontMatter, let firstHeading = selected.first {
             drafts.append(DraftChapter(
                 baseTitle: "Front Matter",
@@ -98,7 +120,7 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
                 baseTitle: heading.title,
                 partNumber: 1,
                 level: heading.level,
-                startChar: index == 0 && (adaptive || !hasAuthoredFrontMatter)
+                startChar: index == 0 && leadChapterEnd == nil && (adaptive || !hasAuthoredFrontMatter)
                     ? 0
                     : heading.startChar,
                 endChar: index + 1 < selected.count ? selected[index + 1].startChar : contentEnd

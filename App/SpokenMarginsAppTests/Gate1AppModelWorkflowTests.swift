@@ -1467,7 +1467,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.selectedItem.text.contains("Summarize Notes synthesizes"))
         XCTAssertTrue(model.selectedItem.text.contains("enable Spoken Margins Text"))
         XCTAssertFalse(model.selectedItem.text.contains("You Can't Inspect the Pill"))
-        XCTAssertEqual(model.selectedItem.chapters.count, 5)
+        XCTAssertEqual(model.selectedItem.chapters.count, 6, "the welcome title heads its opening, then five sections")
     }
 
     /// #1043 APM-10: the practice-Margin step was checked once, before any tap. It must stay open through Add

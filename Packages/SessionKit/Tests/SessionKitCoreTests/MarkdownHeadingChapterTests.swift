@@ -43,7 +43,10 @@ final class MarkdownHeadingChapterTests: XCTestCase {
         )
     }
 
+    /// The plan's `#` title heads its preamble (the build line, what changed), so it is the first
+    /// chapter, and "Try these" starts at its own heading, not at 0 (#1435).
     private let testPlanSections = [
+        "Phone build 744242e: what to try",
         "Try these (about ten minutes)",
         "Also waiting on your check (not in the ten minutes)",
         "Also changed (not in the ten minutes)",
@@ -62,10 +65,52 @@ final class MarkdownHeadingChapterTests: XCTestCase {
 
         XCTAssertEqual(map.chapters.map(\.title), testPlanSections)
         assertContiguous(map, textCount: parsed.text.count)
-        for chapter in map.chapters.dropFirst() {
-            let start = parsed.text.index(parsed.text.startIndex, offsetBy: chapter.startChar)
-            XCTAssertTrue(parsed.text[start...].hasPrefix(chapter.title), "\(chapter.title) starts at its heading")
+        assertEachChapterStartsAtItsHeading(map, text: parsed.text)
+    }
+
+    /// The phone check on build 32 `c9f8bbc` (#1435): six headings, an `#` title, a preamble before
+    /// the first `##`. Each chapter starts at its own heading line, the first at 0.
+    func testPhoneTestPlanC9f8bbcHasSixChaptersAtTheirHeadings() throws {
+        let contents = try String(
+            contentsOf: repositoryRoot().appending(path: "Contracts/fixtures/markdown/test-plan-c9f8bbc.md"),
+            encoding: .utf8
+        )
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "Test plan c9f8bbc.md", contents: contents)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-test-plan", policy: .authoredSections))
+
+        XCTAssertEqual(map.chapters.map(\.title), [
+            "Phone build c9f8bbc: what to try",
+            "Try these (about ten minutes)",
+            "Also waiting on your check",
+            "Also changed (not in the ten minutes)",
+            "Also changed (no phone check written)",
+            "If something is wrong"
+        ])
+        assertContiguous(map, textCount: parsed.text.count)
+        assertEachChapterStartsAtItsHeading(map, text: parsed.text)
+        // "Try these" does not start before its heading: the preamble belongs to the title chapter.
+        let trySection = map.chapters[1]
+        XCTAssertGreaterThan(trySection.startChar, 100)
+        XCTAssertTrue(parsed.text.prefix(trySection.startChar).contains("Settings > Version ends with"))
+    }
+
+    /// Every chapter after a lead starts on the line of its own title, found independently of the parser.
+    private func assertEachChapterStartsAtItsHeading(
+        _ map: ListeningMap, text: String, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let lines = text.components(separatedBy: "\n")
+        var offsets: [String: Int] = [:]
+        var running = 0
+        for textLine in lines {
+            if offsets[textLine] == nil { offsets[textLine] = running }
+            running += textLine.count + 1
         }
+        for chapter in map.chapters {
+            XCTAssertEqual(Optional(chapter.startChar), chapter.startChar == 0 ? 0 : offsets[chapter.title], "\(chapter.title) starts at its heading line", file: file, line: line)
+            let start = text.index(text.startIndex, offsetBy: chapter.startChar)
+            XCTAssertTrue(text[start...].hasPrefix(chapter.title), "\(chapter.title) starts at its heading", file: file, line: line)
+        }
+        XCTAssertEqual(map.chapters.first?.startChar, 0, file: file, line: line)
     }
 
     func testImportedFileBecomesTheSameChapters() throws {
@@ -117,8 +162,8 @@ final class MarkdownHeadingChapterTests: XCTestCase {
 
     func testSetextHeadingsAreChapters() throws {
         let markdown = "Opening\n=======\n\n\(words(30))\n\nMiddle\n------\n\n\(words(30))\n\nClosing\n-------\n\n\(words(6))\n\nEpilogue\n--------\n\n\(words(6))"
-        // The lone top heading is the title of the piece; the underlined ones are its sections.
-        XCTAssertEqual(try titles(markdown), ["Middle", "Closing", "Epilogue"])
+        // The lone top heading heads the opening (30 words) that comes before the first section.
+        XCTAssertEqual(try titles(markdown), ["Opening", "Middle", "Closing", "Epilogue"])
     }
 
     func testTitleHeadingAloneMakesNoChapters() throws {
@@ -131,6 +176,36 @@ final class MarkdownHeadingChapterTests: XCTestCase {
 
     func testTitleHeadingDoesNotBecomeAChapter() throws {
         let markdown = "# Notes\n\n\(words(10))\n\n## One\n\n\(words(10))\n\n## Two\n\n\(words(10))"
+        XCTAssertEqual(try titles(markdown), ["One", "Two"])
+    }
+
+    // MARK: #1435: the title heading and the text before the first section
+
+    func testTitleHeadingWithASubstantialPreambleIsTheFirstChapter() throws {
+        let markdown = "# Notes\n\n\(words(30))\n\n## One\n\n\(words(10))\n\n## Two\n\n\(words(10))"
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "notes.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-1"))
+        XCTAssertEqual(map.chapters.map(\.title), ["Notes", "One", "Two"])
+        assertContiguous(map, textCount: parsed.text.count)
+        assertEachChapterStartsAtItsHeading(map, text: parsed.text)
+    }
+
+    func testPreambleWithoutATitleHeadingIsNamedByTheItemTitle() throws {
+        let markdown = "---\ntitle: Field notes\n---\n\n\(words(40))\n\n## One\n\n\(words(10))\n\n## Two\n\n\(words(10))"
+        XCTAssertEqual(try titles(markdown), ["Field notes", "One", "Two"])
+    }
+
+    func testAShortPreambleIsFoldedIntoTheFirstChapter() throws {
+        let markdown = "# Notes\n\nThree words here.\n\n## One\n\n\(words(10))\n\n## Two\n\n\(words(10))"
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "notes.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-1"))
+        XCTAssertEqual(map.chapters.map(\.title), ["One", "Two"])
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
+    }
+
+    func testTitleHeadingAndTheSectionsOfAPlanWithNoPreambleStayAsTheyWere() throws {
+        // "# Title" directly above the first `##`: no preamble, so no chapter for the title alone.
+        let markdown = "# Title\n\n## One\n\n\(words(30))\n\n## Two\n\n\(words(30))"
         XCTAssertEqual(try titles(markdown), ["One", "Two"])
     }
 

@@ -188,7 +188,8 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.status, "ready")
         XCTAssertEqual(
             model.selectedItem.chapters.map(\.title),
-            EmojiArticleRegressionFixture.sectionHeadings
+            // The article's opening paragraphs, under its `#` title, are a chapter before the first section (#1435).
+            [EmojiArticleRegressionFixture.title] + EmojiArticleRegressionFixture.sectionHeadings
         )
     }
 
