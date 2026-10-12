@@ -10,7 +10,7 @@ extension Gate1AppModel {
             diagnostics["sessionTTS"] = "Test audio override"
             try configureAudioPlaybackPolicy(audioPlaybackClientOverride)
             sessionAudioPlaybackClient = audioPlaybackClientOverride
-            return audioPlaybackClientOverride
+            return NoopAudioPlaybackClient()
         }
         sanitizeTTSMode()
         let speech = try makeSpeechPlaybackClient()
