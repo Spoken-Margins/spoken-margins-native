@@ -268,6 +268,26 @@ elif args[:1] == ["api"] and args[1].endswith("/issues/184/comments"):
     for body in ("```text\nLane report integration-%s — PASS\nran: --plan app (pass: 564 of 564 tests)\n```" % tip[:7],
                  "```text\nLane report journeys-%s — PASS\nran: J4 (pass)\n```" % tip[:7]):
         print(json.dumps(body))
+elif args[:2] in (["issue", "list"], ["issue", "create"], ["issue", "edit"], ["issue", "close"],
+                  ["issue", "comment"]):
+    path = os.environ.get("FAKE_ISSUES")
+    if not path:
+        sys.exit(1)  # GitHub unreachable for issues
+    items = json.load(open(path)) if os.path.exists(path) else []
+    def option(name):
+        return args[args.index(name) + 1]
+    if args[1] == "list":
+        print(json.dumps(items))
+    elif args[1] == "create":
+        items.append({"number": 100 + len(items), "title": option("--title"), "body": option("--body"),
+                      "labels": option("--label")})
+    elif args[1] == "edit":
+        for item in items:
+            if str(item["number"]) == args[2]:
+                item["body"] = option("--body")
+    elif args[1] == "close":
+        items = [item for item in items if str(item["number"]) != args[2]]
+    json.dump(items, open(path, "w"))
 elif args[:2] == ["api", "graphql"]:
     def pr(n, title, files, issue):
         return {"number": n, "title": title, "url": "https://example/pr/%d" % n, "mergedAt": "", "body": "",
@@ -461,6 +481,69 @@ class PhoneBuildTests(unittest.TestCase):
         again = self.run_build('--if-changed')
         self.assertEqual(again.returncode, 0)
         self.assertIn('already failed', again.stdout)
+
+    def next_tip(self):
+        """Another merge of PR 12 on next, which the fake gh says the lane runner tested."""
+        self.git('commit', '-q', '--allow-empty', '-m', 'Merge pull request #12: another change')
+        self.tip = self.git('rev-parse', 'HEAD')
+        self.env['FAKE_TIP'] = self.tip
+
+    def release_items(self):
+        return json.loads(self.issues.read_text()) if self.issues.exists() else []
+
+    def test_a_failed_release_build_opens_one_item_updates_it_and_the_next_success_closes_it(self):
+        """#1465: Release phone builds failed for two days while Debug tips passed, and nobody was told."""
+        self.issues = self.tmp / 'issues.json'
+        self.env['FAKE_ISSUES'] = str(self.issues)
+        self.assertEqual(self.run_build().returncode, 0)
+        good = self.tip[:7]
+        self.assertEqual(self.release_items(), [])  # a success with nothing open files nothing
+
+        self.next_tip()
+        failed = self.run_build(FAKE_FAIL='error: Command CodeSign failed')
+        self.assertEqual(failed.returncode, 1)
+        (item,) = self.release_items()
+        self.assertEqual(item['title'], 'Release phone build is failing on next')
+        self.assertIn(self.tip, item['body'])                       # the failed commit
+        self.assertIn(f'Last good binary: `{good}`', item['body'])  # and what can still be installed
+        self.assertIn('Command CodeSign failed', item['body'])
+
+        self.next_tip()
+        self.assertEqual(self.run_build(FAKE_FAIL='error: Command CodeSign failed').returncode, 1)
+        (item,) = self.release_items()                              # still one item, now naming the newer commit
+        self.assertIn(self.tip, item['body'])
+        self.assertIn('Another commit fails the Release build', self.log.read_text())
+
+        self.next_tip()
+        self.assertEqual(self.run_build().returncode, 0)
+        self.assertEqual(self.release_items(), [])                  # the success closed it
+        self.assertIn('issue close', self.log.read_text())
+
+    def test_a_signing_failure_already_tells_the_owner_so_it_files_nothing(self):
+        self.issues = self.tmp / 'issues.json'
+        self.env['FAKE_ISSUES'] = str(self.issues)
+        done = self.run_build(FAKE_FAIL='error: errSecInternalComponent')
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('phone build needs you', self.log.read_text())
+        self.assertEqual(self.release_items(), [])
+
+    def test_only_the_exact_title_is_the_owned_item(self):
+        self.issues = self.tmp / 'issues.json'
+        lookalike = {'number': 7, 'title': 'Release phone build is failing on next branch', 'body': 'someone else\'s'}
+        self.issues.write_text(json.dumps([lookalike]))
+        self.env['FAKE_ISSUES'] = str(self.issues)
+        self.assertEqual(self.run_build(FAKE_FAIL='error: Command CodeSign failed').returncode, 1)
+        items = self.release_items()
+        self.assertEqual([i['title'] for i in items],
+                         ['Release phone build is failing on next branch', 'Release phone build is failing on next'])
+        self.assertEqual(items[0], lookalike)
+        listed = [l for l in self.log.read_text().splitlines() if l.startswith('gh issue list')]
+        self.assertTrue(listed and '--search' not in listed[0] and '--label where:mac' in listed[0], listed)
+
+    def test_a_release_failure_with_github_unreachable_still_fails_the_build_plainly(self):
+        done = self.run_build(FAKE_FAIL='error: Command CodeSign failed')  # no FAKE_ISSUES: gh issue exits 1
+        self.assertEqual(done.returncode, 1)
+        self.assertIn('could not reach GitHub to report the Release failure', done.stdout)
 
     def test_if_changed_skips_when_latest_is_the_tip(self):
         self.assertEqual(self.run_build().returncode, 0)
@@ -925,6 +1008,106 @@ class VerdictTests(unittest.TestCase):
         plan = self.plan_with(self.RECORDED[:1] + [other, ran])
         self.assertIn('No integration run has reported on this commit yet.', plan)
         self.assertNotIn('skipped by the Test Desk', plan)
+
+    # #1465: the integration run's PASS is app tests only; the plan says what else was or wasn't tested.
+    MIXED = {'body': "```text\nLane report integration-828597e — PASS\ncommit 828597e7 (next's tip) · integration run: "
+                     '--plan app · 11:09–11:25 local, 2026-10-12\nrun by: Test Desk\nran:\n'
+                     '  1. --plan app: 566 passed, 0 failed, 0 skipped  ← verdict input\n'
+                     '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n'
+                     'failing: \nflaky: none this run\ncrashes: none recorded\n'
+                     "not run: agent-driven journeys (they need an attended session)\n"
+                     "not verified (owner's phone): audible content, Bluetooth\nevidence: /mac/evidence\n```\n\n"
+                     '828597e is the current phone candidate: app tests passed; scripted journeys failed '
+                     '(testOpen); attended journeys not run.'}
+
+    def outcomes(self, recorded):
+        plan = self.plan_with(recorded)
+        section = plan.split('## What was tested on this commit', 1)[1].split('\n## ', 1)[0]
+        return plan, {line[2:].split(':', 1)[0]: line for line in section.splitlines() if line.startswith('- ')}
+
+    def test_each_kind_of_check_gets_its_own_outcome_for_the_commit(self):
+        _, got = self.outcomes([self.MIXED])
+        self.assertIn('**pass** (1. --plan app: 566 passed', got['App tests'])
+        self.assertIn('**pass**', got['Release device build'])
+        self.assertIn('**fail** (J1Tests/testOpen failed, J4Tests/testPlay passed)', got['Scripted journeys'])
+        self.assertIn('**not run** (agent-driven journeys need an attended session)', got['Attended journeys'])
+        self.assertIn('**not run**', got['Upgrade from the last shipped build'])
+        self.assertIn('**not run** (yours', got['Phone checks'])
+
+    def test_a_unit_test_pass_with_journeys_failed_keeps_both_exclusions_visible(self):
+        plan, _ = self.outcomes([self.MIXED])
+        self.assertIn("- not run: agent-driven journeys (they need an attended session)", plan)
+        self.assertIn("- not verified (owner's phone): audible content, Bluetooth", plan)
+
+    def test_a_unit_test_pass_with_journeys_not_run_says_not_run(self):
+        quiet = {'body': self.MIXED['body'].replace(
+            '  scripted journeys (probation, not verdict input): J1Tests/testOpen failed, J4Tests/testPlay passed\n', '')}
+        _, got = self.outcomes([quiet])
+        self.assertIn('**not run** (the integration report lists no scripted journeys)', got['Scripted journeys'])
+        _, got = self.outcomes([{'body': self.MIXED['body'].replace('J1Tests/testOpen failed, J4Tests/testPlay passed',
+                                                                    'J1Tests/testOpen not_run')}])
+        self.assertIn('**not run**', got['Scripted journeys'])
+
+    def test_failing_tests_and_the_attended_verdict_reach_the_plan(self):
+        failing = {'body': self.MIXED['body'].replace('PASS', 'FAIL', 1).replace('failing: \n', 'failing: AppTests/testX\n')}
+        attended = {'body': '```text\nLane report journeys-828597e — FAIL\ncommit 828597e7\nfailing: J4 step 3\n```'}
+        plan, got = self.outcomes([failing, attended])
+        self.assertIn('**fail**', got['App tests'])
+        self.assertIn('**fail** (Lane report journeys-828597e — FAIL)', got['Attended journeys'])
+        self.assertIn('- failing: AppTests/testX', plan)
+        self.assertIn('- failing: J4 step 3', plan)
+
+    def report_with(self, extra, verdict='PASS'):
+        body = self.MIXED['body'].replace('PASS', verdict, 1).replace('failing: \n', '')
+        return {'body': body.replace('flaky: none this run\n', extra + 'flaky: none this run\n')}
+
+    def test_an_upgrade_line_is_a_pass_or_fail_only_when_it_says_so(self):
+        for line, status in (('upgrade: passed (Build 30 library opened)', 'pass'), ('upgrade: FAILED (database)', 'fail'),
+                             ('upgrade: not run (no Build 29 library)', 'not run'), ('upgrade: skipped', 'not run'),
+                             ('upgrade: blocked', 'not run'), ('upgrade: 0 failed', 'not run'),
+                             ('upgrade: unclear', 'not run')):
+            _, got = self.outcomes([self.report_with(line + '\n')])
+            self.assertIn(f'**{status}**', got['Upgrade from the last shipped build'], line)
+
+    def test_journeys_that_did_not_all_run_are_not_a_pass(self):
+        partial = {'body': self.MIXED['body'].replace('J1Tests/testOpen failed, J4Tests/testPlay passed',
+                                                      'J1Tests/testOpen passed, J4Tests/testPlay not_run')}
+        _, got = self.outcomes([partial])
+        self.assertIn('**not run**', got['Scripted journeys'])
+
+    def test_an_inconclusive_run_proves_no_scripted_journey(self):
+        _, got = self.outcomes([self.report_with('', verdict='INCONCLUSIVE')])
+        self.assertIn('**not run (inconclusive)**', got['App tests'])
+        self.assertIn('**not run** (the integration run did not finish)', got['Scripted journeys'])
+
+    def test_flakes_and_crashes_reach_the_plan_but_empty_lines_do_not(self):
+        body = self.MIXED['body'].replace('flaky: none this run', 'flaky: AppTests/testSlow').replace(
+            'crashes: none recorded', 'crashes: SpokenMarginsApp-2026-10-12.ips').replace('failing: \n', 'failing: none\n')
+        plan, _ = self.outcomes([{'body': body}])
+        self.assertIn('- flaky: AppTests/testSlow', plan)
+        self.assertIn('- crashes: SpokenMarginsApp-2026-10-12.ips', plan)
+        self.assertNotIn('- failing:', plan)
+        plan, _ = self.outcomes([self.MIXED])
+        self.assertNotIn('- flaky:', plan)
+        self.assertNotIn('- crashes:', plan)
+
+    def test_a_commit_with_no_report_has_every_check_not_run(self):
+        _, got = self.outcomes([])
+        for kind in ('App tests', 'Scripted journeys', 'Attended journeys', 'Upgrade from the last shipped build'):
+            self.assertIn('**not run**', got[kind], kind)
+
+    def test_a_report_for_another_commit_is_not_this_commits_record(self):
+        other = {'body': self.MIXED['body'].replace('828597e', '1234567')}
+        _, got = self.outcomes([other])
+        self.assertIn('**not run** (no integration report for this commit)', got['App tests'])
+
+    def test_without_github_the_outcomes_are_unknown_not_not_run(self):
+        self.module.gh = lambda *args: None
+        self.module.plan_base = lambda sha: (None, 'the start')
+        self.module.merged_prs = lambda base, sha: {}
+        with tempfile.TemporaryDirectory() as folder:
+            plan = self.module.write_plan(Path(folder), '828597e7' + '0' * 32, 'host tests').read_text()
+        self.assertIn('- App tests: **unknown**', plan)
 
     def test_odd_bodies_are_skipped_not_fatal(self):
         line_separator = {'body': 'a note\u2028with a line separator'}

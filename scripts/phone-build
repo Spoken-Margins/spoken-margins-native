@@ -45,6 +45,12 @@ Gates (hourly coalescing, #1329; bugs are fine, crashes the runners would catch 
   below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
   merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
+- The test plan has one record for the exact commit: app tests, Release device build, scripted journeys,
+  attended journeys, upgrade and phone checks, each pass, fail or not run, plus every failure and
+  exclusion the reports on #184 name (#1465).
+- A failed Release build (the signed iPhone build or its checks) opens one item, "Release phone build is
+  failing on next", naming the failed commit and the last good binary; another failing commit updates
+  it, and the next Release success closes it. GitHub unreachable only skips the report.
 
 The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
 
@@ -143,6 +149,8 @@ ATTACH_LIMIT = 50_000_000
 MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re.I)
 # A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
 SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/)\S+')
+RELEASE_ISSUE_TITLE = 'Release phone build is failing on next'  # one owned item, updated and closed here (#1465)
+RELEASE_ISSUE_LABELS = 'bug,regression,where:mac'
 MERGED_ON_NEXT = 'status: needs-human-validation'  # dispatch adds it when a PR for the issue merges into next
 
 
@@ -732,6 +740,96 @@ def integration_skip(bodies: list[str], sha: str) -> str | None:
     return None
 
 
+# Lines of a lane report that say something was left out, failed or went wrong: the plan carries them
+# whole, not just the report's first line (#1465).
+CARRIED_LINES = re.compile(r'(failing|flaky|crashes|why inconclusive|merges since the last PASS|not run|not verified'
+                           r'|integration: skipped)\b', re.I)
+QUIET_LINE = re.compile(r':\s*(none( this run| recorded)?|n/a)?\.?$', re.I)  # "failing:", "flaky: none this run"
+OUTCOME_WORDS = {'PASS': 'pass', 'FAIL': 'fail', 'INCONCLUSIVE': 'not run (inconclusive)'}
+
+
+def report_body(bodies: list[str], kind: str, sha: str) -> list[str]:
+    """The lines of a `Lane report <kind>-<sha7>` report up to its closing fence, or []."""
+    body = []
+    for line in report_lines(bodies, kind, sha) or []:
+        if line.startswith('```'):
+            break
+        body.append(line)
+    return body
+
+
+def report_verdict(lines: list[str]) -> str | None:
+    match = re.search(r'\u2014 (PASS|FAIL|INCONCLUSIVE)\b', lines[0]) if lines else None
+    return match.group(1) if match else None
+
+
+def scripted_journeys_outcome(lines: list[str]) -> tuple[str, str]:
+    line = next((l for l in lines if l.startswith('scripted journeys')), None)
+    if line is None:
+        return 'not run', 'the integration report lists no scripted journeys'
+    detail = line.split(':', 1)[-1].strip()
+    if re.search(r'\b(failed|missing)\b', detail):
+        return 'fail', detail
+    # Only an all-passed line is a pass: a journey that was skipped or never ran leaves the rest unproven.
+    unproven = re.search(r'\b(not_run|skipped)\b', detail)
+    return ('pass' if re.search(r'\bpassed\b', detail) and not unproven else 'not run'), detail
+
+
+def commit_record(reports: list[str] | None, sha: str) -> list[tuple[str, str, str]]:
+    """One record per exact commit: (what, pass | fail | not run, detail) for each kind of check, the
+    integration run and the journeys report read for this commit only (#1465). A kind nobody reported on
+    is `not run`, never left out."""
+    if reports is None:
+        unknown = f'GitHub could not be reached, so #{REPORTS_ISSUE} is unread'
+        return [('App tests', 'unknown', unknown), ('Release device build', 'pass', 'this build, signed'),
+                ('Scripted journeys', 'unknown', unknown), ('Attended journeys', 'unknown', unknown),
+                ('Upgrade from the last shipped build', 'unknown', unknown),
+                ('Phone checks', 'not run', 'yours: the checks below')]
+    integration = report_body(reports, 'integration', sha)
+    journeys = report_body(reports, 'journeys', sha)
+    verdict = report_verdict(integration)
+    ran = next((l for l in integration if re.match(r'(\d+\. )?(ran: )?--plan app', l)), '')
+    skip = integration_skip(reports, sha)
+    app = (OUTCOME_WORDS[verdict], ran or integration[0]) if verdict else \
+        ('not run', f'skipped by the Test Desk: {skip}' if skip else 'no integration report for this commit')
+    scripted = scripted_journeys_outcome(integration) if verdict in ('PASS', 'FAIL') else \
+        ('not run', 'the integration run did not finish' if verdict else 'no integration run')
+    attended_verdict = report_verdict(journeys)
+    attended = (OUTCOME_WORDS[attended_verdict], journeys[0]) if attended_verdict else \
+        ('not run', 'agent-driven journeys need an attended session')
+    upgrade_line = next((l for l in [*integration, *journeys] if re.match(r'upgrade\b', l, re.I)), None)
+    # Pass or fail only when the line says so; "skipped", "blocked", "not run" and the rest are not run.
+    if upgrade_line is None:
+        upgrade = ('not run', 'no upgrade check was reported for this commit')
+    elif re.search(r'\b(not run|skipped|blocked|inconclusive)\b|\b0 failed\b', upgrade_line, re.I) is None \
+            and re.search(r'\bfail', upgrade_line, re.I):
+        upgrade = ('fail', upgrade_line)
+    elif re.search(r'\b(not run|skipped|blocked|inconclusive|fail\w*)\b', upgrade_line, re.I) is None \
+            and re.search(r'\bpass', upgrade_line, re.I):
+        upgrade = ('pass', upgrade_line)
+    else:
+        upgrade = ('not run', upgrade_line)
+    return [('App tests', *app), ('Release device build', 'pass', 'this build, signed'),
+            ('Scripted journeys', *scripted), ('Attended journeys', *attended),
+            ('Upgrade from the last shipped build', *upgrade), ('Phone checks', 'not run', 'yours: the checks below')]
+
+
+def outcome_lines(reports: list[str] | None, sha: str) -> list[str]:
+    """The plan's section on what was and wasn't tested on this commit, with every exclusion and failure the
+    reports name, not only their first lines (#1465)."""
+    lines = ['## What was tested on this commit', '']
+    lines += [f'- {what}: **{status}**' + (f' ({detail})' if detail else '')
+              for what, status, detail in commit_record(reports, sha)]
+    carried = []
+    for kind in ('integration', 'journeys') if reports is not None else ():
+        for line in report_body(reports, kind, sha)[1:]:
+            if CARRIED_LINES.match(line) and not QUIET_LINE.search(line) and line not in carried:
+                carried.append(line)
+    if carried:
+        lines += ['', 'The reports also say:', ''] + [f'- {line}' for line in carried]
+    return lines + ['']
+
+
 def latest_verdict(sha: str, bodies: list[str] | None = None) -> str | None:
     """The newest integration report on #184 for this commit, whoever ran it (#444)."""
     bodies = report_comments() if bodies is None else bodies
@@ -839,7 +937,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     journeys = report_line(reports, 'journeys', sha) if reports is not None else None
     if journeys:
         lines.append(f'Latest journeys run for this commit: {journeys}.')
-    lines.append('')
+    lines += ['', *outcome_lines(reports, sha)]
     path = folder / 'test-plan.md'
     shutil.rmtree(str(folder / 'files'), ignore_errors=True)  # --plan-only rewrites: only this plan's files
     if prs is None:
@@ -1070,6 +1168,74 @@ def notify_ready(sha: str, plan: Path) -> None:
            '"Install Spoken Margins on iPhone" on the Desktop.')
 
 
+def release_issue() -> tuple[bool, dict | None]:
+    """(known, the open item this script owns): `known` is False when gh failed, so nobody files twice."""
+    # A plain list, not --search: GitHub's search index lags a created or closed issue by minutes.
+    raw = gh('issue', 'list', '--repo', REPO, '--state', 'open', *[a for label in RELEASE_ISSUE_LABELS.split(',')
+                                                                    for a in ('--label', label)],
+             '--json', 'number,title,body', '--limit', '100')
+    try:
+        found = json.loads(raw) if raw else None
+    except ValueError:
+        found = None
+    if not isinstance(found, list):
+        return False, None
+    return True, next((i for i in found if i.get('title') == RELEASE_ISSUE_TITLE), None)
+
+
+def release_failure_body(sha: str, failure: str, log_tail: str) -> str:
+    good = latest_build()
+    last_good = (f"`{good['sha7']}` ({good.get('subject', '')}), built {good.get('built_at', 'unknown')}; "
+                 'it is the build the Desktop installer still offers' if good.get('sha7') else
+                 'none on this Mac yet')
+    subject = git('log', '-1', '--format=%s', sha, check=False)
+    return '\n'.join([
+        f'The signed Release build for the iPhone of `{sha[:7]}` ({subject}) failed on the Mac, so no phone '
+        'build was made for it. Debug builds and the integration run can pass while this fails.', '',
+        f'- Failed commit: `{sha}`',
+        f'- When: {datetime.datetime.now().isoformat(timespec="seconds")} (Mac local time)',
+        f'- What failed: {failure[:400]}',
+        f'- Last good binary: {last_good}',
+        f'- Log: `{phone_dir() / "last-failure.log"}` on the Mac', '',
+        '```text', log_tail.strip().replace(str(Path.home()), '~')[-1500:], '```', '',
+        'This item is updated by `scripts/phone-build` when another commit fails the same way and is '
+        'closed by it when a Release build succeeds. Nothing else needs to open or close it.',
+        '', '---', '_Filed by scripts/phone-build (#1465)_', ''])
+
+
+def report_release_failure(sha: str, failure: str, log_tail: str) -> None:
+    """Open the one owned item for a failed Release build, or update it with the newer failed commit.
+    Never fails the build; says so when GitHub can't be reached."""
+    known, item = release_issue()
+    if not known:
+        say('could not reach GitHub to report the Release failure; the next failure will try again')
+        return
+    body = release_failure_body(sha, failure, log_tail)
+    if item is None:
+        made = gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--label', RELEASE_ISSUE_LABELS,
+                  '--body', body)
+        if made is None:  # a label missing here would otherwise hide the failure; file it without them
+            made = gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--body', body)
+        if made is None:
+            say('could not file the Release failure on GitHub')
+        return
+    if sha[:7] in (item.get('body') or ''):
+        return
+    if gh('issue', 'edit', str(item['number']), '--repo', REPO, '--body', body) is None \
+            or gh('issue', 'comment', str(item['number']), '--repo', REPO,
+                  '--body', f'Another commit fails the Release build: `{sha[:7]}`. {failure[:300]}') is None:
+        say(f'could not update #{item["number"]} with the Release failure of {sha[:7]}')
+
+
+def close_release_failure(sha: str) -> None:
+    """A Release build succeeded: close the owned item, if one is open."""
+    known, item = release_issue()
+    if known and item:
+        if gh('issue', 'close', str(item['number']), '--repo', REPO, '--reason', 'completed', '--comment',
+              f'Fixed: the Release build of `{sha[:7]}` succeeded on the Mac. The phone build is current again.') is None:
+            say(f'could not close #{item["number"]}; close it by hand')
+
+
 def record_attempt(sha: str, result: str) -> None:
     (phone_dir() / 'last-attempt.json').write_text(json.dumps(
         {'sha': sha, 'result': result, 'at': datetime.datetime.now().isoformat(timespec='seconds')}) + '\n')
@@ -1080,6 +1246,7 @@ def build(sha: str) -> int:
     work = phone_dir() / '.work' / f'{stamp}-{sha[:7]}'
     cache = phone_dir() / '.cache'
     src, derived, log = cache / 'src', cache / 'dd-release', work / 'build.log'
+    release = 'not started'  # 'started' until the Release app is built and verified, then 'built' (#1465)
     work.mkdir(parents=True)
     try:
         cache.mkdir(exist_ok=True)
@@ -1110,6 +1277,7 @@ def build(sha: str) -> int:
             checks = 'host tests (--plan fast) and the simulator build passed here, on this exact commit'
         say(f'checks: {checks}')
         say('building the signed Release app for iPhone (waits for a build slot)')
+        release = 'started'
         started = datetime.datetime.now()
         if run_logged([*lane, *project, '-configuration', 'Release', '-destination', 'generic/platform=iOS',
                        '-derivedDataPath', str(derived), '-allowProvisioningUpdates',
@@ -1125,6 +1293,7 @@ def build(sha: str) -> int:
         info = plistlib.loads((app / 'Info.plist').read_bytes())
         if 'SMBuildCommit' in info and info['SMBuildCommit'] != sha:
             raise BuildFailed(f'the app says it was built from {info["SMBuildCommit"]!r}, not {sha}')
+        release = 'built'
         folder = phone_dir() / f'{stamp}-{sha[:7]}'
         folder.mkdir()
         subprocess.check_call(['ditto', str(app), str(folder / APP_NAME)])
@@ -1138,6 +1307,10 @@ def build(sha: str) -> int:
         plan = write_plan(folder, sha, checks, commit_in_app=bool(info.get('SMBuildCommit')))
         point_latest(folder)
         record_attempt(sha, 'built')
+        try:
+            close_release_failure(sha)  # only once the new build is the latest one
+        except Exception as failure:  # noqa: BLE001 - reporting never fails a build
+            say(f'could not close the Release failure item: {failure}')
         prune()
         share_files(folder, sha)
         say(f'done: {folder}')
@@ -1153,6 +1326,11 @@ def build(sha: str) -> int:
         if 'Signing needs the owner' in str(failure):
             # Only signing waits on the owner; other failures clear with the next change on next.
             notify('Spoken Margins: phone build needs you', str(failure).split('Signing needs the owner: ', 1)[-1])
+        elif release == 'started':  # signing already told the owner; any other Release failure is filed (#1465)
+            try:
+                report_release_failure(sha, str(failure), tail(log))
+            except Exception as reporting:  # noqa: BLE001 - reporting never fails a build
+                say(f'could not report the Release failure: {reporting}')
         return 1
     finally:
         shutil.rmtree(work, ignore_errors=True)
