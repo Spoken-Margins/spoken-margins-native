@@ -457,6 +457,41 @@ PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 RUNNER_TESTS_TIMEOUT = 600
 
 
+# #705: on intermittent runs the AudioAdapters step launched the app (AcquiredPID) and then sat until its 5m00s
+# budget with no test-runner handshake: no "Test Suite" line, 0 tests, exit 124, an unreadable xcresult. Runs that
+# start normally print their first Test Suite line about 7 s after launch and finish in 8-30 s. A step that has
+# printed none after this long has stalled at startup: record what the host app was doing, then launch the same
+# test command once more inside the same budget. The retry runs the same real tests; nothing is skipped or widened.
+STARTUP_STALL_SECONDS = 90
+STARTUP_RETRIES = 1
+TESTS_STARTED = re.compile(r"^Test (?:Suite|Case) '", re.M)
+
+
+class StartupStall(Exception):
+    pass
+
+
+def stall_evidence(udid, folder, sample_seconds=3):
+    """Best effort: which processes of this simulator are alive and what the host app is doing. Never raises."""
+    folder.mkdir(parents=True, exist_ok=True)
+    found = {}
+    try:
+        ps = subprocess.run(['ps', '-axo', 'pid=,etime=,stat=,command='], capture_output=True, text=True, timeout=20).stdout
+        mine = [line for line in ps.splitlines() if udid and udid in line]
+        (folder / 'processes.txt').write_text('\n'.join(mine) + '\n')
+        found['processes'] = len(mine)
+        for line in mine:
+            fields = line.split(None, 3)
+            if len(fields) == 4 and 'SpokenMarginsApp.app/SpokenMarginsApp' in fields[3]:
+                pid = fields[0]
+                sampled = subprocess.run(['sample', pid, str(sample_seconds), '-file', str(folder / f'sample-{pid}.txt')],
+                                         capture_output=True, text=True, timeout=sample_seconds + 30)
+                found.setdefault('samples', []).append({'pid': int(pid), 'exit': sampled.returncode})
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        found['error'] = repr(error)
+    return found
+
+
 # The SessionKit tests that need a running audio output (#909).
 REAL_PLAYER_TEST = re.compile(r'/(?:RealPlayer[A-Z]\w*Tests|StreamSeekLifecycleTests)/')
 
@@ -498,7 +533,7 @@ class Run:
         return False
 
     def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
-                record_source=None):
+                startup=None, record_source=None):
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
         self.manifest['steps'].append(entry)
@@ -516,7 +551,10 @@ class Run:
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
-            start = time.monotonic()
+            start = attempt_start = time.monotonic()
+            attempt = 1
+            watching = startup is not None
+            scan_from = 0  # each launch is judged by its own part of the shared log
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -531,10 +569,40 @@ class Run:
                         result = process.wait(timeout=min(0.25, remaining))
                         break
                     except subprocess.TimeoutExpired:
+                        pass
+                    if not watching:
                         continue
-            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError) as stop:
-                entry['interrupted'] = True
-                entry['signalled'] = isinstance(stop, KeyboardInterrupt)  # the lane stopped this run, not the step's own limit
+                    text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
+                    if TESTS_STARTED.search(text):
+                        watching = False
+                    elif time.monotonic() - attempt_start >= startup['seconds']:
+                        lines = [line for line in text.splitlines() if line.strip()]
+                        stall = {'attempt': attempt, 'after_seconds': round(time.monotonic() - attempt_start, 1),
+                                 'last_log_line': lines[-1][:200] if lines else None}
+                        stall.update(startup['diagnose'](self.output / f'{name}-stall-{attempt}'))
+                        # The diagnosis takes seconds; a launch that began its tests meanwhile is slow, not stalled.
+                        if TESTS_STARTED.search((self.output / f'{name}.log').read_text(errors='replace')[scan_from:]):
+                            entry.setdefault('slow_starts', []).append(stall)
+                            watching = False
+                            continue
+                        entry.setdefault('startup_stalls', []).append(stall)
+                        print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
+                              f'(last log line: {stall["last_log_line"]}); attempt {attempt}', flush=True)
+                        stop_process_group(process)
+                        if attempt > startup['retries']:
+                            raise StartupStall()
+                        startup['reset'](attempt)
+                        attempt += 1
+                        log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
+                        log.flush()
+                        scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
+                        attempt_start = time.monotonic()
+                        process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                                   start_new_session=True)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
+                # A startup stall is reported as its own reason below, not as the step running out of budget.
+                entry['interrupted'] = not isinstance(stopped, StartupStall)
+                entry['signalled'] = isinstance(stopped, KeyboardInterrupt)  # the lane stopped this run, not the step's own limit
                 stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
@@ -550,6 +618,24 @@ class Run:
         entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
+        if entry.get('startup_stalls'):
+            entry['startup_attempts'] = attempt
+            last = entry['startup_stalls'][-1]
+            if result and last['attempt'] == attempt:  # the final launch itself stalled
+                errors.append(f'Test runner printed no test output in {attempt} launch(es) of {startup["seconds"]}s '
+                              f'(last log line: {last["last_log_line"]}); host-app samples under {name}-stall-*/')
+            elif not result and len(entry['startup_stalls']) == 1:
+                # #705, owner's call 2026-10-11: one stall that the first retry recovered, with every requested
+                # test then passing (the checks below still hold the step to that), counts as a PASS. The stall
+                # stays on record: the lane runner logs each one on #705 as evidence of the cause.
+                entry['startup_recovered'] = True
+                print(f'warning: {name} recovered after 1 startup stall of {startup["seconds"]}s; '
+                      f'samples under {name}-stall-*/', flush=True)
+            elif not result:
+                # More than one stall before a pass is not covered by that call: the step stays INCONCLUSIVE.
+                errors.append(f'Recovered after {len(entry["startup_stalls"])} startup stall(s) of {startup["seconds"]}s; '
+                              f'the tests passed on launch {attempt} but the stalls are undiagnosed, so this is not a PASS '
+                              f'(samples under {name}-stall-*/)')
         if tests:
             records = record_source() if record_source else test_records(text)
             payload = None
@@ -864,11 +950,26 @@ class Run:
             expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
+            result_bundle = self.output / 'tests.xcresult'
+
+            def relaunch(attempt):
+                # The stalled attempt's app may still be up, and xcodebuild refuses an existing result bundle.
+                app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+                bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
+                subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
+                               cwd=ROOT, capture_output=True, timeout=60)
+                if result_bundle.exists():
+                    result_bundle.rename(self.output / f'tests-stalled-{attempt}.xcresult')
+
+            # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
+            startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
+                       'diagnose': lambda folder: stall_evidence(chosen['udid'], folder),
+                       'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                          'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
-                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
-                         timeout=timeout, expected=expected, tests=True, probation=on_probation)
+                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
+                         timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
         finally:
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.

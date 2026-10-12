@@ -3027,5 +3027,106 @@ class BaseScriptsFallbackTests(unittest.TestCase):
                 lane.main(['--pr', '1', '--event-head', HEAD, '--run-id', '1', '--tree', str(self.tree)])
         fallback.assert_called_once_with(self.tree.resolve(), 'next')
 
+def stalled_step(recovered=True, stalls=1, errors=(), tests=3):
+    """An xcode-tests step as verify-tests.py records it after a startup stall."""
+    step = {'name': 'xcode-tests', 'exit_code': 0, 'errors': list(errors), 'startup_attempts': stalls + 1,
+            'startup_stalls': [{'attempt': n, 'after_seconds': 90.2, 'last_log_line': 'Writing result bundle at path:'}
+                               for n in range(1, stalls + 1)],
+            'tests': {f'T/A/test{n}': {'status': 'passed'} for n in range(tests)}}
+    if recovered:
+        step['startup_recovered'] = True
+    return step
+
+
+class RecoveredStallTests(unittest.TestCase):
+    """Owner's call 2026-10-11: one startup stall recovered on the first retry, every test then passing, is a PASS."""
+
+    def plan(self, step, status='verified'):
+        manifest = {'status': status, 'steps': [{'name': 'build-for-testing', 'exit_code': 0, 'errors': []}, step]}
+        summaries, statuses, _, details = lane.run_plans({'app': ['T/A']}, lambda *_: manifest, Path('/e'))
+        return lane.t3_verdict(summaries, statuses), details
+
+    def test_one_stall_recovered_on_the_first_retry_is_a_pass_the_report_says_so(self):
+        verdict, details = self.plan(stalled_step())
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(len(details), 1)
+        self.assertIn('app: recovered after 1 startup stall', details[0])
+        self.assertIn('passed 3 test(s)', details[0])
+        self.assertIn('Logged on #705', details[0])
+
+    def test_two_stalls_before_a_pass_keep_their_verdict(self):
+        # verify-tests.py leaves the step in error (and its status not verified) for two or more stalls.
+        step = stalled_step(recovered=False, stalls=2, errors=['Recovered after 2 startup stall(s) of 90s; … not a PASS'])
+        verdict, details = self.plan(step, status='failed_or_incomplete')
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertFalse(any('recovered after 1 startup stall' in line for line in details))
+        self.assertEqual(lane.recovered_startup_stalls({'steps': [step]}), [])
+
+    def test_a_stall_that_does_not_recover_keeps_its_verdict(self):
+        step = {'name': 'xcode-tests', 'exit_code': 124, 'tests': {}, 'startup_attempts': 2,
+                'errors': ['Test runner printed no test output in 2 launch(es) of 90s'],
+                'startup_stalls': stalled_step(stalls=2)['startup_stalls']}
+        verdict, _ = self.plan(step, status='failed_or_incomplete')
+        self.assertEqual(verdict, 'INCONCLUSIVE')
+        self.assertEqual(lane.recovered_startup_stalls({'steps': [step]}), [])
+
+    def test_a_recovered_stall_with_a_failing_test_is_still_a_fail(self):
+        step = stalled_step(errors=['Failed: T/A/test0'])
+        step['tests']['T/A/test0']['status'] = 'failed'
+        verdict, _ = self.plan(step, status='failed_or_incomplete')
+        self.assertEqual(verdict, 'FAIL')
+        self.assertEqual(lane.recovered_startup_stalls({'steps': [step]}), [])
+
+    def test_each_recovered_stall_is_logged_on_705_with_its_evidence(self):
+        with tempfile.TemporaryDirectory() as folder:
+            for plan, step in (('app', stalled_step()), ('adapters', stalled_step(tests=5)),
+                               ('quiet', {'name': 'xcode-tests', 'exit_code': 0, 'errors': [], 'tests': {}})):
+                (Path(folder) / f'verify-{plan}').mkdir()
+                (Path(folder) / f'verify-{plan}' / 'manifest.json').write_text(json.dumps({'steps': [step]}))
+            posted = []
+            count = lane.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/report', posted.append)
+        self.assertEqual(count, 2)
+        self.assertEqual(len(posted), 2)
+        self.assertIn('`adapters` plan', posted[0])
+        self.assertIn('retry then passed 5 test(s)', posted[0])
+        self.assertIn('`app` plan', posted[1])
+        for body in posted:
+            self.assertIn('PR #5 at `aaaaaaa` (https://example.test/report)', body)
+            self.assertIn('xcode-tests-stall-1/', body)
+            self.assertIn('90.2s after launch', body)
+
+    def test_a_failed_log_comment_never_fails_the_job(self):
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / 'verify-app').mkdir()
+            (Path(folder) / 'verify-app' / 'manifest.json').write_text(json.dumps({'steps': [stalled_step()]}))
+
+            def refuse(body):
+                raise RuntimeError('GitHub API unavailable')
+
+            with mock.patch('builtins.print'):
+                self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'u', refuse), 0)
+
+    def test_a_t3_run_with_a_recovered_stall_logs_it_on_705_after_reporting(self):
+        run = MainFlowTests()
+        ops = FakeRepo()
+        run.ops = ops
+
+        def t3(tests, request_id, evidence, classes=()):
+            (evidence / 'verify-app').mkdir(parents=True)
+            (evidence / 'verify-app' / 'manifest.json').write_text(json.dumps({'steps': [stalled_step()]}))
+            return 'PASS', 'sim', 'ran', ['app: recovered after 1 startup stall'], 'none', ''
+
+        github = FakeGitHub(comments=[comment('/lane T3\ntests: SupertonicSpeechTests')])
+        with mock.patch.object(lane, 't3_scope', return_value=([], [])), \
+                mock.patch.object(lane, 'run_t3', side_effect=t3), \
+                mock.patch.object(lane, 'clean_tree'):
+            run.run_main(github)
+        self.assertTrue(any(body.startswith('Lane report') and '— PASS' in body for body in github.posted))
+        logged = [(number, body) for number, body in ops.posted if number == lane.STALL_ISSUE]
+        self.assertEqual(len(logged), 1)
+        self.assertIn('PR #5', logged[0][1])
+        self.assertIn('(https://example.test/', logged[0][1])  # links the report it was found in
+
+
 if __name__ == '__main__':
     unittest.main()

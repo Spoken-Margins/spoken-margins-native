@@ -48,6 +48,8 @@ Replace this section when the focus changes; do not append to it.
   - **Map lookups and relay features are opt-in** until an anonymous relay exists. Relay experiments are fine; spend nothing until the owner approves a price.
   - **Cloud voices start as a limited trial** (a couple of minutes per listener). No payment work until the trial shows whether to charge. Server maps stay free.
   - **Solid Ground has no ship pressure.** Start the second half of the model split now; cutting Solid Ground off as its own branch first is fine.
+- **Owner's standing call (2026-10-11).** Don't ask again:
+  - **A recovered startup stall is a PASS.** A T3 plan (app or adapters) that stalls once at startup, recovers on the first retry and then passes every requested test reports PASS, not INCONCLUSIVE. Each stall is logged on #705 as evidence. This is an owner-accepted exception to #705's "don't convert this INCONCLUSIVE to PASS" while the cause is still open; #705 stays open. Two or more stalls, or a stall that doesn't recover, keep their verdict.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
@@ -83,7 +85,7 @@ Replace this section when the focus changes; do not append to it.
   3. what it is meant to catch, with evidence it catches it (a past failure it would have caught);
   4. the signal that would show it's waste, which the lane's step ledger (`scripts/lane_ledger.py`) watches.
   - The audit and reviewers block a pipeline PR without it. The per-PR app builds ran 140 times in a week and caught nothing (#1196).
-  - Pipeline waste fixes outrank feature work in dispatch. A lane or pipeline fix never waits on the owner's phone check: no `needs-human-validation` on lane fixes.
+  - Pipeline waste fixes outrank feature work in dispatch. A lane or pipeline fix never waits on the owner's phone check: no `needs-human-validation` on lane fixes, model-split moves or test fixes. Close those once merged into `next` ([workstreams README](docs/workstreams/README.md#branches-and-merging)).
   - The runner never merges a PR touching `scripts/lane-runner.py` or `.github/`, whatever the audit says. Such a PR goes to the lead session the same day, for the owner's merge tap.
 - **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
 - **Branches.** Each PR gets its own branch, off `next` or, one level deep, off your own armed branch (project threads: `ws/<issue>-<slug>`). Don't push new work to a branch whose PR is armed: the runner could merge it half done. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
