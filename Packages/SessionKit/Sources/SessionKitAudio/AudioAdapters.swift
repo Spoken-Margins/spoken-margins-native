@@ -2405,6 +2405,16 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         playbackStallTraceHandler?(fields)
     }
 
+    /// AVPlayer's own state right now, in the fields the stall trace carries, plus `uptimeMs` (#835). Unlike
+    /// `currentMediaTimeMs()`, `playerMs` is the player's raw clock even while a seek is pending, so a caller can
+    /// tell a frozen player clock from a pending seek or a buffering wait.
+    public func playbackStateTraceFields() -> [String: String] {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        var fields = playerStateFields(uptime: uptime)
+        fields["uptimeMs"] = String(Int(uptime * 1_000))
+        return fields
+    }
+
     private func playerStateFields(uptime: TimeInterval) -> [String: String] {
         var fields: [String: String] = ["intendsToPlay": paused ? "0" : "1", "tap": hasPodcastEvidenceTap ? "1" : "0"]
         if let pending = mediaSeekLifecycle.pending {
