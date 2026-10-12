@@ -52,7 +52,7 @@ final class Gate1AppModel: ObservableObject {
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
-    private static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
+    static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     private static let showsMixWithOtherAudioOptionKey = "showsMixWithOtherAudioOption"
     private static let mixedPlaybackVolumeKey = "mixedPlaybackVolume"
     private static let suppressedAudioPreparationItemIdsKey = AudioPreparationQueueProjection.suppressedItemIdsDefaultsKey
@@ -122,7 +122,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
     @Published var narrationVoiceNotice = NarrationVoiceNotice() // written by updateNarrationVoiceNotice() only
-    private(set) var gate2CompactSnapshot: CompactControlSnapshot?
+    var gate2CompactSnapshot: CompactControlSnapshot?
     let runtimeDiagnostics = RuntimeDiagnostics()
     var diagnostics: [String: String] {
         get { runtimeDiagnostics.values }
@@ -446,15 +446,15 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var episodeMapPreparationStatus = "Not started"
     @Published var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
-    @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
-    @Published private(set) var onDeviceSpeechGenerationStopReason: String?
+    @Published var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
+    @Published var onDeviceSpeechGenerationStopReason: String?
     /// Why narration is in the iOS voice instead of the chosen one (I14); nil when it isn't.
     @Published var speechFallbackReason: SpeechFallbackReason?
-    @Published private(set) var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
+    @Published var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
         completedChunks: 0,
         totalChunks: 0
     )
-    @Published private(set) var isOnDeviceSpeechGenerationDelayed = false
+    @Published var isOnDeviceSpeechGenerationDelayed = false
     @Published var sourceTranscriptStatus = "Not started"
     @Published var speechVoiceOptions: [SpeechVoiceChoice] = []
     @Published var speechVoiceIdentifier = UserDefaults.standard.string(forKey: "speechVoiceIdentifier") ?? ""
@@ -490,7 +490,7 @@ final class Gate1AppModel: ObservableObject {
         "Source link, public podcast, and share-extension intake are experimental until they have their own human validation record."
     ]
 
-    private(set) var engine: SessionEngine?
+    var engine: SessionEngine?
     private(set) var store: SQLiteSessionStore?
     /// The UI-test seed this launch still has to write; nil once written and for a normal launch. Written even when
     /// something opened the store before the root view bootstrapped the Library, else the last run's Library shows (#1175).
@@ -540,10 +540,10 @@ final class Gate1AppModel: ObservableObject {
     private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     let trashUndoDismissDelay: Duration
     var activeItemId = "item-pill"
-    private(set) var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
+    var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
-    private var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
+    var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
     var trashUndoDismissTask: Task<Void, Never>?
     /// Background time while on-device narration starts, on every path into "starting" (#854).
     private lazy var narrationStartupProtection = NarrationStartupProtection(
@@ -608,7 +608,7 @@ final class Gate1AppModel: ObservableObject {
     private var pendingMapGenerationItemId: String?
     var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
-    private(set) var pendingTermsVoiceSelection: AppTTSVoiceSelection?
+    var pendingTermsVoiceSelection: AppTTSVoiceSelection?
     var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     private let preparedTextAudioStarterDurationMs = 30_000
     private static let startupAudioChunkCount = LibraryRowBuilder.startupAudioChunkCount
@@ -3702,7 +3702,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func applySupertonicPlaybackRate() {
+    func applySupertonicPlaybackRate() {
         let transportRate = speechPlaybackRateMultiplier
         do {
             try speechPlaybackClient?.configureSpeechSettings(
@@ -4484,204 +4484,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func saveProviderSettings() {
-        guard remoteProviderExperienceEnabled else {
-            reportFailure("Remote provider settings are disabled in this release.")
-            return
-        }
-        sanitizeTTSMode()
-        providerModel = fallbackProviderModel()
-        UserDefaults.standard.set(providerModel, forKey: "providerModel")
-        UserDefaults.standard.set(listeningMapModel, forKey: "listeningMapModel")
-        UserDefaults.standard.set(summaryModel, forKey: "summaryModel")
-        UserDefaults.standard.set(conversationModel, forKey: "conversationModel")
-        UserDefaults.standard.set(skipUnit, forKey: "skipUnit")
-        UserDefaults.standard.set(mediaSkipBackSeconds, forKey: "mediaSkipBackSeconds")
-        UserDefaults.standard.set(mediaSkipForwardSeconds, forKey: "mediaSkipForwardSeconds")
-        UserDefaults.standard.set(speechRate, forKey: "speechRate")
-        UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
-        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
-        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
-        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
-        let keychainStatus = KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
-        guard keychainStatus == errSecSuccess else {
-            diagnostics["keychainStatus"] = "save_failed:\(keychainStatus)"
-            reportFailure("Provider settings were not saved because Keychain returned \(keychainStatus).")
-            return
-        }
-        diagnostics["keychainStatus"] = providerAPIKey.isEmpty ? "empty" : "saved"
-        cancelTextAudioPrewarmTasks()
-        diagnostics["providerBaseURL"] = providerBaseURL
-        diagnostics["fallbackModel"] = providerModel
-        diagnostics["listeningMapModel"] = listeningMapModel
-        diagnostics["summaryModel"] = summaryModel
-        diagnostics["conversationModel"] = conversationModel
-        diagnostics["skipUnit"] = skipUnit
-        diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
-        diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
-        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
-        diagnostics["speechVoice"] = speechVoiceDescription
-        diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
-        diagnostics["ttsMode"] = ttsMode
-        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-        diagnostics["piperStatus"] = piperStatus
-        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-        diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
-        if rebuildEngineForCurrentSettings() {
-            screen = .settings
-            reportConfirmation("Provider settings saved.")
-        }
-    }
-
-    func saveSpeechSettings() {
-        sanitizeTTSMode()
-        UserDefaults.standard.set(speechRate, forKey: "speechRate")
-        UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
-        UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
-        UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
-        UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
-        cancelTextAudioPrewarmTasks()
-        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
-        diagnostics["speechVoice"] = speechVoiceDescription
-        diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
-        diagnostics["ttsMode"] = ttsMode
-        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-        diagnostics["piperStatus"] = piperStatus
-        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-        diagnostics["speechTranscriptionEngine"] = systemSpeechTranscriptionEngineDescription()
-    }
-
-    func refreshSpeechVoiceOptions() {
-        speechVoiceOptions = Self.availableSpeechVoiceOptions()
-        diagnostics["speechVoiceCount"] = "\(speechVoiceOptions.count)"
-        diagnostics["speechVoice"] = speechVoiceDescription
-        let selected = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !Self.supportsSpeechVoiceEnumeration {
-            diagnostics["speechVoiceAvailability"] = "system_default_on_simulator"
-        } else {
-            diagnostics["speechVoiceAvailability"] = selected.isEmpty || speechVoiceOptions.contains(where: { $0.id == selected })
-                ? "available"
-                : "unavailable"
-        }
-    }
-
-    func speechSettingsChanged() {
-        let changed = sanitizeTTSMode()
-        settingsValueChanged()
-        saveSpeechSettings()
-        if changed {
-            _ = rebuildEngineForCurrentSettings()
-        } else if ttsVoiceSelection.supertonicVoice != nil, audioPlaybackClientOverride == nil {
-            applySupertonicPlaybackRate()
-        } else if !isMediaPlaybackSnapshot {
-            run { engine in
-                snapshot = try engine.updateSpeechPlaybackSettings(
-                    voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
-                    rate: Float(speechRate)
-                )
-                refreshSelectedItem()
-                diagnostics["speechSettingsApplied"] = snapshot.status.rawValue
-                reportConfirmation("Speech settings saved.")
-            }
-        }
-    }
-
-    func ttsVoiceSelectionChanged() {
-        if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
-            pendingTermsVoiceSelection = ttsVoiceSelection
-            UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
-            ttsVoiceSelection = .system
-            saveSpeechSettings()
-            isTermsOfUsePresented = true
-            diagnostics["termsGate"] = "presented_for_on_device_voice"
-            statusMessage = "Review the Terms of Use to enable an on-device voice."
-            return
-        }
-        sanitizeTTSMode()
-        settingsValueChanged()
-        saveSpeechSettings()
-        if let engine {
-            snapshot = (try? engine.stopPlayback()) ?? snapshot
-            refreshSelectedItem()
-        }
-        _ = rebuildEngineForCurrentSettings()
-        if ttsVoiceSelection == .system, let renderer = supertonicRenderer {
-            supertonicRenderer = nil
-            Task { await renderer.unload() }
-        }
-        reportSuccess("Voice changed to \(ttsVoiceSelection.displayName). Press play when you are ready.")
-    }
-
-    func previewSpokenContentVoice() {
-        previewSpeech(label: "Spoken Content settings", mode: .spokenContent)
-    }
-
-    func previewAppVoice() {
-        saveSpeechSettings()
-        if let voice = ttsVoiceSelection.supertonicVoice {
-            previewSupertonicVoice(voice)
-            return
-        }
-        previewSpeech(
-            label: "app voice and rate",
-            mode: .appVoice(
-                voiceIdentifier: speechVoiceIdentifier.isEmpty ? nil : speechVoiceIdentifier,
-                rate: Float(speechRate)
-            )
-        )
-    }
-
-    private func previewSupertonicVoice(_ voice: SupertonicVoiceID) {
-        guard hasAcceptedCurrentTerms else {
-            pendingTermsVoiceSelection = ttsVoiceSelection.supertonicVoice == nil ? .james : ttsVoiceSelection
-            UserDefaults.standard.set(pendingTermsVoiceSelection?.rawValue, forKey: Self.supertonicVoicePendingTermsKey)
-            ttsVoiceSelection = .system
-            saveSpeechSettings()
-            isTermsOfUsePresented = true
-            return
-        }
-        guard !isRenderingSupertonicPreview else { return }
-        isRenderingSupertonicPreview = true
-        statusMessage = "Preparing \(ttsVoiceSelection.displayName)…"
-        let speed = Float(speechRate / 0.5)
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let renderer = try self.makeSupertonicRenderer()
-                let result = try await renderer.render(
-                    text: "Spoken Margins is ready to read with your selected on-device voice.",
-                    voice: voice,
-                    speed: speed,
-                    synthesisSteps: 8
-                )
-                try Task.checkCancellation()
-                try self.playSupertonicPreview(url: result.audioURL)
-                self.diagnostics["supertonicPreviewRenderSeconds"] = String(format: "%.3f", result.renderDuration)
-                self.diagnostics["supertonicPreviewDurationSeconds"] = String(format: "%.3f", result.duration)
-                self.diagnostics["supertonicSessionLoadCount"] = "\(result.sessionLoadCount)"
-                self.reportSuccess("Playing \(self.ttsVoiceSelection.displayName).")
-            } catch {
-                self.reportFailure(error, context: "On-device voice preview failed")
-            }
-            self.isRenderingSupertonicPreview = false
-        }
-    }
-
-    func verifyCurrentTermsForOnDeviceVoice() throws {
-        guard SpokenMarginsTerms.hasBundledText() else {
-            throw SpokenMarginsTermsError.bundledTermsUnavailable
-        }
-        guard hasAcceptedCurrentTerms else {
-            throw SpokenMarginsTermsError.acceptanceRequired
-        }
-    }
-
-    func previewAssistiveTechnologyVoice() {
-        previewSpeech(label: "assistive technology settings", mode: .assistiveTechnology)
-    }
-
     func refreshPiperVoiceStatus() {
         do {
             piperVoiceOptions = try discoverPiperVoiceOptions()
@@ -4706,65 +4508,6 @@ final class Gate1AppModel: ObservableObject {
             piperVoiceOptions = []
             piperStatus = "Piper voice check failed: \(error.localizedDescription)"
             diagnostics["piperStatus"] = piperStatus
-        }
-    }
-
-    func runtimeProfileChanged() {
-        diagnostics["runtimeProfile"] = selectedProfileId
-        if rebuildEngineForCurrentSettings() {
-            reportSuccess("Runtime profile set to \(selectedProfileId).")
-        }
-    }
-
-    func settingsValueChanged() {
-        diagnostics["providerBaseURL"] = providerBaseURL
-        diagnostics["fallbackModel"] = fallbackProviderModel()
-        diagnostics["listeningMapModel"] = listeningMapModel
-        diagnostics["summaryModel"] = summaryModel
-        diagnostics["conversationModel"] = conversationModel
-        diagnostics["skipUnit"] = skipUnit
-        diagnostics["mediaSkipBackSeconds"] = "\(mediaSkipBackSeconds)"
-        diagnostics["mediaSkipForwardSeconds"] = "\(mediaSkipForwardSeconds)"
-        diagnostics["speechRate"] = String(format: "%.2f", speechRate)
-        diagnostics["speechVoice"] = speechVoiceDescription
-        diagnostics["ttsMode"] = ttsMode
-        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-        diagnostics["piperStatus"] = piperStatus
-        diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
-    }
-
-    func probeProvider() {
-        guard remoteProviderExperienceEnabled else {
-            providerProbeStatus = "Disabled by release feature flag"
-            reportFailure("Remote provider access is disabled in this release.")
-            return
-        }
-        saveProviderSettings()
-        providerProbeStatus = "Checking..."
-        guard let url = URL(string: providerBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/models") else {
-            providerProbeStatus = "Invalid URL"
-            reportFailure("Invalid provider URL.")
-            return
-        }
-        var request = URLRequest(url: url)
-        if !providerAPIKey.isEmpty {
-            request.setValue("Bearer \(providerAPIKey)", forHTTPHeaderField: "Authorization")
-        }
-        Task {
-            do {
-                let (_, response) = try await URLSession.shared.data(for: request)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                await MainActor.run {
-                    providerProbeStatus = (200..<300).contains(status) ? "Reachable (\(status))" : "HTTP \(status)"
-                    diagnostics["providerProbe"] = providerProbeStatus
-                    reportSuccess("Provider probe completed: \(providerProbeStatus).")
-                }
-            } catch {
-                await MainActor.run {
-                    providerProbeStatus = "Failed: \(error.localizedDescription)"
-                    reportFailure(error, context: "Provider probe failed")
-                }
-            }
         }
     }
 
@@ -4846,37 +4589,6 @@ final class Gate1AppModel: ObservableObject {
         return canRetryLocalSummary ? "Retry Summary" : "Summarize Notes"
     }
 
-    var speechVoiceDescription: String {
-        if ttsVoiceSelection != .system {
-            return "\(ttsVoiceSelection.displayName) (Supertonic \(ttsVoiceSelection.supertonicVoice?.rawValue ?? ""))"
-        }
-        guard !speechVoiceIdentifier.isEmpty else {
-            return "System Spoken Content Voice (Siri falls back)"
-        }
-        if let voice = speechVoiceOptions.first(where: { $0.id == speechVoiceIdentifier }) {
-            return "\(voice.name) (\(voice.language), \(voice.quality))"
-        }
-        return speechVoiceIdentifier
-    }
-
-    var speechRateDescription: String {
-        if ttsVoiceSelection.supertonicVoice != nil {
-            return String(format: "Supertonic %.2fx", speechPlaybackRateMultiplier)
-        }
-        return String(format: "System %.2fx", speechPlaybackRateMultiplier)
-    }
-
-    var speechPlaybackRateMultiplier: Double {
-        SpeechRateRule.quarterStepMultiplier(speechRate / 0.5)
-    }
-
-    var compactPlaybackRateDescription: String {
-        if isMediaPlaybackSnapshot {
-            return String(format: "%.2f×", mediaPlaybackRate)
-        }
-        return String(format: "%.2f×", speechPlaybackRateMultiplier)
-    }
-
     private var playbackChapterContext: PlaybackChapterContext {
         let session = engine?.currentSession
         return PlaybackChapterContext(
@@ -4927,202 +4639,12 @@ final class Gate1AppModel: ObservableObject {
         PlaybackChapterLocator.isCurrentTimelineListeningMapScene(scene, context: playbackChapterContext)
     }
 
-    var hasConfiguredProviderAPIKey: Bool {
-        !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var preparedTextAudioStatusDescription: String {
-        PlaybackStatusWording.humanReadableStatus(preparedTextAudioStatus)
-    }
-
-    var shouldShowOnDeviceSpeechGenerationStatus: Bool {
-        Self.supportsOnDeviceSpeechGenerationStatus(targetType: snapshot.targetType)
-            && ttsVoiceSelection.supertonicVoice != nil
-            && onDeviceSpeechGenerationStatus != RenderedSpeechGenerationState.inactive.rawValue
-    }
-
     static func supportsOnDeviceSpeechGenerationStatus(targetType: String?) -> Bool {
         PlaybackStatusWording.supportsOnDeviceSpeechGenerationStatus(targetType: targetType)
     }
 
-    var canStopOnDeviceSpeechGeneration: Bool {
-        onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue
-    }
-
-    var isOnDeviceSpeechGenerating: Bool {
-        onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue
-    }
-
-    var canRetryOnDeviceSpeechGeneration: Bool {
-        guard speechPlaybackClient is SupertonicSpeechPlaybackClient, snapshot.targetId != nil, snapshot.sessionId != nil else { return false }
-        return onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.stopped.rawValue
-            || preparedTextAudioStatus == "failed"
-    }
-
-    func retryOnDeviceSpeechGeneration() {
-        guard let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient,
-              let targetId = snapshot.targetId,
-              let sessionId = snapshot.sessionId else {
-            reportFailure("There is no current Supertonic response to retry.")
-            return
-        }
-        let itemId = snapshot.itemId
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                if let coordinator = self.preparedAudioCoordinator,
-                   let signature = self.currentSupertonicRenderSignature {
-                    try await coordinator.retry(itemId: targetId, signature: signature)
-                }
-                guard self.snapshot.sessionId == sessionId, self.snapshot.targetId == targetId else { return }
-                if let itemId { self.allowAudioPreparation(itemId: itemId) }
-                guard try client.retryOnDeviceRendering() else { return }
-                self.speechFallbackReason = nil
-                self.preparedTextAudioStatus = "preparing"
-                self.diagnostics["onDeviceSpeechGeneration"] = "retry_current_target"
-                self.reportConfirmation("Retrying Supertonic at the current position.")
-            } catch {
-                self.reportFailure(error, context: "Prepared audio retry failed", itemId: itemId)
-            }
-        }
-    }
-
-    var onDeviceSpeechGenerationStatusDescription: String {
-        (RenderedSpeechGenerationState(rawValue: onDeviceSpeechGenerationStatus) ?? .inactive).listenerDescription(
-            progress: onDeviceSpeechGenerationProgress, isDelayed: isOnDeviceSpeechGenerationDelayed,
-            stopReason: onDeviceSpeechGenerationStopReason, fallbackReason: speechFallbackReason
-        )
-    }
-
-    func updateOnDeviceSpeechGenerationState(_ state: RenderedSpeechGenerationState, stopReason: String?) {
-        if onDeviceSpeechGenerationStatus != state.rawValue { onDeviceSpeechGenerationStatus = state.rawValue }
-        if onDeviceSpeechGenerationStopReason != stopReason { onDeviceSpeechGenerationStopReason = stopReason }
-        // Rendering, ready or idle: the iOS voice isn't standing in, so an old reason is stale (#314).
-        if state != .stopped, speechFallbackReason != nil { speechFallbackReason = nil }
-        if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
-        diagnostics["onDeviceSpeechGeneration"] = state.rawValue
-        diagnostics["onDeviceSpeechGenerationStopReason"] = stopReason
-        guard state != .rendering else { return }
-        onDeviceSpeechGenerationDelayTask?.cancel()
-        onDeviceSpeechGenerationDelayTask = nil
-        isOnDeviceSpeechGenerationDelayed = false
-        if state == .inactive {
-            onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
-                completedChunks: 0,
-                totalChunks: 0
-            )
-        }
-    }
-
-    func updateOnDeviceSpeechGenerationProgress(_ progress: RenderedSpeechGenerationProgress) {
-        guard onDeviceSpeechGenerationProgress != progress else { return }
-        onDeviceSpeechGenerationProgress = progress
-        if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
-        isOnDeviceSpeechGenerationDelayed = false
-        diagnostics["onDeviceSpeechGenerationProgress"] = "\(progress.completedChunks)/\(progress.totalChunks)"
-        onDeviceSpeechGenerationDelayTask?.cancel()
-        onDeviceSpeechGenerationDelayTask = nil
-        guard progress.completedChunks < progress.totalChunks else { return }
-        onDeviceSpeechGenerationDelayTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(45))
-            guard !Task.isCancelled, let self,
-                  self.onDeviceSpeechGenerationStatus == RenderedSpeechGenerationState.rendering.rawValue,
-                  self.onDeviceSpeechGenerationProgress == progress else { return }
-            self.isOnDeviceSpeechGenerationDelayed = true
-            self.diagnostics["onDeviceSpeechGenerationDelay"] = "chunk_\(progress.completedChunks + 1)_over_45s"
-        }
-    }
-
-    var sourceTranscriptStatusDescription: String {
-        PlaybackStatusWording.humanReadableStatus(sourceTranscriptStatus)
-    }
-
     var currentChapter: Chapter? {
         PlaybackChapterLocator.currentChapter(playbackChapterContext)
-    }
-
-    func installEngine(_ engine: SessionEngine) {
-        self.engine = engine
-        for record in podcastDownloadRecords.values where record.state == .availableOffline {
-            guard let path = record.localRelativePath,
-                  let url = try? applicationSupportDirectory()
-                    .appending(path: "PodcastAudio", directoryHint: .isDirectory)
-                    .appending(path: path) else { continue }
-            _ = try? engine.updatePlaybackTransport(itemId: record.itemId, playbackURL: url.absoluteString)
-        }
-        configureGate2CompactControls(for: engine)
-    }
-
-    private func configureGate2CompactControls(for engine: SessionEngine) {
-        do {
-            let surfaceProfile = try loadProfile(id: "lock-screen-widget")
-            gate2CompactControls.configure(
-                canonicalRuntime: engine,
-                surfaceProfile: surfaceProfile,
-                skipUnit: mediaSkipUnit(seconds: mediaSkipForwardSeconds)
-            ) { [weak self] command, origin, chapterId, mediaTimeMs, playbackRate in
-                self?.dispatchGate2CompactCommand(
-                    command,
-                    chapterId: chapterId,
-                    mediaTimeMs: mediaTimeMs,
-                    playbackRate: playbackRate,
-                    origin: origin
-                )
-            } applicationCommandHandler: { [weak self] command, targetID in
-                self?.handleGate2CompactApplicationCommand(command, targetID: targetID) ?? false
-            }
-            gate2CompactControls.setNowPlayingEnabled(!mixesWithOtherAudio)
-            updateGate2CompactState()
-            diagnostics.merge(gate2CompactControls.diagnostics(), uniquingKeysWith: { _, new in new })
-        } catch {
-            diagnostics["gate2CompactSurface"] = "configuration_failed"
-            diagnostics["gate2CompactError"] = String(describing: error)
-        }
-    }
-
-    private func updateGate2CompactState() {
-        // The source Live Activity cannot describe the separate Margin player.
-        // Its native Now Playing owner supplies transport until source restoration.
-        guard playingImportedCommentary == nil else { return }
-        let sharedMarginPrompt = pendingImportedCommentary.map {
-            Gate2SharedMarginActivityPrompt(
-                senderLabel: $0.senderLabel
-            )
-        }
-        gate2CompactControls.update(
-            snapshot: snapshot, sharedMarginPrompt: sharedMarginPrompt, upcomingSharedMargins: liveActivitySharedMarginNavigationEntries(),
-            skimForwardDestinationMs: skimForwardDestinationMs, skimBackwardDestinationMs: skimBackwardDestinationMs // #115
-        )
-        let compactSnapshot = gate2CompactControls.snapshot
-        if gate2CompactSnapshot != compactSnapshot {
-            gate2CompactSnapshot = compactSnapshot
-        }
-        let compactDiagnostics = gate2CompactControls.diagnostics()
-        if compactDiagnostics.contains(where: { diagnostics[$0.key] != $0.value }) {
-            diagnostics.merge(compactDiagnostics, uniquingKeysWith: { _, new in new })
-        }
-    }
-
-    private func liveActivitySharedMarginNavigationEntries() -> [Gate2LiveActivityNavigationEntry] {
-        let currentPercent = snapshot.sourceProgressPercent
-        let mediaDurationMs = snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
-        let textLength = selectedItem.text.count
-        return importedCommentaryPrompts(includeAnnounced: false).compactMap { prompt in
-            let positionPercent = SharedMarginPosition.percent(
-                mediaTimeMs: prompt.interjection.resolution.localMediaTimeMs,
-                mediaDurationMs: mediaDurationMs,
-                charOffset: prompt.interjection.resolution.localStartChar,
-                textLength: textLength
-            )
-            guard let positionPercent,
-                  positionPercent > currentPercent else { return nil }
-            return Gate2LiveActivityNavigationEntry(
-                kind: .sharedMargin,
-                title: "Shared Margin",
-                targetID: prompt.interjection.id,
-                positionPercent: min(100, max(0, positionPercent))
-            )
-        }
     }
 
     func performGate2CompactCommand(
@@ -5507,7 +5029,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func previewSpeech(label: String, mode: AppSpeechPreviewMode) {
+    func previewSpeech(label: String, mode: AppSpeechPreviewMode) {
         #if canImport(AVFoundation)
         do {
             if speechPreviewSynthesizer.isSpeaking {
@@ -5552,7 +5074,7 @@ final class Gate1AppModel: ObservableObject {
         supertonicPreviewPlayer?.stop()
     }
 
-    private func playSupertonicPreview(url: URL) throws {
+    func playSupertonicPreview(url: URL) throws {
         stopSpeechPreviews()
         if let priorURL = supertonicPreviewURL, let renderer = supertonicRenderer {
             Task { await renderer.discardGeneratedAudio(at: priorURL) }
@@ -5619,7 +5141,7 @@ final class Gate1AppModel: ObservableObject {
             }
     }
 
-    private func piperVoiceId(forModelURL url: URL) -> String {
+    func piperVoiceId(forModelURL url: URL) -> String {
         let name = url.lastPathComponent
         guard name.lowercased().hasSuffix(".onnx") else { return "" }
         return String(name.dropLast(5))
@@ -5694,7 +5216,7 @@ final class Gate1AppModel: ObservableObject {
         engine?.currentSession?.currentTargetId ?? snapshot.itemId
     }
 
-    private func rebuildEngineForCurrentSettings() -> Bool {
+    func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
             foregroundAudioPreparationTask?.cancel()
@@ -5978,7 +5500,7 @@ final class Gate1AppModel: ObservableObject {
         snapshot.preparedTextAudioStatus = status
     }
 
-    private func cancelTextAudioPrewarmTasks() {
+    func cancelTextAudioPrewarmTasks() {
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
         textAudioPrewarmTasks.removeAll()
     }
@@ -8060,7 +7582,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func startForegroundAudioPreparationIfNeeded() {
+    func startForegroundAudioPreparationIfNeeded() {
         requestContinuedAudioPreparationIfNeeded() // before the guard: a loop may already be running when the listener asks (#905)
         guard foregroundAudioPreparationTask == nil else { return }
         foregroundAudioPreparationGeneration += 1
@@ -8151,7 +7673,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private var canPrepareLibraryAudio: Bool {
+    var canPrepareLibraryAudio: Bool {
         !preparationSeams.memoryBackoffActive() && playbackAllowsLibraryAudioPreparation
     }
 
@@ -8881,7 +8403,7 @@ final class Gate1AppModel: ObservableObject {
         return try ContractFixtureLoader.listeningMap(at: url)
     }
 
-    private func loadProfile(id: String) throws -> RuntimeCapabilityProfile {
+    func loadProfile(id: String) throws -> RuntimeCapabilityProfile {
         guard let url = Bundle.main.url(forResource: id, withExtension: "json", subdirectory: "fixtures/capabilities") else {
             throw CocoaError(.fileNoSuchFile)
         }
