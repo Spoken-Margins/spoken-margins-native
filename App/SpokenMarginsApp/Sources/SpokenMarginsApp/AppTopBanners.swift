@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// One stable presentation boundary, outside the root's changing screen content.
+@MainActor
+struct AppFeedbackPresentation: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners() }
+            .overlay(alignment: .top) { FloatingFeedbackBanner() }
+    }
+}
+
 /// The banners above the app's content.
 ///
 /// Anything the listener can't miss keeps its place and moves the content below it: an error that

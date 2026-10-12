@@ -65,6 +65,7 @@ extension Gate1AppModel {
 /// with an action (#784).
 struct UserFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.feedbackDeliveryEffects) private var deliveryEffects
     let feedback: UserFeedbackEvent
 
     var body: some View {
@@ -122,14 +123,14 @@ struct UserFeedbackBanner: View {
             #if canImport(UIKit)
             // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
             let announcement = feedback.action.map { "\(feedback.message) \($0.title) is available." } ?? feedback.message
-            UIAccessibility.post(notification: .announcement, argument: announcement)
+            deliveryEffects.announce(announcement)
             #endif
             guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
                 for: feedback.kind,
                 offersAction: feedback.action != nil
             ) else { return }
             do {
-                try await Task.sleep(for: .seconds(seconds))
+                try await deliveryEffects.sleep(.seconds(seconds))
                 model.dismissFeedback(id: feedback.id)
             } catch {}
         }
