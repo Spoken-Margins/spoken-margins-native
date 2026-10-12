@@ -64,7 +64,7 @@ final class Gate1AppModel: ObservableObject {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTestCase") != nil
     }
-    private static var supportsSpeechVoiceEnumeration: Bool {
+    static var supportsSpeechVoiceEnumeration: Bool {
         #if targetEnvironment(simulator)
         false
         #else
@@ -449,7 +449,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
     @Published private(set) var onDeviceSpeechGenerationStopReason: String?
     /// Why narration is in the iOS voice instead of the chosen one (I14); nil when it isn't.
-    @Published private(set) var speechFallbackReason: SpeechFallbackReason?
+    @Published var speechFallbackReason: SpeechFallbackReason?
     @Published private(set) var onDeviceSpeechGenerationProgress = RenderedSpeechGenerationProgress(
         completedChunks: 0,
         totalChunks: 0
@@ -502,19 +502,19 @@ final class Gate1AppModel: ObservableObject {
     let localFoundationModelClient: any LocalFoundationModelClient
     let openAIResponsesClient = OpenAIResponsesClient()
     let streamingSpeechQueue = StreamingSpeechQueue()
-    private(set) var speechPlaybackClient: AudioPlaybackClient?
+    var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
-    private var supertonicRenderer: SupertonicNarrationRenderer?
-    private var preparedAudioCoordinator: PreparedAudioCoordinator?
-    private var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
+    var supertonicRenderer: SupertonicNarrationRenderer?
+    var preparedAudioCoordinator: PreparedAudioCoordinator?
+    var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
         didSet { if let digest = currentSupertonicRenderSignature?.digest, digest != oldValue?.digest { Task { [ledger = offlineStorageLedger] in _ = try? await ledger?.markSupersededPreparedChunks(currentSignatureDigest: digest) } } }
     }
-    private var renderedSpeechDiskCache: RenderedSpeechDiskCache?
+    var renderedSpeechDiskCache: RenderedSpeechDiskCache?
     let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     let audioPlaybackClientOverride: AudioPlaybackClient?
-    private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
+    var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     private(set) var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     /// Shared by the podcast downloader and the pre-play offline check (#779).
     let connectivity = ConnectivityMonitor()
@@ -552,7 +552,7 @@ final class Gate1AppModel: ObservableObject {
         outcomeChanged: { [weak self] in self?.diagnostics["textAudioBackgroundStartup"] = $0.rawValue }
     )
     /// Background time over each seam between two chunks of on-device narration (#540).
-    private lazy var handOverBackgroundHold = HandOverBackgroundHold(
+    lazy var handOverBackgroundHold = HandOverBackgroundHold(
         begin: NarrationStartupBackgroundTime.begin,
         record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
     )
@@ -635,7 +635,7 @@ final class Gate1AppModel: ObservableObject {
         case jumpToChapter(String, fromTimeline: Bool)
         case playSourceFromBeginning(fromTimeline: Bool)
     }
-    private static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
+    static func availableSpeechVoiceOptions() -> [SpeechVoiceChoice] {
         #if canImport(AVFoundation)
         // `AVSpeechSynthesisVoice.speechVoices()` can crash inside the iOS
         // Simulator's AXSpeech process while XCTest is attaching. The system
@@ -5893,7 +5893,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func updateOnDeviceSpeechGenerationProgress(_ progress: RenderedSpeechGenerationProgress) {
+    func updateOnDeviceSpeechGenerationProgress(_ progress: RenderedSpeechGenerationProgress) {
         guard onDeviceSpeechGenerationProgress != progress else { return }
         onDeviceSpeechGenerationProgress = progress
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
@@ -6004,7 +6004,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func performGate2CompactCommand(
+    func performGate2CompactCommand(
         _ command: CompactControlCommand,
         chapterId: String? = nil,
         mediaTimeMs: Int? = nil,
@@ -6814,7 +6814,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func attachPreparedTextAudio(
+    func attachPreparedTextAudio(
         _ prepared: PreparedTextAudio,
         itemId: String,
         preparedStatus: String = "ready",
@@ -6903,325 +6903,8 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func makeAudioPlaybackClient() throws -> AudioPlaybackClient {
-        if let audioPlaybackClientOverride {
-            diagnostics["sessionTTS"] = "Test audio override"
-            try configureAudioPlaybackPolicy(audioPlaybackClientOverride)
-            sessionAudioPlaybackClient = audioPlaybackClientOverride
-            return audioPlaybackClientOverride
-        }
-        sanitizeTTSMode()
-        let speech = try makeSpeechPlaybackClient()
-        speechPlaybackClient = speech
-        let routed = RoutedAudioPlaybackClient(
-            speech: speech,
-            media: makeMediaPlaybackClient()
-        )
-        try configureAudioPlaybackPolicy(routed)
-        sessionAudioPlaybackClient = routed
-        streamingSpeechQueue.configureSpeechClient(routed)
-        return routed
-    }
-
-    private func configureAudioPlaybackPolicy(_ audio: AudioPlaybackClient) throws {
-        try audio.setMixesWithOtherAudio(mixesWithOtherAudio)
-        try audio.setLowersBackgroundAudio(mixesWithOtherAudio && lowersBackgroundAudio)
-        try audio.setPlaybackVolume(mixesWithOtherAudio ? Float(mixedPlaybackVolume) : 1)
-        audio.setRemoteCommandHandlingEnabled(!mixesWithOtherAudio)
-    }
-
-    private func makeSpeechPlaybackClient() throws -> AudioPlaybackClient {
-        let selectedVoice = speechVoiceIdentifier.trimmingCharacters(in: .whitespacesAndNewlines)
-        let appleVoiceIsAvailable = !Self.supportsSpeechVoiceEnumeration
-            || selectedVoice.isEmpty
-            || Self.availableSpeechVoiceOptions().contains(where: { $0.id == selectedVoice })
-        if ttsVoiceSelection == .system, !appleVoiceIsAvailable {
-            diagnostics["speechVoiceAvailability"] = "unavailable"
-            throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
-        }
-        if let voice = ttsVoiceSelection.supertonicVoice {
-            let renderer = try makeSupertonicRenderer()
-            let supportDirectory = try applicationSupportDirectory()
-            guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
-                throw SupertonicNarrationError.missingAsset("Supertonic")
-            }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
-            let signatureTask = Task.detached(priority: .userInitiated) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
-            }
-            let coordinator = PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: supportDirectory.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
-            let hooks = PreparedSpeechHooks(store: store, coordinator: coordinator, signatureTask: signatureTask) // #336
-            Task { [weak self] in
-                guard let signature = try? await signatureTask.value,
-                      let self, self.ttsVoiceSelection.supertonicVoice == voice else { return }
-                self.currentSupertonicRenderSignature = signature
-            }
-            let diskCache: RenderedSpeechDiskCache
-            if let renderedSpeechDiskCache {
-                renderedSpeechDiskCache.setLimitBytes(renderedSpeechCacheLimitMB * 1024 * 1024)
-                diskCache = renderedSpeechDiskCache
-            } else {
-                let created = try RenderedSpeechDiskCache(
-                    directory: supportDirectory.appending(path: "RenderedSpeechCache", directoryHint: .isDirectory),
-                    limitBytes: renderedSpeechCacheLimitMB * 1024 * 1024
-                )
-                renderedSpeechDiskCache = created
-                diskCache = created
-            }
-            diagnostics["sessionTTS"] = "Supertonic 3 INT8 \(voice.rawValue)"
-            diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
-            diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
-            return SupertonicSpeechPlaybackClient(
-                renderer: supertonicOutputGuard(wrapping: renderer, systemVoice: selectedVoice),
-                voice: voice,
-                speed: Float(speechRate / 0.5),
-                fallbackVoiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
-                fallbackRate: Float(speechRate),
-                diskCache: diskCache,
-                preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
-                voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
-                interruptionHandler: { [weak self] event in
-                    Task { @MainActor [weak self] in
-                        self?.handleSpeechPlaybackInterruption(event)
-                    }
-                },
-                onGenerationStateChange: { [weak self] state, stopReason in
-                    Task { @MainActor [weak self] in
-                        self?.updateOnDeviceSpeechGenerationState(state, stopReason: stopReason)
-                    }
-                },
-                onGenerationProgress: { [weak self] progress in Task { @MainActor [weak self] in self?.updateOnDeviceSpeechGenerationProgress(progress) } },
-                onChunkHandOverGap: { [weak self] gap in Task { @MainActor [weak self] in self?.runtimeDiagnostics.recordChunkHandOverGap(gap) } },
-                onPreparationPlan: { await hooks.planned(itemId: $0, articleIdentity: $1, plan: $2) },
-                onPreparedChunk: { await hooks.rendered(itemId: $0, articleIdentity: $1, plan: $2, audioURL: $3, durationMs: $4, engine: $5) },
-                articleText: { hooks.articleText(itemId: $0) },
-                preparedChunkLookup: { await hooks.lookup(itemId: $0, articleIdentity: $1, plan: $2) },
-                onPreparedAudio: { [weak self] itemId, prepared in
-                    Task { @MainActor [weak self] in
-                        guard let signature = try? await signatureTask.value, let self else { return }
-                        guard let store = self.store,
-                              let item = try? store.loadItem(id: itemId),
-                              let canonical = prepared.canonicalized(toItemText: item.text) else {
-                            self.diagnostics["supertonicPreparedCanonicalization:\(itemId)"] = "source_mismatch"
-                            return
-                        }
-                        let attached = self.attachPreparedTextAudio(
-                            canonical,
-                            itemId: itemId,
-                            preparedStatus: "ready",
-                            diagnosticStatus: "supertonic_full_ready",
-                            replaceActivePlayback: false
-                        )
-                        if attached {
-                            try? await coordinator.complete(itemId: itemId, signature: signature, prepared: canonical)
-                        }
-                        if attached, let renderer = self.supertonicRenderer {
-                            Task { [weak self] in
-                                await renderer.unload(removingGeneratedAudio: false)
-                                await MainActor.run { [weak self] in
-                                    self?.diagnostics["supertonicRuntimeAfterFullAudio"] = "unloaded"
-                                }
-                            }
-                        }
-                    }
-                },
-                onFallback: { [weak self] reason, offset, itemId in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.suppressAudioPreparation(itemId: itemId)
-                        if let coordinator = self.preparedAudioCoordinator,
-                           let signature = self.currentSupertonicRenderSignature {
-                            try? await coordinator.stop(itemId: itemId, signature: signature)
-                        }
-                        // I14: the reason is shown and logged with the power state beside it,
-                        // so a device report shows whether charging or Low Power Mode coincided.
-                        let conditions = self.currentResourceConditions()
-                        let fallbackReason = SpeechFallbackReason(
-                            supertonicCode: reason,
-                            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions)
-                        )
-                        self.recordSupertonicFallbackEvent(code: reason, reason: fallbackReason, conditions: conditions, offset: offset)
-                        self.speechFallbackReason = fallbackReason
-                        self.diagnostics["supertonicFallback"] = reason
-                        self.diagnostics["supertonicFallbackReason"] = fallbackReason.rawValue
-                        self.diagnostics["supertonicFallbackConditions"] = conditions.logDescription
-                        self.diagnostics["supertonicFallbackOffset"] = "\(offset)"
-                        let message = fallbackReason.listenerExplanation
-                        self.statusMessage = message
-                        self.presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
-                    }
-                },
-                onRestore: { [weak self] itemId in
-                    Task { @MainActor [weak self] in
-                        guard let self else { return }
-                        self.speechFallbackReason = nil
-                        self.allowAudioPreparation(itemId: itemId)
-                        self.diagnostics["supertonicFallbackRestored"] = itemId
-                    }
-                },
-                onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
-                onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
-                onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
-                onRenderPace: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["onDeviceRenderPace"] = summary } },
-                handOverHold: handOverBackgroundHold
-            )
-        }
-        diagnostics["sessionTTS"] = "System speech"
-        return SystemSpeechPlaybackClient(
-            voiceIdentifier: selectedVoice.isEmpty ? nil : selectedVoice,
-            speechRate: Float(speechRate)
-        )
-    }
-
-    private func makeSupertonicRenderer() throws -> SupertonicNarrationRenderer {
-        try verifyCurrentTermsForOnDeviceVoice()
-        if let supertonicRenderer { return supertonicRenderer }
-        guard let resourceRoot = Bundle.main.resourceURL?.appending(
-            path: "Supertonic",
-            directoryHint: .isDirectory
-        ) else {
-            throw SupertonicNarrationError.missingAsset("Supertonic")
-        }
-        let cachesDirectory = try FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        let renderer = try SupertonicNarrationRenderer(
-            assets: SupertonicAssetLocation(rootURL: resourceRoot),
-            outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory)
-        )
-        supertonicRenderer = renderer
-        return renderer
-    }
-
-    /// #240: chunks that fail the output check are read by the iOS voice; diagnostics say so.
-    private func supertonicOutputGuard(wrapping renderer: SupertonicRendering, systemVoice: String) -> SupertonicOutputGuard {
-        let voice = systemVoice.trimmingCharacters(in: .whitespacesAndNewlines)
-        return SupertonicOutputGuard(wrapping: renderer, systemVoiceIdentifier: voice.isEmpty ? nil : voice) { [weak self] summary in
-            Task { @MainActor [weak self] in self?.diagnostics["supertonicOutputCheck"] = summary }
-        }
-    }
-
-    private func makeMediaPlaybackClient() -> AudioPlaybackClient {
-        let client = AVPlayerStreamPlaybackClient(
-            preferredSkipBackSeconds: mediaSkipBackSeconds,
-            preferredSkipForwardSeconds: mediaSkipForwardSeconds,
-            interruptionHandler: { [weak self] event in
-                Task { @MainActor [weak self] in
-                    self?.handleMediaPlaybackInterruption(event)
-                }
-            }
-        ) { [weak self] command, mediaTimeMs, playbackRate in
-            Task { @MainActor [weak self] in
-                self?.syncPlaybackProgressForLifecycle()
-                self?.performGate2CompactCommand(
-                    command,
-                    mediaTimeMs: mediaTimeMs,
-                    playbackRate: playbackRate,
-                    origin: "now_playing"
-                )
-            }
-        }
-        client.playbackStartTraceHandler = { [weak self] fields in
-            Task { @MainActor [weak self] in
-                // #160: resume after a spoken Margin on a stream took 2.6-9.3 s; this shows where the time goes.
-                self?.recordDeveloperDiagnostic("media.start", fields)
-            }
-        }
-        client.heardSourceWindowHandler = { [weak self] window in
-            Task { @MainActor [weak self] in self?.handleHeardSourceWindow(window) }
-        }
-        client.playbackStallTraceHandler = { [weak self] fields in
-            Task { @MainActor [weak self] in
-                // #166: the clock froze on a stream while the app showed "playing"; this records the player's state.
-                self?.recordDeveloperDiagnostic(fields["event"] == "seek_abandoned" ? "media.seek_abandoned" : "media.stall", fields)
-            }
-        }
-        #if canImport(AVFoundation) && canImport(ShazamKit)
-        client.postResumePodcastEvidenceHandler = { [weak self] result in
-            Task { @MainActor [weak self] in
-                self?.handlePostResumePodcastEvidence(result)
-            }
-        }
-        #endif
-        mediaPlaybackClient = client
-        return client
-    }
-
-    private func handleMediaPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
-        switch event {
-        case .began:
-            guard snapshot.status.isPlaybackActive, let engine else {
-                diagnostics["mediaPlaybackInterruption"] = "pause_skipped"
-                return
-            }
-            do {
-                snapshot = try engine.reconcileSystemInitiatedPause()
-                refreshSelectedItem()
-                diagnostics["mediaPlaybackInterruption"] = "paused"
-            } catch {
-                diagnostics["mediaPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
-                reportWarning("Playback could not be paused cleanly after the audio route changed.")
-            }
-        case .endedShouldResume:
-            guard snapshot.status == .paused, let engine else {
-                diagnostics["mediaPlaybackInterruption"] = "resume_skipped"
-                return
-            }
-            do {
-                snapshot = try engine.resumePlayback()
-                refreshSelectedItem()
-                diagnostics["mediaPlaybackInterruption"] = "resumed"
-            } catch {
-                diagnostics["mediaPlaybackInterruption"] = "resume_failed:\(error.localizedDescription)"
-                reportWarning("Playback paused after the interruption. Tap Play to resume.")
-            }
-        }
-    }
-
-    private func handleSpeechPlaybackInterruption(_ event: AudioPlaybackInterruptionEvent) {
-        switch event {
-        case .began:
-            // Counted so a device report can show whether chunk-boundary pauses (#183) come
-            // from audio interruptions.
-            diagnostics["speechPlaybackInterruptionCount"] = "\(Int(diagnostics["speechPlaybackInterruptionCount"] ?? "0").map { $0 + 1 } ?? 1)"
-            guard snapshot.status.isPlaybackActive, let engine else {
-                diagnostics["speechPlaybackInterruption"] = "pause_skipped"
-                return
-            }
-            do {
-                snapshot = try engine.reconcileSystemInitiatedPause()
-                refreshSelectedItem()
-                diagnostics["speechPlaybackInterruption"] = "paused"
-            } catch {
-                diagnostics["speechPlaybackInterruption"] = "pause_failed:\(error.localizedDescription)"
-                reportWarning("Playback could not be paused cleanly after the audio route changed.")
-            }
-        case .endedShouldResume:
-            guard snapshot.status == .paused, let engine else {
-                noteSpeechInterruptionResume(.skipped)
-                return
-            }
-            do {
-                snapshot = try engine.resumePlayback()
-                refreshSelectedItem()
-                noteSpeechInterruptionResumeReturned()
-            } catch {
-                noteSpeechInterruptionResume(.failed(reason: error.localizedDescription))
-                reportWarning("Playback paused after the interruption. Tap Play to resume.")
-            }
-        }
-    }
-
     @discardableResult
-    private func sanitizeTTSMode() -> Bool {
+    func sanitizeTTSMode() -> Bool {
         let priorMode = ttsMode
         if ttsVoiceSelection.supertonicVoice != nil, !hasAcceptedCurrentTerms {
             ttsVoiceSelection = .system
@@ -7404,7 +7087,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func suppressAudioPreparation(itemId: String) {
+    func suppressAudioPreparation(itemId: String) {
         suppressAudioPreparation(itemIds: Set([itemId]))
     }
 
@@ -7416,7 +7099,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func allowAudioPreparation(itemId: String) {
+    func allowAudioPreparation(itemId: String) {
         guard suppressedAutomaticAudioPreparationItemIds.remove(itemId) != nil else { return }
         UserDefaults.standard.set(
             suppressedAutomaticAudioPreparationItemIds.sorted(),
@@ -8044,7 +7727,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     #if canImport(AVFoundation) && canImport(ShazamKit)
-    private func handlePostResumePodcastEvidence(_ result: PostResumePodcastEvidenceCaptureResult) {
+    func handlePostResumePodcastEvidence(_ result: PostResumePodcastEvidenceCaptureResult) {
         switch result {
         case .captured(let capture):
             do {
