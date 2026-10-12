@@ -162,6 +162,25 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    func testPlacementPassUsesDecodedItemIdentityWhenStoredKeyDiffers() throws {
+        try withFixture { _, store, database in
+            try store.saveItem(item("A"))
+            try executeSQL("UPDATE records SET id = 'alias' WHERE kind = 'item' AND id = 'A';", database: database)
+            XCTAssertEqual(try store.loadItem(id: "alias").id, "A", "Only the stored key changed")
+            var passes = SharedMarginPlacementPasses()
+            passes.begin(.matching, itemId: "A")
+            passes.begin(.transcript, itemId: "alias")
+            let decodedPass = try XCTUnwrap(passes.pass(itemId: "A"))
+            let requestedPass = try XCTUnwrap(passes.pass(itemId: "alias"))
+            XCTAssertNotEqual(decodedPass, requestedPass)
+
+            let detail = try ItemDetailLoader.load(id: "alias", store: store,
+                snapshotItemId: nil, snapshotSessionId: nil, placementPasses: passes)
+            XCTAssertEqual(detail.id, "A")
+            XCTAssertEqual(detail.sharedMarginPlacement, decodedPass)
+        }
+    }
+
     private func withFixture(_ body: (Gate1AppModel, SQLiteSessionStore, URL) throws -> Void) throws {
         let preferences = VoicePreferencesSnapshot.capture()
         defer { preferences.restore() }
