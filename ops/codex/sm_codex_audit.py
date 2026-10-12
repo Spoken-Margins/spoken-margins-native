@@ -86,7 +86,7 @@ CLAUDE_TOOLS = "Read,Grep,Glob"
 CLAUDE_BUDGET_USD = "10"  # per call; a small batch costs well under $1
 CLAUDE_TIMEOUT_S = 30 * 60
 
-MAX_FAILED_AUDITS = 2  # a head whose audit call failed this many times is left alone (no blind retries)
+MAX_FAILED_AUDITS = 2  # a head whose audit call or post failed this many times is left alone (no blind retries)
 FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
 
 HEAD_FILE_CAP = 2_000_000  # bytes of one changed file copied out at the PR head
@@ -1066,6 +1066,8 @@ def audit_batch(batch: list[dict]) -> None:
             usage_run.checkpoint(targets=targets)
             if res.returncode == 0:
                 clear_failure(n)
+            else:  # the head is still unaudited, so count it or every tick pays for the same audit again (#1456)
+                record_failure(n, head)
             results.append(f"#{n} posted" if res.returncode == 0 else f"#{n} post failed: {res.stderr.strip()[:120]}")
         log(f"batch {','.join('#' + str(x) for x in live_nums)}: claude {took}s {why}; " + "; ".join(results))
         usage_run.checkpoint(outcome={'kind': 'audit completed', 'signature': usage.signature(answer)})

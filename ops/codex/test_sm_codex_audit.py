@@ -746,6 +746,36 @@ class UsageRecording(unittest.TestCase):
                 failures = json.loads((root / 'failures.json').read_text()) if (root / 'failures.json').exists() else {}
                 self.assertEqual(A.failed_count(failures, 1, HEAD), 0 if ok else 1)
 
+    def test_a_failed_post_counts_toward_the_retry_limit(self):
+        # #1456: a post that fails leaves the head unaudited, so without this the next tick paid for the audit again.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            scratch = root / 'scratch'
+            scratch.mkdir()
+            def run(command, **kwargs):
+                if command[:3] == ['git', 'worktree', 'add']:
+                    Path(command[-2]).mkdir()
+                if command[:4] == ['gh', 'pr', 'comment', '1']:
+                    return SimpleNamespace(stdout='', stderr='HTTP 502', returncode=1)
+                output = HEAD if command[-1] == 'FETCH_HEAD' else OLD
+                if command[:3] == ['gh', 'pr', 'comment']:
+                    output = 'https://github.com/uncomposed/spoken-margins-native/pull/2#issuecomment-42'
+                return SimpleNamespace(stdout=output, stderr='', returncode=0)
+            def claude(wt, answer, prompt, transcript):
+                transcript.write_text(json.dumps(CLAUDE_RESULT) + '\n')
+                answer.write_text('### PR #1\nNo blocking findings.\n### PR #2\nNo blocking findings.')
+                return True, 'ok'
+            batch = [dict(pr(number=n), lines=1, issues=[], reason='new head') for n in (1, 2)]
+            with patch.object(A, 'run', run), patch.object(A, 'run_claude', claude), \
+                 patch.object(A, 'fetch_comments', return_value=[]), patch.object(A, 'log'), \
+                 patch.object(A, 'OUTPUT_KEEP_DIR', root / 'kept'), patch.object(A.usage, 'DEFAULT_DIR', root / 'ledger'), \
+                 patch.object(A.tempfile, 'mkdtemp', return_value=str(scratch)), \
+                 patch.object(A.subprocess, 'run'), patch.object(A, 'FAILURES_PATH', root / 'failures.json'):
+                A.audit_batch(batch)
+            failures = json.loads((root / 'failures.json').read_text())
+            self.assertEqual(A.failed_count(failures, 1, HEAD), 1)
+            self.assertEqual(A.failed_count(failures, 2, HEAD), 0)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=1)

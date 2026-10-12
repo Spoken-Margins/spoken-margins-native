@@ -224,7 +224,7 @@ launchctl bootout gui/$(id -u)/com.spokenmargins.codex-worker
 
 ## Audit (headless Claude)
 
-`sm_codex_audit.py` is the mechanical audit of PRs into `next`. Since #1195 it runs on headless Claude (`claude -p`, model `opus`, effort `high`), read-only; before that it ran Codex (`gpt-6-astra`). launchd runs it every 20 minutes (`com.spokenmargins.codex-audit.plist`). The script, job label, log and lock keep their old names, so the loaded job picks the change up when the ops checkout pulls `next`, with nothing to reinstall. Its docstring has the full gating rules. In short, it audits an open PR when:
+`sm_codex_audit.py` is the mechanical audit of PRs into `next`. Since #1195 it runs on headless Claude (`claude -p`, model `opus`, effort `high`), read-only; before that it ran Codex (`gpt-6-astra`). launchd runs it every 5 minutes (`com.spokenmargins.codex-audit.plist`; 20 until #1456). An idle tick makes no model call. The script, job label, log and lock keep their old names, so the loaded job picks the change up when the ops checkout pulls `next`, with nothing to reinstall. Its docstring has the full gating rules. In short, it audits an open PR when:
 
 1. The PR has no Codex or Claude audit comment naming its head. Only comments the lane runner also counts are audits: legacy ones starting ``**Codex audit (Astra)`` or `## Codex audit`, or an exact first-line heading ``**Claude audit on `<sha7>`**`` (7–40 lowercase hex characters). A finisher's reply such as ``**Codex audit on `a919a79` (P2): fixed in `d00dd82` `` is not (#812).
 2. Its newest lane report is a PASS on the head.
