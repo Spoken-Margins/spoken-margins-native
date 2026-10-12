@@ -133,23 +133,9 @@ extension Gate1AppModel {
         lastError = nil
         Task {
             do {
-                var partials: [String] = []
-                for context in contexts {
-                    partials.append(try await localFoundationModelClient.summarizeInterjections(context: context))
-                }
-                while partials.count > 1 {
-                    var reduced: [String] = []
-                    var start = 0
-                    while start < partials.count {
-                        let end = min(partials.count, start + 4)
-                        let group = partials[start..<end]
-                        let payload = group.enumerated().map { index, summary in
-                            "PARTIAL \(index + 1):\n\(String(summary.prefix(1_200)))"
-                        }.joined(separator: "\n\n")
-                        reduced.append(try await localFoundationModelClient.summarizeInterjections(context: payload))
-                        start = end
-                    }
-                    partials = reduced
+                let client = localFoundationModelClient
+                let partials = try await SummaryPartialsReducer.reduce(contexts: contexts) { context in
+                    try await client.summarizeInterjections(context: context)
                 }
                 guard let response = partials.first, !response.isEmpty else {
                     throw LocalFoundationModelError.emptyResponse
