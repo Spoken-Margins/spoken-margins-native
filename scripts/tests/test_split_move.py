@@ -159,6 +159,18 @@ class MoveTests(unittest.TestCase):
         source, _, _ = self.move(['useCount'])
         self.assertIn('    @Published private(set) var counter = 0', source)
 
+    def test_a_call_to_a_repo_mutating_method_opens_the_setter(self):
+        # #1012: moved code called `passes.begin(...)`, a `mutating func` on one of our own
+        # structs. A read-only setter there fails the app build.
+        model = (
+            'struct Passes {\n    mutating func begin() {}\n}\n\n'
+            '@MainActor\nfinal class Gate1AppModel: ObservableObject {\n'
+            '    private var passes = Passes()\n    private var other = Passes()\n\n'
+            '    func start() {\n        passes.begin()\n        _ = other\n    }\n}\n')
+        source, _, _ = split_move.move_texts(model, None, ['start'])
+        self.assertIn('    var passes = Passes()', source)
+        self.assertIn('    private(set) var other = Passes()', source)
+
     def test_a_private_moved_member_unused_by_the_model_stays_private(self):
         _, dest, _ = self.move(['countThing', 'useCount'])
         self.assertIn('    private func countThing', dest)
