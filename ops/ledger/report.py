@@ -11,7 +11,6 @@ import subprocess
 import sys
 from zoneinfo import ZoneInfo
 
-import claude_sessions
 import usage
 
 REPO = 'uncomposed/spoken-margins-native'
@@ -131,32 +130,7 @@ def ratio(rows: list, count: int):
     return round(value['tokens'] / count, 2) if count and not value['incomplete_runs'] else None
 
 
-CLAUDE_NOT_MEASURED = [
-    'Project threads that run in the cloud leave no transcript on this Mac.',
-    'Calls Claude Code makes outside the transcript (titles, side queries, compaction) are missing; '
-    'coverage.transcript_share is the measured part of Claude Code\'s own total.',
-    'Headless runs with --no-session-persistence (the audit job) are counted from usage.jsonl, not here.',
-    'Sessions on other machines and claude.ai chats are not measured.']
-
-
-def claude_summary(claude_rows, start: dt.datetime, end: dt.datetime):
-    """Measured Claude desktop turns on this Mac (ops/ledger/claude_sessions.py), kept apart from the
-    wrapper rows above so nothing is added twice. None when the collector has never run."""
-    if claude_rows is None:
-        return None
-    week = [row for row in claude_rows if row.get('time') and start <= parse_time(row['time']) < end]
-    turns = [row for row in week if row.get('kind') == 'turn']
-    by_job = {}
-    for job in sorted({row['job'] for row in turns}):
-        group = [row for row in turns if row['job'] == job]
-        by_job[job] = dict(totals(group), sessions=len({row['session_id'] for row in group}),
-                           outcome_links=len({link for row in group for link in row.get('outcome_links') or []}))
-    return {'by_job': by_job, 'total': totals(turns),
-            'outcome_links': sorted({link for row in turns for link in row.get('outcome_links') or []}),
-            'coverage': claude_sessions.coverage(week), 'not_measured': CLAUDE_NOT_MEASURED}
-
-
-def summarize(all_rows: list, start: dt.datetime, github, claude_rows=None) -> dict:
+def summarize(all_rows: list, start: dt.datetime, github) -> dict:
     end = start + dt.timedelta(days=7)
     rows = [row for row in all_rows if start <= parse_time(row['time']) < end]
     jobs = {job: totals([r for r in rows if r['job'] == job]) for job in sorted({r['job'] for r in rows})}
@@ -186,7 +160,6 @@ def summarize(all_rows: list, start: dt.datetime, github, claude_rows=None) -> d
             'tokens_per_merged_pr': ratio([r for r in rows if r['job'] in ('audit', 'issue', 'finisher')], len(merged)),
             'tokens_per_fixed_audit_finding': ratio([r for r in rows if r['job'] == 'audit'], len(fixes)),
             'tokens_per_testdesk_bug': ratio([r for r in rows if r['job'] == 'testdesk-diagnosis'], len(bugs)),
-            'claude': claude_summary(claude_rows, start, end),
             'repeated_runs': len(repeat_rows), 'repeated_tokens': totals(repeat_rows)['tokens'],
             'repeated_token_share': round(totals(repeat_rows)['tokens'] / measured['tokens'], 4)
                 if coverage >= 7 * 86400 and measured['tokens'] and not measured['incomplete_runs'] else None,
@@ -197,10 +170,7 @@ def summarize(all_rows: list, start: dt.datetime, github, claude_rows=None) -> d
                 'Fix count requires an exact-title fixed-in comment linked to the audit and a later commit touching its file.',
                 'A claimed fix is not behavioral verification; unmatched fixes remain uncounted.',
                 'Repeated means all targets repeat the preceding reported outcome for the same job/PR, not necessarily waste.',
-                'No percentage until ledger events span a week.',
-                'claude: Claude desktop turns on this Mac, one run per turn; null until claude_sessions.py '
-                'has written its ledger. Outcome links are comments and PRs that gh printed when it posted them. '
-                'They are not added to total or to the ratios above.']}
+                'No percentage until ledger events span a week. This excludes Claude and interactive app sessions.']}
 
 
 def main(argv=None) -> int:
@@ -208,14 +178,12 @@ def main(argv=None) -> int:
     parser.add_argument('--week', required=True, help='Week start date YYYY-MM-DD (America/Chicago by default)')
     parser.add_argument('--timezone', default='America/Chicago')
     parser.add_argument('--ledger', type=Path, default=usage.DEFAULT_DIR / 'usage.jsonl')
-    parser.add_argument('--claude-ledger', type=Path, default=claude_sessions.LEDGER)
     parser.add_argument('--repo', default=REPO)
     args = parser.parse_args(argv)
     try:
         usage.recover(args.ledger.parent, log=lambda message: print(message, file=sys.stderr))
         start = dt.datetime.combine(dt.date.fromisoformat(args.week), dt.time(), ZoneInfo(args.timezone))
-        claude_rows = load_rows(args.claude_ledger) if args.claude_ledger.exists() else None
-        print(json.dumps(summarize(load_rows(args.ledger), start, GitHub(args.repo), claude_rows), indent=2))
+        print(json.dumps(summarize(load_rows(args.ledger), start, GitHub(args.repo)), indent=2))
     except Exception as error:
         print(f'Usage report failed: {error}; no summary produced', file=sys.stderr)
         return 1
