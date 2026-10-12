@@ -455,6 +455,10 @@ def mutated(code: str, name: str, methods: frozenset = frozenset()) -> bool:
         before = code[max(0, match.start() - 40):match.start()]
         if match.group(1) or not re.search(r'\b(let|var|case)\s+$|,\s*$', before):
             return True
+    # A tuple assignment, `(a, b) = (x, y)` (#1016: skimForwardDestinationMs).
+    tuple_target = r'\(\s*(?:[^()=]*,\s*)?(self\.)?' + re.escape(name) + r'\s*(?:,[^()=]*)?\)\s*=(?!=)'
+    if re.search(tuple_target, code):
+        return True
     return re.search(r'&(self\.)?' + re.escape(name) + r'\b', code) is not None
 
 
