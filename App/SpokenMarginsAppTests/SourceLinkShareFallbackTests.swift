@@ -231,7 +231,10 @@ final class SourceLinkShareFallbackTests: XCTestCase {
         return SourceLinkHandoffStore(baseDirectory: directory)
     }
 
-    private func waitFor(_ description: String, timeoutNanoseconds: UInt64 = 10_000_000_000, condition: () -> Bool) async throws {
+    /// Some of these shares go through real WebKit extraction (#1049). WebKit's own
+    /// processes took 24 s to launch in a full app-plan run (#1413), so the
+    /// default allows 60 s; a passing share returns as soon as it lands.
+    private func waitFor(_ description: String, timeoutNanoseconds: UInt64 = 60_000_000_000, condition: () -> Bool) async throws {
         var elapsed: UInt64 = 0
         while elapsed < timeoutNanoseconds {
             if condition() { return }

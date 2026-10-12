@@ -4545,7 +4545,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.resetAndSeed()
 
         model.importObsidianMarkdownFiles(urls: [file])
-        try await waitFor("structured PDF import to finish") {
+        // Alone this import takes about 0.1 s, but in the full app plan on a
+        // loaded simulator it overran the 1 s default (#1413), so give it 10 s.
+        try await waitFor("structured PDF import to finish", timeoutNanoseconds: 10_000_000_000) {
             !model.isImportingSources
         }
 
