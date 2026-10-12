@@ -1811,7 +1811,8 @@ final class SupertonicSpeechTests: XCTestCase {
     // lifecycle is on, and a chunk ends through its item's own end notification, as on a phone.
 
     // Audit of #346 (1): playing a cached chunk removes it from the cache. Seek ahead into C, then
-    // back into B; when B ends, C must still play rather than leave silence.
+    // back into B; when B ends, C must play at once from its saved audio. Rendering C again would also
+    // play it eventually, after a gap on a phone, so the next render is held and must not be needed.
     func testSeekingAheadThenBackStillPlaysTheLaterChunk() async throws {
         let harness = try SupertonicClientHarness()
         defer { harness.tearDown() }
@@ -1824,10 +1825,13 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(harness.playingChunkStart, chunk[1], "B plays")
         let before = harness.playerStarts
+        let rendersBefore = harness.renderer.startedCount
+        harness.holdNextRender()                                    // a second render of C would wait
         await harness.finishPlayingChunk()                          // B ends, as AVFoundation reports it
         let next = await harness.waitForPlayerStarts(before + 1)
         XCTAssertTrue(next, "the next chunk started after B")
         XCTAssertEqual(harness.playingChunkStart, chunk[2], "C plays after B")
+        XCTAssertEqual(harness.renderer.startedCount, rendersBefore, "C played from its saved audio, not a new render")
     }
 
     // Audit of #346 (2): a seek into cached B left an autoplay marker for still-rendering C, so
