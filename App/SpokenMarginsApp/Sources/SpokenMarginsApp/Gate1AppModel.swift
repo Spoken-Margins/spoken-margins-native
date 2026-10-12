@@ -74,11 +74,11 @@ final class Gate1AppModel: ObservableObject {
 
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
-    @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
-    @Published private(set) var recordingPermissionDenied = false
+    @Published var writtenMarginDraft: WrittenMarginDraft?
+    @Published var recordingPermissionDenied = false
     @Published var marginCollectionQuery = MarginCollectionQuery()
     @Published var sharedMarginRows: [SharedMarginRow] = []
-    private var pendingVoiceCaptureRequestID: UUID?
+    var pendingVoiceCaptureRequestID: UUID?
     var screen: Gate1Screen {
         get { presentedScreen }
         set {
@@ -234,7 +234,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
     @Published var batchExportResult: BatchSessionExportResult?
     @Published var isWritingBatchExport = false
-    @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
+    @Published var retryingInterjectionTranscriptionIds: Set<String> = []
     @Published var playingInterjectionAudioId: String?
     @Published var playingInterjectionAudioSessionID: String?
     @Published var playingInterjectionAudioRate: Double = 1
@@ -280,14 +280,14 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginRows: [MarginRow] = []
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
     @Published var recordingPresentationContext: RecordingPresentationContext?
-    @Published private(set) var isRequestingRecordingPermission = false
+    @Published var isRequestingRecordingPermission = false
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
     /// #783: the line shown before iOS's first microphone prompt.
-    @Published private(set) var microphonePrimer = MicrophonePrimer()
-    @Published private(set) var isFinishingInterjection = false
-    @Published private(set) var isMarginCaptureCoolingDown = false
-    @Published private(set) var isDismissingMiniPlayer = false
+    @Published var microphonePrimer = MicrophonePrimer()
+    @Published var isFinishingInterjection = false
+    @Published var isMarginCaptureCoolingDown = false
+    @Published var isDismissingMiniPlayer = false
     @Published var requestedTimelineFocusMarginID: String?
     @Published var pastedAssistantResponse = ""
     @Published var sharingState = InterjectionSharingState()
@@ -695,7 +695,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Applies one transition to a copy, then stores it and writes only the UserDefaults keys it names.
     /// A transition that changes nothing leaves the published value alone, so views are not redrawn for it.
-    private func changeOnboardingProgress(_ transition: (inout OnboardingProgress) -> OnboardingProgress.Change) {
+    func changeOnboardingProgress(_ transition: (inout OnboardingProgress) -> OnboardingProgress.Change) {
         var updated = onboardingProgress
         let change = transition(&updated)
         guard !change.isEmpty else { return }
@@ -3111,7 +3111,7 @@ final class Gate1AppModel: ObservableObject {
         cancelSkimBridge(restoringOrigin: true, resumeSource: true)
     }
 
-    private func cancelSkimBridge(restoringOrigin: Bool, resumeSource: Bool) {
+    func cancelSkimBridge(restoringOrigin: Bool, resumeSource: Bool) {
         guard var bridge = snapshot.skimBridgeState else { return }
         bridge.status = .cancelled
         skimBridgePlayer?.pause()
@@ -3762,44 +3762,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func beginInterjection() {
-        guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
-        guard snapshot.skimBridgeState == nil else {
-            reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
-            return
-        }
-        guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
-        let voiceCaptureRequestID = UUID()
-        pendingVoiceCaptureRequestID = voiceCaptureRequestID
-        recordingPermissionDenied = false
-        isRequestingRecordingPermission = true
-        statusMessage = "Starting Margin..."
-        lastError = nil
-        diagnostics["lastInterjectionTap"] = "begin"
-        let requestedAt = Date()
-        recordingPresentationContext = RecordingPresentationContext(
-            itemTitle: selectedItem.title.isEmpty ? "Current item" : selectedItem.title,
-            locationTitle: snapshot.chapterTitle ?? "Current listening position",
-            progressPercent: snapshot.currentPlaybackProgressPercent,
-            startedAt: requestedAt
-        )
-        let status = microphoneAccess.status()
-        if status == .granted {
-            diagnostics["lastMicrophonePermissionResult"] = "granted"
-            microphoneAccess.record { [weak self] in self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID) }
-            return
-        }
-        if let status, microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
-            diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
-            return
-        }
-        requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
-    }
-
     /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
     /// and the source moves to the playing Margin's place so the new Margin is anchored there. False when that move
     /// failed: nothing records, rather than recording at the wrong place.
-    private func handOffPlayingMarginToRecording() -> Bool {
+    func handOffPlayingMarginToRecording() -> Bool {
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
             handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
@@ -3826,232 +3792,6 @@ final class Gate1AppModel: ObservableObject {
         }
         if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is.") }
         return moved
-    }
-
-    /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
-    func continueMicrophonePrimer() {
-        guard let captureID = microphonePrimer.continueTapped(),
-              pendingVoiceCaptureRequestID == captureID else { return }
-        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
-    }
-
-    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
-        Task {
-            let granted = await requestMicrophonePermission()
-            guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
-            guard granted else {
-                isRequestingRecordingPermission = false
-                recordingPresentationContext = nil
-                pendingVoiceCaptureRequestID = nil
-                recordingPermissionDenied = true
-                reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
-                return
-            }
-            startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
-        }
-    }
-
-    private func startInterjectionRecording(requestedAt: Date, captureID: UUID) {
-        guard pendingVoiceCaptureRequestID == captureID else { return }
-        defer {
-            isRequestingRecordingPermission = false
-            pendingVoiceCaptureRequestID = nil
-        }
-        synchronizeStreamingSpeechAnchorIfNeeded()
-        streamingSpeechQueue.pauseForInterjection()
-        run { engine in
-            snapshot = try engine.beginInterjection()
-            if snapshot.isRecording {
-                recordingPresentationContext = RecordingPresentationContext(
-                    itemTitle: selectedItem.title,
-                    locationTitle: snapshot.chapterTitle ?? "Current listening position",
-                    progressPercent: snapshot.currentPlaybackProgressPercent,
-                    startedAt: Date()
-                )
-                let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
-                diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
-            }
-        }
-        guard !snapshot.isRecording else { return }
-        recordingPresentationContext = nil
-        streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
-    }
-
-    /// Publish acknowledgement before synchronous recorder/store finalization.
-    /// Keep capture gated briefly after dismissal so a second tap cannot start a new Margin.
-    func requestFinishInterjection() {
-        guard snapshot.isRecording, !isFinishingInterjection else { return }
-        isFinishingInterjection = true
-        isMarginCaptureCoolingDown = true
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            guard let self else { return }
-            self.finishInterjection()
-            self.isFinishingInterjection = false
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            self.isMarginCaptureCoolingDown = false
-        }
-    }
-
-    func finishInterjection() {
-        guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
-        run { engine in
-            defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
-            snapshot = try engine.finishInterjection(audioRef: nil)
-            refreshSelectedItem()
-            recordSavedInterjectionForOnboarding()
-            transcribeAndRecordSavedSpokenMargin()
-            reportMarginSaved(verdict)
-        }
-        if !snapshot.isRecording {
-            recordingPresentationContext = nil
-            refreshMarginRows()
-        }
-        streamingSpeechQueue.resumeAfterInterjection()
-    }
-
-    func recordSavedInterjectionForOnboarding() {
-        changeOnboardingProgress { $0.firstInterjectionSaved() }
-    }
-
-    func cancelInterjection() {
-        if isRequestingRecordingPermission && !snapshot.isRecording {
-            microphonePrimer.cancel()
-            pendingVoiceCaptureRequestID = nil
-            isRequestingRecordingPermission = false
-            recordingPresentationContext = nil
-            return
-        }
-        recordFinalCaptureDiagnostics("cancelled")
-        run { engine in
-            snapshot = try engine.cancelInterjection()
-            refreshSelectedItem()
-            reportSuccess("Cancelled Margin.")
-        }
-        if !snapshot.isRecording {
-            recordingPresentationContext = nil
-        }
-        streamingSpeechQueue.resumeAfterInterjection()
-    }
-
-    func beginWrittenMargin() {
-        guard !recordingNavigationIsLocked else { return }
-        guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
-            reportFailure("Return to the source before writing a Margin.")
-            return
-        }
-        do {
-            let store = try requireStore()
-            if engine == nil { installEngine(try makeEngine(store: store)) }
-            guard let engine else { return }
-            synchronizeStreamingSpeechAnchorIfNeeded()
-            streamingSpeechQueue.pauseForInterjection()
-            let capture = try engine.beginWrittenInterjection()
-            lastError = nil
-            recordingPermissionDenied = false
-            snapshot = engine.snapshot
-            writtenMarginDraft = WrittenMarginDraft(
-                capture: capture,
-                text: "",
-                itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
-                targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
-                progressPercent: capture.roughPercent
-            )
-            recordingPresentationContext = nil
-        } catch {
-            streamingSpeechQueue.resumeAfterInterjection()
-            reportFailure(error, context: "Written Margin could not start")
-        }
-    }
-
-    func updateWrittenMarginText(_ text: String) {
-        guard writtenMarginDraft != nil else { return }
-        writtenMarginDraft?.text = text
-    }
-
-    func switchPendingVoiceCaptureToWrittenMargin() {
-        guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
-        microphonePrimer.cancel()
-        isRequestingRecordingPermission = false
-        pendingVoiceCaptureRequestID = nil
-        recordingPresentationContext = nil
-        beginWrittenMargin()
-    }
-
-    func saveWrittenMargin(text: String) {
-        guard let draft = writtenMarginDraft, let engine else { return }
-        do {
-            snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
-            listeningSignals.writtenMargin(itemId: draft.capture.itemId, text: text)
-            writtenMarginDraft = nil
-            if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
-            refreshSelectedItem()
-            refreshMarginRows()
-            if draft.priorWasPlaying && snapshot.status == .paused {
-                reportWarning("Margin saved. Playback is paused; tap Play to continue.")
-            } else {
-                reportConfirmation("Written Margin saved.")
-            }
-        } catch {
-            writtenMarginDraft?.text = text
-            reportFailure(error, context: "Written Margin could not be saved")
-        }
-    }
-
-    func cancelWrittenMargin() {
-        guard let draft = writtenMarginDraft, let engine else { return }
-        do {
-            snapshot = try engine.cancelWrittenInterjection(captureId: draft.capture.id)
-            writtenMarginDraft = nil
-            if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
-            refreshSelectedItem()
-        } catch {
-            reportFailure(error, context: "Written Margin could not be cancelled")
-        }
-    }
-
-    func endSession() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("end_session") else { return }
-        closeCurrentSession(navigateHome: true)
-    }
-
-    func dismissMiniPlayer() {
-        recordDeveloperDiagnostic("miniPlayer.close")
-        guard !rejectNavigationOrSessionMutationWhileRecording("dismiss_mini_player") else { return }
-        guard !isDismissingMiniPlayer else { return }
-        isDismissingMiniPlayer = true
-        Task { @MainActor [weak self] in
-            await Task.yield()
-            guard let self else { return }
-            self.closeCurrentSession(navigateHome: false)
-            self.isDismissingMiniPlayer = false
-        }
-    }
-
-    private func closeCurrentSession(
-        navigateHome: Bool,
-        successMessage: String = "Session saved. You can resume it later."
-    ) {
-        cancelSkimBridge(restoringOrigin: true, resumeSource: false)
-        let closedItemId = snapshot.itemId ?? activeItemId
-        run { engine in
-            snapshot = try endEngineSession(engine)
-            activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
-            refreshSelectedItem()
-            if let store {
-                try refreshLibraryRows(store: store)
-            }
-            reportConfirmation(successMessage)
-        }
-        streamingSpeechQueue.stopAndClear()
-        gate2CompactControls.endLiveActivities()
-        resetMixWithOtherAudioForNewSession()
-        if let renderer = supertonicRenderer {
-            Task { await renderer.unload() }
-        }
-        if navigateHome {
-            screen = .home
-        }
     }
 
     func playTurn(_ turn: ConversationTurn, fromTimeline: Bool = false) {
@@ -4167,49 +3907,6 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["pendingAutoPlayReason"] = reason
     }
 
-    static func marginIdentity(_ interjection: Interjection) -> String {
-        "\(interjection.sessionId)::\(interjection.id)"
-    }
-
-    /// Margin IDs repeat per session, so per-Margin diagnostics carry a hashed session token.
-    static func marginDiagnosticKey(_ name: String, sessionId: String, interjectionId: String) -> String {
-        PodcastAnchorCaptureDiagnostics.marginKey(name, sessionId: sessionId, interjectionId: interjectionId)
-    }
-
-    static func marginDiagnosticKey(_ name: String, _ interjection: Interjection) -> String {
-        marginDiagnosticKey(name, sessionId: interjection.sessionId, interjectionId: interjection.id)
-    }
-
-    static func marginDiagnosticKey(_ name: String, _ request: PostResumeAudioSampleRequest) -> String {
-        marginDiagnosticKey(name, sessionId: request.sessionId, interjectionId: request.interjectionId)
-    }
-
-    func isRetryingInterjectionTranscription(_ interjection: Interjection) -> Bool {
-        retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
-    }
-
-    func isRetryingAnchorContext(_ interjection: Interjection) -> Bool {
-        pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection))
-    }
-
-    func retryAnchorContext(_ interjection: Interjection) {
-        guard interjection.captureKind != .written else { return }
-        guard !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
-        if !scheduleSourceWindowContextIfNeeded(for: interjection, reportsResult: true) {
-            reportWarning("Context needs a source timestamp and completed Margin transcription. Retry when transcription finishes.")
-        }
-    }
-
-    func retryInterjectionTranscription(_ interjection: Interjection) {
-        guard interjection.captureKind != .written, interjection.audioPath != nil else {
-            reportFailure("The saved Margin audio is unavailable.")
-            return
-        }
-        guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
-        scheduleRetriedTranscription(for: interjection)
-        reportConfirmation("Retranscribing the saved Margin audio.")
-    }
-
     func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
         SharedMarginPrompts.prompts(
             layers: selectedItem.importedCommentaryLayers,
@@ -4221,81 +3918,6 @@ final class Gate1AppModel: ObservableObject {
 
     nonisolated static func isPlayableImportedCommentaryResolution(_ resolution: ImportedAnchorResolution) -> Bool {
         SharedMarginPrompts.isPlayable(resolution)
-    }
-
-    func deleteTranscript(interjection: Interjection) {
-        run { engine in
-            snapshot = try engine.deleteRepresentation(interjectionId: interjection.id, sessionId: interjection.sessionId, representation: "transcript")
-            refreshSelectedItem()
-            reportSuccess("Deleted transcript.")
-        }
-        refreshMarginRows()
-    }
-
-    func deleteInterjection(_ interjection: Interjection) {
-        run { engine in
-            snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
-            refreshSelectedItem()
-            reportSuccess("Deleted Margin.")
-        }
-        refreshMarginRows()
-    }
-
-    func setInterjectionStarredForSharing(_ interjectionID: String, sessionId: String? = nil, starred: Bool) {
-        do {
-            let store = try requireStore()
-            let candidates = try sessionId.map { try store.loadInterjections(sessionId: $0) } ?? selectedItem.interjections
-            guard var interjection = candidates.first(where: { $0.id == interjectionID && (sessionId == nil || $0.sessionId == sessionId) }) else {
-                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
-            }
-            interjection.isStarredForSharing = starred ? true : nil
-            try store.saveInterjection(interjection)
-            refreshSelectedItem()
-            refreshMarginRows()
-            diagnostics["shareCuration:\(interjectionID)"] = starred ? "starred" : "unstarred"
-        } catch {
-            reportFailure(error, context: "Margin sharing star could not be saved")
-        }
-    }
-
-    func setMarginStarred(_ row: MarginRow, starred: Bool) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("star_margin") else { return }
-        do {
-            let store = try requireStore()
-            guard var interjection = try store.loadInterjections(sessionId: row.interjection.sessionId).first(where: {
-                $0.id == row.interjection.id
-                    && $0.sessionId == row.interjection.sessionId
-                    && $0.itemId == row.interjection.itemId
-            }) else {
-                throw SessionKitError.persistenceFailed("margin_curation_interjection_missing")
-            }
-            interjection.isStarredForSharing = starred ? true : nil
-            try store.saveInterjection(interjection)
-            refreshMarginRows()
-            if snapshot.sessionId == row.interjection.sessionId { refreshSelectedItem() }
-            diagnostics["marginCuration:\(row.id)"] = starred ? "starred" : "unstarred"
-        } catch {
-            reportFailure(error, context: "Margin star could not be saved")
-        }
-    }
-
-    func setInterjectionPrivateSharingNote(_ interjectionID: String, sessionId: String? = nil, note: String) {
-        do {
-            let store = try requireStore()
-            let candidates = try sessionId.map { try store.loadInterjections(sessionId: $0) } ?? selectedItem.interjections
-            guard var interjection = candidates.first(where: { $0.id == interjectionID && (sessionId == nil || $0.sessionId == sessionId) }) else {
-                throw SessionKitError.persistenceFailed("share_curation_interjection_missing")
-            }
-            let bounded = String(note.prefix(Self.privateSharingNoteCharacterLimit))
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            interjection.privateSharingNote = bounded.isEmpty ? nil : bounded
-            try store.saveInterjection(interjection)
-            refreshSelectedItem()
-            refreshMarginRows()
-            diagnostics["shareCurationNote:\(interjectionID)"] = bounded.isEmpty ? "empty" : "saved"
-        } catch {
-            reportFailure(error, context: "Private sharing note could not be saved")
-        }
     }
 
     func refreshDiagnostics() {
@@ -4798,7 +4420,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func synchronizeStreamingSpeechAnchorIfNeeded() {
+    func synchronizeStreamingSpeechAnchorIfNeeded() {
         guard let engine,
               let turnId = streamingSpeechQueue.currentTurnId,
               let presentationOffset = streamingSpeechQueue.currentPresentationOffset else {
@@ -6059,7 +5681,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func scheduleSourceWindowContextIfNeeded(for interjection: Interjection, reportsResult: Bool = false) -> Bool {
+    func scheduleSourceWindowContextIfNeeded(for interjection: Interjection, reportsResult: Bool = false) -> Bool {
         guard interjection.captureKind != .written,
               interjection.targetType == .item,
               let anchorMediaTimeMs = interjection.anchor.mediaTimeMs,
