@@ -165,6 +165,13 @@ final class TrackingPlaybackSlider: UISlider {
         onEditing?(false)
     }
 
+    /// UISlider only reports `.adjustable` once UIKit's accessibility bundle loads (VoiceOver on), so the
+    /// scrubber states it itself: it now sits inside a container that lists it beside the Margin stacks.
+    override var accessibilityTraits: UIAccessibilityTraits {
+        get { super.accessibilityTraits.union(.adjustable) }
+        set { super.accessibilityTraits = newValue }
+    }
+
     override func accessibilityIncrement() { accessibilityStep(1) }
     override func accessibilityDecrement() { accessibilityStep(-1) }
     private func accessibilityStep(_ direction: Float) {
