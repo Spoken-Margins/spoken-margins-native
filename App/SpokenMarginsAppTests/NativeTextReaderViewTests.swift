@@ -59,8 +59,8 @@ final class NativeTextReaderViewTests: XCTestCase {
     /// Mounts the whole sheet: the reader tests above build the UITextView alone and cannot see
     /// a SwiftUI ancestor's identifier replace the text view's (#1426). SwiftUI vends its
     /// accessibility nodes lazily, so the XCUI hierarchy in J1 is the real check that the sheet
-    /// identifier still exists; this guards the text view's identifier through the mounted sheet.
-    func testMountedSheetKeepsBothTheSheetAndTheTextViewIdentifiers() async throws {
+    /// identifier still exists; this test guards only the text view's identifier through the mounted sheet.
+    func testMountedSheetKeepsTheTextViewIdentifier() async throws {
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let text = "First sentence. Current sentence. Last sentence."
