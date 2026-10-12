@@ -4271,14 +4271,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testPlaybackSpeechRateChangeRestartsActiveNativeTextAtCurrentOffset() throws {
-        let previousSpeechRate = UserDefaults.standard.object(forKey: "speechRate")
-        defer {
-            if let previousSpeechRate {
-                UserDefaults.standard.set(previousSpeechRate, forKey: "speechRate")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "speechRate")
-            }
-        }
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
+        SpokenMarginsTerms.recordAcceptance()
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio)
         model.resetAndSeed()
@@ -4286,6 +4281,9 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.importText = "One. Two. Three."
 
         model.importTextItem()
+        XCTAssertEqual(model.snapshot.status, .playing)
+        XCTAssertEqual(audio.playedOffsets.last, 0,
+                       "The fixture must start the injected audio client")
         audio.currentOffset = "One. ".count
         model.speechRate = 0.65
         model.playbackSpeechRateChanged()
