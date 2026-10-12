@@ -274,6 +274,7 @@ private struct RootBranchingFeedbackTestContent: View {
                 VStack { Text("First screen") }
             }
         }
+        .background(AppColors.background.ignoresSafeArea())
         .modifier(AppFeedbackPresentation())
     }
 }
