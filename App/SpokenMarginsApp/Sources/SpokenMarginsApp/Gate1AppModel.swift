@@ -238,12 +238,12 @@ final class Gate1AppModel: ObservableObject {
     @Published var playingInterjectionAudioId: String?
     @Published var playingInterjectionAudioSessionID: String?
     @Published var playingInterjectionAudioRate: Double = 1
-    private var libraryPresentationRevision = 0
-    private(set) var navigationRefreshTask: Task<Void, Never>?
+    var libraryPresentationRevision = 0
+    var navigationRefreshTask: Task<Void, Never>?
     var navigationLibraryRead: @Sendable (SQLiteSessionStore) async throws -> LibraryReadSnapshot = { store in
         try await Task.detached(priority: .utility) { try LibraryReadSnapshot.read(store: store) }.value
     }
-    private var activePlaybackDetail: ItemDetailState?
+    var activePlaybackDetail: ItemDetailState?
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { cachedQuickAddCandidates = nil; libraryPresentationRevision += 1 }
     }
@@ -756,7 +756,7 @@ final class Gate1AppModel: ObservableObject {
         recordTimelineReviewCompleted()
     }
 
-    private func recordTimelineReviewCompleted() {
+    func recordTimelineReviewCompleted() {
         changeOnboardingProgress { $0.timelineReviewed() }
     }
 
@@ -1733,7 +1733,7 @@ final class Gate1AppModel: ObservableObject {
         conductor.observe(mediaTimeMs: current.currentMediaTimeMs)
     }
 
-    private func tryRefreshOfflineStorageUsage() {
+    func tryRefreshOfflineStorageUsage() {
         guard let ledger = offlineStorageLedger else { return }
         Task { [weak self] in
             guard let snapshot = try? await ledger.presentationSnapshot() else { return }
@@ -4093,171 +4093,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var nextPlaybackChapter: Chapter? {
-        guard snapshot.itemId == selectedItem.id,
-              snapshot.targetType == TargetType.itemTextTTS.rawValue,
-              let index = selectedItem.chapters.firstIndex(where: { isCurrentTimelineChapter($0) }),
-              selectedItem.chapters.indices.contains(index + 1) else { return nil }
-        return selectedItem.chapters[index + 1]
-    }
-
-    var nextPlaybackMediaChapter: MediaTimelineChapter? {
-        guard snapshot.itemId == selectedItem.id,
-              snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
-                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue,
-              let position = snapshot.currentMediaTimeMs else { return nil }
-        let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
-        return chapters.sorted { $0.startMs < $1.startMs }.first { $0.startMs > position }
-    }
-
-    func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(chapter.title).")
-        }
-    }
-
-    func jumpToMediaChapter(_ chapter: MediaTimelineChapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(chapter.title).")
-        }
-    }
-
-    func jumpToListeningMapScene(_ scene: MediaTimelineChapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(scene.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: scene.startMs)
-            if !snapshot.status.isPlaybackActive {
-                snapshot = try engine.resumePlayback()
-            }
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(scene.title).")
-        }
-    }
-
-    func playSourceFromBeginning(fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning(fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            let startedSelectedItem = try ensureSessionForSelectedItem(engine)
-            if !startedSelectedItem {
-                snapshot = try engine.playSourceFromBeginning()
-            }
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Playing source from the beginning.")
-        }
-    }
-
-    /// Item Detail can be opened while another item remains in the mini player. Chapter
-    /// actions belong to the item being viewed, not merely to whichever session happens
-    /// to be restored in the engine.
-    @discardableResult
-    private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
-        try prepareSourceMediaPlayback(itemId: activeItemId)
-        if let session = engine.currentSession, session.itemId == activeItemId,
-           session.status != "finished", session.phase != .finished, session.completionPercent < 100 {
-            return false
-        }
-        resetMixWithOtherAudioForNewSession()
-        if engine.currentSession != nil {
-            snapshot = try endEngineSession(engine)
-        }
-        let started = try engine.startSession(itemId: activeItemId)
-        snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
-        return true
-    }
-
-    var activePlaybackItemId: String? {
-        snapshot.sessionId == nil ? nil : snapshot.itemId
-    }
-
-    var recordingNavigationIsLocked: Bool {
-        isRequestingRecordingPermission || snapshot.isRecording || writtenMarginDraft != nil
-    }
-
-    @discardableResult
-    func rejectNavigationOrSessionMutationWhileRecording(_ operation: String) -> Bool {
-        guard recordingNavigationIsLocked else { return false }
-        diagnostics["recordingNavigationGuard"] = "blocked_\(operation)"
-        statusMessage = "Finish or cancel this Margin before leaving its listening position."
-        return true
-    }
-
-    func openHome() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_home") else { return }
-        screen = .home
-        // Reflect the known source position without loading every saved item.
-        if let index = libraryItems.firstIndex(where: { $0.id == snapshot.itemId }), snapshot.sessionId != nil {
-            libraryItems[index].hasContinuationSession = true
-            libraryItems[index].continuationProgressPercent = snapshot.sourceProgressPercent
-        }
-        navigationRefreshTask?.cancel()
-        guard let store else { return }
-        let revision = libraryPresentationRevision
-        let read = navigationLibraryRead
-        navigationRefreshTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(350))
-                let data = try await read(store)
-                try Task.checkCancellation()
-                guard let self, self.screen == .home,
-                      self.libraryPresentationRevision == revision else { return }
-                let rows = LibraryRowBuilder.rows(from: data, context: self.startupAudioContext)
-                if self.libraryItems != rows { self.libraryItems = rows }
-                self.recentlyDeletedItems = data.items.filter { $0.deletedAt != nil }
-                    .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }.map {
-                    LibraryItemRow(id: $0.id, title: $0.title, status: "Recently deleted", canDelete: true)
-                }
-            } catch is CancellationError {
-            } catch {
-                self?.diagnostics["homeLibraryRefreshError"] = String(describing: error)
-            }
-        }
-    }
-
-    func openMargins() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_margins") else { return }
-        openHome()
-        requestedExperienceRoot = .margins
-    }
-
-    func openLibrary() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_library") else { return }
-        openHome()
-        requestedExperienceRoot = .library
-    }
-
     var visibleLibraryItems: [LibraryItemRow] {
         LibraryQueryEngine.visibleLibraryItems(libraryItems, query: libraryQuery)
     }
@@ -4301,80 +4136,6 @@ final class Gate1AppModel: ObservableObject {
 
     var librarySortDescription: String {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
-    }
-
-    func openSettings() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_settings") else { return }
-        screen = .settings
-    }
-
-    func openHelp() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_help") else { return }
-        isHelpPresented = true
-    }
-
-    func openAISettingsFromSummaryPrompt() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings") else { return }
-        isAISetupNeededPresented = false
-        screen = .settings
-    }
-
-    func openPlayback() {
-        guard !isRequestingRecordingPermission else { return }
-        guard hasActiveSession else { return }
-        screen = .playback
-        if let itemId = snapshot.itemId, let store {
-            activeItemId = itemId
-            if selectedItem.id != itemId {
-                if let detail = activePlaybackDetail, detail.id == itemId {
-                    selectedItem = detail
-                } else {
-                    navigationRefreshTask?.cancel()
-                    navigationRefreshTask = Task { [weak self] in
-                        try? await Task.sleep(for: .milliseconds(350))
-                        guard !Task.isCancelled, let self, self.screen == .playback,
-                              self.snapshot.itemId == itemId,
-                              let detail = try? self.loadItemDetail(id: itemId, store: store) else { return }
-                        self.selectedItem = detail
-                    }
-                }
-            }
-        }
-    }
-
-    func openTimeline(focusMarginID: String? = nil) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_timeline") else { return }
-        guard hasActiveSession else { return }
-        requestedTimelineFocusMarginID = focusMarginID
-        screen = .timeline
-    }
-
-    func openOfflineStorage() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_offline_storage") else { return }
-        tryRefreshOfflineStorageUsage()
-        screen = .offlineStorage
-    }
-
-    func refreshOfflineStoragePresentation() {
-        tryRefreshOfflineStorageUsage()
-    }
-
-    func returnToSettingsFromOfflineStorage() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("return_to_settings") else { return }
-        screen = .settings
-    }
-
-    func openExport() {
-        openExport(sessionId: nil)
-    }
-
-    func openExport(sessionId: String?) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
-        exportSessionId = sessionId
-            ?? (snapshot.itemId == selectedItem.id ? snapshot.sessionId : nil)
-            ?? selectedItem.sessions.first?.id
-        screen = .export
-        refreshExportPreview(reportStatus: false)
     }
 
     func openItem(id: String) {
@@ -4639,7 +4400,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Seeks the source player, or records the destination when a restored paused session
     /// has no player yet; the next playback start then opens the source there.
-    private func seekOrStageMedia(_ engine: SessionEngine, toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+    func seekOrStageMedia(_ engine: SessionEngine, toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
         do {
             return try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
         } catch SessionKitError.invalidCommandForState(let reason)
@@ -4754,7 +4515,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func resetMixWithOtherAudioForNewSession() {
+    func resetMixWithOtherAudioForNewSession() {
         if mixesWithOtherAudio {
             setMixesWithOtherAudio(false)
         } else {
@@ -5272,7 +5033,7 @@ final class Gate1AppModel: ObservableObject {
         updatePendingAutoPlayDiagnostics(reason: "waiting_for_current_audio")
     }
 
-    private func clearPendingAutoPlayTurns() {
+    func clearPendingAutoPlayTurns() {
         pendingAutoPlayQueue.clear()
         diagnostics["pendingAutoPlayTurnId"] = nil
         diagnostics["pendingAutoPlayQueue"] = "0"
@@ -7476,7 +7237,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// What the Library row builder needs to know about the app right now.
-    private var startupAudioContext: StartupAudioContext {
+    var startupAudioContext: StartupAudioContext {
         StartupAudioContext(
             hasAcceptedCurrentTerms: hasAcceptedCurrentTerms,
             hasSupertonicVoice: ttsVoiceSelection.supertonicVoice != nil,
@@ -10874,7 +10635,7 @@ final class Gate1AppModel: ObservableObject {
         return resolvedApplicationSupportAssetURL(for: savedURL.path)
     }
 
-    private func prepareSourceMediaPlayback(itemId: String) throws {
+    func prepareSourceMediaPlayback(itemId: String) throws {
         if let item = try store?.loadItem(id: itemId), item.mediaType == "audiobook" {
             guard let url = resolvedOwnedAudiobookURL(for: item) else {
                 throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
