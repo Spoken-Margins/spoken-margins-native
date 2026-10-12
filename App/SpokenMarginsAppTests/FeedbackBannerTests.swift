@@ -179,7 +179,10 @@ final class FeedbackBannerTests: XCTestCase {
             try await waitForSummaryFailure(model)
 
             let failure = try XCTUnwrap(model.itemFailures.lastFailure(itemId: "item-pill"))
-            XCTAssertEqual(failure.message, model.feedbackEvent?.message)
+            XCTAssertEqual(model.feedbackEvent?.message, "Summary couldn’t finish.")
+            XCTAssertEqual(failure.message, "On-device summary failed: \(LocalFoundationModelError.invalidInterjectionSummary.localizedDescription) Tap Retry Summary to try the model again.")
+            XCTAssertEqual(model.lastError, failure.message)
+            XCTAssertEqual(model.providerProbeStatus, failure.message)
             XCTAssertGreaterThanOrEqual(failure.occurredAt, startedAt)
             XCTAssertLessThanOrEqual(failure.occurredAt, Date())
             XCTAssertEqual(model.feedbackEvent?.kind, .error)
@@ -208,9 +211,11 @@ final class FeedbackBannerTests: XCTestCase {
             try await waitForSummaryFailure(model)
 
             XCTAssertEqual(model.selectedItem.id, otherItemId)
-            XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message,
-                           model.feedbackEvent?.message)
-            XCTAssertNotNil(model.itemFailures.lastFailure(itemId: "item-pill"))
+            XCTAssertEqual(model.feedbackEvent?.message, "Summary couldn’t finish.")
+            let failure = try XCTUnwrap(model.itemFailures.lastFailure(itemId: "item-pill"))
+            XCTAssertEqual(failure.message, "On-device summary failed: \(LocalFoundationModelError.invalidInterjectionSummary.localizedDescription) Tap Retry Summary to try the model again.")
+            XCTAssertEqual(model.lastError, failure.message)
+            XCTAssertEqual(model.providerProbeStatus, failure.message)
             XCTAssertNil(model.itemFailures.lastFailure(itemId: otherItemId))
             XCTAssertEqual(model.feedbackEvent?.retry?.key, "summary")
         }

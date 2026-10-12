@@ -538,8 +538,8 @@ final class Gate1FlowUITests: XCTestCase {
 
         let failure = element("app.feedback.banner")
         XCTAssertTrue(failure.waitForExistence(timeout: 8))
-        XCTAssertTrue(failure.label.contains("On-device summary failed"))
-        XCTAssertTrue(failure.label.contains("Retry Summary"))
+        XCTAssertTrue(failure.label.contains("Summary couldn’t finish."))
+        XCTAssertTrue(app.buttons["app.feedback.retry"].isEnabled)
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
         XCTAssertTrue(summarize.label.contains("Retry summary"))
