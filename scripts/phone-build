@@ -742,7 +742,9 @@ def integration_skip(bodies: list[str], sha: str) -> str | None:
 
 # Lines of a lane report that say something was left out, failed or went wrong: the plan carries them
 # whole, not just the report's first line (#1465).
-CARRIED_LINES = re.compile(r'(failing|why inconclusive|merges since the last PASS|not run|not verified|integration: skipped)\b', re.I)
+CARRIED_LINES = re.compile(r'(failing|flaky|crashes|why inconclusive|merges since the last PASS|not run|not verified'
+                           r'|integration: skipped)\b', re.I)
+QUIET_LINE = re.compile(r':\s*(none( this run| recorded)?|n/a)?\.?$', re.I)  # "failing:", "flaky: none this run"
 OUTCOME_WORDS = {'PASS': 'pass', 'FAIL': 'fail', 'INCONCLUSIVE': 'not run (inconclusive)'}
 
 
@@ -768,7 +770,9 @@ def scripted_journeys_outcome(lines: list[str]) -> tuple[str, str]:
     detail = line.split(':', 1)[-1].strip()
     if re.search(r'\b(failed|missing)\b', detail):
         return 'fail', detail
-    return ('pass' if re.search(r'\bpassed\b', detail) else 'not run'), detail
+    # Only an all-passed line is a pass: a journey that was skipped or never ran leaves the rest unproven.
+    unproven = re.search(r'\b(not_run|skipped)\b', detail)
+    return ('pass' if re.search(r'\bpassed\b', detail) and not unproven else 'not run'), detail
 
 
 def commit_record(reports: list[str] | None, sha: str) -> list[tuple[str, str, str]]:
@@ -788,13 +792,23 @@ def commit_record(reports: list[str] | None, sha: str) -> list[tuple[str, str, s
     skip = integration_skip(reports, sha)
     app = (OUTCOME_WORDS[verdict], ran or integration[0]) if verdict else \
         ('not run', f'skipped by the Test Desk: {skip}' if skip else 'no integration report for this commit')
-    scripted = scripted_journeys_outcome(integration) if verdict else ('not run', 'no integration run')
+    scripted = scripted_journeys_outcome(integration) if verdict in ('PASS', 'FAIL') else \
+        ('not run', 'the integration run did not finish' if verdict else 'no integration run')
     attended_verdict = report_verdict(journeys)
     attended = (OUTCOME_WORDS[attended_verdict], journeys[0]) if attended_verdict else \
         ('not run', 'agent-driven journeys need an attended session')
     upgrade_line = next((l for l in [*integration, *journeys] if re.match(r'upgrade\b', l, re.I)), None)
-    upgrade = ('fail' if re.search(r'\bfail', upgrade_line, re.I) else 'pass', upgrade_line) if upgrade_line else \
-        ('not run', 'no upgrade check was reported for this commit')
+    # Pass or fail only when the line says so; "skipped", "blocked", "not run" and the rest are not run.
+    if upgrade_line is None:
+        upgrade = ('not run', 'no upgrade check was reported for this commit')
+    elif re.search(r'\b(not run|skipped|blocked|inconclusive)\b|\b0 failed\b', upgrade_line, re.I) is None \
+            and re.search(r'\bfail', upgrade_line, re.I):
+        upgrade = ('fail', upgrade_line)
+    elif re.search(r'\b(not run|skipped|blocked|inconclusive|fail\w*)\b', upgrade_line, re.I) is None \
+            and re.search(r'\bpass', upgrade_line, re.I):
+        upgrade = ('pass', upgrade_line)
+    else:
+        upgrade = ('not run', upgrade_line)
     return [('App tests', *app), ('Release device build', 'pass', 'this build, signed'),
             ('Scripted journeys', *scripted), ('Attended journeys', *attended),
             ('Upgrade from the last shipped build', *upgrade), ('Phone checks', 'not run', 'yours: the checks below')]
@@ -809,8 +823,7 @@ def outcome_lines(reports: list[str] | None, sha: str) -> list[str]:
     carried = []
     for kind in ('integration', 'journeys') if reports is not None else ():
         for line in report_body(reports, kind, sha)[1:]:
-            quiet = line.endswith(('none this run', 'none recorded'))
-            if CARRIED_LINES.match(line) and not quiet and line not in carried and not line.startswith('upgrade'):
+            if CARRIED_LINES.match(line) and not QUIET_LINE.search(line) and line not in carried:
                 carried.append(line)
     if carried:
         lines += ['', 'The reports also say:', ''] + [f'- {line}' for line in carried]
@@ -1157,8 +1170,10 @@ def notify_ready(sha: str, plan: Path) -> None:
 
 def release_issue() -> tuple[bool, dict | None]:
     """(known, the open item this script owns): `known` is False when gh failed, so nobody files twice."""
-    raw = gh('issue', 'list', '--repo', REPO, '--state', 'open', '--search', f'"{RELEASE_ISSUE_TITLE}" in:title',
-             '--json', 'number,title,body', '--limit', '30')
+    # A plain list, not --search: GitHub's search index lags a created or closed issue by minutes.
+    raw = gh('issue', 'list', '--repo', REPO, '--state', 'open', *[a for label in RELEASE_ISSUE_LABELS.split(',')
+                                                                    for a in ('--label', label)],
+             '--json', 'number,title,body', '--limit', '100')
     try:
         found = json.loads(raw) if raw else None
     except ValueError:
@@ -1182,7 +1197,7 @@ def release_failure_body(sha: str, failure: str, log_tail: str) -> str:
         f'- What failed: {failure[:400]}',
         f'- Last good binary: {last_good}',
         f'- Log: `{phone_dir() / "last-failure.log"}` on the Mac', '',
-        '```text', log_tail.strip()[-1500:], '```', '',
+        '```text', log_tail.strip().replace(str(Path.home()), '~')[-1500:], '```', '',
         'This item is updated by `scripts/phone-build` when another commit fails the same way and is '
         'closed by it when a Release build succeeds. Nothing else needs to open or close it.',
         '', '---', '_Filed by scripts/phone-build (#1465)_', ''])
@@ -1197,22 +1212,28 @@ def report_release_failure(sha: str, failure: str, log_tail: str) -> None:
         return
     body = release_failure_body(sha, failure, log_tail)
     if item is None:
-        gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--label', RELEASE_ISSUE_LABELS,
-           '--body', body)
+        made = gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--label', RELEASE_ISSUE_LABELS,
+                  '--body', body)
+        if made is None:  # a label missing here would otherwise hide the failure; file it without them
+            made = gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--body', body)
+        if made is None:
+            say('could not file the Release failure on GitHub')
         return
     if sha[:7] in (item.get('body') or ''):
         return
-    gh('issue', 'edit', str(item['number']), '--repo', REPO, '--body', body)
-    gh('issue', 'comment', str(item['number']), '--repo', REPO,
-       '--body', f'Another commit fails the Release build: `{sha[:7]}`. {failure[:300]}')
+    if gh('issue', 'edit', str(item['number']), '--repo', REPO, '--body', body) is None \
+            or gh('issue', 'comment', str(item['number']), '--repo', REPO,
+                  '--body', f'Another commit fails the Release build: `{sha[:7]}`. {failure[:300]}') is None:
+        say(f'could not update #{item["number"]} with the Release failure of {sha[:7]}')
 
 
 def close_release_failure(sha: str) -> None:
     """A Release build succeeded: close the owned item, if one is open."""
     known, item = release_issue()
     if known and item:
-        gh('issue', 'close', str(item['number']), '--repo', REPO, '--reason', 'completed', '--comment',
-           f'Fixed: the Release build of `{sha[:7]}` succeeded on the Mac. The phone build is current again.')
+        if gh('issue', 'close', str(item['number']), '--repo', REPO, '--reason', 'completed', '--comment',
+              f'Fixed: the Release build of `{sha[:7]}` succeeded on the Mac. The phone build is current again.') is None:
+            say(f'could not close #{item["number"]}; close it by hand')
 
 
 def record_attempt(sha: str, result: str) -> None:
@@ -1273,7 +1294,6 @@ def build(sha: str) -> int:
         if 'SMBuildCommit' in info and info['SMBuildCommit'] != sha:
             raise BuildFailed(f'the app says it was built from {info["SMBuildCommit"]!r}, not {sha}')
         release = 'built'
-        close_release_failure(sha)
         folder = phone_dir() / f'{stamp}-{sha[:7]}'
         folder.mkdir()
         subprocess.check_call(['ditto', str(app), str(folder / APP_NAME)])
@@ -1287,6 +1307,10 @@ def build(sha: str) -> int:
         plan = write_plan(folder, sha, checks, commit_in_app=bool(info.get('SMBuildCommit')))
         point_latest(folder)
         record_attempt(sha, 'built')
+        try:
+            close_release_failure(sha)  # only once the new build is the latest one
+        except Exception as failure:  # noqa: BLE001 - reporting never fails a build
+            say(f'could not close the Release failure item: {failure}')
         prune()
         share_files(folder, sha)
         say(f'done: {folder}')
@@ -1299,11 +1323,14 @@ def build(sha: str) -> int:
             shutil.copy(log, phone_dir() / 'last-failure.log')
         say(f'FAILED on {sha[:7]}: {failure}')
         say(f'log: {phone_dir() / "last-failure.log"}; its end:\n{tail(log)}')
-        if release == 'started':
-            report_release_failure(sha, str(failure), tail(log))
         if 'Signing needs the owner' in str(failure):
             # Only signing waits on the owner; other failures clear with the next change on next.
             notify('Spoken Margins: phone build needs you', str(failure).split('Signing needs the owner: ', 1)[-1])
+        elif release == 'started':  # signing already told the owner; any other Release failure is filed (#1465)
+            try:
+                report_release_failure(sha, str(failure), tail(log))
+            except Exception as reporting:  # noqa: BLE001 - reporting never fails a build
+                say(f'could not report the Release failure: {reporting}')
         return 1
     finally:
         shutil.rmtree(work, ignore_errors=True)

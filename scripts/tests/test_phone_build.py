@@ -519,13 +519,26 @@ class PhoneBuildTests(unittest.TestCase):
         self.assertEqual(self.release_items(), [])                  # the success closed it
         self.assertIn('issue close', self.log.read_text())
 
-    def test_failures_before_the_release_build_open_no_item(self):
+    def test_a_signing_failure_already_tells_the_owner_so_it_files_nothing(self):
         self.issues = self.tmp / 'issues.json'
         self.env['FAKE_ISSUES'] = str(self.issues)
-        self.commit_the_host_check_python('Merge pull request #14 from someone/venv')
-        done = self.run_build(FAKE_FAST_EXIT='1')
+        done = self.run_build(FAKE_FAIL='error: errSecInternalComponent')
         self.assertEqual(done.returncode, 1)
+        self.assertIn('phone build needs you', self.log.read_text())
         self.assertEqual(self.release_items(), [])
+
+    def test_only_the_exact_title_is_the_owned_item(self):
+        self.issues = self.tmp / 'issues.json'
+        lookalike = {'number': 7, 'title': 'Release phone build is failing on next branch', 'body': 'someone else\'s'}
+        self.issues.write_text(json.dumps([lookalike]))
+        self.env['FAKE_ISSUES'] = str(self.issues)
+        self.assertEqual(self.run_build(FAKE_FAIL='error: Command CodeSign failed').returncode, 1)
+        items = self.release_items()
+        self.assertEqual([i['title'] for i in items],
+                         ['Release phone build is failing on next branch', 'Release phone build is failing on next'])
+        self.assertEqual(items[0], lookalike)
+        listed = [l for l in self.log.read_text().splitlines() if l.startswith('gh issue list')]
+        self.assertTrue(listed and '--search' not in listed[0] and '--label where:mac' in listed[0], listed)
 
     def test_a_release_failure_with_github_unreachable_still_fails_the_build_plainly(self):
         done = self.run_build(FAKE_FAIL='error: Command CodeSign failed')  # no FAKE_ISSUES: gh issue exits 1
@@ -1043,6 +1056,40 @@ class VerdictTests(unittest.TestCase):
         self.assertIn('**fail** (Lane report journeys-828597e — FAIL)', got['Attended journeys'])
         self.assertIn('- failing: AppTests/testX', plan)
         self.assertIn('- failing: J4 step 3', plan)
+
+    def report_with(self, extra, verdict='PASS'):
+        body = self.MIXED['body'].replace('PASS', verdict, 1).replace('failing: \n', '')
+        return {'body': body.replace('flaky: none this run\n', extra + 'flaky: none this run\n')}
+
+    def test_an_upgrade_line_is_a_pass_or_fail_only_when_it_says_so(self):
+        for line, status in (('upgrade: passed (Build 30 library opened)', 'pass'), ('upgrade: FAILED (database)', 'fail'),
+                             ('upgrade: not run (no Build 29 library)', 'not run'), ('upgrade: skipped', 'not run'),
+                             ('upgrade: blocked', 'not run'), ('upgrade: 0 failed', 'not run'),
+                             ('upgrade: unclear', 'not run')):
+            _, got = self.outcomes([self.report_with(line + '\n')])
+            self.assertIn(f'**{status}**', got['Upgrade from the last shipped build'], line)
+
+    def test_journeys_that_did_not_all_run_are_not_a_pass(self):
+        partial = {'body': self.MIXED['body'].replace('J1Tests/testOpen failed, J4Tests/testPlay passed',
+                                                      'J1Tests/testOpen passed, J4Tests/testPlay not_run')}
+        _, got = self.outcomes([partial])
+        self.assertIn('**not run**', got['Scripted journeys'])
+
+    def test_an_inconclusive_run_proves_no_scripted_journey(self):
+        _, got = self.outcomes([self.report_with('', verdict='INCONCLUSIVE')])
+        self.assertIn('**not run (inconclusive)**', got['App tests'])
+        self.assertIn('**not run** (the integration run did not finish)', got['Scripted journeys'])
+
+    def test_flakes_and_crashes_reach_the_plan_but_empty_lines_do_not(self):
+        body = self.MIXED['body'].replace('flaky: none this run', 'flaky: AppTests/testSlow').replace(
+            'crashes: none recorded', 'crashes: SpokenMarginsApp-2026-10-12.ips').replace('failing: \n', 'failing: none\n')
+        plan, _ = self.outcomes([{'body': body}])
+        self.assertIn('- flaky: AppTests/testSlow', plan)
+        self.assertIn('- crashes: SpokenMarginsApp-2026-10-12.ips', plan)
+        self.assertNotIn('- failing:', plan)
+        plan, _ = self.outcomes([self.MIXED])
+        self.assertNotIn('- flaky:', plan)
+        self.assertNotIn('- crashes:', plan)
 
     def test_a_commit_with_no_report_has_every_check_not_run(self):
         _, got = self.outcomes([])
