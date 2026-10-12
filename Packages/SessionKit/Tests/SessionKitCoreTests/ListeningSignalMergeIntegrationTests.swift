@@ -64,7 +64,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     }
 
     func testManualCompletionRecordsFinishOnlyAfterTheCompletionHelperChangesTheItem() throws {
-        let source = try appSource("Gate1AppModel.swift")
+        let source = try appSource("Gate1AppModel+CompletionMarking.swift")
         let completion = try body(source, from: "func markItemCompleted(id:", to: "func undoMarkedCompletion(")
         XCTAssertFalse(completion.contains("<<<<<<<"), "The completion merge must be resolved")
         try assertOrdered([

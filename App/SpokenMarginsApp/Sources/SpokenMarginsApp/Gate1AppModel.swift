@@ -48,7 +48,7 @@ final class Gate1AppModel: ObservableObject {
     private static let onboardingStepsKey = "onboardingCompletedStepsV1"
     private static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
     private static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
-    private static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
+    static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
@@ -538,13 +538,13 @@ final class Gate1AppModel: ObservableObject {
     private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
     private let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
     private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
-    private let trashUndoDismissDelay: Duration
-    private(set) var activeItemId = "item-pill"
+    let trashUndoDismissDelay: Duration
+    var activeItemId = "item-pill"
     private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
     private var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
-    private var trashUndoDismissTask: Task<Void, Never>?
+    var trashUndoDismissTask: Task<Void, Never>?
     /// Background time while on-device narration starts, on every path into "starting" (#854).
     private lazy var narrationStartupProtection = NarrationStartupProtection(
         begin: NarrationStartupBackgroundTime.begin,
@@ -4207,7 +4207,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func rejectNavigationOrSessionMutationWhileRecording(_ operation: String) -> Bool {
+    func rejectNavigationOrSessionMutationWhileRecording(_ operation: String) -> Bool {
         guard recordingNavigationIsLocked else { return false }
         diagnostics["recordingNavigationGuard"] = "blocked_\(operation)"
         statusMessage = "Finish or cancel this Margin before leaving its listening position."
@@ -4377,53 +4377,6 @@ final class Gate1AppModel: ObservableObject {
         refreshExportPreview(reportStatus: false)
     }
 
-    func openBatchExport() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_batch_export") else { return }
-        syncPlaybackProgressForLifecycle()
-        exportSessionId = nil
-        exportPreview = ""
-        batchExportFilter = .withInterjections
-        selectedBatchExportSessionIds = []
-        batchExportResult = nil
-        do {
-            let store = try requireStore()
-            try refreshBatchExportRows(store: store)
-            screen = .batchExport
-        } catch {
-            reportFailure(error, context: "Session export setup failed")
-        }
-    }
-
-    var visibleBatchExportRows: [BatchSessionExportRow] {
-        switch batchExportFilter {
-        case .withInterjections:
-            batchExportRows.filter { $0.interjectionCount > 0 }
-        case .all:
-            batchExportRows
-        }
-    }
-
-    var hasBatchExportFolder: Bool { SavedFolderSetting.sessionExport.hasFolder() }
-
-    func toggleBatchExportSelection(sessionId: String) {
-        if selectedBatchExportSessionIds.contains(sessionId) {
-            selectedBatchExportSessionIds.remove(sessionId)
-        } else {
-            selectedBatchExportSessionIds.insert(sessionId)
-        }
-        batchExportResult = nil
-    }
-
-    func selectAllVisibleBatchExportSessions() {
-        selectedBatchExportSessionIds.formUnion(visibleBatchExportRows.map(\.id))
-        batchExportResult = nil
-    }
-
-    func clearBatchExportSelection() {
-        selectedBatchExportSessionIds = []
-        batchExportResult = nil
-    }
-
     func openItem(id: String) {
         let diagnosticStart = ProcessInfo.processInfo.systemUptime
         recordDeveloperDiagnostic("item.open.begin", ["item": DeveloperDiagnosticRecording.token(id)])
@@ -4555,43 +4508,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func markItemCompleted(id: String) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_completed") else { return }
-        do {
-            let store = try requireStore()
-            // Completion is an item-level fact, not fabricated listening history.
-            guard let item = try ManualItemCompletion.markComplete(itemId: id, in: store) else { return }
-            listeningSignals.finish(itemId: id)
-            marginOutput.noteCompletion(ofItem: id) // One note per item mode (#587).
-            try refreshLibraryRows(store: store)
-            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
-            presentCompletionUndo(itemId: id, title: item.title, markedAt: item.sourceCompletedAt ?? Date())
-        } catch {
-            reportFailure(error, context: "Mark complete failed")
-        }
-    }
-
-    func undoMarkedCompletion(itemId: String, markedAt: Date) {
-        clearMarkedCompletion(id: itemId, markedAt: markedAt)
-    }
-
-    /// Any time after the undo banner is gone (#273). Only a completion set by hand.
-    func markItemUnfinished(id: String) { clearMarkedCompletion(id: id, markedAt: nil) }
-
-    private func clearMarkedCompletion(id: String, markedAt: Date?) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("mark_item_unfinished") else { return }
-        do {
-            let store = try requireStore()
-            // Never a later completion, and never natural session completion.
-            guard let item = try ManualItemCompletion.markUnfinished(itemId: id, markedAt: markedAt, in: store) else { return }
-            try refreshLibraryRows(store: store)
-            if selectedItem.id == id { selectedItem = try loadItemDetail(id: id, store: store) }
-            reportConfirmation(markedAt == nil
-                ? ManualCompletionMessages.unfinished(title: item.title)
-                : ManualCompletionMessages.undone(title: item.title))
-        } catch { reportFailure(error, context: "Mark unfinished failed") }
-    }
-
     func prioritizeOfflinePreparation(id: String) {
         do {
             let store = try requireStore()
@@ -4633,64 +4549,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func moveItemToTrash(id: String) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("move_item_to_trash") else { return }
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: id)
-            if id == Self.guidedOnboardingItemId {
-                UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
-            }
-            if snapshot.itemId == id {
-                _ = try? engine?.stopPlayback()
-            }
-            try store.moveItemToTrash(id: id)
-            try refreshLibraryRows(store: store)
-            if activeItemId == id {
-                activeItemId = libraryItems.first?.id ?? "item-pill"
-                snapshot = SessionSnapshot()
-                exportPreview = ""
-                selectedItem = libraryItems.first.map { (try? loadItemDetail(id: $0.id, store: store)) ?? ItemDetailState() } ?? ItemDetailState()
-            }
-            screen = .home
-            presentTrashUndo(itemId: id, title: item.title)
-            reportSuccess("Moved \(item.title) to Recently Deleted.")
-        } catch {
-            reportFailure(error, context: "Move to Recently Deleted failed")
-        }
-    }
-
-    func undoLastTrash() {
-        guard let trashUndo else { return }
-        restoreItem(id: trashUndo.itemId)
-    }
-
-    func dismissTrashUndo() {
-        dismissTrashUndo(id: nil)
-    }
-
-    private func presentTrashUndo(itemId: String, title: String) {
-        trashUndoDismissTask?.cancel()
-        let undo = TrashUndoState(itemId: itemId, title: title)
-        trashUndo = undo
-        trashUndoDismissTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                try await Task.sleep(for: trashUndoDismissDelay)
-                dismissTrashUndo(id: undo.id)
-            } catch {
-                // Manual dismissal, Undo, replacement, and teardown cancel this timer.
-            }
-        }
-    }
-
-    private func dismissTrashUndo(id: UUID?) {
-        guard id == nil || trashUndo?.id == id else { return }
-        trashUndoDismissTask?.cancel()
-        trashUndoDismissTask = nil
-        trashUndo = nil
-    }
-
     func dismissFeedback(id: UUID? = nil) {
         guard id == nil || feedbackEvent?.id == id else { return }
         feedbackEvent = nil
@@ -4700,83 +4558,6 @@ final class Gate1AppModel: ObservableObject {
 
     /// Trying an action again answers its Retry banner, so a stale one can't linger over the result.
     private func withdrawRetryOffer(_ key: String) { if feedbackEvent?.retry?.key == key { feedbackEvent = nil } }
-
-    func restoreItem(id: String) {
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: id)
-            try store.restoreItem(id: id)
-            try refreshLibraryRows(store: store)
-            dismissTrashUndo()
-            reportSuccess("Restored \(item.title).")
-        } catch {
-            reportFailure(error, context: "Restore failed")
-        }
-    }
-
-    func permanentlyDeleteItem(id: String) {
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: id)
-            guard item.deletedAt != nil else {
-                reportFailure("Move the item to Recently Deleted before deleting it permanently.")
-                return
-            }
-            let recordings = try store.loadInterjections(itemId: id)
-            podcastDownloadCoordinator?.removeItem(id)
-            removeDurableGeneratedAudio(for: item)
-            removeEpisodeMapArtifacts(itemId: id)
-            try store.deleteItem(id: id)
-            removeMarginRecordings(recordings, store: store)
-            try refreshLibraryRows(store: store)
-            guard !libraryItems.contains(where: { $0.id == id }),
-                  !recentlyDeletedItems.contains(where: { $0.id == id }),
-                  (try? store.loadItem(id: id)) == nil,
-                  (try? store.loadSessions(itemId: id))?.isEmpty != false else {
-                throw SessionKitError.persistenceFailed("permanent_delete_verification_failed")
-            }
-            if trashUndo?.itemId == id {
-                dismissTrashUndo()
-            }
-            reportSuccess("Permanently deleted \(item.title).")
-        } catch {
-            reportFailure(error, context: "Permanent delete failed")
-        }
-    }
-
-    func permanentlyDeleteRecentlyDeletedItems() {
-        do {
-            let store = try requireStore()
-            let ids = recentlyDeletedItems.map(\.id)
-            guard !ids.isEmpty else {
-                reportSuccess("Recently Deleted is already empty.")
-                return
-            }
-            let items = try ids.map { try store.loadItem(id: $0) }
-            for item in items {
-                guard item.deletedAt != nil else {
-                    throw SessionKitError.persistenceFailed("bulk_delete_requires_trashed_items")
-                }
-            }
-            let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
-            ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
-            items.forEach(removeDurableGeneratedAudio)
-            ids.forEach(removeEpisodeMapArtifacts)
-            try store.deleteItems(ids: ids)
-            removeMarginRecordings(recordings, store: store)
-            try refreshLibraryRows(store: store)
-            guard recentlyDeletedItems.isEmpty,
-                  ids.allSatisfy({ (try? store.loadItem(id: $0)) == nil }) else {
-                throw SessionKitError.persistenceFailed("bulk_permanent_delete_verification_failed")
-            }
-            if let undoItemId = trashUndo?.itemId, ids.contains(undoItemId) {
-                dismissTrashUndo()
-            }
-            reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
-        } catch {
-            reportFailure(error, context: "Empty Recently Deleted failed")
-        }
-    }
 
     func skipBack() {
         recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
@@ -8308,7 +8089,7 @@ final class Gate1AppModel: ObservableObject {
         return cachesDirectory.appending(path: "GeneratedTextAudio", directoryHint: .isDirectory)
     }
 
-    private func removeEpisodeMapArtifacts(itemId: String) {
+    func removeEpisodeMapArtifacts(itemId: String) {
         if snapshot.itemId == itemId, snapshot.skimBridgeState != nil {
             cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         }
@@ -8695,7 +8476,7 @@ final class Gate1AppModel: ObservableObject {
         LibraryRowBuilder.startupAudioPresentation(item: item, manifest: manifest, job: job, context: startupAudioContext)
     }
 
-    private func refreshBatchExportRows(store: SQLiteSessionStore) throws {
+    func refreshBatchExportRows(store: SQLiteSessionStore) throws {
         let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
         batchExportRows = try store.loadSessions().compactMap { session in
             guard let item = itemsById[session.itemId] else { return nil }
@@ -10995,7 +10776,7 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["uiTestSummaryFixture"] = interjection.id
     }
 
-    private func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
+    func loadItemDetail(id: String, store: SQLiteSessionStore) throws -> ItemDetailState {
         let item = try store.loadItem(id: id)
         var map = try store.loadListeningMap(itemId: id)
         let canonicalSource = try store.loadCanonicalSource(itemId: id)
