@@ -1573,6 +1573,223 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertNotIn('1. ', plan)
 
 
+class PlanFaultTests(unittest.TestCase):
+    """#1476: the c9f8bbc plan cost a ten-minute sitting. Lane procedures, a redesign filed under other titles,
+    checks that don't say what to look for, and a named paper with no link."""
+
+    PLAYBACK = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackScreen.swift'
+    OTHER = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/ExperienceLibraryScreen.swift'
+
+    def setUp(self):
+        self.module = load_phone_build()
+
+    @staticmethod
+    def pr(number, title, issues=(), body='', path=None):
+        path = path or PlanFaultTests.OTHER
+        return {'number': number, 'title': title, 'url': f'https://example/pr/{number}', 'body': body,
+                'labels': {'nodes': []}, 'files': {'nodes': [{'path': path}]}, 'issues': list(issues)}
+
+    @staticmethod
+    def issue(number, check, title=None):
+        return {'number': number, 'title': title or f'Issue {number}', 'url': f'https://example/issue/{number}',
+                'body': f'**Owner check:** {check}\n', 'labels': {'nodes': []}}
+
+    def write(self, prs, waiting=(), built_prs=()):
+        module = self.module
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {n: f'Merge pull request #{n}' for n in prs}
+        module.fetch_prs = lambda numbers: prs
+        module.fetch_waiting = lambda: list(waiting)
+        module.build_prs = lambda sha: set(built_prs)
+        module.fetch_items = lambda numbers: {}
+        module.built_numbers = lambda sha: set()
+        module.report_comments = lambda: []
+        printed = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(printed):
+            plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        self.printed = printed.getvalue()
+        return plan
+
+    def test_which_checks_the_owner_cannot_run(self):
+        rows = [  # (check, refused)
+            ('Run `scripts/xcodebuild-lane -project X.xcodeproj -configuration Release build` and see it succeed.', True),
+            ('Run --plan app at 929b5ce on simulator F1E6BBFE and read the result.', True),
+            ('Run --plan app and read the result.', True),
+            ('Comment `/lane T3` on the PR.', True),
+            ('Boot the simulator and open the Library.', True),
+            ('Boot 1330F268-5C1B-4B07-9E37-0F6D2A3C41AB and open the Library.', True),
+            ('Open build.log and find the failing test.', True),
+            ('Look in artifacts/run-1 for the screenshot.', True),
+            ('Run the app on `929b5ce`.', True),
+            ('Install the build from 929b5ce1f2.', True),
+            ('Run xcodebuild test.', True),
+            ('Read the diagnostics field "supertonicOutputCheck".', True),
+            ('Read the AI Handoff export of the next test plan.', True),
+            ('Look through the exported log.', True),
+            # neighbours the owner can run
+            ('Settings > Version ends with `929b5ce`.', False),
+            ('Open the Library at 2am and play the first item.', False),
+            ('Play an item on iPad.', False),
+            ('Check the app at deadbeef.', False),           # all letters: a word, not a commit
+            ('Check the app at 1234567 words.', False),      # all digits: a number, not a commit
+            ('Read the Library rows.', False),
+            ('Read the AI Handoff export of the next test plan: the Margins come out in the order you made them, '
+             'and each passage is printed once.', False),
+            ('Double-click the Desktop icon.', False),
+            ('Tap Share Diagnostics and send the file to Claude.', False),
+            ('', False),
+        ]
+        for check, refused in rows:
+            with self.subTest(check=check):
+                self.assertEqual(bool(self.module.unusable_check(check)), refused)
+
+    def test_a_check_with_a_lane_procedure_is_not_in_the_ten_minutes_and_the_run_names_its_issue(self):
+        # The c9f8bbc plan: #1453 asked for an xcodebuild-lane Release build, #1340 pasted a --plan app re-run.
+        release = self.pr(1459, 'Release builds compile the share extension', [self.issue(
+            1453, 'Run `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -configuration Release build`.')])
+        rerun = self.pr(1352, 'Credit a followed source mid-playback', [self.issue(
+            1340, 'Run --plan app at 929b5ce on simulator F1E6BBFE and read the result.')])
+        fine = self.pr(1400, 'Library wording', [self.issue(1401, 'Read the Library rows.')])
+        plan = self.write({1459: release, 1352: rerun, 1400: fine})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('1. **Library wording**', ten_minutes)
+        for text in ('xcodebuild', '--plan', 'simulator', '929b5ce'):
+            self.assertNotIn(text, ten_minutes)
+        unchecked = plan.split('## Also changed (no phone check written)')[1]
+        self.assertIn('- Release builds compile the share extension (', unchecked)
+        self.assertIn('- Credit a followed source mid-playback (', unchecked)
+        self.assertIn('rewrite its "Owner check:" line: #1453 (', self.printed)
+        self.assertIn('#1340 (', self.printed)
+        self.assertNotIn('#1401', self.printed)
+
+    def test_a_usable_check_in_the_pr_body_stands_in_for_a_refused_one_in_the_issue(self):
+        pr = self.pr(1500, 'Library wording', [self.issue(1501, 'Run --plan app at 929b5ce.')],
+                     body='**Owner check:** Open the Library and read the first row.\n')
+        plan = self.write({1500: pr})
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('Check: Open the Library and read the first row.', ten_minutes)
+        self.assertNotIn('--plan', plan)
+
+    def test_a_fix_waiting_on_a_lane_procedure_is_left_out_and_named(self):
+        stuck = {'number': 1340, 'title': 'Credit a followed source', 'url': 'https://example/issue/1340',
+                 'state': 'OPEN', 'createdAt': '2026-10-11T00:00:00Z', 'milestone': None,
+                 'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
+                 'body': '**Owner check:** Run --plan app at 929b5ce on simulator F1E6BBFE.\n',
+                 'comments': {'nodes': [{'body': 'Merged in #1352.'}]}, 'timelineItems': {'nodes': []}}
+        plan = self.write({}, waiting=[stuck], built_prs={1352})
+        self.assertNotIn('Credit a followed source', plan)
+        self.assertIn("can't be run on the phone", self.printed)
+        self.assertIn('#1340 (', self.printed)
+        self.assertNotIn('no "Owner check:" written', self.printed)
+
+    def test_several_merges_to_one_screen_are_one_item_at_the_top_each_with_its_own_title(self):
+        # The c9f8bbc plan filed the playback redesign under "Deliver feedback once across banner presentations"
+        # and "Expose playback Margin stacks to VoiceOver".
+        feedback = self.issue(430, 'Say if the banner speaks once.', title='Deliver feedback once across banner presentations')
+        prs = {
+            1355: self.pr(1355, 'Playback bar draws chapters and Margins', [self.issue(428, 'Drag the bar.')],
+                          path=self.PLAYBACK),
+            1446: self.pr(1446, 'Playback: clarify source labels and move preparation into More', [feedback],
+                          path=self.PLAYBACK),
+            1441: self.pr(1441, 'Deliver feedback once across banner presentations', [feedback]),
+            1480: self.pr(1480, 'Playback shows the transcription status', [self.issue(431, 'Record a Margin.')],
+                          path='App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackNowView.swift'),
+            1400: self.pr(1400, 'Library wording', [self.issue(1401, 'Read the Library rows.')]),
+        }
+        plan = self.write(prs)
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('\n1. **The playback screen changed** (3 changes)\n', ten_minutes)
+        self.assertNotIn('Deliver feedback once across banner presentations', ten_minutes.split('\n2. ')[0])
+        self.assertIn('Check: Open an article and a podcast and say if the playback screen is usable', ten_minutes)
+        for title in ('Playback bar draws chapters and Margins',
+                      'Playback: clarify source labels and move preparation into More',
+                      'Playback shows the transcription status'):
+            self.assertEqual(plan.count(f'- {title} ([PR #'), 1, title)
+        # The banner PR shares issue #430 with the playback one, but keeps its own title and its own check.
+        self.assertIn('2. **Deliver feedback once across banner presentations**', ten_minutes)
+        self.assertIn('3. **Library wording**', ten_minutes)
+        self.assertEqual(ten_minutes.count('Playback bar draws chapters'), 1)
+
+    def test_two_merges_to_a_screen_are_not_a_redesign(self):
+        prs = {1355: self.pr(1355, 'Playback bar draws chapters and Margins', [self.issue(428, 'Drag the bar.')],
+                             path=self.PLAYBACK),
+               1446: self.pr(1446, 'Playback: clarify source labels', [self.issue(430, 'Read the title.')],
+                             path=self.PLAYBACK)}
+        plan = self.write(prs)
+        self.assertNotIn('screen changed', plan)
+        self.assertIn('1. **Playback bar draws chapters and Margins**', plan)
+        self.assertIn('2. **Playback: clarify source labels**', plan)
+
+    def test_screen_changes_ignores_tests_and_other_screens(self):
+        module = self.module
+        tests = [self.pr(n, f'Playback test {n}', path='App/SpokenMarginsAppTests/PlaybackScreenTests.swift')
+                 for n in (1, 2, 3)]
+        other = [self.pr(n, f'Library {n}') for n in (4, 5, 6)]
+        self.assertEqual(module.screen_changes([[pr] for pr in tests + other]), ([], [[pr] for pr in tests + other]))
+        playback = [self.pr(n, f'Playback {n}', path=self.PLAYBACK) for n in (7, 8, 9)]
+        groups, stay = module.screen_changes([[pr] for pr in other + playback])
+        self.assertEqual([(g['screen'], [p['number'] for p in g['prs']]) for g in groups], [('playback screen', [7, 8, 9])])
+        self.assertEqual([[p['number'] for p in entry] for entry in stay], [[4], [5], [6]])
+
+    def test_prs_sharing_an_issue_each_keep_their_own_title(self):
+        shared = self.issue(430, 'Say if the banner speaks once.')
+        prs = {1441: self.pr(1441, 'Deliver feedback once across banner presentations', [shared]),
+               1446: self.pr(1446, 'Source labels in More', [shared])}
+        plan = self.write(prs)
+        self.assertIn('   - Also in this change: Source labels in More ([PR #1446](https://example/pr/1446))', plan)
+        unchecked = {1441: self.pr(1441, 'Deliver feedback once across banner presentations',
+                                   [{**shared, 'body': 'Nothing.'}]),
+                     1446: self.pr(1446, 'Source labels in More', [{**shared, 'body': 'Nothing.'}])}
+        plan = self.write(unchecked)
+        listed = plan.split('## Also changed (no phone check written)')[1]
+        self.assertIn('- Deliver feedback once across banner presentations ([#1441]', listed)
+        self.assertIn('- Source labels in More ([#1446]', listed)
+
+    def test_a_check_that_names_a_document_without_supplying_it_waits_for_one(self):
+        with tempfile.TemporaryDirectory() as repo:
+            def git(*args):
+                return subprocess.run(['git', *args], cwd=repo, check=True, capture_output=True,
+                                      text=True).stdout.strip()
+            git('init', '-q')
+            files = Path(repo) / 'TestPlans' / 'phone-files'
+            files.mkdir(parents=True)
+            (files / 'paper.txt').write_text('text')
+            git('add', '-A')
+            git('-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '-m', 'paper')
+            sha = git('rev-parse', 'HEAD')
+            with unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': repo}):
+                module = load_phone_build()
+            rows = [  # (check, the kind it lacks, or None)
+                ('Listen to the arXiv paper at 0.88x and say if the gaps are gone.', 'document'),
+                ('Play the arXiv paper and listen to the gaps.', 'document'),
+                ('Open this paper and listen.', 'document'),
+                ('Listen to the book for a minute.', 'document'),
+                ('Listen to the arXiv paper: <https://arxiv.org/abs/2608.09666>.', None),
+                ('Listen to the paper at https://example.org/paper.html.', None),
+                ('Listen to `TestPlans/phone-files/paper.txt` from Files.', None),
+                ('Library > + > Link, paste `https://arxiv.org/pdf/2608.09666`, Add.', None),
+                ('Open a paper you already have and listen.', None),
+                ('Tap Paperless in Settings.', None),
+                ('Import the PDF.', 'PDF'),
+            ]
+            for check, lacks in rows:
+                with self.subTest(check=check):
+                    self.assertEqual(module.missing_material(check, sha), lacks)
+
+    def test_586_waits_in_the_plan_until_its_paper_is_linked(self):
+        gaps = self.issue(586, 'Listen to the arXiv paper at 0.88x and say if the gaps between chunks are gone.')
+        plan = self.write({586: self.pr(600, 'Close the gaps between chunks', [gaps])})
+        self.assertNotIn('1. **Close the gaps', plan)
+        waiting = plan.split('## Waiting on another change or a test file')[1].split('## ')[0]
+        self.assertIn('- Close the gaps between chunks (', waiting)
+        self.assertIn('needs a test document, not supplied yet', waiting)
+        self.assertIn('#586', self.printed)
+        linked = self.issue(586, 'Listen to the arXiv paper <https://arxiv.org/abs/2608.09666> at 0.88x and say if '
+                                 'the gaps between chunks are gone.')
+        plan = self.write({586: self.pr(600, 'Close the gaps between chunks', [linked])})
+        self.assertIn('1. **Close the gaps between chunks**', plan)
+
+
 class PassedChecksTests(unittest.TestCase):
     """#1100: the plan for 41a591e listed four checks the owner had already passed (#854, #537, #281, #223) and
     eight passed fixes under "Also changed". Their issues are closed after an owner pass."""

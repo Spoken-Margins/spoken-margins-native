@@ -26,7 +26,14 @@ What it does:
   carries the check's own numbered steps, its URLs as links, and the repo files it names (copied to
   files/ and to iCloud Drive as "Test plan <sha7> files", beside the plan the installer puts there).
   A check that asks for a PDF, EPUB, audiobook or packet with no link and no repo file to attach waits
-  with the run naming its issue (#1038); test PDFs live in TestPlans/phone-files/.
+  with the run naming its issue (#1038); test PDFs live in TestPlans/phone-files/. So does a check that
+  names a document with no link ("the arXiv paper") (#1476).
+  A check the owner can't run isn't a check (#1476): one that names a script, simulator, commit to run at
+  or log file (lane and agent procedures), reads a diagnostics field, or says to read an export or log without
+  saying what it should show. The run names the issue whose "Owner check:" line needs rewriting, and a usable
+  check elsewhere (the PR body) stands in. Three or more PRs changing the playback screen's view files are
+  one item at the top of the ten minutes ("The playback screen changed"), each PR listed under its own title;
+  PRs that share an issue keep their own titles in every list.
   After those, "Still waiting on your check" lists open issues labelled `status: needs-human-validation` whose
   fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
   is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
@@ -149,6 +156,31 @@ ATTACH_LIMIT = 50_000_000
 MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re.I)
 # A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
 SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/)\S+')
+# A document the check names but doesn't link: "the arXiv paper" (#1476: #586). A link or repo file supplies it.
+NAMED_DOCUMENT = re.compile(r'\barxiv\b|\b(?:the|this|that)\s+(?:[\w.-]+\s+){0,2}(?:paper|whitepaper|book|ebook|thesis)\b',
+                            re.I)
+# A check the owner can't run (#1476): lane and agent procedures belong to the lane and the Test Desk, not to
+# his ten minutes on the phone. A script, a build or lane tool, a simulator or its id, a commit to run at, a log.
+LANE_PROCEDURE = re.compile(
+    r'\bscripts/[\w.-]+|\bxcodebuild\b|\bxcodegen\b|\bxcrun\b|\bsimctl\b|\bbuild-for-testing\b|\bverify-tests\b'
+    r'|(?<![\w-])--plan\b|/lane\s+T\d|\bsimulators?\b|\bcomputer use\b|\bartifacts/|\b[\w./-]+\.log\b'
+    r'|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    r'|\b(?:at|on|against|from)\s+`?(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b', re.I)
+# Reading a diagnostics field is the agent's job, not his (#1476: #586); so is judging an export or a log, unless
+# the check at least says what the result should be (#1439: "read the AI Handoff export of the next test plan").
+DIAGNOSTICS_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
+                                 r'\bdiagnostics?\b', re.I)
+EXPORT_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
+                            r'\b(?:AI Handoff|export(?:ed|s)?|logs?|console)\b', re.I)
+EXPECTED_RESULT = re.compile(
+    r"\b(?:should|expect(?:s|ed)?|must|so that|until|matches|in the order|once|each|every|never|only|exactly|instead"
+    r"|not|no|without|nothing|ends?|starts?|shows?|says?|contains?|tell me|whether)\b", re.I)
+# Several merges to one screen are one thing to try, at the top (#1476: the playback redesign was split across
+# four titles that named other things). Listener-facing PRs are matched by the view files they change.
+SCREEN_FILES = {'playback screen': re.compile(r'^App/[^/]+/Sources/.*/Playback[^/]*\.swift$')}
+SCREEN_MERGES = 3
+SCREEN_CHECKS = {'playback screen': 'Open an article and a podcast and say if the playback screen is usable: '
+                                    'play, pause, skip, drag the bar, and open More.'}
 RELEASE_ISSUE_TITLE = 'Release phone build is failing on next'  # one owned item, updated and closed here (#1465)
 RELEASE_ISSUE_LABELS = 'bug,regression,where:mac'
 MERGED_ON_NEXT = 'status: needs-human-validation'  # dispatch adds it when a PR for the issue merges into next
@@ -463,7 +495,8 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
         alone = {'issues': [issue], 'body': body}
         none = says_no_check(alone)
         check = None if none else owner_check(alone)
-        fixes.append({'issue': issue, 'prs': list(prs.values()), 'check': check, 'none': none})
+        fixes.append({'issue': issue, 'prs': list(prs.values()), 'check': check, 'none': none,
+                      'refused': [] if check or none else refused_in(alone)})
     fixes.sort(key=lambda fix: (0 if current and build_number(fix['issue']) == current else 1,
                                 0 if FIRST_ON_PHONE & labels(fix['issue']) else 1,
                                 fix['issue'].get('createdAt') or ''))
@@ -630,23 +663,50 @@ def says_no_check(pr: dict) -> bool:
     return taken_off(pr) or bool(checks) and all(NO_CHECK.match(check) for check in checks)
 
 
+def unusable_check(check: str) -> str | None:
+    """Why the owner can't use a check in his ten minutes on the phone (#1476), or None when he can.
+
+    A lane or agent procedure (a script, a simulator, a commit to run at, a log file), or a reading of
+    diagnostics, an export or a log, which an agent judges unless the check says what the result should be.
+    """
+    if LANE_PROCEDURE.search(check):
+        return 'it names a script, simulator, commit to run at or log file, which the lane and the Test Desk run'
+    if DIAGNOSTICS_READING.search(check):
+        return 'it asks him to read a diagnostics field, which an agent does'
+    if EXPORT_READING.search(check) and not EXPECTED_RESULT.search(check):
+        return 'it says to read an export or log but not what it should show: write the expected result, or let an agent judge it'
+    return None
+
+
+def refused_in(pr: dict) -> list[str]:
+    """The written checks of a PR's issues and its own body that unusable_check refuses, as
+    "#N (why)" so the run can name which "Owner check:" line to rewrite (#1476)."""
+    named = [(f'#{issue["number"]}', issue_check(issue)) for issue in pr['issues']]
+    named.append((f'PR #{pr["number"]}' if pr.get('number') else 'the PR', check_field(pr.get('body') or '')))
+    return [f'{who} ({unusable_check(check)})' for who, check in named
+            if check and not NO_CHECK.match(check) and unusable_check(check)]
+
+
 def owner_check(pr: dict) -> str | None:
     """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own.
 
     "Owner check: none" counts as no check, so it never reaches the plan as a thing to try; said in an
-    issue's newest comment, it holds even when the PR's body has one (#927).
+    issue's newest comment, it holds even when the PR's body has one (#927). A check he can't run is no
+    check (#1476): the next one that he can wins.
     """
     if taken_off(pr):
         return None
     for check in written_checks(pr):
-        if not NO_CHECK.match(check):
+        if not NO_CHECK.match(check) and not unusable_check(check):
             return check
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
     for text in texts:
         steps, expected = check_field(text, STEPS_FIELD), check_field(text, EXPECTED_FIELD)
         if steps and expected:  # numbered Steps keep every step (#847: #585 lost the swipe in step 2)
             numbered = chr(10) in steps or STEP_LINE.match(steps)
-            return f'{steps}{chr(10) if numbered else " "}Expected: {expected}'
+            found = f'{steps}{chr(10) if numbered else " "}Expected: {expected}'
+            if not unusable_check(found):
+                return found
     return None
 
 
@@ -671,6 +731,31 @@ def plan_entries(facing: list[dict]) -> list[list[dict]]:
         for key in keys:
             by_key.setdefault(key, entry)
     return entries
+
+
+def screens_of(entry: list[dict]) -> set[str]:
+    """The screens an entry's PRs change: those whose view files they touch (SCREEN_FILES)."""
+    return {name for pr in entry for node in pr['files']['nodes'] for name, pattern in SCREEN_FILES.items()
+            if pattern.match(node['path'])}
+
+
+def screen_changes(entries: list[list[dict]]) -> tuple[list[dict], list[list[dict]]]:
+    """Pull out of the entries the screens that several merges changed (#1476). Returns
+    ([{'screen': name, 'prs': [...]}], the entries that stay), the screens in SCREEN_FILES order.
+
+    A screen counts when SCREEN_MERGES or more PRs touch its view files. Those PRs leave their entries (a PR
+    that only shares an issue with them stays, with its own title and check), so no PR's title hides behind
+    another's and the owner meets the whole redesign as one item.
+    """
+    groups = []
+    stay = [list(entry) for entry in entries]
+    for name in SCREEN_FILES:
+        touching = [pr for entry in stay for pr in entry if name in screens_of([pr])]
+        if len(touching) >= SCREEN_MERGES:
+            groups.append({'screen': name, 'prs': touching})
+            stay = [kept for kept in ([pr for pr in entry if not any(pr is gone for gone in touching)]
+                                      for entry in stay) if kept]
+    return groups, stay
 
 
 def found_on_phone(entry: list[dict]) -> bool:
@@ -866,6 +951,8 @@ def missing_material(check: str, sha: str) -> str | None:
     """The kind of test file a check asks for ("PDF", "packet") when it carries no link and names no repo
     file to attach, so the owner would have nothing to test with (#1038); None when it needs none."""
     found = MATERIAL.search(check)
+    if not found and NAMED_DOCUMENT.search(check) and not (SUPPLIED_URL.search(check) or repo_files(check, sha)):
+        return 'document'  # "the arXiv paper" with no link (#1476)
     if not found or SUPPLIED_URL.search(check) or repo_files(check, sha):
         return None
     kind = (found.group(1) or 'packet').lower()
@@ -954,6 +1041,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     entries = plan_entries(facing)
     passed = [entry for entry in entries if passed_on_phone(entry)]
     entries = [entry for entry in entries if not any(entry is gone for gone in passed)]
+    # Several merges to one screen are one item at the top of the ten minutes (#1476).
+    screens, entries = screen_changes(entries)
     # Only what the owner can check goes in the ten minutes: a written check (#504). A bug his phone found
     # with none goes with the unchecked changes, and the run names its issues so one gets written (#847);
     # "repeat what you did" sent him back to the issue for his own steps and content.
@@ -965,18 +1054,27 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if needs_check:
         say('found on the phone but no "Owner check:" line, so not in the ten minutes; add one to: '
             + ', '.join(f'#{n}' for n in dict.fromkeys(needs_check)))
+    refused = [who for entry in unchecked for pr in entry for who in refused_in(pr)]
+    if refused:
+        say("a check can't be run on the phone, so not in the ten minutes; rewrite its \"Owner check:\" line: "
+            + '; '.join(dict.fromkeys(refused)))
     # A check that needs another change still open waits for it (#847: step 2 needed #547).
     checkable = [entry for entry in entries if check_of[id(entry)]]
     # Fixes from earlier builds still waiting on his check go after these (#927: the 887c560 plan had
     # none while ten Build 30 fixes on the phone waited on him).
     pending = fetch_waiting()
-    shown = {number for entry in entries for pr in entry
+    shown = {number for entry in [*entries, *([pr] for screen in screens for pr in screen['prs'])] for pr in entry
              for number in [pr['number'], *pr.get('linked', ()), *(issue['number'] for issue in pr['issues'])]}
     fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha)) if pending else []
-    unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']]
+    unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']
+                 and not fix['refused']]
     if unwritten:
         say('waiting on the owner\'s check but no "Owner check:" written, so not in the plan; add one to: '
             + ', '.join(f'#{n}' for n in unwritten))
+    cannot_run = [who for fix in fixes for who in fix['refused']]
+    if cannot_run:
+        say("waiting on the owner's check but it can't be run on the phone, so not in the plan; rewrite its "
+            '"Owner check:" line: ' + '; '.join(dict.fromkeys(cannot_run)))
     fixes = [fix for fix in fixes if fix['check']]
     named = [n for entry in checkable for n in references(check_of[id(entry)])]
     named += [n for fix in fixes for n in references(fix['check'])]
@@ -1002,31 +1100,41 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
             + ', '.join(f'#{n}' for n in dict.fromkeys(unsupplied)))
     waiting = [entry for entry in checkable if waits[id(entry)] or lacks[id(entry)]]
     checkable = [entry for entry in checkable if not (waits[id(entry)] or lacks[id(entry)])]
-    budget = checkable[:PLAN_CHECKS]
-    rest = checkable[PLAN_CHECKS:]
+    room = max(0, PLAN_CHECKS - len(screens))
+    budget = checkable[:room]
+    rest = checkable[room:]
     # They share the ten minutes, new changes first; the rest are listed with their links.
-    still = [fix for fix in fixes if not fix['needs'] and not fix['lacks']][:PLAN_CHECKS - len(budget)]
+    still = [fix for fix in fixes if not fix['needs'] and not fix['lacks']][:max(0, room - len(budget))]
     also_waiting = [fix for fix in fixes if fix not in still]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     left_out = f' {len(passed)} changes whose issues are already closed are left out.' if passed else ''
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.{left_out}', '',
               '## Try these (about ten minutes)', '']
-    if not budget and still:
+    if not (screens or budget) and still:
         lines += ['No change new in this build has a phone check. The fixes below, from earlier builds, '
                   'still wait on yours.', '']
-    elif not budget:
+    elif not (screens or budget):
         lines += ['Nothing is ready to check on the phone yet; the changes you might notice are listed below.'
                   if waiting and not unchecked else
                   'No phone checks were written for this build; the changes you might notice are listed below.'
                   if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
-    for index, entry in enumerate(budget, 1):
+    for index, screen in enumerate(screens, 1):
+        lines += [f'{index}. **The {screen["screen"]} changed** ({len(screen["prs"])} changes)',
+                  f'   - Check: {SCREEN_CHECKS.get(screen["screen"], "Use it and say if it is usable.")}',
+                  '   - What changed:']
+        lines += [f'     - {pr["title"]} ([PR #{pr["number"]}]({pr["url"]}))' for pr in screen['prs']]
+        lines.append('')
+    for index, entry in enumerate(budget, len(screens) + 1):
         pr = entry[0]
         issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
         tag = ' (found on your phone)' if found_on_phone(entry) else ''
         links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
-        lines += [f'{index}. **{pr["title"]}**{tag}', *step_lines(check_of[id(entry)], sha, folder),
+        # A PR keeps its own title even when it shares an issue with another (#1476).
+        others = [f'   - Also in this change: {member["title"]} ([PR #{member["number"]}]({member["url"]}))'
+                  for member in entry[1:] if member['title'] != pr['title']]
+        lines += [f'{index}. **{pr["title"]}**{tag}', *step_lines(check_of[id(entry)], sha, folder), *others,
                   f'   - Links: {", ".join(links)}', '']
 
     def fix_links(fix, label=True):
@@ -1039,7 +1147,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if still:
         lines += ['## Still waiting on your check', '',
                   'Fixed in an earlier build and on your phone now, but nobody has checked them yet.', '']
-        for index, fix in enumerate(still, len(budget) + 1):
+        for index, fix in enumerate(still, len(screens) + len(budget) + 1):
             lines += [f'{index}. **{fix["issue"]["title"]}**{fix_tag(fix)}', *step_lines(fix['check'], sha, folder),
                       f'   - Links: {", ".join(fix_links(fix))}', '']
     if also_waiting:
@@ -1057,19 +1165,27 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if pending is None:
         lines += ["GitHub could not be reached, so earlier fixes still waiting on your check aren't listed.", '']
 
+    def bullets(entry):
+        """One bullet per title in the entry: a PR that shares an issue keeps its own title (#1476)."""
+        by_title: dict[str, list[dict]] = {}
+        for pr in entry:
+            by_title.setdefault(pr['title'], []).append(pr)
+        return [f'- {title}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
+                + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in members) + ')'
+                for title, members in by_title.items()]
+
     def titles(group):
-        return [f'- {entry[0]["title"]}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
-                + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')' for entry in group]
+        return [bullet for entry in group for bullet in bullets(entry)]
     if rest:
         lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
     if waiting:
         lines += ['## Waiting on another change or a test file (not in the ten minutes)', '',
                   'Their checks need something that is not on your phone yet.', '']
-        for entry, title in zip(waiting, titles(waiting)):
+        for entry in waiting:
             needed = [f'[#{item["number"]}]({item["url"]}) ({item["title"]})' for item in waits[id(entry)]]
             if lacks[id(entry)]:
                 needed.append(f'a test {lacks[id(entry)]}, not supplied yet')
-            lines.append(f'{title}: needs {", ".join(needed)}')
+            lines += [f'{bullet}: needs {", ".join(needed)}' for bullet in bullets(entry)]
         lines.append('')
     if unchecked:
         lines += ['## Also changed (no phone check written)', '',
