@@ -61,6 +61,40 @@ class VerificationTests(unittest.TestCase):
                 simulator.assert_not_called()
                 boot.assert_not_called()
 
+    def test_the_app_build_uses_the_shared_compilation_cache_and_records_its_hits(self):
+        # #1331: each T3 builds in fresh DerivedData; the cache outside the tree is what a later build reuses.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            commands = []
+
+            def command(run, name, args, **kw):
+                commands.append((name, args))
+                if name == 'build-for-testing':
+                    (run.output / f'{name}.log').write_text(
+                        'note: 0 hits / 508 cacheable tasks (0%)\n** TEST BUILD SUCCEEDED **\n'
+                        'note: 441 hits / 508 cacheable tasks (87%)\n')
+
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='toolchain'), \
+                    patch.object(verification.Run, 'command', autospec=True, side_effect=command):
+                run = verification.Run(Path(temporary) / 'run', 'app')
+                run.xcode_build('app', 'runtime1')
+            build = next(args for name, args in commands if name == 'build-for-testing')
+            settings = dict(arg.split('=', 1) for arg in build if '=' in arg and not arg.startswith('-'))
+            cache = Path(settings['COMPILATION_CACHE_CAS_PATH'])
+            self.assertEqual(settings['COMPILATION_CACHE_ENABLE_CACHING'], 'YES')
+            self.assertEqual(cache, verification.state_dir() / 'compilation-cache')
+            self.assertFalse(cache.is_relative_to(root))  # the checkout's clean must not empty it
+            self.assertEqual(settings['COMPILATION_CACHE_LIMIT_SIZE'], verification.COMPILATION_CACHE_LIMIT)
+            for language in ('SWIFT', 'CLANG'):
+                self.assertEqual(settings[f'{language}_ENABLE_PREFIX_MAPPING'], 'YES')
+                self.assertEqual(settings[f'{language}_ENABLE_PROJECT_PREFIX_MAPPING'], 'YES')
+                self.assertEqual(settings[f'{language}_OTHER_PREFIX_MAPPINGS'], f'"{root}=/^tree"')
+            self.assertEqual(build[-1], 'build-for-testing')
+            self.assertEqual(run.manifest['compilation_cache'], '441 hits / 508 cacheable tasks (87%)')
+            self.assertIsNone(verification.compilation_cache_hits('** TEST BUILD SUCCEEDED **\n'))
+
     def test_both_behavior_plans_reuse_one_build_and_inputs_invalidate_it(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary) / 'repo'
