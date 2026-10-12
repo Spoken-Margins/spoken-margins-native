@@ -2466,6 +2466,28 @@ class MergeTests(unittest.TestCase):
         self.commit(self.tree, 'App/SpokenMarginsApp/View.swift', 'struct V {}\n')
         self.assertEqual(lane.diff_scope(self.tree, 'next')['tier'], 'T2')
 
+    def test_a_file_moved_out_of_the_owner_s_paths_still_counts_as_a_change_to_them(self):
+        # #1402 audit: git lists only the new name of a rename, so a PR that moved .github/workflows/merge-audit.yml or
+        # scripts/lane-runner.py elsewhere looked like a docs change and the runner merged it without the owner's tap.
+        workflow = '.github/workflows/merge-audit.yml'
+        for name in (workflow, 'scripts/lane-runner.py', '.github/wörkflows/audit.yml'):
+            (self.origin / name).parent.mkdir(parents=True, exist_ok=True)
+            self.commit(self.origin, name, 'name: audit\nrun: the same body, long enough for rename detection\n' * 4)
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        (self.tree / 'docs/archive').mkdir(parents=True)
+        for old, new in ((workflow, 'docs/archive/merge-audit.yml'),
+                         ('scripts/lane-runner.py', 'docs/archive/lane-runner.py'),
+                         ('.github/wörkflows/audit.yml', 'docs/archive/audit.yml')):
+            subprocess.run(self.git + ['-C', str(self.tree), 'mv', old, new], check=True)
+        subprocess.run(self.git + ['-C', str(self.tree), 'commit', '-q', '-m', 'move them'], check=True)
+        lane.fetch_base(self.tree, 'next')
+        paths, _ = lane.committed_changes(self.tree, 'next')
+        self.assertEqual(paths, sorted(['.github/wörkflows/audit.yml', 'docs/archive/audit.yml',
+                                        'docs/archive/lane-runner.py', 'docs/archive/merge-audit.yml',
+                                        'scripts/lane-runner.py', workflow]))
+        self.assertEqual(lane.owner_tap_paths({'files': [{'path': p} for p in paths]}),
+                         sorted(['.github/wörkflows/audit.yml', 'scripts/lane-runner.py', workflow]))
+
     def test_a_diff_touching_the_app_model_suggests_its_whole_workflow_class(self):
         (self.origin / 'scripts').mkdir()
         self.commit(self.origin, 'scripts/test-scope.py', (SCRIPTS / 'test-scope.py').read_text())

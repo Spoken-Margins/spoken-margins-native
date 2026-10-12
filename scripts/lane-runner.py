@@ -497,7 +497,11 @@ def committed_changes(tree: Path, base: str) -> tuple[list[str], dict[str, str]]
     public-API check). Nothing untracked in the runner's workspace counts."""
     git = ['git', '-C', str(tree)]
     merge_base = subprocess.check_output(git + ['merge-base', 'HEAD', f'origin/{base}'], text=True).strip()
-    paths = subprocess.check_output(git + ['diff', '--name-only', merge_base, 'HEAD'], text=True).splitlines()
+    # Both sides of a rename (a file moved out of .github/ is a change to .github/), and NUL-separated: git's default
+    # output lists only the new name of a rename and quotes a name like .github/wörkflows/x.yml (#1402 audit).
+    paths = subprocess.check_output(git + ['diff', '--name-only', '--no-renames', '-z', merge_base, 'HEAD'],
+                                    text=True).split('\0')
+    paths = [path for path in paths if path]
     diffs, current = {}, None
     for line in subprocess.check_output(git + ['diff', '-U0', merge_base, 'HEAD', '--', 'Packages/SessionKit/Sources'],
                                         text=True).splitlines():
