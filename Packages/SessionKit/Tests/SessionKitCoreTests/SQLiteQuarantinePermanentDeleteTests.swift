@@ -195,4 +195,53 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: root.appending(path: "shared.m4a").path), "a surviving Margin still uses it")
         XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path), "only files under the recordings folder are ever removed")
     }
+
+    func testAQuarantinedExtractedDocumentGoesButAnUploadRecordAndALookalikeItemStay() throws {
+        try seed()
+        try quarantine("structured_document", "item-1#v2", #"{"text":"EXTRACTED PDF TEXT","from-a-future-build":true}"#)
+        try quarantine("structured_document", "item-10#v2", #"{"text":"another item's","from-a-future-build":true}"#)
+        try quarantine("community_map_upload", "episode-key", #"{"id":"episode-key","itemId":"item-1","from-a-future-build":true}"#)
+        try quarantine("interjection", "session-10::note", margin("note", session: "session-10", item: "item-10", audio: "SpokenMargins/note-10.m4a"))
+        let store = try SQLiteSessionStore(path: path)
+
+        try store.deleteItem(id: "item-1")
+
+        let kept = try quarantinedKeys()
+        XCTAssertFalse(kept.contains("structured_document/item-1#v2"), "the extracted text is the item's")
+        XCTAssertTrue(kept.contains("structured_document/item-10#v2"), "item-10 is not item-1")
+        XCTAssertTrue(kept.contains("interjection/session-10::note"))
+        XCTAssertTrue(kept.contains("community_map_upload/episode-key"),
+                      "a live upload record deliberately outlives its item, so a quarantined one does too")
+    }
+
+    func testTheLiveTurnsOfAQuarantinedSessionGoWithTheItem() throws {
+        try seed()
+        _ = try SQLiteSessionStore(path: path)
+        try insert(kind: "turn", id: "session-q::live-turn", sessionId: "session-q", itemId: nil,
+                   payload: #"{"id":"live-turn","sessionId":"session-q","role":"user","text":"Hello."}"#)
+
+        try SQLiteSessionStore(path: path).deleteItem(id: "item-1")
+
+        XCTAssertEqual(try StoreRawSQL.ids(kind: "turn", at: path), [], "the turn's session was set aside, not live")
+    }
+
+    func testAMarginRowWithAnUnreadableRecordingPathDoesNotMakeThePermanentDeleteImpossible() throws {
+        try seed()
+        try quarantine("interjection", "session-1::odd", #"{"id":"odd","sessionId":"session-1","itemId":"item-1","audioPath":5}"#)
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(try store.quarantinedMarginAudioPaths(itemId: "item-1").sorted(),
+                       ["SpokenMargins/note-1.m4a", "SpokenMargins/note-q.m4a"], "the readable ones are still named")
+        try store.deleteItem(id: "item-1")
+        XCTAssertFalse(try quarantinedKeys().contains("interjection/session-1::odd"))
+    }
+
+    func testNothingSetAsideMeansNothingToScan() throws {
+        _ = try SQLiteSessionStore(path: path)
+        try insert(kind: "item", id: "item-1", sessionId: nil, itemId: "item-1", payload: item("item-1"))
+        let store = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try store.quarantinedMarginAudioPaths(itemId: "item-1"), [])
+        try store.deleteItem(id: "item-1")
+        XCTAssertNil(try? store.loadItem(id: "item-1"))
+    }
 }

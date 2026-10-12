@@ -438,13 +438,17 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// The audio paths of the Margins quarantined under `itemId` (#1466): the recordings of rows this build
     /// can't decode, which `loadInterjections(itemId:)` doesn't return. Read them before `deleteItem(id:)`,
     /// which takes the rows, so the files that only those rows named can be removed too.
+    ///
+    /// A row whose JSON or audio path can't be read is skipped, not fatal: it must not make the delete
+    /// impossible, and the recording it may name is then kept, never removed on a guess.
     public func quarantinedMarginAudioPaths(itemId: String) throws -> [String] {
-        try marginAudioPaths(
+        guard try quarantinedRecordCount() > 0 else { return [] }
+        return try marginAudioPaths(
             sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection' AND (\(Self.quarantinedRowBelongsToItem));",
-            bindings: [itemId])
+            bindings: [itemId], skippingUnreadable: true)
     }
 
-    private func marginAudioPaths(sql: String, bindings: [String] = []) throws -> [String] {
+    private func marginAudioPaths(sql: String, bindings: [String] = [], skippingUnreadable: Bool = false) throws -> [String] {
         try withConnectionLock {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
@@ -461,12 +465,15 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
                 }
                 guard let raw = sqlite3_column_text(statement, 0),
                       let object = try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] else {
+                    if skippingUnreadable { continue }
                     throw SessionKitError.persistenceFailed("margin_row_unreadable")
                 }
                 switch object["audioPath"] {
                 case nil, is NSNull: continue
                 case let path as String: paths.append(path)
-                default: throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
+                default:
+                    if skippingUnreadable { continue }
+                    throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
                 }
             }
         }
@@ -1107,9 +1114,20 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// can't decode. A payload that isn't JSON can't be tied to an item, so it isn't matched. Turns carry only
     /// a session id and imported Margins only a layer id, so they go with the item's sessions and layers,
     /// live or quarantined.
+    /// The kinds whose live save path files the row under the item named in its payload (`item_id`). A kind
+    /// that deliberately outlives its item, such as `community_map_upload`, is not here (#1466).
+    private static let itemScopedQuarantineKinds = """
+        'item', 'listening_map', 'session', 'interjection', 'ai_job', 'interjection_share_revision', \
+        'imported_commentary_layer', 'canonical_source', 'audio_asset', 'source_transcript_timeline', \
+        'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
+        'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
+        'resolved_listening_map_projection', 'watch_audio_package'
+        """
+
     private static let quarantinedRowBelongsToItem = """
         (kind = 'item' AND id = ?1)
-        OR \(quarantinedJSON("$.itemId")) = ?1
+        OR (kind IN (\(itemScopedQuarantineKinds)) AND \(quarantinedJSON("$.itemId")) = ?1)
+        OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v')
         OR (kind = 'turn' AND \(quarantinedJSON("$.sessionId")) IN (\(quarantinedSessionIdsOfItem)))
         OR (kind = 'imported_commentary_interjection' AND \(quarantinedJSON("$.layerId")) IN (\(quarantinedLayerIdsOfItem)))
         """
@@ -1127,6 +1145,8 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// Takes the item's quarantined rows with it (#1466). Turns and imported Margins go first, as their own
     /// statements, while the sessions and layers they are tied through are still there to be found.
     private func deleteQuarantinedRows(ofItem id: String) throws {
+        // Nearly every library has nothing set aside: skip the scans.
+        guard try quarantinedRecordCount() > 0 else { return }
         try runDelete(
             "DELETE FROM quarantined_records WHERE kind = 'turn' AND \(Self.quarantinedJSON("$.sessionId")) IN (\(Self.quarantinedSessionIdsOfItem));",
             prepareError: "prepare_delete_item_quarantined_turns", stepError: "step_delete_item_quarantined_turns", ids: [id])
@@ -1134,7 +1154,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             "DELETE FROM quarantined_records WHERE kind = 'imported_commentary_interjection' AND \(Self.quarantinedJSON("$.layerId")) IN (\(Self.quarantinedLayerIdsOfItem));",
             prepareError: "prepare_delete_item_quarantined_imports", stepError: "step_delete_item_quarantined_imports", ids: [id])
         try runDelete(
-            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR \(Self.quarantinedJSON("$.itemId")) = ?1;",
+            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind IN (\(Self.itemScopedQuarantineKinds)) AND \(Self.quarantinedJSON("$.itemId")) = ?1) OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v');",
             prepareError: "prepare_delete_item_quarantined", stepError: "step_delete_item_quarantined", ids: [id])
     }
 
@@ -1146,14 +1166,13 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         // (SQLite 3.37 on Linux did, #1219). One transaction, so a failure leaves the item whole.
         try withTransaction {
             try withConnectionLock {
-                try deleteQuarantinedRows(ofItem: id)
+                // The item's quarantined sessions count too: their live turns go, then the quarantined rows (#1466).
                 try runDelete(
                     """
                     DELETE FROM records
-                    WHERE kind = 'turn' AND session_id IN (
-                        SELECT id FROM records WHERE kind = 'session' AND item_id = ?
-                    );
+                    WHERE kind = 'turn' AND session_id IN (\(Self.quarantinedSessionIdsOfItem));
                     """, prepareError: "prepare_delete_item_turns", stepError: "step_delete_item_turns", ids: [id])
+                try deleteQuarantinedRows(ofItem: id)
                 try runDelete(
                     """
                     DELETE FROM records
