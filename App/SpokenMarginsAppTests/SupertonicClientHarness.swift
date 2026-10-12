@@ -83,6 +83,10 @@ final class SupertonicClientHarness {
 
     func releaseRender(_ index: Int) { renderer.release(index) }
 
+    /// Holds the next render the client starts, so a chunk the client renders again can't stand in for
+    /// one it should already have.
+    func holdNextRender() { renderer.hold(renderer.startedCount + 1) }
+
     /// Waits until `count` renders have returned to the client.
     func waitForRenders(_ count: Int) async {
         for _ in 0..<250 where renderer.finishedCount < count { try? await Task.sleep(for: .milliseconds(20)) }
@@ -153,6 +157,8 @@ final class ScriptedSupertonicRenderer: SupertonicRendering, @unchecked Sendable
     var startedCount: Int { lock.withLock { started } }
     /// Renders returned to the client.
     var finishedCount: Int { lock.withLock { finished } }
+
+    func hold(_ index: Int) { lock.withLock { _ = held.insert(index) } }
 
     func release(_ index: Int) {
         let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
