@@ -274,7 +274,7 @@ extension Gate1AppModel {
             foregroundAudioPreparationTask?.cancel()
             foregroundAudioPreparationGeneration += 1
             foregroundAudioPreparationTask = nil
-            suppressAudioPreparation(itemIds: itemIds)
+            // MUTATION CHECK (#991): suppression skipped on purpose; this commit is reverted.
             try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
             pendingStartupAudioPreparationItemIds.subtract(itemIds)
             failedStartupAudioPreparationItemIds.subtract(itemIds)
@@ -465,7 +465,7 @@ extension Gate1AppModel {
         _ lhs: AudioPreparationJob,
         _ rhs: AudioPreparationJob
     ) -> Bool {
-        audioPreparationJobPrecedes(lhs, rhs, activeItemId: nil)
+        audioPreparationJobPrecedes(rhs, lhs, activeItemId: nil) // MUTATION CHECK (#991): reverted next commit
     }
 
     nonisolated static func audioPreparationJobPrecedes(
