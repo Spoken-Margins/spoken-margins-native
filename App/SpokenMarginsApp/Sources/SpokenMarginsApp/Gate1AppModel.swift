@@ -284,7 +284,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
     /// #783: the line shown before iOS's first microphone prompt.
-    @Published private(set) var microphonePrimer = MicrophonePrimer()
+    @Published var microphonePrimer = MicrophonePrimer()
     @Published var isFinishingInterjection = false
     @Published var isMarginCaptureCoolingDown = false
     @Published var isDismissingMiniPlayer = false
