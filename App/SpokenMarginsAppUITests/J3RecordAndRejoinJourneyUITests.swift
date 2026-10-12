@@ -44,7 +44,6 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertEqual(app.buttons["playback.title"].firstMatch.label, episodeTitle, "A different item is playing")
             try waitUntilPlaying("Podcast never reached the playing state")
             try waitUntilAdvancing("Podcast clock did not move before recording")
-            assertDockStaysFixedWhileSwitching()
             // Record well past 0:00, so a Margin anchored at the start can't pass for one anchored here (#1044 APO-01).
             waitUntil("Podcast did not reach 0:30 before recording", timeout: 45) {
                 self.currentPosition().map { $0 >= 30 } ?? false
@@ -159,26 +158,6 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
         guard banner.exists else { return }
         for problem in ["unavailable", "couldn't be played", "could not be played"] {
             XCTAssertFalse(banner.label.localizedCaseInsensitiveContains(problem), "Margin playback reported: \(banner.label)")
-        }
-    }
-
-    private func assertDockStaysFixedWhileSwitching() {
-        let controls = element("playback.controls")
-        let original = controls.frame
-        for (button, content) in [("playback.timeline.button", "timeline.screen"),
-                                  ("playback.margins.button", "margins.screen"),
-                                  ("playback.now.button", "playback.now.margins")] {
-            tap(button)
-            XCTAssertTrue(element(content).waitForExistence(timeout: 5), "Playback pane did not appear")
-            XCTAssertEqual(controls.frame.minY, original.minY, accuracy: 1, "Dock moved when switching panes")
-            XCTAssertEqual(controls.frame.height, original.height, accuracy: 1, "Dock changed height")
-            for control in ["playback.play.button", "playback.interject.button", "playback.write.button"] {
-                XCTAssertTrue(app.buttons[control].isHittable, "Dock control disappeared: \(control)")
-            }
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
-            screenshot.name = "Fixed dock — \(content)"
-            screenshot.lifetime = .keepAlways
-            add(screenshot)
         }
     }
 

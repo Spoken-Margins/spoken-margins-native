@@ -6,10 +6,6 @@ struct ExperienceTimelineRailScreen: View {
     @EnvironmentObject private var sharingCoordinator: Build23SharingCoordinator
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    /// A playback pane reuses the rail and sheets, without a second player or navigation stack.
-    var onReturnToPlayback: (() -> Void)? = nil
-    var onEditorFocusChange: ((Bool) -> Void)? = nil
-
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
@@ -17,115 +13,102 @@ struct ExperienceTimelineRailScreen: View {
     @ScaledMetric(relativeTo: .body) private var responseEditorHeight: CGFloat = 160
 
     var body: some View {
-        if onReturnToPlayback != nil {
-            content
-        } else {
-            NavigationStack {
-                content
-                    .navigationTitle("Timeline")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-        }
-    }
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(model.selectedItem.title)
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.bottom, 12)
 
-    private var content: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(model.selectedItem.title)
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .lineLimit(onReturnToPlayback == nil ? nil : 1)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 12)
-
-                    if entries.isEmpty {
-                        SMExperienceEmptyState(
-                            systemImage: "list.bullet.rectangle",
-                            title: "This session is just beginning",
-                            detail: "Source positions, Margins, and reflections will appear here in listening order.",
-                            actionTitle: "Return to \(model.timelineExitTitle)",
-                            action: returnToPlayback
-                        )
-                    } else {
-                        timelineRail
-                    }
-
-                    if !sharingCoordinator.importedLayers.isEmpty {
-                        DisclosureGroup("Shared Margins") {
-                            Build23ImportedMarginPresentation(coordinator: sharingCoordinator, showsMargins: false)
+                        if entries.isEmpty {
+                            SMExperienceEmptyState(
+                                systemImage: "list.bullet.rectangle",
+                                title: "This session is just beginning",
+                                detail: "Source positions, Margins, and reflections will appear here in listening order.",
+                                actionTitle: "Return to \(model.timelineExitTitle)",
+                                action: model.leaveTimeline
+                            )
+                        } else {
+                            timelineRail
                         }
-                        .padding(.top, 16)
-                    }
 
-                    reflectionComposer
-                        .padding(.top, 24)
-                        .id("timeline.reflection.composer")
+                        if !sharingCoordinator.importedLayers.isEmpty {
+                            DisclosureGroup("Shared Margins") {
+                                Build23ImportedMarginPresentation(coordinator: sharingCoordinator, showsMargins: false)
+                            }
+                            .padding(.top, 16)
+                        }
+
+                        reflectionComposer
+                            .padding(.top, 24)
+                            .id("timeline.reflection.composer")
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.top, 12)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: 760)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 18)
-                .padding(.top, 12)
-                .padding(.bottom, 28)
-                .frame(maxWidth: 760)
-                .frame(maxWidth: .infinity)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .background(AppColors.bone)
-            .safeAreaInset(edge: .bottom, spacing: 8) {
-                if onReturnToPlayback == nil && model.shouldShowMiniPlayer && !responseEditorFocused {
-                    MiniPlayerBar()
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 4)
+                .scrollDismissesKeyboard(.interactively)
+                .background(AppColors.bone)
+                .safeAreaInset(edge: .bottom, spacing: 8) {
+                    if model.shouldShowMiniPlayer && !responseEditorFocused {
+                        MiniPlayerBar()
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 4)
+                    }
                 }
-            }
-            .onAppear {
-                refreshEntries(from: model.selectedItem)
-                focusRequestedMargin(using: proxy)
-            }
-            .onReceive(model.$selectedItem) { item in
-                refreshEntries(from: item)
-            }
-            .onDisappear { onEditorFocusChange?(false) }
-            .onChange(of: responseEditorFocused) { _, isFocused in
-                onEditorFocusChange?(isFocused)
-                guard isFocused else { return }
-                Task { @MainActor in
-                    await Task.yield()
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
+                .onAppear {
+                    refreshEntries(from: model.selectedItem)
+                    focusRequestedMargin(using: proxy)
+                }
+                .onReceive(model.$selectedItem) { item in
+                    refreshEntries(from: item)
+                }
+                .onChange(of: responseEditorFocused) { _, isFocused in
+                    guard isFocused else { return }
+                    Task { @MainActor in
+                        await Task.yield()
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("timeline.reflection.composer", anchor: .bottom)
+                        }
                     }
                 }
             }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("timeline.screen")
-        .toolbar {
-            if onReturnToPlayback == nil {
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("timeline.screen")
+            .navigationTitle("Timeline")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button(action: returnToPlayback) {
                         Label(model.timelineExitTitle, systemImage: "arrow.left")
                     }
                     .accessibilityIdentifier("timeline.nowPlaying.button")
                 }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(action: model.openExport) {
-                    Image(systemName: "square.and.arrow.up")
-                        .frame(width: 44, height: 44)
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: model.openExport) {
+                        Image(systemName: "square.and.arrow.up")
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Export session")
                 }
-                .accessibilityLabel("Export session")
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { responseEditorFocused = false }
+                        .accessibilityIdentifier("timeline.keyboard.done")
+                }
             }
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") { responseEditorFocused = false }
-                    .accessibilityIdentifier("timeline.keyboard.done")
+            .sheet(item: $selectedSharedMargin) { row in
+                SharedMarginDetailView(row: row).environmentObject(model)
             }
-        }
-        .sheet(item: $selectedSharedMargin) { row in
-            SharedMarginDetailView(row: row).environmentObject(model)
-        }
-        .sheet(item: $selectedMargin) { row in
-            ExperienceMarginDetailView(row: row)
-                .environmentObject(model)
+            .sheet(item: $selectedMargin) { row in
+                ExperienceMarginDetailView(row: row)
+                    .environmentObject(model)
+            }
         }
     }
 
@@ -437,7 +420,7 @@ struct ExperienceTimelineRailScreen: View {
     private func returnToPlayback() {
         responseEditorFocused = false
         withAnimation(.snappy(duration: 0.34)) {
-            if let onReturnToPlayback { onReturnToPlayback() } else { model.leaveTimeline() }
+            model.leaveTimeline()
         }
     }
 

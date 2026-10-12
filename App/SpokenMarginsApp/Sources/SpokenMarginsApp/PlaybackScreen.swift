@@ -42,8 +42,6 @@ struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var selectedPane: PlaybackPane = .now
-    @State private var isTimelineEditing = false
     @State private var followUp = ""
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
@@ -55,7 +53,7 @@ struct PlaybackScreen: View {
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write, paste }
+    private enum OptionsDestination { case item, timeline, export, margins, write }
     @State private var sourceTextOffsetAtPresentation = 0
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
@@ -66,74 +64,54 @@ struct PlaybackScreen: View {
             ScrollViewReader { proxy in
                 ZStack {
                     AppColors.listeningBackground.ignoresSafeArea()
-                    Group {
-                        switch selectedPane {
-                        case .now:
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 20) {
-                                    if model.snapshot.phase == .finished {
-                                        Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
-                                    }
-                                    playbackHeader
-                                    capturePermissionRecovery
-                                    importedCommentaryControl
-                                    marginMomentControl
-                                    if model.selectedItem.isNativeAudio {
-                                        PlaybackNowView()
-                                    } else {
-                                        recentMarginPreview
-                                    }
-                                    if model.shouldShowGuidedOnboardingCoach {
-                                        GuidedOnboardingPlaybackCard {
-                                            openTimeline()
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
-                                .padding(.vertical, 18)
-                                .frame(maxWidth: 620)
-                                .frame(maxWidth: .infinity, alignment: .top)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if model.snapshot.phase == .finished {
+                                Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
                             }
-                            .scrollBounceBehavior(.always)
-                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                                // ScrollGeometry's container is the inset content viewport.
-                                // The offset calculation below expects the whole viewport.
-                                TimelinePullPresentation.overscrollDistance(
-                                    contentOffsetY: geometry.contentOffset.y,
-                                    contentHeight: geometry.contentSize.height,
-                                    containerHeight: geometry.containerSize.height
-                                        + geometry.contentInsets.top + geometry.contentInsets.bottom,
-                                    bottomInset: geometry.contentInsets.bottom,
-                                    topInset: geometry.contentInsets.top
-                                )
-                            } action: { _, distance in
-                                if distance < 1 {
-                                    timelinePullTriggered = false
-                                } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
-                                          !timelinePullTriggered {
-                                    timelinePullTriggered = true
+                            playbackHeader
+                            capturePermissionRecovery
+                            importedCommentaryControl
+                            marginMomentControl
+                            recentMarginPreview
+                            if model.shouldShowGuidedOnboardingCoach {
+                                GuidedOnboardingPlaybackCard {
                                     openTimeline()
                                 }
                             }
-
-                        case .timeline:
-                            ExperienceTimelineRailScreen(
-                                onReturnToPlayback: { selectedPane = .now },
-                                onEditorFocusChange: { isTimelineEditing = $0 }
-                            )
-                        case .margins:
-                            PlaybackMarginsView()
+                        }
+                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
+                        .padding(.vertical, 18)
+                        .frame(maxWidth: 620)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                    }
+                    .scrollBounceBehavior(.always)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        // ScrollGeometry's container is the inset content viewport.
+                        // The offset calculation below expects the whole viewport.
+                        TimelinePullPresentation.overscrollDistance(
+                            contentOffsetY: geometry.contentOffset.y,
+                            contentHeight: geometry.contentSize.height,
+                            containerHeight: geometry.containerSize.height
+                                + geometry.contentInsets.top + geometry.contentInsets.bottom,
+                            bottomInset: geometry.contentInsets.bottom,
+                            topInset: geometry.contentInsets.top
+                        )
+                    } action: { _, distance in
+                        if distance < 1 {
+                            timelinePullTriggered = false
+                        } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
+                                  !timelinePullTriggered {
+                            timelinePullTriggered = true
+                            openTimeline()
                         }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        if !isTimelineEditing { playbackControls }
+                        playbackControls
                     }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playback.screen")
-                .onChange(of: model.marginMoment?.target.marginId) { _, target in
-                    if target != nil { selectedPane = .now }
-                }
                 .task(id: model.renderFrontierKey) { await model.observeRenderedFrontier() }
                 .task(id: "\(model.snapshot.itemId ?? "")|\(model.snapshot.status.rawValue)") {
                     guard model.snapshot.status == .starting, let id = model.snapshot.itemId,
@@ -152,19 +130,15 @@ struct PlaybackScreen: View {
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                if selectedPane == .timeline {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button { selectedPane = .now } label: {
-                            Label("Now Playing", systemImage: "arrow.left")
-                        }
-                        .accessibilityIdentifier("timeline.nowPlaying.button")
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: model.openLibrary) {
+                        Label("Library", systemImage: "books.vertical")
                     }
+                    .accessibilityIdentifier("playback.home.button")
                 }
-                if selectedPane != .timeline {
-                    ToolbarItemGroup(placement: .keyboard) {
-                        Spacer()
-                        Button("Done") { followUpFocused = false }
-                    }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Done") { followUpFocused = false }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -196,7 +170,6 @@ struct PlaybackScreen: View {
                             }
                             .accessibilityIdentifier("playback.writeMargin.button")
                             reflectionOptions
-                            conversation
                             sessionActionDock
                         }
                         .padding(20)
@@ -218,35 +191,35 @@ struct PlaybackScreen: View {
 
     private var playbackControls: some View {
         VStack(spacing: 10) {
-            PlaybackPaneSwitchView(selection: $selectedPane)
-                .id("playback.timeline")
-            PlaybackChapterRowView(
-                title: model.playbackChapterHeaderTitle,
-                canJumpToNextChapter: model.canJumpToNextChapter,
-                showItem: model.openCurrentPlaybackItem,
-                nextChapter: model.jumpToNextChapter
-            )
             playbackPosition
-            playbackTransport
-            PlaybackSecondaryControlsRow {
-                Button(action: model.openLibrary) {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "books.vertical").frame(minWidth: 44, minHeight: 44)
-                    } else {
-                        Text("Library").frame(minWidth: 44, minHeight: 44)
-                    }
-                }
-                .accessibilityLabel("Library")
-                .accessibilityIdentifier("playback.home.button")
-                Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
-                    .accessibilityIdentifier("playback.rate.button")
-                listeningOptionsButton
-                    .frame(minWidth: 44, minHeight: 44)
+            if model.canJumpToNextChapter {
+                Button("Next chapter", systemImage: "forward.end") { model.jumpToNextChapter() }
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.white)
+                    .frame(minHeight: 44)
+                    .accessibilityIdentifier("playback.nextChapter.button")
             }
-            .foregroundStyle(.white)
-            .buttonStyle(.plain)
+            playbackTransport
+            if !dynamicTypeSize.isAccessibilitySize {
+                PlaybackSecondaryControlsRow {
+                    Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
+                        .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
+                        .accessibilityIdentifier("playback.rate.button")
+                    Button {
+                        isSleepTimerPresented = true
+                    } label: {
+                        Label(model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+                    }
+                    .accessibilityIdentifier("playback.sleepTimer.button")
+                    .popover(isPresented: $isSleepTimerPresented) {
+                        sleepTimerPopover.presentationCompactAdaptation(.popover)
+                    }
+                    listeningOptionsButton
+                }
+                .foregroundStyle(.white)
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+            }
             if model.playingImportedCommentary != nil {
                 Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
                     .buttonStyle(InterjectButtonStyle())
@@ -269,6 +242,31 @@ struct PlaybackScreen: View {
             } else {
                 marginRow
             }
+            HStack(spacing: 18) {
+                Button(action: openTimeline) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        Image(systemName: "list.bullet.rectangle").frame(minWidth: 52, minHeight: 52)
+                    } else {
+                        Label("Timeline", systemImage: "list.bullet.rectangle")
+                    }
+                }
+                .accessibilityLabel("Timeline")
+                .accessibilityIdentifier("playback.timeline.button")
+                Spacer(minLength: 4)
+                if dynamicTypeSize.isAccessibilitySize {
+                    listeningOptionsButton
+                } else {
+                    Button(action: model.openMargins) {
+                        Label("Margins", systemImage: "quote.bubble")
+                    }
+                    .accessibilityIdentifier("playback.margins.button")
+                }
+            }
+            .font(.subheadline)
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
+            .frame(minHeight: 44)
+            .id("playback.timeline")
         }
         .padding(.horizontal, 22)
         .padding(.top, 14)
@@ -422,7 +420,9 @@ struct PlaybackScreen: View {
             closeOptions(to: .timeline)
             return
         }
-        selectedPane = .timeline
+        withAnimation(.snappy(duration: 0.34)) {
+            model.openTimeline()
+        }
     }
 
     private func closeOptions(to destination: OptionsDestination) {
@@ -439,7 +439,6 @@ struct PlaybackScreen: View {
         case .export: model.openExport()
         case .margins: model.openMargins()
         case .write: model.beginWrittenMargin()
-        case .paste: isPastingAssistantResponse = true
         }
     }
 
@@ -654,15 +653,6 @@ struct PlaybackScreen: View {
             .contentShape(Rectangle())
             .accessibilityHint("Opens item details and listening-session history")
             .accessibilityIdentifier("playback.itemTitle.button")
-
-            if model.selectedItem.isNativeAudio,
-               let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
-               !show.isEmpty {
-                Text(show)
-                    .font(.subheadline)
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .accessibilityIdentifier("playback.showTitle")
-            }
 
             if let chapterTitle = model.playbackChapterHeaderTitle {
                 Button(action: model.openCurrentPlaybackItem) {
@@ -1529,8 +1519,7 @@ struct PlaybackScreen: View {
                     Text("Conversation")
                         .font(.headline)
                     Button {
-                        if isPlaybackOptionsPresented { closeOptions(to: .paste) }
-                        else { isPastingAssistantResponse = true }
+                        isPastingAssistantResponse = true
                     } label: {
                         Image(systemName: "plus")
                             .frame(width: 34, height: 34)
@@ -1565,7 +1554,6 @@ struct PlaybackScreen: View {
                                     .accessibilityLabel("Copy Margins for \(turnTitle(turn))")
                                     .accessibilityIdentifier("conversation.copyTurnInterjections.\(turn.id)")
                                     Button {
-                                        isPlaybackOptionsPresented = false
                                         model.playTurn(turn)
                                     } label: {
                                         Image(systemName: "play.fill")
