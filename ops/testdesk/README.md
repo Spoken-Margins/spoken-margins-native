@@ -16,7 +16,7 @@ There is no fixed spacing: when the lane is quiet, each new tip is tested within
 
 Otherwise it tests the tip in its own detached worktree (`~/SpokenMarginsOps/integration-run/worktree`):
 
-- It runs `--plan app`, then re-runs any failing tests twice on the same build. A test that passes both re-runs is reported as `flaky:`, and the verdict is PASS.
+- It runs `--plan app`, then re-runs any failing tests twice on the same build. A test that passes in any re-run that completed is reported as `flaky:` (with a note when it failed in the other re-run), and the verdict is PASS. A re-run that never ran a test (the simulator would not boot) counts for nothing either way.
 - It runs the scripted journeys, which only change the verdict once one is on `gating`.
 - It frees the simulator, then posts one `Lane report integration-<sha7>` on #184 in test-lane.md's format, with `run by: integration script`. `scripts/phone-build` reads it unchanged.
 
@@ -24,7 +24,7 @@ On a confirmed FAIL it also (owner's "revert first" rule, #1180):
 
 - builds the commits since the last PASS and re-runs only the failing tests, while it still holds the simulator slot. It bisects (about log2 of the number of merges, at most 8 builds), so the culprit is the first commit where the tests fail and the commit before it passes. A test that is missing or a build that stops at some commit gives no answer, and then there is no culprit;
 - opens `Revert #N: <title> (integration-<sha7> FAIL)` from branch `revert/pr<N>` with the `automerge` label (plus `hot-file-ok` when the revert makes `Gate1AppModel.swift` or `Gate1RootView.swift` longer, saying why in the PR), and files `Re-land #N after an integration revert` labelled `ready,regression`, with the Claude diagnosis as its prose. It files no separate failure issue then;
-- does not revert, and comments on #184 (naming the owner) instead, then files the failure issue as before, when: the revert doesn't apply cleanly or changes nothing; the culprit touches persistence, a migration or a packet format; the culprit touches `.github/` or `scripts/lane*`; no single culprit is found, or it isn't a merged PR or is itself a revert; another revert PR is open, or next already reverts it.
+- does not revert, and comments on #184 (naming the owner) instead, then files the failure issue as before, when: the revert doesn't apply cleanly or changes nothing; the culprit touches persistence, a migration or a packet format; the culprit touches `.github/` or `scripts/lane*`; the culprit changes only docs, ops, research or scripts outside the app build and its tests (it can't have changed an app test result; #1417); no single culprit is found, or it isn't a merged PR or is itself a revert; another revert PR is open, or next already reverts it.
 
 The diagnosis is `claude -p` with only Read, Grep and Glob, `--permission-mode dontAsk`, structured JSON output and a $10 cap. Anything else is refused at once rather than waiting for a click. A missing token or a bad answer gives template text instead. A tip is tested at most once: a run cut off part-way is closed as INCONCLUSIVE, not repeated.
 
