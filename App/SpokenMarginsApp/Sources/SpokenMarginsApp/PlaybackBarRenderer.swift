@@ -23,14 +23,6 @@ final class PlaybackBarRenderer {
     /// The segments and diamonds sit in this layer, which the slider puts behind its thumb.
     let layer = CALayer()
 
-    struct RenderedStack: Equatable {
-        let stack: PlaybackBarLayout.Stack
-        let frame: CGRect
-    }
-
-    /// The actual drawn stacks and diamond bounds, reused by VoiceOver without a second layout calculation.
-    private(set) var renderedStacks: [RenderedStack] = []
-
     static let trackThickness: CGFloat = 4
     private static let gap: CGFloat = 2
     private static let diamondHalf: CGFloat = 4.5
@@ -138,32 +130,29 @@ final class PlaybackBarRenderer {
         guard key != drawnMarks else { return }
         drawnMarks = key
         marksLayer.sublayers?.forEach { $0.removeFromSuperlayer() }
-        renderedStacks = []
         guard let content, !content.marks.isEmpty else { return }
         let stacks = PlaybackBarLayout.stacks(marks: content.marks, length: content.length, width: Double(g.upper - g.lower))
         for stack in stacks {
             let center = CGPoint(x: g.lower + CGFloat(stack.x), y: centerY)
-            var frame = CGRect.null
             if stack.ghostLayers > 0 {
                 for ghost in stride(from: stack.ghostLayers, through: 1, by: -1) {
                     let offset = CGFloat(ghost) * Self.layerStep
-                    frame = frame.union(addDiamond(at: center, offset: offset, half: Self.crowdedHalf, style: .ghost))
+                    addDiamond(at: center, offset: offset, half: Self.crowdedHalf, style: .ghost)
                 }
-                frame = frame.union(addDiamond(at: center, offset: 0, half: Self.crowdedHalf, style: stack.front.kind.diamondStyle))
+                addDiamond(at: center, offset: 0, half: Self.crowdedHalf, style: stack.front.kind.diamondStyle)
                 if let count = stack.countLabel { addCount(count, at: center, scale: g.scale, style: stack.front.kind.diamondStyle) }
             } else {
                 for (index, kind) in stack.layers.enumerated().reversed() {
-                    frame = frame.union(addDiamond(at: center, offset: CGFloat(index) * Self.layerStep, half: Self.diamondHalf, style: kind.diamondStyle))
+                    addDiamond(at: center, offset: CGFloat(index) * Self.layerStep, half: Self.diamondHalf, style: kind.diamondStyle)
                 }
             }
-            renderedStacks.append(RenderedStack(stack: stack, frame: frame))
         }
     }
 
     fileprivate enum DiamondStyle { case own, shared, ghost }
 
     /// Solid amber for the listener's own Margin, hollow blue for a shared one; the shape and fill say which, not the colour alone.
-    private func addDiamond(at center: CGPoint, offset: CGFloat, half: CGFloat, style: DiamondStyle) -> CGRect {
+    private func addDiamond(at center: CGPoint, offset: CGFloat, half: CGFloat, style: DiamondStyle) {
         let middle = CGPoint(x: center.x + offset, y: center.y - offset)
         let path = UIBezierPath()
         path.move(to: CGPoint(x: middle.x, y: middle.y - half))
@@ -190,7 +179,6 @@ final class PlaybackBarRenderer {
             diamond.lineWidth = 1
         }
         marksLayer.addSublayer(diamond)
-        return path.bounds.insetBy(dx: -diamond.lineWidth / 2, dy: -diamond.lineWidth / 2)
     }
 
     /// The count is dark on the amber of an own Margin and light blue on the dark fill of a shared one, so it reads on both.

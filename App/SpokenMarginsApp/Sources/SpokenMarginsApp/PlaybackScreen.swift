@@ -716,12 +716,13 @@ struct PlaybackScreen: View {
                         }
                     },
                     preparedFraction: model.renderedFractionForPlayback,
-                    barContent: mediaBarContent,
-                    barPositionUnit: .seconds,
-                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))",
-                    positionAccessibilityHint: model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? ""
+                    barContent: mediaBarContent
                 )
                 .tint(AppColors.accent)
+                .accessibilityLabel("Playback position")
+                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
+                .accessibilityValue("\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
+                .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalMediaSeconds) { value in
                     model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": String(value), "displayed": String(mediaScrubState.displayedValue(canonicalValue: value, range: mediaScrubRange)), "editing": String(mediaScrubState.isEditing), "range": String(mediaScrubRange.upperBound)])
                 }
@@ -761,12 +762,13 @@ struct PlaybackScreen: View {
                         }
                     },
                     preparedFraction: model.renderedFractionForPlayback,
-                    barContent: textBarContent,
-                    barPositionUnit: .characters,
-                    positionAccessibilityValue: textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent",
-                    positionAccessibilityHint: model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? ""
+                    barContent: textBarContent
                 )
                 .tint(AppColors.accent)
+                .accessibilityLabel("Playback position")
+                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
+                .accessibilityValue(textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent")
+                .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
