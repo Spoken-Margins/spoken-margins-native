@@ -1566,10 +1566,8 @@ final class SourceLinkImportTests: XCTestCase {
                 confidence: 1
             )
         ))
-        let transcriber = SequencedInterjectionTranscriber(transcripts: [
-            "Only the ending survived.",
-            "The complete saved interjection is restored from its original audio."
-        ])
+        // Each transcription waits here until the test settles it, so "a retry is pending" is observed, not assumed.
+        let transcriber = GatedInterjectionTranscriber()
         let model = Gate1AppModel(
             sourceLinkResolver: resolver,
             audioPlaybackClient: WindowContextAudioClient(),
@@ -1584,28 +1582,53 @@ final class SourceLinkImportTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.beginInterjection)
         model.dispatchGate2CompactCommand(.finishInterjection)
+        let firstRequested = await transcriber.waitUntilRequested(1)
+        XCTAssertTrue(firstRequested, "the first transcription never started")
+        await transcriber.settleNext(.success("Only the ending survived."))
         try await waitFor("initial transcript") {
             model.selectedItem.interjections.first?.transcript == "Only the ending survived."
         }
         let interjection = try XCTUnwrap(model.selectedItem.interjections.first)
+        // The same note ID in another session: Margin IDs repeat per session, so only the stored identity tells them apart.
+        var sameIdElsewhere = interjection
+        sameIdElsewhere.sessionId = "another-session"
+        let identity = Gate1AppModel.marginIdentity(interjection)
+        XCTAssertNotEqual(identity, Gate1AppModel.marginIdentity(sameIdElsewhere))
 
+        // A retry that succeeds: pending while the transcriber is suspended, gone once it completes.
+        XCTAssertFalse(model.isRetryingInterjectionTranscription(interjection))
         model.retryInterjectionTranscription(interjection)
+        XCTAssertTrue(model.isRetryingInterjectionTranscription(interjection), "the retry must be pending while the transcriber is suspended")
+        XCTAssertFalse(model.isRetryingInterjectionTranscription(sameIdElsewhere), "another session's note with the same ID is not retrying")
+        XCTAssertEqual(model.retryingInterjectionTranscriptionIds, [identity], "the set stores sessionId::id, never the bare ID")
+        let secondRequested = await transcriber.waitUntilRequested(2)
+        XCTAssertTrue(secondRequested, "the retry never reached the transcriber")
+        await transcriber.settleNext(.success("The complete saved interjection is restored from its original audio."))
         try await waitFor("replacement transcript") {
             model.selectedItem.interjections.first?.transcript == "The complete saved interjection is restored from its original audio."
         }
 
-        XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
+        XCTAssertFalse(model.isRetryingInterjectionTranscription(interjection))
+        XCTAssertTrue(model.retryingInterjectionTranscriptionIds.isEmpty, "a finished retry leaves no stored identity behind")
         XCTAssertEqual(model.diagnostics[Gate1AppModel.marginDiagnosticKey("interjectionTranscription", interjection)], "complete")
 
+        // A retry that fails: pending the same way, then gone, with the words it already had kept.
         let recovered = try XCTUnwrap(model.selectedItem.interjections.first)
         model.retryInterjectionTranscription(recovered)
+        XCTAssertTrue(model.isRetryingInterjectionTranscription(recovered))
+        XCTAssertFalse(model.isRetryingInterjectionTranscription(sameIdElsewhere))
+        XCTAssertEqual(model.retryingInterjectionTranscriptionIds, [identity])
+        let thirdRequested = await transcriber.waitUntilRequested(3)
+        XCTAssertTrue(thirdRequested, "the second retry never reached the transcriber")
+        await transcriber.settleNext(.failure(SessionKitError.persistenceFailed("scripted_failure")))
         try await waitFor("failed retry evidence") {
             model.diagnostics[Gate1AppModel.marginDiagnosticKey("interjectionTranscription", interjection)]?.hasPrefix("retry_failed:") == true
         }
 
         XCTAssertEqual(model.selectedItem.interjections.first?.transcript, "The complete saved interjection is restored from its original audio.")
         XCTAssertEqual(model.selectedItem.interjections.first?.displayText, "The complete saved interjection is restored from its original audio.")
-        XCTAssertFalse(model.retryingInterjectionTranscriptionIds.contains(interjection.id))
+        XCTAssertFalse(model.isRetryingInterjectionTranscription(interjection))
+        XCTAssertTrue(model.retryingInterjectionTranscriptionIds.isEmpty, "a failed retry leaves no stored identity behind")
     }
 
     func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {
@@ -2770,18 +2793,31 @@ private actor ControlledInterjectionTranscriber {
     }
 }
 
-private actor SequencedInterjectionTranscriber {
-    private var transcripts: [String]
+/// A transcriber whose every call waits until the test settles it, in the order the calls arrived.
+private actor GatedInterjectionTranscriber {
+    private var waiting: [CheckedContinuation<String, Error>] = []
+    private var requestCount = 0
 
-    init(transcripts: [String]) {
-        self.transcripts = transcripts
+    func transcribe(audioPath: String) async throws -> String {
+        requestCount += 1
+        return try await withCheckedThrowingContinuation { waiting.append($0) }
     }
 
-    func transcribe(audioPath: String) throws -> String {
-        guard !transcripts.isEmpty else {
-            throw SessionKitError.persistenceFailed("no_scripted_transcript")
+    /// True once `count` calls have reached the transcriber, false after about two seconds.
+    func waitUntilRequested(_ count: Int) async -> Bool {
+        for _ in 0..<200 {
+            if requestCount >= count { return true }
+            try? await Task.sleep(for: .milliseconds(10))
         }
-        return transcripts.removeFirst()
+        return false
+    }
+
+    func settleNext(_ result: Result<String, Error>) {
+        guard !waiting.isEmpty else {
+            XCTFail("no transcription is waiting to be settled")
+            return
+        }
+        waiting.removeFirst().resume(with: result)
     }
 }
 
