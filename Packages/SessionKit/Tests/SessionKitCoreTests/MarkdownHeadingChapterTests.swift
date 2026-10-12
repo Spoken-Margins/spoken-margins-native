@@ -209,6 +209,31 @@ final class MarkdownHeadingChapterTests: XCTestCase {
         XCTAssertLessThan(Double(sizes.max()!) / Double(sizes.min()!), 1.2, "\(sizes)")
     }
 
+    func testBoldLinesAreChaptersUnderATitleHeadingWhenNothingElseIsAHeading() throws {
+        let markdown = "# Planning call\n\n" + ["Budget", "Timeline", "Risks"].map { "**\($0)**\n\n\(words(30))" }.joined(separator: "\n\n")
+        XCTAssertEqual(try titles(markdown), ["Budget", "Timeline", "Risks"])
+    }
+
+    func testALongSectionThatOpensWithASubheadingHasNoNearEmptyLeadChapter() throws {
+        let markdown = "## Short\n\n\(words(100))\n\n## Big\n\n### One\n\n\(words(2000))\n\n### Two\n\n\(words(2000))\n\n## Last\n\n\(words(100))"
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "notes.md", contents: markdown)
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-1"))
+        assertContiguous(map, textCount: parsed.text.count)
+        XCTAssertEqual(map.chapters.map(\.title), ["Short", "One", "Two", "Last"])
+        XCTAssertTrue(map.chapters.allSatisfy { $0.endChar - $0.startChar > 100 })
+    }
+
+    func testAHugeSingleSectionIsSplitInLinearTime() throws {
+        let markdown = "## Short\n\n\(words(100))\n\n## Transcript\n\n" + (1...(120_000 / 90)).map { _ in words(89) }.joined(separator: "\n\n")
+            + "\n\n## Last\n\n\(words(100))"
+        let parsed = try ObsidianMarkdownParser.parse(fileName: "notes.md", contents: markdown)
+        let started = Date()
+        let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-1"))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5)
+        assertContiguous(map, textCount: parsed.text.count)
+        XCTAssertGreaterThan(map.chapters.count, 40)
+    }
+
     func testAnArticleWithAReferencesTailKeepsEverySectionAndOneNotesChapter() throws {
         let markdown = "# Title\n\n" + (1...4).map { "## Part \($0)\n\n\(words(20))" }.joined(separator: "\n\n")
             + "\n\n## References\n\n1. A source.\n2. Another.\n3. A third."

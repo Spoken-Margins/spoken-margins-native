@@ -18,6 +18,9 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     /// A section over about 20 minutes is split; the parts aim at about 10 minutes each.
     private static let veryLongChapterWords = estimatedWordsPerMinute * 20
     private static let splitTargetWords = estimatedWordsPerMinute * 10
+    /// Text before a long section's first sub-heading that is shorter than this (little more than the
+    /// section's own heading line) isn't a chapter of its own.
+    private static let minimumLeadWords = 20
 
     private struct DraftChapter {
         var baseTitle: String
@@ -190,8 +193,13 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
                 var start = draft.startChar
                 var title = draft.baseTitle
                 for boundary in boundaries {
-                    parts.append(DraftChapter(baseTitle: title, partNumber: 1, level: draft.level, startChar: start, endChar: boundary.startChar))
-                    start = boundary.startChar
+                    let lead = DraftChapter(baseTitle: title, partNumber: 1, level: draft.level, startChar: start, endChar: boundary.startChar)
+                    if parts.isEmpty, wordCount(in: lead, characters: characters) < Self.minimumLeadWords {
+                        // The heading line and a few words: the first sub-section takes them with it.
+                    } else {
+                        parts.append(lead)
+                        start = boundary.startChar
+                    }
                     title = boundary.title
                 }
                 parts.append(DraftChapter(baseTitle: title, partNumber: 1, level: level, startChar: start, endChar: draft.endChar))
@@ -210,8 +218,8 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         var parts: [DraftChapter] = []
         var remaining = draft
         var partsLeft = partCount
+        let target = words / partCount
         while partsLeft > 1 {
-            let target = wordCount(in: remaining, characters: characters) / partsLeft
             guard target > 0, let split = naturalSplitOffset(in: remaining, targetWords: target, characters: characters) else { break }
             var head = remaining
             head.endChar = split
@@ -434,7 +442,12 @@ public enum ObsidianMarkdownParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         // A bold line is a heading only in a text with no real ones: "**Key point:**" lead-ins in an
         // article are not peers of its `##` sections (#1468).
-        let hasRealHeadings = headings.contains { !$0.boldOnly }
+        // (A lone top-level heading is the title, not a section.)
+        var realHeadings = headings.filter { !$0.boldOnly }
+        if realHeadings.first?.level == 1, realHeadings.filter({ $0.level == 1 }).count == 1 {
+            realHeadings.removeFirst()
+        }
+        let hasRealHeadings = !realHeadings.isEmpty
         let resolvedHeadings = headings.filter { !hasRealHeadings || !$0.boldOnly }.compactMap { heading -> ParsedMarkdownHeading? in
             guard heading.outputIndex < output.count else { return nil }
             let prefix = output.prefix(heading.outputIndex).joined(separator: "\n")
