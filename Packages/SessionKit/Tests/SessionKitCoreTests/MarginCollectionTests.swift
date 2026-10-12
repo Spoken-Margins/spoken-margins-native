@@ -130,7 +130,8 @@ final class MarginCollectionTests: XCTestCase {
         let model = try appSource("Gate1AppModel.swift")
         XCTAssertTrue(rows.contains(#"var id: String { "\(interjection.sessionId)::\(interjection.id)" }"#))
         XCTAssertTrue(rows.contains(#"var id: String { "shared::\(layer.id)::\(interjection.id)" }"#))
-        XCTAssertTrue(model.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        "\(interjection.sessionId)::\(interjection.id)""#))
+        let curation = try appSource("Gate1AppModel+MarginCuration.swift")
+        XCTAssertTrue(curation.contains(#"static func marginIdentity(_ interjection: Interjection) -> String {"# + "\n" + #"        "\(interjection.sessionId)::\(interjection.id)""#))
         XCTAssertTrue(model.contains(#"let targetID = "shared::\(row.layer.id)::\(row.interjection.id)""#))
     }
 
