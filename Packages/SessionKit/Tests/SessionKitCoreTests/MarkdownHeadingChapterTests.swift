@@ -209,6 +209,13 @@ final class MarkdownHeadingChapterTests: XCTestCase {
         XCTAssertEqual(try titles(markdown), ["One", "Two"])
     }
 
+    func testASectionHeadingAtTheStartIsNotATitleSoItsIntroStaysWithItsFirstSubsection() throws {
+        let markdown = (1...2).map { group in
+            "## Group \(group)\n\n\(words(20))\n\n" + (1...3).map { "### Detail \(group).\($0)\n\n\(words(15))" }.joined(separator: "\n\n")
+        }.joined(separator: "\n\n")
+        XCTAssertEqual(try titles(markdown), ["Detail 1.1", "Detail 1.2", "Detail 1.3", "Detail 2.1", "Detail 2.2", "Detail 2.3"])
+    }
+
     func testThereIsNoChapterCap() throws {
         let markdown = (1...30).map { "## Section \($0)\n\n\(words(10 + $0))" }.joined(separator: "\n\n")
         XCTAssertEqual(try titles(markdown), (1...30).map { "Section \($0)" })

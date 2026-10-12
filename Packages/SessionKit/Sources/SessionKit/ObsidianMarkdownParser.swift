@@ -88,15 +88,19 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         // the first section starts at its own heading (#1435). It is named by the title heading that
         // heads it (the lone `#`), else by the item's title. A line or two of preamble is folded into
         // the first chapter, as before.
+        // The heading at 0, if any, must be the title: the only heading at its level. A section heading
+        // there (`## Group 1` with `###` chapters under it, and another `## Group 2`) has no title above
+        // it, and its intro stays with its first sub-section, as the later groups' intros do.
+        let titleHeading = headings.first { $0.startChar == 0 && $0.level < (selected.first?.level ?? 1) }
+        let leadIsTitled = titleHeading.map { heading in headings.filter { $0.level == heading.level }.count == 1 } ?? true
         let leadChapterEnd: Int? = {
-            guard adaptive, let first = selected.first, first.startChar > 0 else { return nil }
+            guard adaptive, leadIsTitled, let first = selected.first, first.startChar > 0 else { return nil }
             let words = String(text.prefix(first.startChar)).split(whereSeparator: \.isWhitespace).count
             return words >= Self.minimumLeadWords ? first.startChar : nil
         }()
 
         var drafts: [DraftChapter] = []
         if let leadChapterEnd {
-            let titleHeading = headings.first { $0.startChar == 0 && $0.level < (selected.first?.level ?? 1) }
             drafts.append(DraftChapter(
                 baseTitle: titleHeading?.title ?? title,
                 partNumber: 1,
