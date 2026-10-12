@@ -20,7 +20,6 @@ struct ItemDetailState {
         return listeningMapIsCommunity ? "This item has a community map with \(scenes)." : "This item has a private Listening Map with \(scenes)."
     }
     var isNativeAudio = false
-    var timelineSource = TimelineSourceContent(text: "")
     var documentStructure: PDFDocumentStructure?
     var sessions: [Session] = []
     var sessionRows: [SessionPresentation] = []

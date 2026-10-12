@@ -144,24 +144,6 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
-    func testStructuredSourceRolesRemainAvailableAfterLoading() throws {
-        try withFixture { model, store, _ in
-            try store.saveItem(item("A"))
-            let document = StructuredDocument(
-                extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 2, textSHA256: nil),
-                text: "One.\n\nTwo.",
-                segments: [
-                    .init(id: "one", role: .caption, range: .init(start: 0, length: 4), pageIndex: 0),
-                    .init(id: "two", role: .footnote, range: .init(start: 6, length: 4), pageIndex: 1)
-                ], markers: [], floats: [])
-            try store.saveStructuredDocument(document, itemId: "A")
-            let detail = try model.loadItemDetail(id: "A", store: store)
-            XCTAssertEqual(detail.timelineSource.entries.map(\.text), ["One.", "Two."])
-            XCTAssertEqual(detail.timelineSource.entries.map(\.role), [.caption, .footnote])
-            XCTAssertEqual(detail.timelineSource.entries.map(\.pageIndex), [0, 1])
-        }
-    }
-
     func testPlacementPassUsesDecodedItemIdentityWhenStoredKeyDiffers() throws {
         try withFixture { _, store, database in
             try store.saveItem(item("A"))

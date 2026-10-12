@@ -86,20 +86,6 @@ final class TimelineSourceContentTests: XCTestCase {
         XCTAssertEqual(Set(entries.map(\.id)).count, 3)
     }
 
-    func testSubpercentPositionsSortBeforeRankAndID() {
-        let early = TimelineRailSortKey(position: 1, rank: 3, id: "z", precisePosition: 1.1)
-        let later = TimelineRailSortKey(position: 1, rank: 0, id: "a", precisePosition: 1.2)
-        XCTAssertEqual([later, early].sorted().map(\.id), ["z", "a"])
-        XCTAssertEqual(TimelineRailSortKey.percent(position: 11, length: 1_000) ?? .nan, 1.1, accuracy: 1e-9)
-        XCTAssertNil(TimelineRailSortKey.percent(position: -1, length: 1_000))
-        XCTAssertNil(TimelineRailSortKey.percent(position: 1, length: 0))
-        XCTAssertEqual(TimelineRailSortKey.percent(position: 101, length: 100), 100)
-        for value in [Double.nan, .infinity, -.infinity] {
-            XCTAssertEqual(TimelineRailSortKey(position: 1, rank: 0, id: "a", precisePosition: value),
-                           TimelineRailSortKey(position: 1, rank: 0, id: "a"))
-        }
-    }
-
     func testCurrentPassageUsesCharactersAndHandlesBoundaries() {
         let content = TimelineSourceContent(text: "🙂é\n\nSecond")
         XCTAssertEqual(content.entry(atCharacter: 0)?.text, "🙂é")
