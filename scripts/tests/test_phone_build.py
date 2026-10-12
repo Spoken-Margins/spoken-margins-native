@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -1621,10 +1622,18 @@ class PlanFaultTests(unittest.TestCase):
             ('Open build.log and find the failing test.', True),
             ('Look in artifacts/run-1 for the screenshot.', True),
             ('Run the app on `929b5ce`.', True),
+            ('Run the app at commit 929b5ce.', True),
+            ('Check out 929b5ce and build it.', True),
+            ('Test with build 929b5ce.', True),
+            ('Re-run the T3 lane on the PR.', True),
+            ('Open the crash log.', True),
+            ('Run pytest and read the output.', True),
             ('Install the build from 929b5ce1f2.', True),
             ('Run xcodebuild test.', True),
             ('Read the diagnostics field "supertonicOutputCheck".', True),
+            ('Read the diagnostics screen: voice should say Supertonic.', True),   # an agent's job even with a result
             ('Read the AI Handoff export of the next test plan.', True),
+            ('Read the AI Handoff export of the next test plan once.', True),
             ('Look through the exported log.', True),
             # neighbours the owner can run
             ('Settings > Version ends with `929b5ce`.', False),
@@ -1635,6 +1644,9 @@ class PlanFaultTests(unittest.TestCase):
             ('Read the Library rows.', False),
             ('Read the AI Handoff export of the next test plan: the Margins come out in the order you made them, '
              'and each passage is printed once.', False),
+            ('Settings > Version is at `929b5ce`.', False),
+            ('Settings > Version shows 929b5ce and the build number.', False),
+            ('Read the AI Handoff export; you will see two Margins.', False),
             ('Double-click the Desktop icon.', False),
             ('Tap Share Diagnostics and send the file to Claude.', False),
             ('', False),
@@ -1710,6 +1722,30 @@ class PlanFaultTests(unittest.TestCase):
         self.assertIn('3. **Library wording**', ten_minutes)
         self.assertEqual(ten_minutes.count('Playback bar draws chapters'), 1)
 
+    def test_the_folded_prs_keep_their_issue_links_and_checks_and_the_rest_are_numbered_after_them(self):
+        prs = {n: self.pr(n, f'Playback change {n}', [self.issue(100 + n, f'Try thing {n}.')], path=self.PLAYBACK)
+               for n in (1, 2, 3)}
+        prs.update({n: self.pr(n, f'Library change {n}', [self.issue(100 + n, f'Try thing {n}.')])
+                    for n in range(4, 14)})
+        plan = self.write(prs)
+        ten_minutes = plan.split('## Try these')[1].split('## ')[0]
+        self.assertIn('     - Playback change 2 ([PR #2](https://example/pr/2), [issue #102](https://example/issue/102)): '
+                      'Try thing 2.', ten_minutes)
+        self.assertIn('\n2. **Library change 4**', ten_minutes)      # numbered after the screen item; 8 slots in all
+        self.assertEqual(len(re.findall(r'(?m)^\d+\. \*\*', ten_minutes)), 8)
+        self.assertEqual(len(re.findall(r'(?m)^- Library change', plan.split('## Also changed (not in')[1])), 3)
+
+    def test_helpers_and_tests_under_the_playback_name_are_not_the_screen(self):
+        helper = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackQualityPresentation.swift'
+        prs = [self.pr(n, f'Playback {n}', path=helper) for n in (1, 2, 3)]
+        self.assertEqual(self.module.screen_changes([[pr] for pr in prs])[0], [])
+
+    def test_a_refused_check_is_named_even_when_a_usable_one_stands_in(self):
+        pr = self.pr(1500, 'Library wording', [self.issue(1501, 'Run --plan app at 929b5ce.')],
+                     body='**Owner check:** Open the Library and read the first row.\n')
+        self.write({1500: pr})
+        self.assertIn('#1501 (', self.printed)
+
     def test_two_merges_to_a_screen_are_not_a_redesign(self):
         prs = {1355: self.pr(1355, 'Playback bar draws chapters and Margins', [self.issue(428, 'Drag the bar.')],
                              path=self.PLAYBACK),
@@ -1763,13 +1799,16 @@ class PlanFaultTests(unittest.TestCase):
                 ('Listen to the arXiv paper at 0.88x and say if the gaps are gone.', 'document'),
                 ('Play the arXiv paper and listen to the gaps.', 'document'),
                 ('Open this paper and listen.', 'document'),
-                ('Listen to the book for a minute.', 'document'),
+                ('Listen to the paper for a minute.', 'document'),
                 ('Listen to the arXiv paper: <https://arxiv.org/abs/2608.09666>.', None),
                 ('Listen to the paper at https://example.org/paper.html.', None),
                 ('Listen to `TestPlans/phone-files/paper.txt` from Files.', None),
                 ('Library > + > Link, paste `https://arxiv.org/pdf/2608.09666`, Add.', None),
                 ('Open a paper you already have and listen.', None),
                 ('Tap Paperless in Settings.', None),
+                ('Switch to the Paper theme in the reader.', None),
+                ('Open the Books tab and pick the book you were reading.', None),
+                ('Paste an arXiv URL into Library > Link and play it.', None),
                 ('Import the PDF.', 'PDF'),
             ]
             for check, lacks in rows:

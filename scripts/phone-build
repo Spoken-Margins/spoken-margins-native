@@ -157,15 +157,21 @@ MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re
 # A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
 SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/)\S+')
 # A document the check names but doesn't link: "the arXiv paper" (#1476: #586). A link or repo file supplies it.
-NAMED_DOCUMENT = re.compile(r'\barxiv\b|\b(?:the|this|that)\s+(?:[\w.-]+\s+){0,2}(?:paper|whitepaper|book|ebook|thesis)\b',
-                            re.I)
+NAMED_DOCUMENT = re.compile(r'\b(?:[Tt]he|[Tt]his|[Tt]hat)\s+(?:[\w.-]+\s+){0,2}(?:paper|whitepaper|thesis)\b')  # not "Paper theme"
 # A check the owner can't run (#1476): lane and agent procedures belong to the lane and the Test Desk, not to
 # his ten minutes on the phone. A script, a build or lane tool, a simulator or its id, a commit to run at, a log.
+HEX = r'`?(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b'   # a commit: digits and a-f letters, so not "deadbeef"
 LANE_PROCEDURE = re.compile(
     r'\bscripts/[\w.-]+|\bxcodebuild\b|\bxcodegen\b|\bxcrun\b|\bsimctl\b|\bbuild-for-testing\b|\bverify-tests\b'
-    r'|(?<![\w-])--plan\b|/lane\s+T\d|\bsimulators?\b|\bcomputer use\b|\bartifacts/|\b[\w./-]+\.log\b'
+    r'|\bswift (?:test|build)\b|\bpytest\b|\bmake test\b'
+    r'|(?<![\w-])--plan\b|/lane\s+T\d|\bT[2-5]\s+(?:lane|run|build|test)|\bsimulators?\b|\bcomputer use\b'
+    r'|\bartifacts/|\b[\w./-]+\.log\b|\b(?:crash|build|test|lane|system) logs?\b'
     r'|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
-    r'|\b(?:at|on|against|from)\s+`?(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b', re.I)
+    # a commit to run something at: "Run --plan app at 929b5ce", "Check out 929b5ce", "Test with build 929b5ce".
+    # "Settings > Version is at 929b5ce" is the owner's own check and has no run verb.
+    r'|\bcheck ?out\s+' + HEX +
+    r'|\b(?:run|re-?run|running|boot|install|test|build)\b[^.\n]{0,60}\b(?:at|on|against|from|with|commit|sha|build)\s+' + HEX,
+    re.I)
 # Reading a diagnostics field is the agent's job, not his (#1476: #586); so is judging an export or a log, unless
 # the check at least says what the result should be (#1439: "read the AI Handoff export of the next test plan").
 DIAGNOSTICS_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
@@ -173,11 +179,11 @@ DIAGNOSTICS_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|i
 EXPORT_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
                             r'\b(?:AI Handoff|export(?:ed|s)?|logs?|console)\b', re.I)
 EXPECTED_RESULT = re.compile(
-    r"\b(?:should|expect(?:s|ed)?|must|so that|until|matches|in the order|once|each|every|never|only|exactly|instead"
-    r"|not|no|without|nothing|ends?|starts?|shows?|says?|contains?|tell me|whether)\b", re.I)
+    r"\b(?:should|expect(?:s|ed)?|must|so that|matches|in the order|exactly|see|lists?|includes?|contains?|shows?"
+    r"|says?|appears?|prints?|printed|tell me|whether)\b", re.I)
 # Several merges to one screen are one thing to try, at the top (#1476: the playback redesign was split across
 # four titles that named other things). Listener-facing PRs are matched by the view files they change.
-SCREEN_FILES = {'playback screen': re.compile(r'^App/[^/]+/Sources/.*/Playback[^/]*\.swift$')}
+SCREEN_FILES = {'playback screen': re.compile(r'^App/[^/]+/Sources/.*/Playback\w*(?:Screen|View|Slider|Renderer|Icon)\.swift$')}
 SCREEN_MERGES = 3
 SCREEN_CHECKS = {'playback screen': 'Open an article and a podcast and say if the playback screen is usable: '
                                     'play, pause, skip, drag the bar, and open More.'}
@@ -1054,9 +1060,10 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if needs_check:
         say('found on the phone but no "Owner check:" line, so not in the ten minutes; add one to: '
             + ', '.join(f'#{n}' for n in dict.fromkeys(needs_check)))
-    refused = [who for entry in unchecked for pr in entry for who in refused_in(pr)]
+    refused = [who for entry in [*entries, *([pr] for screen in screens for pr in screen['prs'])]
+               for pr in entry for who in refused_in(pr)]
     if refused:
-        say("a check can't be run on the phone, so not in the ten minutes; rewrite its \"Owner check:\" line: "
+        say("a check can't be run on the phone, so it was skipped; rewrite its \"Owner check:\" line: "
             + '; '.join(dict.fromkeys(refused)))
     # A check that needs another change still open waits for it (#847: step 2 needed #547).
     checkable = [entry for entry in entries if check_of[id(entry)]]
@@ -1123,7 +1130,13 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         lines += [f'{index}. **The {screen["screen"]} changed** ({len(screen["prs"])} changes)',
                   f'   - Check: {SCREEN_CHECKS.get(screen["screen"], "Use it and say if it is usable.")}',
                   '   - What changed:']
-        lines += [f'     - {pr["title"]} ([PR #{pr["number"]}]({pr["url"]}))' for pr in screen['prs']]
+        for pr in screen['prs']:  # each keeps its title, issue links and own check (#1476)
+            found = owner_check(pr)
+            links = [f'[PR #{pr["number"]}]({pr["url"]})'] + [f'[issue #{issue["number"]}]({issue["url"]})'
+                                                              for issue in pr['issues']]
+            tag = ' (found on your phone)' if found_on_phone([pr]) else ''
+            lines.append(f'     - {pr["title"]}{tag} ({", ".join(links)})'
+                         + (f': {found.splitlines()[0]}' if found else ''))
         lines.append('')
     for index, entry in enumerate(budget, len(screens) + 1):
         pr = entry[0]
