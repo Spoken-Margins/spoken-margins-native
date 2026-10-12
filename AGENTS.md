@@ -48,6 +48,8 @@ Replace this section when the focus changes; do not append to it.
   - **Map lookups and relay features are opt-in** until an anonymous relay exists. Relay experiments are fine; spend nothing until the owner approves a price.
   - **Cloud voices start as a limited trial** (a couple of minutes per listener). No payment work until the trial shows whether to charge. Server maps stay free.
   - **Solid Ground has no ship pressure.** Start the second half of the model split now; cutting Solid Ground off as its own branch first is fine.
+- **Owner's standing call (2026-10-11).** Don't ask again:
+  - **A recovered startup stall is a PASS.** A T3 plan (app or adapters) that stalls once at startup, recovers on the first retry and then passes every requested test reports PASS, not INCONCLUSIVE. Each stall is logged on #705 as evidence. This is an owner-accepted exception to #705's "don't convert this INCONCLUSIVE to PASS" while the cause is still open; #705 stays open. Two or more stalls, or a stall that doesn't recover, keep their verdict.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
