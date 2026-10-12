@@ -222,6 +222,30 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(recorder.cancelCount, 0)
     }
 
+    /// #1291 APO-03: a double tap on Save & resume reaches `finishInterjection()` twice. The UI test that
+    /// double-taps Save never counted what was saved, and `Gate1FlowUITests` runs nowhere, so the count is
+    /// checked here. The seeded item may already have Margins, so it counts from before the recording.
+    func testADoubleTapOnSaveSavesExactlyOneMargin() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        let model = harness.model
+        model.refreshMarginRows()
+        let before = model.marginRows.count
+        harness.run(seconds: 10)
+        XCTAssertTrue(model.snapshot.isRecording, "precondition: the Margin is recording")
+
+        model.finishInterjection()
+        model.finishInterjection()
+
+        model.refreshMarginRows()
+        XCTAssertEqual(model.marginRows.count, before + 1, "a double tap on Save saves exactly one Margin")
+        XCTAssertEqual(recorder.finishCount, 1, "the recorder is finished once")
+        XCTAssertEqual(recorder.cancelCount, 0, "the second tap does not discard or cancel anything")
+        XCTAssertFalse(model.snapshot.isRecording, "the second tap does not start or keep a recording")
+        XCTAssertNil(model.lastError, "the second tap is ignored, not reported as a failure")
+    }
+
     func testTryAgainRestartsTheRecorderAfterAFailure() {
         let recorder = ScriptedRecordingClient(capturedMs: 22)
         let harness = Harness(recorder: recorder)
