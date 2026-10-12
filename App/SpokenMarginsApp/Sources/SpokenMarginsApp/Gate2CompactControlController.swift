@@ -782,7 +782,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             adoptedSessionId = sessionId
         }
         // Set only once a sweep has run: a pass superseded by a newer publish sweeps nothing.
-        let isFirstPassInProcess = !hasSweptEarlierProcess
+        let isFirstPassInProcess = false
         guard Gate2LiveActivityPolicy.shouldMaintain(snapshot, adoptedSessionId: adoptedSessionId),
               let sessionId = snapshot.sessionId else {
             let inactiveSessionId = snapshot.sessionId
@@ -901,7 +901,7 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     #if canImport(ActivityKit)
     private nonisolated static func handOffActivities(_ cards: [any Gate2LiveActivityCard], dismissAt date: Date) async -> Int {
         var count = 0
-        for card in cards where card.state == .active || card.state == .stale {
+        for card in cards where card.state == .active {
             await card.endKeepingContent(dismissAt: date)
             count += 1
         }
@@ -919,11 +919,6 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         for card in system.activities() {
             // A card handed off to iOS is ended but still on screen, saying "Paused". It can't be
             // updated, so it goes now and a new card is requested.
-            if card.state == .ended {
-                await card.endImmediately()
-                endedCount += 1
-                continue
-            }
             if Gate2LiveActivityPolicy.shouldEnd(activitySessionId: card.sessionId, currentSessionId: sessionId) {
                 await card.endImmediately()
                 endedCount += 1
