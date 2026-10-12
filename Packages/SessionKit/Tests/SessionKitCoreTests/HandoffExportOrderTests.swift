@@ -88,4 +88,51 @@ final class HandoffExportOrderTests: XCTestCase {
         XCTAssertTrue(markdown.contains("Later source context:\nw360"), markdown)
         XCTAssertTrue(markdown.contains("Source continues:\nw063"), markdown)
     }
+
+    // MARK: context passages (review findings)
+
+    private func custom(
+        _ id: String, percent: Int, before: String, after: String
+    ) -> ExportInterjection {
+        ExportInterjection(
+            id: id, sessionId: "s", targetType: "item", targetId: "item", roughPercent: percent,
+            anchorBefore: before, anchorAfter: after, mediaTimeMs: nil, transcriptionStatus: "transcribed",
+            transcript: "note-\(id)", audioPath: nil, captureKind: .written, sourceCharOffset: percent * 100
+        )
+    }
+
+    func testContextKeepsItsLineBreaks() {
+        let before = "- item one\n- item two\n\nA second paragraph of the source."
+        let markdown = render([custom("a", percent: 10, before: before, after: "After one.\n\nAfter two.")], timeline: ["a"])
+        XCTAssertTrue(markdown.contains(before), markdown)
+        XCTAssertTrue(markdown.contains("After one.\n\nAfter two."), markdown)
+    }
+
+    func testMarginsFarApartKeepTheirContextWhenAPhraseRepeats() {
+        let markdown = render([
+            custom("a", percent: 10, before: "Opening words of the early part.", after: "we stopped at the end of the day and went home"),
+            custom("b", percent: 60, before: "Quite different words lead into the later part.", after: "at the end of the road the story turns")
+        ], timeline: ["a", "b"])
+        XCTAssertTrue(markdown.contains("went home"), "the first Margin keeps what comes after it")
+        XCTAssertTrue(markdown.contains("Quite different words lead into the later part."), "the second keeps what comes before it")
+    }
+
+    func testARefrainThatRepeatsInTheSourceIsPrintedEachTime() {
+        let refrain = "Thanks so much for listening everyone."
+        let markdown = render([
+            custom("a", percent: 10, before: "Start of the show.", after: "Next up is a sponsor. \(refrain)"),
+            custom("b", percent: 60, before: "Much later in the show. \(refrain)", after: "End.")
+        ], timeline: ["a", "b"])
+        XCTAssertEqual(markdown.components(separatedBy: refrain).count - 1, 2, markdown)
+    }
+
+    func testTheWordsBetweenTwoCloseMarginsAreKept() {
+        let markdown = render(
+            [margin("a", percent: 10, at: 10), margin("b", percent: 10, at: 12)], timeline: ["a", "b"]
+        )
+        XCTAssertTrue(markdown.contains("w013 w014"), markdown)
+        let repeated = Dictionary(grouping: markdown.split(whereSeparator: \.isWhitespace).filter { $0.hasPrefix("w") }, by: { $0 })
+            .filter { $0.value.count > 1 }.keys.sorted()
+        XCTAssertEqual(repeated, [])
+    }
 }

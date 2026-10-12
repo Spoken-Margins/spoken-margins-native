@@ -331,23 +331,25 @@ public enum SessionExportMarkdownRenderer {
 
     /// Source Margins as they sit in the source. Audio and video Margins all carry a media time and
     /// go by it. A text item's don't, and a missing time used to count as zero, which put a Margin
-    /// from the middle of the text first (#1439); those go by percent, then by where the anchor
-    /// starts. Margins that tie keep their given order.
+    /// from the middle of the text first (#1439); those go by where the anchor starts in the text,
+    /// or by percent when an older export has no offset. Margins that tie keep their given order.
     static func inSourceOrder(_ interjections: [ExportInterjection]) -> [ExportInterjection] {
         let timed = interjections.allSatisfy { $0.mediaTimeMs != nil }
-        return interjections.enumerated().sorted { lhs, rhs in
-            let left = lhs.element, right = rhs.element
-            let leftKey = timed
-                ? [left.mediaTimeMs ?? 0, left.sourceCharOffset ?? 0, lhs.offset]
-                : [left.roughPercent, left.sourceCharOffset ?? 0, left.mediaTimeMs ?? 0, lhs.offset]
-            let rightKey = timed
-                ? [right.mediaTimeMs ?? 0, right.sourceCharOffset ?? 0, rhs.offset]
-                : [right.roughPercent, right.sourceCharOffset ?? 0, right.mediaTimeMs ?? 0, rhs.offset]
-            return leftKey.lexicographicallyPrecedes(rightKey)
-        }.map(\.element)
+        let located = interjections.allSatisfy { $0.sourceCharOffset != nil }
+        func key(_ margin: ExportInterjection, _ index: Int) -> [Int] {
+            if timed { return [margin.mediaTimeMs ?? 0, margin.sourceCharOffset ?? 0, index] }
+            if located { return [margin.sourceCharOffset ?? 0, margin.roughPercent, index] }
+            return [margin.roughPercent, margin.sourceCharOffset ?? 0, margin.mediaTimeMs ?? 0, index]
+        }
+        return interjections.enumerated()
+            .sorted { key($0.element, $0.offset).lexicographicallyPrecedes(key($1.element, $1.offset)) }
+            .map(\.element)
     }
 
     private static let minimumSharedTokens = 4
+    /// A repeated run shorter than this is taken for the author's own repeat (a refrain, a sponsor
+    /// line), not for the same passage twice, and is printed again.
+    private static let minimumRepeatedTokens = 8
 
     /// The source passages printed so far in one block. Margins close together carry context windows
     /// that overlap, so a window is printed only for the words not already above it (#1439).
@@ -357,17 +359,20 @@ public enum SessionExportMarkdownRenderer {
         /// The part of `passage` not yet printed, or nil when all of it is. `passage` counts as
         /// printed afterwards, because what was cut was printed before.
         mutating func unprinted(_ passage: String) -> String? {
-            let tokens = SessionExportMarkdownRenderer.whitespaceTokens(passage)
-            guard !tokens.isEmpty else { return nil }
-            let compared = tokens.map(SessionExportMarkdownRenderer.comparisonToken)
-            var result: String? = tokens.joined(separator: " ")
-            if compared.count >= SessionExportMarkdownRenderer.minimumSharedTokens {
+            let ranges = SessionExportMarkdownRenderer.tokenRanges(passage)
+            guard !ranges.isEmpty else { return nil }
+            let compared = ranges.map { SessionExportMarkdownRenderer.comparisonToken(String(passage[$0])) }
+            // The passage is kept as written (line breaks and all) unless some of it is cut.
+            var result: String? = passage
+            if compared.count >= SessionExportMarkdownRenderer.minimumRepeatedTokens {
                 if printed.contains(where: { Self.contains($0, compared) }) {
                     result = nil
                 } else {
-                    let overlap = printed.map { Self.overlap(ending: $0, starting: compared) }.max() ?? 0
+                    let overlap = printed.map {
+                        Self.overlap(ending: $0, starting: compared, atLeast: SessionExportMarkdownRenderer.minimumRepeatedTokens)
+                    }.max() ?? 0
                     if overlap > 0 {
-                        result = overlap == tokens.count ? nil : tokens.dropFirst(overlap).joined(separator: " ")
+                        result = overlap == ranges.count ? nil : String(passage[ranges[overlap].lowerBound...])
                     }
                 }
             }
@@ -380,11 +385,11 @@ public enum SessionExportMarkdownRenderer {
             return (0...(whole.count - part.count)).contains { whole[$0..<($0 + part.count)].elementsEqual(part) }
         }
 
-        /// The most words that end `earlier` and start `later` (at least `minimumSharedTokens`), or 0.
-        private static func overlap(ending earlier: [String], starting later: [String]) -> Int {
+        /// The most words that end `earlier` and start `later` (at least `minimum`), or 0.
+        fileprivate static func overlap(ending earlier: [String], starting later: [String], atLeast minimum: Int) -> Int {
             let most = min(earlier.count, later.count)
-            guard most >= SessionExportMarkdownRenderer.minimumSharedTokens else { return 0 }
-            for count in stride(from: most, through: SessionExportMarkdownRenderer.minimumSharedTokens, by: -1)
+            guard most >= minimum else { return 0 }
+            for count in stride(from: most, through: minimum, by: -1)
             where earlier.suffix(count).elementsEqual(later.prefix(count)) {
                 return count
             }
@@ -432,12 +437,18 @@ public enum SessionExportMarkdownRenderer {
                 if !shared.isEmpty {
                     appendPassage(continuationLabel, shared)
                 }
-            } else if !sameMoment, !startsWithin(current.anchorAfter, previous.anchorAfter) {
-                if !previous.anchorAfter.isEmpty {
-                    appendPassage(continuationLabel, previous.anchorAfter)
-                }
-                if !current.anchorBefore.isEmpty {
-                    appendPassage(laterContextLabel, current.anchorBefore)
+            } else if !sameMoment {
+                if let gap = sourceBetweenOverlappingWindows(previous.anchorAfter, current.anchorAfter) {
+                    if !gap.isEmpty {
+                        appendPassage(continuationLabel, gap)
+                    }
+                } else {
+                    if !previous.anchorAfter.isEmpty {
+                        appendPassage(continuationLabel, previous.anchorAfter)
+                    }
+                    if !current.anchorBefore.isEmpty {
+                        appendPassage(laterContextLabel, current.anchorBefore)
+                    }
                 }
             }
             appendInterjectionMarker(current, to: &lines)
@@ -487,12 +498,37 @@ public enum SessionExportMarkdownRenderer {
         return nil
     }
 
-    /// True when `later` starts inside `earlier`: the two Margins sit so close together that no source
-    /// text lies between them, and the one passage after them is printed once, after the last.
-    private static func startsWithin(_ later: String, _ earlier: String) -> Bool {
-        let head = whitespaceTokens(later).prefix(minimumSharedTokens).map(comparisonToken)
-        guard head.count == minimumSharedTokens else { return false }
-        return PrintedPassages.contains(whitespaceTokens(earlier).map(comparisonToken), head)
+    /// For two Margins so close that the passages after them overlap (the later one's passage starts
+    /// inside the earlier one's): the source between them, which may be empty. Nil when the passages
+    /// don't overlap. The overlap itself is printed once, as the passage after the last Margin.
+    private static func sourceBetweenOverlappingWindows(_ earlier: String, _ later: String) -> String? {
+        let earlierRanges = tokenRanges(earlier)
+        let earlierTokens = earlierRanges.map { comparisonToken(String(earlier[$0])) }
+        let laterTokens = tokenRanges(later).map { comparisonToken(String(later[$0])) }
+        let overlap = PrintedPassages.overlap(ending: earlierTokens, starting: laterTokens, atLeast: minimumSharedTokens)
+        guard overlap > 0 else { return nil }
+        let gapTokens = earlierRanges.count - overlap
+        guard gapTokens > 0 else { return "" }
+        return String(earlier[earlierRanges[0].lowerBound..<earlierRanges[gapTokens - 1].upperBound])
+    }
+
+    private static func tokenRanges(_ source: String) -> [Range<String.Index>] {
+        var ranges: [Range<String.Index>] = []
+        var start: String.Index?
+        var index = source.startIndex
+        while index < source.endIndex {
+            if source[index].isWhitespace {
+                if let begin = start {
+                    ranges.append(begin..<index)
+                    start = nil
+                }
+            } else if start == nil {
+                start = index
+            }
+            index = source.index(after: index)
+        }
+        if let begin = start { ranges.append(begin..<source.endIndex) }
+        return ranges
     }
 
     private static func whitespaceTokens(_ source: String) -> [String] {
