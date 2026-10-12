@@ -41,8 +41,7 @@ struct Gate1RootView: View {
             }
         }
         .background(AppColors.background.ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners() }
-        .overlay(alignment: .top) { FloatingFeedbackBanner() }
+        .modifier(AppFeedbackPresentation())
         .safeAreaInset(edge: .bottom, spacing: 8) {
             if model.screen != .home && model.screen != .timeline && !model.recordingNavigationIsLocked && model.shouldShowMiniPlayer && !keyboardIsPresented {
                 MiniPlayerBar()
