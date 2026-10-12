@@ -79,6 +79,33 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(result['testdesk_bugs_filed'], [900])
         self.assertEqual(result['tokens_per_testdesk_bug'], 110)
 
+    def test_claude_turns_are_summarized_apart_from_wrapper_totals(self):
+        def turn(run_id, job, time, links=(), complete=True):
+            return {'kind': 'turn', 'run_id': run_id, 'session_id': run_id[:1], 'job': job, 'time': time,
+                    'input_tokens': 1000, 'cached_input_tokens': 900, 'output_tokens': 50,
+                    'usage_complete': complete, 'outcome_links': list(links)}
+        link = 'https://github.com/o/r/issues/337#issuecomment-1'
+        claude = [turn('a1', 'scheduled:sm-mac-tick', '2026-10-05T12:00:00Z', [link]),
+                  turn('a2', 'scheduled:sm-mac-tick', '2026-10-06T12:00:00Z', [link], complete=False),
+                  turn('b1', 'finisher', '2026-10-06T12:00:00Z'),
+                  turn('c1', 'finisher', '2026-10-13T00:00:00Z'),  # the next week
+                  {'kind': 'session-check', 'run_id': 's', 'session_id': 'a', 'job': 'scheduled:sm-mac-tick',
+                   'time': '2026-10-06T12:00:00Z', 'transcript_models': ['claude-opus-5-5'],
+                   'transcript': {'input_tokens': 1, 'cache_creation_input_tokens': 0,
+                                  'cache_read_input_tokens': 0, 'output_tokens': 1},
+                   'client_reported': {'input_tokens': 3, 'cache_creation_input_tokens': 0,
+                                       'cache_read_input_tokens': 0, 'output_tokens': 1,
+                                       'models': ['claude-opus-5-5[1m]']},
+                   'client_total_is_final': True}]
+        result = report.summarize([row('a')], START, GitHub(), claude)
+        self.assertEqual(result['total']['tokens'], 110)  # wrapper totals unchanged
+        tick = result['claude']['by_job']['scheduled:sm-mac-tick']
+        self.assertEqual((tick['runs'], tick['tokens'], tick['incomplete_runs'], tick['outcome_links']), (2, 2100, 1, 1))
+        self.assertEqual(result['claude']['total']['runs'], 3)
+        self.assertEqual(result['claude']['outcome_links'], [link])
+        self.assertEqual(result['claude']['coverage']['transcript_share'], 0.5)
+        self.assertIsNone(report.summarize([row('a')], START, GitHub())['claude'])
+
 
 if __name__ == '__main__':
     unittest.main()
