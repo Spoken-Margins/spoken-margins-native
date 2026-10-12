@@ -2429,8 +2429,8 @@ final class Gate1AppModel: ObservableObject {
             || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
     }
 
-    @Published private(set) var skimForwardDestinationMs: Int?
-    @Published private(set) var skimBackwardDestinationMs: Int?
+    @Published var skimForwardDestinationMs: Int?
+    @Published var skimBackwardDestinationMs: Int?
     var skimResourceContext: SkimResourceContext?
     #if DEBUG
     var skimResourceLoadCount = 0
