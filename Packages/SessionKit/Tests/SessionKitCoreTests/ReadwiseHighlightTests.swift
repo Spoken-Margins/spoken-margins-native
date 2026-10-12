@@ -170,6 +170,83 @@ final class ReadwiseHighlightTests: XCTestCase {
         XCTAssertEqual(report.sent, 2)
     }
 
+    // MARK: #1467: a different account is a new destination
+
+    /// Disconnect then Connect is a new destination: nothing counts as sent to it, so it gets the old
+    /// Margins and the new ones, and the old account's links are gone.
+    func testANewConnectionStartsWithNothingSentAndNoOldLinks() async throws {
+        let highlights = try twoArticleHighlights()
+        let transportA = RecordingTransport(bodies: [Self.recordedReply])
+        let reportA = try await ReadwiseHighlightSyncPass.run(
+            [highlights[0]], token: "account-a", client: ReadwiseHighlightClient(transport: transportA.send), ledger: ledger()
+        )
+        XCTAssertEqual(reportA.sent, 1)
+        let destinationA = try ledger().destination()
+        XCTAssertFalse(try ledger().links().isEmpty, "A's page link was kept")
+
+        try ledger().startNewDestination()
+        XCTAssertEqual(try ledger().sentKeys(), [])
+        XCTAssertEqual(try ledger().links(), [:])
+        XCTAssertNotEqual(try ledger().destination(), destinationA)
+
+        let transportB = RecordingTransport()
+        let reportB = try await ReadwiseHighlightSyncPass.run(
+            highlights, token: "account-b", client: ReadwiseHighlightClient(transport: transportB.send), ledger: ledger()
+        )
+        XCTAssertEqual(reportB.sent, 2, "B gets the Margin A already had, and the newer one")
+        XCTAssertEqual(transportB.requests.count, 1)
+        XCTAssertTrue(transportB.requests.allSatisfy { $0.value(forHTTPHeaderField: "Authorization") == "Token account-b" })
+    }
+
+    /// A batch A's server accepted after the listener switched must not be recorded for B, or B would
+    /// never receive those Margins.
+    func testAnInFlightBatchForTheOldAccountIsNotRecordedForTheNewOne() async throws {
+        let highlights = try twoArticleHighlights()
+        let transport = RecordingTransport()
+        let ledger = self.ledger()
+        let switchWhileSending = ReadwiseHighlightClient { request in
+            let result = try await transport.send(request)
+            try ledger.startNewDestination()
+            return result
+        }
+        await XCTAssertThrowsCancellation {
+            try await ReadwiseHighlightSyncPass.run(highlights, token: "account-a", client: switchWhileSending, ledger: ledger, batchSize: 1)
+        }
+        XCTAssertEqual(transport.requests.count, 1, "no further batch goes out")
+        XCTAssertEqual(try ledger.sentKeys(), [], "A's response recorded nothing for the new destination")
+
+        let report = try await ReadwiseHighlightSyncPass.run(
+            highlights, token: "account-b", client: ReadwiseHighlightClient(transport: transport.send), ledger: ledger, batchSize: 1
+        )
+        XCTAssertEqual(report.sent, 2)
+    }
+
+    /// Saving a new token without disconnecting is the same account: its history stays and nothing is resent.
+    func testRotatingTheTokenKeepsTheHistory() async throws {
+        let highlights = try twoArticleHighlights()
+        let transport = RecordingTransport()
+        let client = ReadwiseHighlightClient(transport: transport.send)
+        _ = try await ReadwiseHighlightSyncPass.run(highlights, token: "old-token", client: client, ledger: ledger())
+        let destination = try ledger().destination()
+        let again = try await ReadwiseHighlightSyncPass.run(highlights, token: "new-token", client: client, ledger: ledger())
+        XCTAssertEqual(again.sent, 0)
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(try ledger().destination(), destination)
+    }
+
+    func testTheConnectionIdIsKeptAcrossPassesAndLeavesBuild29ReadingTheFile() async throws {
+        struct Build29File: Decodable { var sent: [String] }
+        try ledger().startNewDestination()
+        let destination = try XCTUnwrap(ledger().destination())
+        let transport = RecordingTransport()
+        _ = try await ReadwiseHighlightSyncPass.run(
+            try twoArticleHighlights(), token: "t", client: ReadwiseHighlightClient(transport: transport.send), ledger: ledger()
+        )
+        XCTAssertEqual(try ledger().destination(), destination)
+        let old = try JSONDecoder().decode(Build29File.self, from: Data(contentsOf: ledger().fileURL))
+        XCTAssertEqual(old.sent.count, 2)
+    }
+
     private func XCTAssertThrowsCancellation(_ body: () async throws -> ReadwiseSyncReport, file: StaticString = #filePath, line: UInt = #line) async {
         do {
             _ = try await body()

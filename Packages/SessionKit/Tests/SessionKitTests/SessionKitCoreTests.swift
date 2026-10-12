@@ -1173,7 +1173,12 @@ final class SessionKitCoreTests: XCTestCase {
             "Tax-deferred growth versus HSAs",
             "2. Earmark savings for health care"
         ])
-        XCTAssertEqual(map.chapters.map(\.title), parsed.headings.map(\.title))
+        // One heading level makes the chapters: the lone `##` section stays inside the chapter before it.
+        XCTAssertEqual(map.chapters.map(\.title), [
+            "Key takeaways",
+            "1. Understand the triple tax advantage",
+            "2. Earmark savings for health care"
+        ])
         XCTAssertEqual(map.chapters.first?.startChar, 0)
         XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
         XCTAssertTrue(zip(map.chapters, map.chapters.dropFirst()).allSatisfy { $0.endChar == $1.startChar })
@@ -1199,7 +1204,7 @@ final class SessionKitCoreTests: XCTestCase {
     func testTitleOverrideKeepsFirstPastedHeadingAsAChapter() throws {
         let parsed = try ObsidianMarkdownParser.parse(
             fileName: "Manual Paste.md",
-            contents: "# Opening\n\nFirst section.\n\n## Next\n\nSecond section.",
+            contents: "## Opening\n\nFirst section.\n\n## Next\n\nSecond section.",
             titleOverride: "User-entered title"
         )
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-manual-paste"))
@@ -1209,7 +1214,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(map.chapters.first?.startChar, 0)
     }
 
-    func testHSAStyleMapKeepsNumberedSectionsAndMergesShortCallouts() throws {
+    func testHSAStyleMapKeepsNumberedSectionsAndFoldsOtherLevelCallouts() throws {
         func words(_ count: Int) -> String {
             Array(repeating: "content", count: count).joined(separator: " ")
         }
@@ -1244,11 +1249,12 @@ final class SessionKitCoreTests: XCTestCase {
             "2. Earmark savings just for health care",
             "3. Consider putting your HSA dollars to work by investing them",
             "4. Plan to use your HSA in retirement",
-            "5. Let HSAs play a role in your estate plan"
+            "5. Let HSAs play a role in your estate plan",
+            "Plan ahead"
         ])
     }
 
-    func testDeterministicListeningMapMergesHeaderExplosionWithinHardCap() throws {
+    func testDeterministicListeningMapNeverMergesHeaderExplosion() throws {
         let filler = Array(repeating: "brief", count: 20).joined(separator: " ")
         var markdown = "---\ntitle: Deep Outline\n---\n"
         for major in 1...2 {
@@ -1261,8 +1267,8 @@ final class SessionKitCoreTests: XCTestCase {
         let parsed = try ObsidianMarkdownParser.parse(fileName: "deep-outline.md", contents: markdown)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-deep-outline"))
 
-        XCTAssertGreaterThanOrEqual(map.chapters.count, 5)
-        XCTAssertLessThanOrEqual(map.chapters.count, 12)
+        // Every `###` is a chapter: the author's headings are never merged to meet a cap.
+        XCTAssertEqual(map.chapters.count, 24)
         XCTAssertTrue(zip(map.chapters, map.chapters.dropFirst()).allSatisfy { $0.endChar == $1.startChar })
         XCTAssertEqual(map.chapters.first?.startChar, 0)
         XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
@@ -1270,26 +1276,31 @@ final class SessionKitCoreTests: XCTestCase {
 
     func testDeterministicListeningMapSplitsVeryLongSectionsAtNaturalBoundaries() throws {
         let paragraph = Array(repeating: "substantive", count: 300).joined(separator: " ") + "."
-        let markdown = "---\ntitle: Long Read\n---\n\n## Main argument\n\n" + Array(repeating: paragraph, count: 8).joined(separator: "\n\n")
+        let short = Array(repeating: "brief", count: 100).joined(separator: " ") + "."
+        let markdown = "---\ntitle: Long Read\n---\n\n## Setup\n\n\(short)\n\n## Main argument\n\n"
+            + Array(repeating: paragraph, count: 14).joined(separator: "\n\n")
+            + "\n\n## Wrap-up\n\n\(short)"
 
         let parsed = try ObsidianMarkdownParser.parse(fileName: "long-read.md", contents: markdown)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-read"))
 
-        XCTAssertEqual(map.chapters.count, 2)
-        XCTAssertEqual(map.chapters.first?.title, "Main argument")
-        XCTAssertEqual(map.chapters.last?.title, "Main argument — part 2")
-        XCTAssertEqual(map.chapters.first?.endChar, map.chapters.last?.startChar)
+        XCTAssertEqual(map.chapters.map(\.title), ["Setup", "Main argument", "Main argument — part 2", "Wrap-up"])
+        XCTAssertEqual(map.chapters[1].endChar, map.chapters[2].startChar)
     }
 
     func testDeterministicListeningMapNumbersRepeatedSplitsWithoutRecursiveLabels() throws {
         let body = Array(repeating: "substantive", count: 11_000).joined(separator: " ")
-        let markdown = "---\ntitle: Long Chapter\n---\n\n## Chapter Text\n\n\(body)"
+        let short = Array(repeating: "brief", count: 100).joined(separator: " ")
+        let markdown = "---\ntitle: Long Chapter\n---\n\n## Opening\n\n\(short)\n\n## Chapter Text\n\n\(body)\n\n## Closing\n\n\(short)"
 
         let parsed = try ObsidianMarkdownParser.parse(fileName: "long-chapter.md", contents: markdown)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-chapter"))
 
-        XCTAssertEqual(map.chapters.count, 10)
-        XCTAssertEqual(map.chapters.map(\.title), ["Chapter Text"] + (2...10).map { "Chapter Text — part \($0)" })
+        let parts = map.chapters.filter { $0.title.hasPrefix("Chapter Text") }
+        XCTAssertEqual(parts.map(\.title), ["Chapter Text"] + (2...parts.count).map { "Chapter Text — part \($0)" })
+        XCTAssertGreaterThan(parts.count, 3)
+        XCTAssertEqual(map.chapters.first?.title, "Opening")
+        XCTAssertEqual(map.chapters.last?.title, "Closing")
         XCTAssertFalse(map.chapters.contains { $0.title.contains("continued — continued") })
     }
 

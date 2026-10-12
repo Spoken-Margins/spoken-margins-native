@@ -196,8 +196,28 @@ class ReportTextTests(unittest.TestCase):
         self.assertEqual(run.reported([body]), [(SHA[:7], 'PASS')])
         for words in (f'run by: {run.RUN_BY}', f'next moved from {OLD[:7]}', '1 passed, 0 failed',
                       'flaky: none this run', run.NOT_RUN, run.NOT_VERIFIED, '/mac/evidence',
-                      f'{SHA[:7]} is the current phone candidate.'):
+                      f'{SHA[:7]} is the current phone candidate: app tests passed; scripted journeys not run; '
+                      'attended journeys not run.'):
             self.assertIn(words, body)
+
+    def test_the_candidate_line_says_what_a_pass_covers(self):
+        """#1465: an app-test PASS must not read as a full candidate when journeys failed or didn't run."""
+        base = dict(run.settle(run.summarize(manifest({TEST: 'passed'})), []), reruns=0)
+        for journeys, words in (({'J1Tests/testOpen': 'passed'}, 'scripted journeys passed'),
+                                ({'J1Tests/testOpen': 'failed', 'J4Tests/testPlay': 'passed'},
+                                 'scripted journeys failed (testOpen)'),
+                                ({'J1Tests/testOpen': 'not_run'}, 'scripted journeys not run'),
+                                ({}, 'scripted journeys not run')):
+            with self.subTest(journeys=journeys):
+                body = self.text(dict(base, journeys=journeys))
+                self.assertIn(f'is the current phone candidate: app tests passed; {words}; attended journeys not run.', body)
+                phone = load_phone_build()
+                plan_lines = phone.commit_record([body], SHA)
+                kinds = {what: status for what, status, _ in plan_lines}
+                self.assertEqual(kinds['App tests'], 'pass')
+                self.assertEqual(kinds['Scripted journeys'], 'fail' if 'failed' in words else
+                                 'pass' if 'passed' in words else 'not run')
+                self.assertEqual(kinds['Attended journeys'], 'not run')
 
     def test_fail_report_lists_failures_flakes_and_suspect_merges(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))

@@ -20,7 +20,7 @@ final class ListeningMapOverviewTextTests: XCTestCase {
         ## Evidence
         Evidence body.
         """)
-        for policy in [DeterministicListeningMapPolicy.canonicalHeadings, .adaptiveListeningSections] {
+        for policy in [DeterministicListeningMapPolicy.canonicalHeadings, .authoredSections] {
             let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-report", policy: policy))
             XCTAssertEqual(map.overview, "A Structured Report. \(map.chapters.count) chapter\(map.chapters.count == 1 ? "" : "s").")
             XCTAssertFalse(map.overview.contains("Structured into"))

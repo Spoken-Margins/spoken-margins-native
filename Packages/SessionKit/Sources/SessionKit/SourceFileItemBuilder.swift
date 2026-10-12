@@ -65,13 +65,10 @@ public enum SourceFileItemBuilder {
             return PreparedObsidianImport(item: item, listeningMap: map, structuredDocument: document)
         }
         let parsed = try ObsidianMarkdownParser.parse(fileName: fileURL.lastPathComponent, contents: imported.text)
-        // A Markdown file's headings are the author's, so each stays a chapter (#1435); plain text has
-        // none of its own and keeps the adaptive sections.
-        let mapPolicy: DeterministicListeningMapPolicy = switch fileURL.pathExtension.lowercased() {
-        case "pdf": .canonicalHeadings
-        case "md", "markdown": .authoredSections
-        default: .adaptiveListeningSections
-        }
+        // The author's headings are the chapters, in a Markdown or a plain text file alike (#1435, #1468).
+        let mapPolicy: DeterministicListeningMapPolicy = fileURL.pathExtension.lowercased() == "pdf"
+            ? .canonicalHeadings
+            : .authoredSections
         let deterministicMap = parsed.deterministicListeningMap(
             itemId: itemId,
             policy: mapPolicy

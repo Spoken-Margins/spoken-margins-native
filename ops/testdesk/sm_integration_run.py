@@ -237,7 +237,13 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     if result.get('attachments'):
         lines += ['', *report_lines(result['attachments'])]
     if result['verdict'] == 'PASS':
-        lines += ['', f'{sha[:7]} is the current phone candidate.']
+        # Say what the pass covers: app tests alone are not a full candidate (#1465).
+        journeys = result.get('journeys') or {}
+        failed = sorted(t.rsplit('/', 1)[-1] for t, status in journeys.items() if status in ('failed', 'missing'))
+        scripted = (f"scripted journeys failed ({', '.join(failed)})" if failed else
+                    'scripted journeys passed' if 'passed' in journeys.values() else 'scripted journeys not run')
+        lines += ['', f'{sha[:7]} is the current phone candidate: app tests passed; {scripted}; '
+                      'attended journeys not run.']
     return '\n'.join(lines) + '\n'
 
 

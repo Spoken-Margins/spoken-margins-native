@@ -111,6 +111,21 @@ final class ReadLaterConnectionStatusAppTests: XCTestCase {
         XCTAssertEqual(model.statusSymbol, .saved)
     }
 
+    /// #1467: Disconnect ends the Readwise connection, so a later one is a new destination with sending off.
+    func testDisconnectingReaderTurnsReadwiseSendingOff() {
+        let tokens = Tokens()
+        tokens.stored[.reader] = "token"
+        let model = ReadLaterModel(credentials: tokens.credentials)
+        let sync = ReadwiseHighlightSync()
+        sync.enabled = true
+        XCTAssertTrue(model.disconnect())
+        sync.destinationDisconnected()
+        XCTAssertFalse(sync.enabled)
+        XCTAssertFalse(UserDefaults.standard.bool(forKey: "readwiseHighlightsEnabled"))
+        XCTAssertTrue(sync.links.isEmpty)
+        XCTAssertFalse(sync.statusIsFailure)
+    }
+
     private final class Attempts: @unchecked Sendable {
         private var count = 0
         func next() -> Int { count += 1; return count }

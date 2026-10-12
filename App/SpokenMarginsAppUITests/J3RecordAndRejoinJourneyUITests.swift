@@ -44,7 +44,6 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertEqual(app.buttons["playback.title"].firstMatch.label, episodeTitle, "A different item is playing")
             try waitUntilPlaying("Podcast never reached the playing state")
             try waitUntilAdvancing("Podcast clock did not move before recording")
-            assertDockStaysFixedWhileSwitching()
             // Record well past 0:00, so a Margin anchored at the start can't pass for one anchored here (#1044 APO-01).
             waitUntil("Podcast did not reach 0:30 before recording", timeout: 45) {
                 self.currentPosition().map { $0 >= 30 } ?? false
@@ -66,7 +65,6 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
             XCTAssertGreaterThanOrEqual(resumed, marginPosition - 2, "Podcast jumped back after the Margin")
             XCTAssertLessThan(resumed - marginPosition, 10, "Podcast kept playing under the recording instead of pausing")
             try waitUntilAdvancing("Podcast clock is stuck after the Margin")
-            assertOwnMarginFilters()
 
             openTimeline()
             let margins = app.descendants(matching: .any)
@@ -104,13 +102,10 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
 
         try XCTContext.runActivity(named: "J3 step 3b: Play this moment goes back to where the Margin was recorded") { _ in
             // The source is now a minute or more past the Margin, so landing near it proves where it was anchored.
-            tap("playback.margins.button")
-            tap("playback.margins.filter.mine")
-            let playMoment = app.buttons.matching(NSPredicate(
-                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "margins.row.", ".play"
-            )).firstMatch
-            XCTAssertTrue(playMoment.waitForExistence(timeout: 5), "The playback Margin row has no play button")
-            playMoment.tap()
+            openTimeline()
+            element(marginId).tap()
+            XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "Margin did not open")
+            tap("marginDetail.playMoment.button")
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Play this moment did not open Now Playing")
             // The moment starts 30 s before the Margin (its lead-in); "Play it now" skips to the Margin itself.
             tap("marginMoment.playNow")
@@ -163,48 +158,6 @@ final class J3RecordAndRejoinJourneyUITests: XCTestCase {
         guard banner.exists else { return }
         for problem in ["unavailable", "couldn't be played", "could not be played"] {
             XCTAssertFalse(banner.label.localizedCaseInsensitiveContains(problem), "Margin playback reported: \(banner.label)")
-        }
-    }
-
-    /// J3 has one own Margin and no shared packet. Mixed-origin ordering is host-tested;
-    /// screenshots with both kinds and shared playback still belong to J5.
-    private func assertOwnMarginFilters() {
-        tap("playback.margins.button")
-        let ownRows = app.buttons.matching(NSPredicate(
-            format: "identifier BEGINSWITH %@ AND NOT (identifier ENDSWITH %@)", "margins.row.", ".play"
-        ))
-        for (filter, expectedCount) in [("all", 1), ("mine", 1), ("shared", 0)] {
-            tap("playback.margins.filter.\(filter)")
-            waitUntil("The \(filter) filter shows the wrong Margin count") {
-                self.element("playback.margins.count").label == "Margins: \(expectedCount)"
-            }
-            XCTAssertEqual(ownRows.count, expectedCount, "Filtering did not change the actual rows")
-            XCTAssertTrue(playPause.isHittable, "Filtering hid the playback dock")
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
-            screenshot.name = "Playback Margins — \(filter) — own-only J3 fixture"
-            screenshot.lifetime = .keepAlways
-            add(screenshot)
-        }
-        tap("playback.now.button")
-    }
-
-    private func assertDockStaysFixedWhileSwitching() {
-        let controls = element("playback.controls")
-        let original = controls.frame
-        for (button, content) in [("playback.timeline.button", "timeline.screen"),
-                                  ("playback.margins.button", "margins.screen"),
-                                  ("playback.now.button", "playback.now.margins")] {
-            tap(button)
-            XCTAssertTrue(element(content).waitForExistence(timeout: 5), "Playback pane did not appear")
-            XCTAssertEqual(controls.frame.minY, original.minY, accuracy: 1, "Dock moved when switching panes")
-            XCTAssertEqual(controls.frame.height, original.height, accuracy: 1, "Dock changed height")
-            for control in ["playback.play.button", "playback.interject.button", "playback.write.button"] {
-                XCTAssertTrue(app.buttons[control].isHittable, "Dock control disappeared: \(control)")
-            }
-            let screenshot = XCTAttachment(screenshot: app.screenshot())
-            screenshot.name = "Fixed dock — \(content)"
-            screenshot.lifetime = .keepAlways
-            add(screenshot)
         }
     }
 

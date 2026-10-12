@@ -54,13 +54,6 @@ public enum MarginCollection {
         /// The chapter and paragraph the Margin was made at, when `build` was given a way to read listening maps (#777).
         public var place: MarginPlaces.Place? = nil
 
-        public init(interjection: Interjection, itemTitle: String, sessionDate: Date?, place: MarginPlaces.Place? = nil) {
-            self.interjection = interjection
-            self.itemTitle = itemTitle
-            self.sessionDate = sessionDate
-            self.place = place
-        }
-
         public var id: String { "\(interjection.sessionId)::\(interjection.id)" }
     }
 
@@ -69,23 +62,12 @@ public enum MarginCollection {
         public let layer: ImportedCommentaryLayer
         public let itemTitle: String
 
-        public init(interjection: ImportedCommentaryInterjection, layer: ImportedCommentaryLayer, itemTitle: String) {
-            self.interjection = interjection
-            self.layer = layer
-            self.itemTitle = itemTitle
-        }
-
         public var id: String { "shared::\(layer.id)::\(interjection.id)" }
     }
 
     public struct Entries: Equatable, Sendable {
         public let privateRows: [PrivateEntry]
         public let sharedRows: [SharedEntry]
-
-        public init(privateRows: [PrivateEntry], sharedRows: [SharedEntry]) {
-            self.privateRows = privateRows
-            self.sharedRows = sharedRows
-        }
     }
 
     /// Reads remain in the caller's synchronous closures, in the original order.

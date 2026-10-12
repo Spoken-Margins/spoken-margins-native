@@ -1,0 +1,8 @@
+Install
+Create a project
+Start the server
+Open the dashboard
+Add your first route
+Reload
+Troubleshooting
+Next steps

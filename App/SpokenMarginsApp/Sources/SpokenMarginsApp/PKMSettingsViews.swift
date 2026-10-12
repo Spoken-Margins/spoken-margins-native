@@ -285,7 +285,11 @@ struct ReadLaterScreen: View {
                 Button("Connect", action: connection.connect).disabled(connection.isLoading)
                 if connection.connected {
                     Button("Refresh") { connection.refresh() }.disabled(connection.isLoading)
-                    Button("Disconnect", role: .destructive, action: connection.disconnect)
+                    Button("Disconnect", role: .destructive) {
+                        // Readwise is also where Margins are sent; a later connection is a new destination (#1467).
+                        let wasReader = connection.service == .reader
+                        if connection.disconnect(), wasReader { model.readwiseHighlightSync.destinationDisconnected() }
+                    }
                 }
                 Text(connection.service == .reader
                      ? "Reader requires a Readwise account. This view lists Later articles with available text. PDFs, books and highlights are not imported by this adapter."
