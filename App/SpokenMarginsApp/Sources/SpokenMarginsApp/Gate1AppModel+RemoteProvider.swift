@@ -170,11 +170,13 @@ extension Gate1AppModel {
             } catch {
                 diagnostics["lastSummaryMode"] = "apple_foundation_failed"
                 diagnostics["lastLocalSummaryErrorType"] = String(reflecting: type(of: error))
+                let presentation = LocalSummaryFailurePresentation(errorDescription: error.localizedDescription)
                 markProviderFailure(
                     String(describing: error),
-                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again.",
+                    userMessage: presentation.detailMessage,
                     itemId: itemId,
-                    retry: .init(key: "summary") { [weak self] in self?.summarize() }
+                    retry: .init(key: "summary") { [weak self] in self?.summarize() },
+                    feedbackMessage: presentation.feedbackMessage
                 )
             }
         }
@@ -316,7 +318,7 @@ extension Gate1AppModel {
         diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
     }
 
-    func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil) {
+    func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil) {
         do {
             if let engine {
                 snapshot = try engine.aiProviderFailed(error: error)
@@ -327,7 +329,7 @@ extension Gate1AppModel {
         }
         providerProbeStatus = userMessage
         diagnostics["providerProbe"] = providerProbeStatus
-        reportFailure(userMessage, itemId: itemId, retry: retry)
+        reportFailure(userMessage, itemId: itemId, retry: retry, feedbackMessage: feedbackMessage)
     }
 }
 

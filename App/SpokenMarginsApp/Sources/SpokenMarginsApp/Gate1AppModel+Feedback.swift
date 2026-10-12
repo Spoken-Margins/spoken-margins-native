@@ -39,10 +39,10 @@ extension Gate1AppModel {
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil) {
         statusMessage = "Error"
         lastError = message
-        presentFeedback(UserFeedbackEvent(kind: .error, message: message, retry: retry))
+        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry))
         itemFailures.record(message, itemId: itemId, visibleItemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
         diagnostics["recentFailure"] = message
     }
