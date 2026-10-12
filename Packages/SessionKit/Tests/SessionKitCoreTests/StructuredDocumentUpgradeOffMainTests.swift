@@ -112,20 +112,31 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
     /// The audit's path: the listener opens the item (inspecting a paused session writes nothing) while the upgrade is
     /// planned off the main actor. The write is back on the main actor with the "is it open?" check, so it sees the
     /// open item and the new text becomes its own edition; the open item keeps its text and position.
+    ///
+    /// The item is opened through the engine's test seam, after the plan is back and before the check. A main-actor
+    /// `Task` queued before the import is not ordered against the import's continuation (the detached plan resumes at a
+    /// higher priority), which made this test fail under the parallel runner (#1452).
     @MainActor
     func testOpeningTheItemDuringThePlanKeepsItOnItsOldTextAndAddsAnEdition() async throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
-        Task { @MainActor in _ = try? fixture.engine.inspectSession(sessionId: "session-reading") }
+        guard case .success = try fixture.plan() else { return XCTFail("fixture check: with nothing open, the upgrade moves") }
+        let engine = fixture.engine
+        // The closure holds the engine and the engine holds the closure; let go of it when the test ends.
+        defer { engine.afterStructuredUpgradePlannedForTesting = nil }
+        engine.afterStructuredUpgradePlannedForTesting = {
+            XCTAssertNil(engine.currentSession, "fixture check: nothing is open until the seam opens the item")
+            _ = try engine.inspectSession(sessionId: "session-reading")
+        }
         let before = try fixture.stored()
 
         let reimported = try await fixture.reimportOffMain()
 
-        XCTAssertNotNil(fixture.engine.currentSession, "fixture check: the queued task opened the session before the import resumed")
+        XCTAssertEqual(engine.currentSession?.itemId, fixture.v1.id, "fixture check: the item was opened after the plan and before the write")
         XCTAssertNotEqual(reimported.id, fixture.v1.id, "the new text becomes its own edition")
         XCTAssertEqual(try fixture.store.listItems().count, 2)
         XCTAssertEqual(try fixture.stored(), before, "the open item's text, Margins and position are as the engine holds them")
-        XCTAssertEqual(fixture.engine.currentItem?.text, before.item.text)
+        XCTAssertEqual(engine.currentItem?.text, before.item.text)
     }
 
     // MARK: A Margin saved between planning and writing
