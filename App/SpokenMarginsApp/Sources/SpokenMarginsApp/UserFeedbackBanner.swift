@@ -65,7 +65,6 @@ extension Gate1AppModel {
 /// with an action (#784).
 struct UserFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
-    @Environment(\.feedbackDeliveryEffects) private var deliveryEffects
     let feedback: UserFeedbackEvent
 
     var body: some View {
@@ -119,21 +118,7 @@ struct UserFeedbackBanner: View {
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(AppColors.border))
         .padding(.top, 44)
         .allowsHitTesting(feedback.kind == .error || feedback.action != nil)
-        .task(id: feedback.id) {
-            #if canImport(UIKit)
-            // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
-            let announcement = feedback.action.map { "\(feedback.message) \($0.title) is available." } ?? feedback.message
-            deliveryEffects.announce(announcement)
-            #endif
-            guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
-                for: feedback.kind,
-                offersAction: feedback.action != nil
-            ) else { return }
-            do {
-                try await deliveryEffects.sleep(.seconds(seconds))
-                model.dismissFeedback(id: feedback.id)
-            } catch {}
-        }
+
     }
 
     private var iconName: String {

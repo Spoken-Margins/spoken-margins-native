@@ -30,6 +30,158 @@ final class UserFeedbackDeliveryViewTests: XCTestCase {
         XCTAssertEqual(probe.requests.map(\.duration), [.seconds(3)])
     }
 
+    func testSameTextWithANewEventIDCancelsAndReplacesDelivery() async throws {
+        let model = try makeModel()
+        let probe = DeliveryProbe()
+        model.reportConfirmation("Saved.")
+        let firstEvent = try XCTUnwrap(model.feedbackEvent)
+        let mounted = try mount(model, probe: probe)
+        defer { mounted.close(); probe.cancelAll() }
+        try await waitUntil { probe.requests.count == 1 }
+        let original = try XCTUnwrap(probe.requests.first)
+
+        model.reportConfirmation("Saved.")
+        let replacement = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertNotEqual(firstEvent.id, replacement.id)
+        try await waitUntil { original.cancelled == true && probe.requests.count >= 2 }
+        let next = try XCTUnwrap(probe.requests.last)
+        XCTAssertFalse(original === next)
+        XCTAssertEqual(probe.announcements, ["Saved.", "Saved."])
+        XCTAssertEqual(probe.requests.count, 2)
+        XCTAssertNil(next.cancelled)
+        XCTAssertEqual(next.duration, .seconds(3))
+        XCTAssertEqual(model.feedbackEvent?.id, replacement.id)
+
+        next.finish(cancelled: false)
+        try await waitUntil { model.feedbackEvent == nil }
+    }
+
+    func testContentReplacementAndTheSameEventKeepTheOriginalDeadline() async throws {
+        let model = try makeModel()
+        let probe = DeliveryProbe()
+        let pane = TestPane()
+        model.reportConfirmation("Saved.")
+        let event = try XCTUnwrap(model.feedbackEvent)
+        let mounted = try mountBranches(model, probe: probe, pane: pane)
+        defer { mounted.close(); probe.cancelAll() }
+        try await waitUntil { probe.requests.count == 1 }
+        let original = try XCTUnwrap(probe.requests.first)
+        let extra = expectation(description: "Content replacement must not announce again")
+        extra.isInverted = true
+        probe.onAnnouncement = { _ in extra.fulfill() }
+
+        pane.alternate = true
+        model.feedbackEvent = event
+        try await waitUntil { pane.appeared }
+        await fulfillment(of: [extra], timeout: 0.3)
+        probe.onAnnouncement = nil
+        XCTAssertEqual(model.feedbackEvent?.id, event.id)
+        XCTAssertEqual(probe.announcements, ["Saved."])
+        XCTAssertEqual(probe.requests.count, 1)
+        XCTAssertNil(original.cancelled)
+        XCTAssertEqual(original.duration, .seconds(3))
+
+        original.finish(cancelled: false)
+        try await waitUntil { model.feedbackEvent == nil }
+    }
+
+    func testRecordingCancelsDeliveryAndUnlockingRestartsTheSameEvent() async throws {
+        let model = try makeModel()
+        let probe = DeliveryProbe()
+        model.reportConfirmation("Saved.")
+        let event = try XCTUnwrap(model.feedbackEvent)
+        let mounted = try mount(model, probe: probe)
+        defer { mounted.close(); probe.cancelAll() }
+        try await waitUntil { probe.requests.count == 1 }
+        let original = try XCTUnwrap(probe.requests.first)
+        let whileLocked = expectation(description: "Recording suppresses delivery")
+        whileLocked.isInverted = true
+        probe.onAnnouncement = { _ in whileLocked.fulfill() }
+
+        model.snapshot.isRecording = true
+        XCTAssertTrue(model.recordingNavigationIsLocked)
+        XCTAssertEqual(model.feedbackEvent?.id, event.id, "The non-polling recording fixture must preserve feedback")
+        try await waitUntil { original.cancelled == true }
+        await fulfillment(of: [whileLocked], timeout: 0.3)
+        probe.onAnnouncement = nil
+        XCTAssertEqual(probe.requests.count, 1)
+        XCTAssertEqual(model.feedbackEvent?.id, event.id)
+
+        model.snapshot.isRecording = false
+        try await waitUntil { probe.requests.count >= 2 }
+        let restarted = try XCTUnwrap(probe.requests.last)
+        XCTAssertFalse(original === restarted)
+        XCTAssertEqual(probe.announcements, ["Saved.", "Saved."])
+        XCTAssertEqual(probe.requests.count, 2)
+        XCTAssertEqual(restarted.duration, .seconds(3))
+        XCTAssertNil(restarted.cancelled)
+        XCTAssertEqual(model.feedbackEvent?.id, event.id)
+
+        restarted.finish(cancelled: false)
+        try await waitUntil { model.feedbackEvent == nil }
+    }
+
+    func testWarningActionAndErrorKeepTheirDeliveryPolicyWithoutInvokingActions() async throws {
+        var actions = 0
+        var retries = 0
+        let cases: [(UserFeedbackEvent, Duration?, String)] = [
+            (.init(kind: .warning, message: "Check connection."), .seconds(6), "Check connection."),
+            (.init(kind: .success, message: "Saved.", action: .init(
+                title: "Play now", accessibilityLabel: "Play now, Article", identifier: "feedback.test.play",
+                perform: { actions += 1 }
+            )), .seconds(8), "Saved. Play now is available."),
+            (.init(kind: .error, message: "Could not save.", retry: .init(
+                key: "feedback-test", action: { retries += 1 }
+            )), nil, "Could not save.")
+        ]
+        for (event, duration, announcement) in cases {
+            let model = try makeModel()
+            let probe = DeliveryProbe()
+            model.presentFeedback(event)
+            let unexpectedDeadline = duration == nil
+                ? expectation(description: "A persistent error has no deadline") : nil
+            if let unexpectedDeadline {
+                unexpectedDeadline.isInverted = true
+                probe.onRequest = { unexpectedDeadline.fulfill() }
+            }
+            let mounted = try mount(model, probe: probe)
+            defer { mounted.close(); probe.cancelAll() }
+            try await waitUntil { !probe.announcements.isEmpty }
+            XCTAssertEqual(probe.announcements, [announcement])
+            if let duration {
+                try await waitUntil { probe.requests.count == 1 }
+                let request = try XCTUnwrap(probe.requests.first)
+                XCTAssertEqual(request.duration, duration)
+                request.finish(cancelled: false)
+                try await waitUntil { model.feedbackEvent == nil }
+            } else {
+                let unexpected = try XCTUnwrap(unexpectedDeadline)
+                await fulfillment(of: [unexpected], timeout: 0.3)
+                XCTAssertTrue(probe.requests.isEmpty)
+                XCTAssertEqual(model.feedbackEvent?.id, event.id)
+            }
+            XCTAssertEqual(actions, 0)
+            XCTAssertEqual(retries, 0)
+        }
+    }
+
+    func testUnmountCancelsTheActualDeadlineWithoutDismissingTheEvent() async throws {
+        let model = try makeModel()
+        let probe = DeliveryProbe()
+        model.reportConfirmation("Saved.")
+        let event = try XCTUnwrap(model.feedbackEvent)
+        let mounted = try mount(model, probe: probe)
+        defer { mounted.close(); probe.cancelAll() }
+        try await waitUntil { probe.requests.count == 1 }
+        let request = try XCTUnwrap(probe.requests.first)
+
+        mounted.close()
+        // Observe lifecycle cancellation before fallback cleanup can cause it.
+        try await waitUntil { request.cancelled == true }
+        XCTAssertEqual(model.feedbackEvent?.id, event.id)
+        XCTAssertEqual(probe.announcements, ["Saved."])
+    }
+
     private func makeModel() throws -> Gate1AppModel {
         let preferences = VoicePreferencesSnapshot.capture()
         addTeardownBlock { @MainActor in preferences.restore() }
@@ -46,13 +198,25 @@ final class UserFeedbackDeliveryViewTests: XCTestCase {
 
     private func mount(_ model: Gate1AppModel, probe: DeliveryProbe, duplicate: Bool = false,
                        pane: TestPane? = nil) throws -> MountedFeedback {
-        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
-        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let root = FeedbackTestContent(pane: pane ?? TestPane(), duplicate: duplicate)
             .modifier(AppFeedbackPresentation())
             .environmentObject(model)
             .environment(\.feedbackDeliveryEffects, probe.effects)
-        let host = UIHostingController(rootView: AnyView(root))
+        return try mountRoot(AnyView(root))
+    }
+
+    private func mountBranches(_ model: Gate1AppModel, probe: DeliveryProbe,
+                               pane: TestPane) throws -> MountedFeedback {
+        let root = RootBranchingFeedbackTestContent(pane: pane)
+            .environmentObject(model)
+            .environment(\.feedbackDeliveryEffects, probe.effects)
+        return try mountRoot(AnyView(root))
+    }
+
+    private func mountRoot(_ root: AnyView) throws -> MountedFeedback {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let host = UIHostingController(rootView: root)
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = host
@@ -96,6 +260,24 @@ private struct FeedbackTestContent: View {
     }
 }
 
+/// Match Gate1RootView's topology: apply the production modifier directly to a conditional Group,
+/// rather than to a custom view or a retained stack that could provide a different identity boundary.
+@MainActor
+private struct RootBranchingFeedbackTestContent: View {
+    @ObservedObject var pane: TestPane
+
+    var body: some View {
+        Group {
+            if pane.alternate {
+                Text("Second screen").onAppear { pane.appeared = true }
+            } else {
+                VStack { Text("First screen") }
+            }
+        }
+        .modifier(AppFeedbackPresentation())
+    }
+}
+
 @MainActor
 private struct MountedFeedback {
     let host: UIHostingController<AnyView>
@@ -116,6 +298,7 @@ private final class DeliveryProbe {
     var announcements: [String] = []
     var requests: [PendingFeedbackSleep] = []
     var onAnnouncement: ((Int) -> Void)?
+    var onRequest: (() -> Void)?
 
     var effects: UserFeedbackDeliveryEffects {
         UserFeedbackDeliveryEffects(
@@ -134,6 +317,7 @@ private final class DeliveryProbe {
     private func pause(for duration: Duration) async throws {
         let request = PendingFeedbackSleep(duration: duration)
         requests.append(request)
+        onRequest?()
         try await request.wait()
     }
 

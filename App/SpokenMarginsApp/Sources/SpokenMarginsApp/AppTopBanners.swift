@@ -1,12 +1,36 @@
 import SwiftUI
+import SessionKit
 
-/// One stable presentation boundary, outside the root's changing screen content.
+/// One stable delivery owner, outside the root's changing screens and passive banner copies.
 @MainActor
 struct AppFeedbackPresentation: ViewModifier {
+    @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.feedbackDeliveryEffects) private var effects
+
     func body(content: Content) -> some View {
+        let event = model.recordingNavigationIsLocked ? nil : model.feedbackEvent
         content
             .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners() }
             .overlay(alignment: .top) { FloatingFeedbackBanner() }
+            .task(id: event?.id) { @MainActor in
+                guard let event else { return }
+                await deliver(event)
+            }
+    }
+
+    private func deliver(_ event: UserFeedbackEvent) async {
+        // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
+        let announcement = event.action.map { "\(event.message) \($0.title) is available." } ?? event.message
+        effects.announce(announcement)
+        guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
+            for: event.kind,
+            offersAction: event.action != nil
+        ) else { return }
+        do {
+            try await effects.sleep(.seconds(seconds))
+            try Task.checkCancellation()
+            model.dismissFeedback(id: event.id)
+        } catch {}
     }
 }
 
