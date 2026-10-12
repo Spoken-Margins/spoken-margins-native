@@ -7619,7 +7619,6 @@ final class Gate1AppModel: ObservableObject {
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "complete"
                         reportSuccess("Transcribed Margin.")
                     }
-                    retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
                     scheduleSourceWindowContextIfNeeded(for: interjection)
                 }
             } catch {
