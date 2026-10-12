@@ -2622,8 +2622,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 pendingAutoplayOffset = nil
                 if abs(currentOffset - spokenOffset) <= (wasPlaying && !isSeek ? Self.livePositionTolerance : 1) {
                     // The player's own clock is the position now, not an earlier request for
-                    // another chunk (#346 re-audit).
-                    initialRequestedSpokenOffset = nil
+                    // another chunk (#346 re-audit). MUTATION (#353 proof B): the earlier request is kept.
                     return .resumePlayer(player)
                 }
                 initialRequestedSpokenOffset = spokenOffset
@@ -2639,8 +2638,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             if let cached = cachedOrSavedChunk(containing: spokenOffset) {
                 transportIntent = .playing
                 pendingStartTargetId = targetId
-                // The listener chose this chunk; a marker left for another must not play over it.
-                pendingAutoplayOffset = nil
+                // MUTATION (#353 proof B): the stale autoplay marker for another chunk is kept.
                 initialPlaybackOffset = cached.request.startOffset
                 initialRequestedSpokenOffset = spokenOffset
                 return .playCached(cached)
