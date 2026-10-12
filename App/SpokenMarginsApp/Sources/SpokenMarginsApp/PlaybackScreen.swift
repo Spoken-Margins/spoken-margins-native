@@ -347,7 +347,9 @@ struct PlaybackScreen: View {
                                 .foregroundStyle(AppColors.watchSecondary)
                             Text(PlaybackMarginPreview.text(displayText: note.displayText,
                                                             cleanedTranscript: note.cleanedTranscript,
-                                                            transcript: note.transcript))
+                                                            transcript: note.transcript,
+                                                            transcriptionStatus: note.transcriptionStatus,
+                                                            captureKind: note.captureKind))
                                 .font(.system(.body, design: .serif))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.leading)

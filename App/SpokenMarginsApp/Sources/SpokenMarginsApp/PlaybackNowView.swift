@@ -33,7 +33,8 @@ struct PlaybackNowView: View {
             ForEach(rows) { entry in
                 if let row = own.first(where: { $0.id == entry.id }), entry.origin == .own {
                     PlaybackMarginRowView(title: PlaybackMarginPreview.text(displayText: row.interjection.displayText,
-                        cleanedTranscript: row.interjection.cleanedTranscript, transcript: row.interjection.transcript),
+                        cleanedTranscript: row.interjection.cleanedTranscript, transcript: row.interjection.transcript,
+                        transcriptionStatus: row.interjection.transcriptionStatus, captureKind: row.interjection.captureKind),
                         detail: row.placeDescription(), countdown: entry.countdown,
                         isShared: false, identifier: "playback.now.margin.\(row.id)",
                         showDetails: { selectedMargin = row }, play: { _ = model.playMarginMoment(row) })
