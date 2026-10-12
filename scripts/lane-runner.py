@@ -40,9 +40,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
   it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
   (test-scope.py's lane_paths) until a Codex or Claude audit of its head says "No blocking findings": those pass
-  or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
+  or fail as usual, and the audit script re-arms automerge after a clean audit. Other lane changes don't
   wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
-  its own workflow and helpers. A PR someone asked T3 for merges only on a
+  its own workflow and helpers. The exception: it never merges a PR touching scripts/lane-runner.py or
+  anything under .github/, whatever the audit says, and its report says it needs the owner's tap
+  (owner rule 2026-10-09, #1203, owner_tap_paths): the runner can't test itself. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
   no report yet, the automerge run reports that verdict (INCONCLUSIVE while waiting) and doesn't merge.
   When a T3 then passes, the lane job that reported it runs the held automerge run itself, in the
@@ -663,6 +665,25 @@ def audit_blocker(comments: list[dict], head: str) -> str | None:
     return None
 
 
+# Owner rule 2026-10-09 (#1203, #1210): arming and merging a PR that touches the runner itself or anything under
+# .github/ is the owner's tap. The runner can't test itself, and a bad runner or workflow change could wave later
+# PRs through, so a clean audit doesn't let the runner merge these. Other lane paths still merge on an audit.
+OWNER_TAP_FILES = {'scripts/lane-runner.py'}
+OWNER_TAP_PREFIXES = ('.github/',)
+
+
+def owner_tap_paths(scope: dict) -> list[str]:
+    """The PR's changed paths only the owner merges, whatever an audit says (OWNER_TAP_FILES, OWNER_TAP_PREFIXES)."""
+    paths = {f.get('path') or '' for f in scope.get('files', [])} | set(scope.get('lane_paths') or [])
+    return sorted(p for p in paths if p in OWNER_TAP_FILES or p.startswith(OWNER_TAP_PREFIXES))
+
+
+def owner_tap_note(paths: list[str]) -> str:
+    shown = ', '.join(f'`{p}`' for p in paths)
+    return (f'not merged by the runner: it touches {shown}, which only the owner merges (owner rule 2026-10-09, '
+            '#1203), whatever an audit says. It needs the owner\'s tap.')
+
+
 def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
     """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex or Claude
     audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
@@ -976,9 +997,11 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return held[0], where, ran, details + [checks_note(head, tested_base, ran, where),
                                                    f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
-        if blockers:
+        tap = owner_tap_paths(scope)
+        if blockers or tap:  # the audit hold line goes first: the Mac's audit script finds lane PRs to audit by it
             return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
-                                                   'of its head says "No blocking findings".' for b in blockers]
+                                                   'of its head says "No blocking findings".' for b in blockers] + (
+                [owner_tap_note(tap)] if tap else [])
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
