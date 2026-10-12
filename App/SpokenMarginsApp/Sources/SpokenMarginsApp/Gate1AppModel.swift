@@ -500,7 +500,7 @@ final class Gate1AppModel: ObservableObject {
     let gate2CompactControls: Gate2CompactControlController
     private let featureFlags: SpokenMarginsFeatureFlags
     let localFoundationModelClient: any LocalFoundationModelClient
-    private let openAIResponsesClient = OpenAIResponsesClient()
+    let openAIResponsesClient = OpenAIResponsesClient()
     let streamingSpeechQueue = StreamingSpeechQueue()
     private(set) var speechPlaybackClient: AudioPlaybackClient?
     private var sessionAudioPlaybackClient: AudioPlaybackClient?
@@ -540,7 +540,7 @@ final class Gate1AppModel: ObservableObject {
     private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     let trashUndoDismissDelay: Duration
     var activeItemId = "item-pill"
-    private var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
+    private(set) var providerModel = UserDefaults.standard.string(forKey: "providerModel") ?? "gpt-5.6"
     private var playbackProgressTask: Task<Void, Never>?
     private var sleepTimerTask: Task<Void, Never>?
     private var onDeviceSpeechGenerationDelayTask: Task<Void, Never>?
@@ -592,8 +592,8 @@ final class Gate1AppModel: ObservableObject {
     private var failedStartupAudioPreparationItemIds: Set<String> = []
     private var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
-    private var completedStreamingTurnIds: Set<String> = []
-    @Published private var pendingSourceContextInterjectionIds: Set<String> = []
+    var completedStreamingTurnIds: Set<String> = []
+    @Published private(set) var pendingSourceContextInterjectionIds: Set<String> = []
     private let sourceWindowJobQueue = SourceWindowJobQueue()
     private var pendingFullSourceTranscriptionItemIds: Set<String> = []
     private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
@@ -606,7 +606,7 @@ final class Gate1AppModel: ObservableObject {
     private var importedTranscriptRetryDates: [String: Date] = [:]
     var importedPodcastRecipientLocalURLs: [String: URL] = [:]
     private var pendingMapGenerationItemId: String?
-    private var pendingProviderJobForConsent: PendingProviderJob?
+    var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
     private(set) var pendingTermsVoiceSelection: AppTTSVoiceSelection?
     var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
@@ -4557,7 +4557,7 @@ final class Gate1AppModel: ObservableObject {
     func clearLastFailure(itemId: String) { itemFailures.clear(itemId: itemId) }
 
     /// Trying an action again answers its Retry banner, so a stale one can't linger over the result.
-    private func withdrawRetryOffer(_ key: String) { if feedbackEvent?.retry?.key == key { feedbackEvent = nil } }
+    func withdrawRetryOffer(_ key: String) { if feedbackEvent?.retry?.key == key { feedbackEvent = nil } }
 
     func skipBack() {
         recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
@@ -4837,7 +4837,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func applyPreferredPlaybackRate(
+    func applyPreferredPlaybackRate(
         to started: SessionSnapshot,
         engine: SessionEngine
     ) throws -> SessionSnapshot {
@@ -5172,72 +5172,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func summarize() {
-        let itemId = snapshot.itemId ?? ""
-        withdrawRetryOffer("summary")
-        if !remoteProviderExperienceEnabled {
-            guard localFoundationModelAvailable else {
-                diagnostics["summaryPreflight"] = "local_model_unavailable"
-                reportFailure(localFoundationModelAvailabilityDescription)
-                return
-            }
-            guard pendingSourceContextInterjectionIds.isEmpty else {
-                reportFailure("Source context is still being prepared. Try again when the podcast context is ready.")
-                return
-            }
-            guard canSummarizeInterjections else {
-                reportFailure("A Margin summary already exists for this session.")
-                return
-            }
-            syncPlaybackProgressForLifecycle()
-            run { engine in
-                snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
-                let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
-                let contexts = localSummaryContexts(interjections: engine.lastSummaryCandidates)
-                submitLocalSummary(itemId: itemId, turnId: turnId, contexts: contexts)
-                refreshSelectedItem()
-                reportSuccess("On-device summary started.")
-            }
-            return
-        }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            isAISetupNeededPresented = true
-            diagnostics["summaryPreflight"] = "api_key_missing"
-            return
-        }
-        guard pendingSourceContextInterjectionIds.isEmpty else {
-            reportFailure("Source context is still being prepared. Try again when the podcast context is ready.")
-            return
-        }
-        guard canSummarizeInterjections else {
-            reportFailure("A Margin summary already exists for this session.")
-            return
-        }
-        syncPlaybackProgressForLifecycle()
-        run { engine in
-            snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
-            let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
-            submitProviderJobIfNeeded(kind: "interjection_summary", itemId: itemId, turnId: turnId, messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
-            refreshSelectedItem()
-            reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
-        }
-    }
-
-    func discuss(followUp: String) {
-        guard remoteProviderExperienceEnabled else {
-            reportFailure("Discuss is disabled in this release. Copy your notes to another chatbot and paste its response back here instead.")
-            return
-        }
-        guard pendingSourceContextInterjectionIds.isEmpty else {
-            reportFailure("Source context is still being prepared. Try again when the podcast context is ready.")
-            return
-        }
-        let trimmed = followUp.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentInterjections = currentDiscussionInterjections()
-        let request = Gate1DiscussionContext.primaryRequest(explicitFollowUp: trimmed, currentInterjections: currentInterjections)
-        submitDiscussionFollowUp(request, explicitFollowUp: trimmed, primaryInterjections: currentInterjections)
-    }
-
     func playTurn(_ turn: ConversationTurn, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         run { engine in
@@ -5278,7 +5212,7 @@ final class Gate1AppModel: ObservableObject {
         screen = .playback
     }
 
-    private func autoPlayCompletedTurn(
+    func autoPlayCompletedTurn(
         kind: String,
         turnId: String,
         engine: SessionEngine,
@@ -5325,7 +5259,7 @@ final class Gate1AppModel: ObservableObject {
         reportConfirmation("Session complete and saved.")
     }
 
-    private func shouldDeferGeneratedTurnPlayback(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
+    func shouldDeferGeneratedTurnPlayback(turnId: String, completedCurrentAudio: Bool = false) -> Bool {
         pendingAutoPlayQueue.shouldDeferGeneratedTurnPlayback(
             snapshot: snapshot,
             turnId: turnId,
@@ -5349,69 +5283,6 @@ final class Gate1AppModel: ObservableObject {
         diagnostics["pendingAutoPlayTurnId"] = pendingAutoPlayQueue.first
         diagnostics["pendingAutoPlayQueue"] = "\(pendingAutoPlayQueue.count)"
         diagnostics["pendingAutoPlayReason"] = reason
-    }
-
-    private func latestPendingJob(kind: String) -> AIJob? {
-        guard let sessionId = snapshot.sessionId,
-              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else {
-            return nil
-        }
-        return jobs.last {
-            $0.kind == kind && ($0.status == "pending" || $0.status == "deferred")
-        }
-    }
-
-    func followUp(_ text: String) {
-        guard remoteProviderExperienceEnabled else {
-            reportFailure("Remote discussion is disabled in this release.")
-            return
-        }
-        submitDiscussionFollowUp(text, explicitFollowUp: text, primaryInterjections: currentDiscussionInterjections())
-    }
-
-    private func submitDiscussionFollowUp(_ text: String, explicitFollowUp: String, primaryInterjections: [Interjection]) {
-        run { engine in
-            snapshot = try engine.submitFollowup(text: text)
-            let turnId = latestPendingJob(kind: "assistant_response")?.turnId ?? "turn-response-001"
-            submitProviderJobIfNeeded(
-                kind: "assistant_response",
-                itemId: snapshot.itemId ?? "",
-                turnId: turnId,
-                messages: [conversationPrompt(
-                    followUp: text,
-                    explicitFollowUp: explicitFollowUp,
-                    primaryInterjections: primaryInterjections
-                )]
-            )
-            refreshSelectedItem()
-            reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Follow-up queued for later." : "Follow-up submitted.")
-        }
-    }
-
-    func retryPendingAI() {
-        guard remoteProviderExperienceEnabled else {
-            summarize()
-            return
-        }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            isAISetupNeededPresented = true
-            diagnostics["aiRetryPreflight"] = "api_key_missing"
-            return
-        }
-        run { engine in
-            guard let sessionId = snapshot.sessionId,
-                  let job = try store?.loadAIJobs(sessionId: sessionId)
-                    .last(where: { $0.status == "retryable" || $0.status == "pending" || $0.status == "deferred" }) else {
-                reportFailure("No retryable AI job is available.")
-                return
-            }
-            snapshot = try engine.retryAIJob(jobId: job.id)
-            let turnId = job.turnId ?? (job.kind == "interjection_summary" ? "turn-summary-001" : "turn-response-001")
-            let messages = job.messages.isEmpty ? [job.kind == "interjection_summary" ? summaryPrompt(interjections: engine.lastSummaryCandidates) : "Continue the discussion."] : job.messages
-            submitProviderJobIfNeeded(kind: job.kind, itemId: snapshot.itemId ?? "", turnId: turnId, messages: messages, force: true)
-            refreshSelectedItem()
-            reportConfirmation("Retrying \(job.kind).")
-        }
     }
 
     static func marginIdentity(_ interjection: Interjection) -> String {
@@ -5748,26 +5619,6 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
         }
         #endif
-    }
-
-    func importPastedAssistantResponse(autoPlay: Bool = true) {
-        let text = pastedAssistantResponse.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else {
-            reportFailure("Paste a response before importing.")
-            return
-        }
-        stopSpeechPreviews()
-        run { engine in
-            if !hasActiveSession {
-                let started = try engine.startSession(itemId: activeItemId)
-                snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
-            }
-            snapshot = try engine.importAssistantResponse(text: text, autoPlay: autoPlay)
-            pastedAssistantResponse = ""
-            refreshSelectedItem()
-            screen = .playback
-            reportSuccess(autoPlay ? "Imported and playing pasted response." : "Imported pasted response.")
-        }
     }
 
     func deleteTranscript(interjection: Interjection) {
@@ -7641,7 +7492,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     #if canImport(AVFoundation)
-    private func stopSpeechPreviews() {
+    func stopSpeechPreviews() {
         if speechPreviewSynthesizer.isSpeaking {
             speechPreviewSynthesizer.stopSpeaking(at: .immediate)
         }
@@ -7666,7 +7517,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     #else
-    private func stopSpeechPreviews() {}
+    func stopSpeechPreviews() {}
     #endif
 
     func applicationSupportDirectory() throws -> URL {
@@ -7756,7 +7607,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func summaryScopeForCurrentTarget() -> SummaryScope {
+    func summaryScopeForCurrentTarget() -> SummaryScope {
         switch currentPlaybackTargetType {
         case TargetType.summaryTurnTTS.rawValue, TargetType.assistantTurnTTS.rawValue:
             return SummaryScope(targetType: "turn", turnId: currentPlaybackTargetId)
@@ -7765,7 +7616,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func latestPendingSummaryTurnId() -> String? {
+    func latestPendingSummaryTurnId() -> String? {
         guard let sessionId = snapshot.sessionId,
               let turns = try? store?.loadTurns(sessionId: sessionId) else { return nil }
         return turns
@@ -8677,30 +8528,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func recoverInterruptedAIJobs(store: SQLiteSessionStore, rows: [LibraryItemRow]) throws {
-        var recovered = 0
-        for row in rows {
-            for session in try store.loadSessions(itemId: row.id) {
-                for var job in try store.loadAIJobs(sessionId: session.id) where job.status == "pending" || job.status == "streaming" {
-                    let remoteJobDisabled = !remoteProviderExperienceEnabled
-                        && job.providerType != "apple_foundation_on_device"
-                    job.status = remoteJobDisabled ? "failed" : "retryable"
-                    job.lastError = remoteJobDisabled
-                        ? "remote_provider_disabled_by_feature_flag"
-                        : "app_terminated_during_stream"
-                    try store.updateAIJob(job)
-                    if let turnId = job.turnId,
-                       var turn = try store.loadTurns(sessionId: session.id).first(where: { $0.id == turnId && $0.status == "streaming" }) {
-                        turn.status = "failed_partial"
-                        try store.saveTurn(turn)
-                    }
-                    recovered += 1
-                }
-            }
-        }
-        diagnostics["recoveredInterruptedAIJobs"] = "\(recovered)"
-    }
-
     private func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
         if let sourceLinkHandoffStore {
             return sourceLinkHandoffStore
@@ -8721,308 +8548,6 @@ final class Gate1AppModel: ObservableObject {
         }
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return detector.matches(in: text, options: [], range: range).compactMap(\.url).first
-    }
-
-    private func submitProviderJobIfNeeded(kind: String, itemId: String, turnId: String, messages: [String], force: Bool = false) {
-        guard remoteProviderExperienceEnabled else {
-            markProviderFailure("remote_provider_disabled", userMessage: "Remote AI is disabled in this release.", itemId: itemId)
-            return
-        }
-        guard force || snapshot.pendingAiJobStatus == "pending" else { return }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            markProviderFailure("provider_api_key_missing", userMessage: "AI provider API key required.", itemId: itemId)
-            screen = .settings
-            return
-        }
-        guard aiDataSharingConsent == .grantedV1 else {
-            pendingProviderJobForConsent = PendingProviderJob(kind: kind, itemId: itemId, turnId: turnId, messages: messages, force: true)
-            isAIDataSharingConsentPresented = true
-            reportSuccess("Review how live AI uses this source before continuing.")
-            return
-        }
-        let selectedModel = modelForAIJob(kind: kind)
-        recordModelForPendingJob(kind: kind, model: selectedModel)
-        statusMessage = "Streaming \(selectedModel) for \(kind)."
-        lastError = nil
-        Task {
-            var receivedText = false
-            var automaticAttempts = 0
-            var streamsSpeechImmediately: Bool?
-            while automaticAttempts < 2 {
-                do {
-                    var completed = false
-                    let stream = openAIResponsesClient.stream(
-                        credentials: .apiKey(providerAPIKey),
-                        model: selectedModel,
-                        instructions: systemPromptForAIJob(kind: kind),
-                        messages: messages
-                    )
-                    for try await event in stream {
-                        guard let engine else { return }
-                        switch event {
-                        case .started(let responseId):
-                            diagnostics["lastOpenAIResponseId"] = responseId ?? "pending"
-                            diagnostics["lastProviderTransport"] = "responses_sse"
-                        case .textDelta(let delta):
-                            receivedText = true
-                            snapshot = try engine.aiStreamDelta(turnId: turnId, content: delta)
-                            if streamsSpeechImmediately == nil {
-                                streamsSpeechImmediately = !shouldDeferGeneratedTurnPlayback(turnId: turnId)
-                            }
-                            if streamsSpeechImmediately == true {
-                                if snapshot.targetId != turnId {
-                                    snapshot = try engine.activateStreamingTurn(turnId: turnId)
-                                }
-                                let stableUnits = snapshot.spokenUnits
-                                streamingSpeechQueue.enqueue(stableUnits, turnId: turnId)
-                                diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
-                                diagnostics["streamingTurnId"] = turnId
-                            }
-                            refreshSelectedItem()
-                        case .completed(let responseId):
-                            diagnostics["lastOpenAIResponseId"] = responseId ?? diagnostics["lastOpenAIResponseId"]
-                            completed = true
-                        }
-                    }
-                    guard completed else {
-                        throw OpenAIResponsesError.api("OpenAI ended the stream before response.completed.")
-                    }
-                    guard let engine else { return }
-                    snapshot = try engine.aiJobCompleted(turnId: turnId)
-                    if streamsSpeechImmediately == true {
-                        streamingSpeechQueue.enqueue(snapshot.spokenUnits, turnId: turnId)
-                        completedStreamingTurnIds.insert(turnId)
-                        diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
-                        finishStreamingTurnIfReady(turnId)
-                    } else {
-                        let completedCurrentAudio = syncPlaybackProgressBeforeGeneratedTurnDecision(engine: engine)
-                        try autoPlayCompletedTurn(
-                            kind: kind,
-                            turnId: turnId,
-                            engine: engine,
-                            completedCurrentAudio: completedCurrentAudio
-                        )
-                    }
-                    refreshSelectedItem()
-                    reportConfirmation(streamsSpeechImmediately == true
-                        ? "Provider response saved and streamed to speech."
-                        : "Provider response saved and queued after the current source.")
-                    await generateAssistantChaptersIfUseful(turnId: turnId, model: selectedModel)
-                    return
-                } catch {
-                    if !receivedText, automaticAttempts == 0 {
-                        automaticAttempts += 1
-                        diagnostics["providerAutomaticRetry"] = "before_first_delta"
-                        try? await Task.sleep(for: .milliseconds(500))
-                        continue
-                    }
-                    markProviderFailure(String(describing: error), userMessage: receivedText ? "Provider stream stopped; the partial response was saved." : "Provider call failed.", itemId: itemId)
-                    return
-                }
-            }
-        }
-    }
-
-    private func submitLocalSummary(itemId: String, turnId: String, contexts: [String]) {
-        statusMessage = "Summarizing Margins on device."
-        lastError = nil
-        Task {
-            do {
-                var partials: [String] = []
-                for context in contexts {
-                    partials.append(try await localFoundationModelClient.summarizeInterjections(context: context))
-                }
-                while partials.count > 1 {
-                    var reduced: [String] = []
-                    var start = 0
-                    while start < partials.count {
-                        let end = min(partials.count, start + 4)
-                        let group = partials[start..<end]
-                        let payload = group.enumerated().map { index, summary in
-                            "PARTIAL \(index + 1):\n\(String(summary.prefix(1_200)))"
-                        }.joined(separator: "\n\n")
-                        reduced.append(try await localFoundationModelClient.summarizeInterjections(context: payload))
-                        start = end
-                    }
-                    partials = reduced
-                }
-                guard let response = partials.first, !response.isEmpty else {
-                    throw LocalFoundationModelError.emptyResponse
-                }
-                guard let engine else { return }
-                snapshot = try engine.aiStreamDelta(turnId: turnId, content: response)
-                snapshot = try engine.aiJobCompleted(turnId: turnId)
-                let completedCurrentAudio = syncPlaybackProgressBeforeGeneratedTurnDecision(engine: engine)
-                try autoPlayCompletedTurn(
-                    kind: "interjection_summary",
-                    turnId: turnId,
-                    engine: engine,
-                    completedCurrentAudio: completedCurrentAudio
-                )
-                diagnostics["lastSummaryMode"] = "apple_foundation_on_device"
-                refreshSelectedItem()
-                reportConfirmation("On-device summary saved and queued after the current source.")
-            } catch {
-                diagnostics["lastSummaryMode"] = "apple_foundation_failed"
-                diagnostics["lastLocalSummaryErrorType"] = String(reflecting: type(of: error))
-                markProviderFailure(
-                    String(describing: error),
-                    userMessage: "On-device summary failed: \(error.localizedDescription) Tap Retry Summary to try the model again.",
-                    itemId: itemId,
-                    retry: .init(key: "summary") { [weak self] in self?.summarize() }
-                )
-            }
-        }
-    }
-
-    private func finishStreamingTurnIfReady(_ turnId: String) {
-        guard completedStreamingTurnIds.contains(turnId),
-              !streamingSpeechQueue.hasPendingSpeech(for: turnId),
-              let engine else {
-            return
-        }
-        do {
-            snapshot = try engine.finishStreamingTurnPlayback(turnId: turnId)
-            completedStreamingTurnIds.remove(turnId)
-            diagnostics["streamingSpeechPending"] = "\(streamingSpeechQueue.pendingCount)"
-            diagnostics["streamingTurnCompleted"] = turnId
-            refreshSelectedItem()
-        } catch {
-            diagnostics["streamingTurnCompletionError"] = String(describing: error)
-        }
-    }
-
-    private func syncPlaybackProgressBeforeGeneratedTurnDecision(engine: SessionEngine) -> Bool {
-        let previousStatus = snapshot.status
-        let previousTargetId = snapshot.targetId
-        do {
-            let updated = try engine.syncPlaybackProgress()
-            if updated != snapshot {
-                snapshot = updated
-            }
-            return previousStatus.isPlaybackActive &&
-                updated.status == .paused &&
-                previousTargetId == updated.targetId &&
-                updated.currentPlaybackProgressPercent >= 100
-        } catch {
-            diagnostics["playbackProgressSyncError"] = String(describing: error)
-            return false
-        }
-    }
-
-    private func generateAssistantChaptersIfUseful(turnId: String, model: String) async {
-        guard remoteProviderExperienceEnabled,
-              let sessionId = snapshot.sessionId,
-              let store,
-              let turn = try? store.loadTurns(sessionId: sessionId).first(where: { $0.id == turnId }),
-              let text = turn.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-              text.count >= 240 else {
-            return
-        }
-        do {
-            let messages = [ProviderPrompts.assistantChapters(responseText: text)]
-            let response = try await openAIResponsesClient.complete(
-                credentials: .apiKey(providerAPIKey),
-                model: model,
-                instructions: "Return only strict JSON for assistant response chapters. Do not use Markdown.",
-                messages: messages
-            )
-            let chapters = try AssistantChapterParser.chapters(from: response, responseText: text)
-            if let engine {
-                snapshot = try engine.aiChaptersCompleted(turnId: turnId, chapters: chapters)
-                refreshSelectedItem()
-            }
-            diagnostics["assistantChapters:\(turnId)"] = "complete:\(chapters.count)"
-        } catch {
-            diagnostics["assistantChapters:\(turnId)"] = "unavailable:\(error.localizedDescription)"
-        }
-    }
-
-    private func callProvider(messages: [String], model: String, systemPrompt: String) async throws -> String {
-        guard remoteProviderExperienceEnabled else {
-            throw ProviderCallError.remoteProviderDisabled
-        }
-        guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            throw ProviderCallError.missingAPIKey
-        }
-        guard aiDataSharingConsent == .grantedV1 else {
-            throw ProviderCallError.dataSharingConsentRequired
-        }
-        diagnostics["lastProviderRequestURL"] = OpenAIResponsesClient.endpoint.absoluteString
-        diagnostics["lastProviderRequestStartedAt"] = "\(Date().timeIntervalSince1970)"
-        diagnostics["lastProviderTransport"] = "responses_stream"
-        var responseText = ""
-        var completed = false
-        for try await event in openAIResponsesClient.stream(
-            credentials: .apiKey(providerAPIKey),
-            model: model,
-            instructions: systemPrompt,
-            messages: messages
-        ) {
-            switch event {
-            case .started(let responseId):
-                diagnostics["lastOpenAIResponseId"] = responseId ?? diagnostics["lastOpenAIResponseId"]
-            case .textDelta(let delta):
-                responseText += delta
-            case .completed(let responseId):
-                diagnostics["lastOpenAIResponseId"] = responseId ?? diagnostics["lastOpenAIResponseId"]
-                completed = true
-            }
-        }
-        guard completed else {
-            throw OpenAIResponsesError.api("OpenAI ended the Listening Map stream before response.completed.")
-        }
-        let trimmed = responseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw OpenAIResponsesError.emptyResponse }
-        return trimmed
-    }
-
-    private func modelForAIJob(kind: String) -> String {
-        Gate1ProviderRequestFactory.modelForAIJob(
-            kind: kind,
-            listeningMapModel: listeningMapModel,
-            summaryModel: summaryModel,
-            conversationModel: conversationModel,
-            fallbackProviderModel: fallbackProviderModel()
-        )
-    }
-
-    private func fallbackProviderModel() -> String {
-        let listeningMapFallback = listeningMapModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !listeningMapFallback.isEmpty {
-            return listeningMapFallback
-        }
-        let storedFallback = providerModel.trimmingCharacters(in: .whitespacesAndNewlines)
-        return storedFallback.isEmpty ? "gpt-5.6" : storedFallback
-    }
-
-    private func systemPromptForAIJob(kind: String) -> String {
-        Gate1ProviderRequestFactory.systemPromptForAIJob(kind: kind)
-    }
-
-    private func recordModelForPendingJob(kind: String, model: String) {
-        guard let sessionId = snapshot.sessionId,
-              let store,
-              var job = try? store.loadAIJobs(sessionId: sessionId).last(where: { $0.kind == kind && $0.status != "complete" }) else {
-            return
-        }
-        job.model = model
-        try? store.updateAIJob(job)
-        diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
-    }
-
-    private func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil) {
-        do {
-            if let engine {
-                snapshot = try engine.aiProviderFailed(error: error)
-                refreshSelectedItem()
-            }
-        } catch {
-            diagnostics["providerFailurePersistence"] = String(describing: error)
-        }
-        providerProbeStatus = userMessage
-        diagnostics["providerProbe"] = providerProbeStatus
-        reportFailure(userMessage, itemId: itemId, retry: retry)
     }
 
     func latestInterjectionNeedingTranscription() -> Interjection? {
@@ -10558,14 +10083,14 @@ final class Gate1AppModel: ObservableObject {
         ].joined(separator: ";")
     }
 
-    private func summaryPrompt(interjections: [Interjection]) -> String {
+    func summaryPrompt(interjections: [Interjection]) -> String {
         """
         I would like to have a session with you, the article, and my interjections below.
         \(sessionContextJSON(interjections: interjections, currentFollowUp: nil))
         """
     }
 
-    private func localSummaryContexts(interjections: [Interjection]) -> [String] {
+    func localSummaryContexts(interjections: [Interjection]) -> [String] {
         let records: [[String: String]] = interjections.map { interjection in
             [
                 "id": interjection.id,
@@ -10607,7 +10132,7 @@ final class Gate1AppModel: ObservableObject {
         return json
     }
 
-    private func conversationPrompt(followUp: String, explicitFollowUp: String, primaryInterjections: [Interjection]) -> String {
+    func conversationPrompt(followUp: String, explicitFollowUp: String, primaryInterjections: [Interjection]) -> String {
         let scopedInterjections = primaryInterjections.isEmpty ? currentDiscussionInterjections() : primaryInterjections
         return Gate1ProviderRequestFactory.conversationPrompt(
             followUp: followUp,
@@ -10633,7 +10158,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func currentDiscussionInterjections() -> [Interjection] {
+    func currentDiscussionInterjections() -> [Interjection] {
         Gate1DiscussionContext.currentTargetInterjections(
             interjections: selectedItem.interjections,
             currentTargetType: currentPlaybackTargetType,
@@ -12234,23 +11759,6 @@ final class Gate1AppModel: ObservableObject {
             throw CocoaError(.fileNoSuchFile)
         }
         return try ContractFixtureLoader.profile(at: url)
-    }
-}
-
-private enum ProviderCallError: Error, CustomStringConvertible {
-    case missingAPIKey
-    case dataSharingConsentRequired
-    case remoteProviderDisabled
-
-    var description: String {
-        switch self {
-        case .missingAPIKey:
-            return "provider_api_key_missing"
-        case .dataSharingConsentRequired:
-            return "ai_data_sharing_consent_required"
-        case .remoteProviderDisabled:
-            return "remote_provider_disabled"
-        }
     }
 }
 
