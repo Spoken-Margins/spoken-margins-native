@@ -71,6 +71,19 @@ final class QuickAddFeedTests: XCTestCase {
         XCTAssertEqual(candidates.map(\.id), ["followed-source:two-a", "followed-source:one-a"])
     }
 
+    func testEpisodesWithTitlesInAnotherScriptStayApart() {
+        let candidates = QuickAddFeed.candidates(
+            folderFiles: [],
+            followedEntries: [
+                entry("j1", title: "第一話", publishedAt: 100),
+                entry("j2", title: "第二話", publishedAt: 100),
+                entry("j3", title: "第一話", publishedAt: 100)
+            ],
+            subscriptions: [subscription()]
+        )
+        XCTAssertEqual(candidates.map(\.id), ["followed-source:j1", "followed-source:j2"])
+    }
+
     func testDifferentEpisodesStayEvenWithOneTitleOrOnePageLink() {
         let candidates = QuickAddFeed.candidates(
             folderFiles: [],

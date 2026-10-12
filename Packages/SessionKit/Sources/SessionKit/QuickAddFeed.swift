@@ -101,8 +101,13 @@ public enum QuickAddFeed {
     private static func distinctEpisodes(_ entries: [FeedEntry], sourceTitles: [String: String]) -> [FeedEntry] {
         var seen = Set<String>()
         return entries.filter { entry in
-            let key = episodeKey(title: entry.title, sourceTitle: sourceTitles[entry.subscriptionId] ?? entry.subscriptionId)
-                + "|" + (entry.publishedAt.map { String(Int($0.timeIntervalSince1970)) } ?? "undated")
+            var key = episodeKey(title: entry.title, sourceTitle: sourceTitles[entry.subscriptionId] ?? entry.subscriptionId)
+            // `episodeKey` keeps only ASCII letters and digits, so a title in another script is empty
+            // there; its own text tells such episodes apart.
+            if key.hasSuffix("|") {
+                key += entry.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+            key += "|" + (entry.publishedAt.map { String(Int($0.timeIntervalSince1970)) } ?? "undated")
             return seen.insert(key).inserted
         }
     }
