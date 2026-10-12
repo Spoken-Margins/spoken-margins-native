@@ -1155,15 +1155,11 @@ class MergeTests_Runner(unittest.TestCase):
 
     def test_lane_changes_merge_on_pass_plus_a_clean_audit_of_the_head(self):
         # Owner rule 2026-10-01: lane PRs no longer wait for the owner. They wait for the audit, then merge.
-        cases = {
-            '.github/workflows/lane.yml': 'docs',
-            'scripts/lane-runner.py': 'scripts',
-            'scripts/lane_sim.py': 'scripts',
-        }
+        # The runner itself and .github/ are the exception (next test).
         clean = comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')
-        for path, category in cases.items():
+        for path in ('scripts/lane_sim.py', 'scripts/verify-tests.py'):
             with self.subTest(path=path):
-                scope = {'tier': 'T1', 'why': [], 'lane_paths': [path], 'files': [{'path': path, 'category': category}]}
+                scope = {'tier': 'T1', 'why': [], 'lane_paths': [path], 'files': [{'path': path, 'category': 'scripts'}]}
                 (verdict, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), scope=scope)
                 self.assertEqual((verdict, events), ('PASS', ['build']))
                 self.assertEqual(details[-1], 'not merged by the runner: it touches the lane and has no Codex or Claude audit '
@@ -1173,6 +1169,40 @@ class MergeTests_Runner(unittest.TestCase):
                                                                  scope=scope)
                 self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
                 self.assertIn('merged into next as m100000', details[-1])
+
+    def test_the_runner_and_github_changes_never_merge_without_the_owner_whatever_the_audit_says(self):
+        # #1210, owner decision 2026-10-09 (#1203): arming and merging a PR that touches scripts/lane-runner.py or
+        # anything under .github/ is the owner's tap. The runner can't test itself, and a bad runner or workflow
+        # change could wave later PRs through, so a clean audit doesn't let the runner merge it.
+        clean = comment('**Codex audit (Astra) on `aaaaaaa`**\n\nNo blocking findings.')
+        cases = {
+            'scripts/lane-runner.py': ['scripts/lane-runner.py'],
+            '.github/workflows/lane.yml': ['.github/workflows/lane.yml'],
+            '.github/CODEOWNERS': [],  # under .github/ but not a lane path (test-scope.py's LANE_PREFIXES)
+        }
+        for path, lane_paths in cases.items():
+            with self.subTest(path=path):
+                scope = {'tier': 'T1', 'why': [], 'lane_paths': lane_paths,
+                         'files': [{'path': 'App/X.swift', 'category': 'app-ui'}, {'path': path, 'category': 'scripts'}]}
+                self.assertEqual(lane.owner_tap_paths(scope), [path])
+                github = FakeGitHub(labels=('automerge',), comments=[clean])
+                (verdict, _, _, details), events = self.run_auto(github, scope=scope)
+                self.assertEqual((verdict, events, github.posted), ('PASS', ['build'], []))
+                self.assertEqual(details[-1], f'not merged by the runner: it touches `{path}`, which only the owner '
+                                              'merges (owner rule 2026-10-09, #1203), whatever an audit says. It needs '
+                                              'the owner\'s tap.')
+        unaudited = {'tier': 'T1', 'why': [], 'lane_paths': ['scripts/lane-runner.py'],
+                     'files': [{'path': 'scripts/lane-runner.py', 'category': 'scripts'}]}
+        (_, _, _, details), _ = self.run_auto(FakeGitHub(labels=('automerge',)), scope=unaudited)
+        # The audit hold line stays first: the Mac's audit script finds lane PRs to audit by it.
+        self.assertTrue(details[-2].startswith('not merged by the runner: it touches the lane and has no Codex'))
+        self.assertIn("needs the owner's tap", details[-1])
+
+    def test_a_policy_without_paths_holds_nothing_for_the_owner(self):
+        self.assertEqual(lane.owner_tap_paths(self.SCOPE), [])
+        self.assertEqual(lane.owner_tap_paths({'files': [{'category': 'scripts'}]}), [])
+        self.assertEqual(lane.owner_tap_paths({'files': [{'path': 'scripts/lane-runner.pyc'},
+                                                         {'path': 'docs/.github/x'}]}), [])
 
     def test_unaudited_risky_changes_wait_for_the_audit(self):
         risky = {'tier': 'T2', 'why': [], 'files': [{'path': 'Packages/SessionKit/Sources/SessionKitSharing/A.swift',
@@ -2435,6 +2465,28 @@ class MergeTests(unittest.TestCase):
         (self.tree / 'App/SpokenMarginsApp').mkdir(parents=True)
         self.commit(self.tree, 'App/SpokenMarginsApp/View.swift', 'struct V {}\n')
         self.assertEqual(lane.diff_scope(self.tree, 'next')['tier'], 'T2')
+
+    def test_a_file_moved_out_of_the_owner_s_paths_still_counts_as_a_change_to_them(self):
+        # #1402 audit: git lists only the new name of a rename, so a PR that moved .github/workflows/merge-audit.yml or
+        # scripts/lane-runner.py elsewhere looked like a docs change and the runner merged it without the owner's tap.
+        workflow = '.github/workflows/merge-audit.yml'
+        for name in (workflow, 'scripts/lane-runner.py', '.github/wörkflows/audit.yml'):
+            (self.origin / name).parent.mkdir(parents=True, exist_ok=True)
+            self.commit(self.origin, name, 'name: audit\nrun: the same body, long enough for rename detection\n' * 4)
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', 'origin', 'next'], check=True)
+        (self.tree / 'docs/archive').mkdir(parents=True)
+        for old, new in ((workflow, 'docs/archive/merge-audit.yml'),
+                         ('scripts/lane-runner.py', 'docs/archive/lane-runner.py'),
+                         ('.github/wörkflows/audit.yml', 'docs/archive/audit.yml')):
+            subprocess.run(self.git + ['-C', str(self.tree), 'mv', old, new], check=True)
+        subprocess.run(self.git + ['-C', str(self.tree), 'commit', '-q', '-m', 'move them'], check=True)
+        lane.fetch_base(self.tree, 'next')
+        paths, _ = lane.committed_changes(self.tree, 'next')
+        self.assertEqual(paths, sorted(['.github/wörkflows/audit.yml', 'docs/archive/audit.yml',
+                                        'docs/archive/lane-runner.py', 'docs/archive/merge-audit.yml',
+                                        'scripts/lane-runner.py', workflow]))
+        self.assertEqual(lane.owner_tap_paths({'files': [{'path': p} for p in paths]}),
+                         sorted(['.github/wörkflows/audit.yml', 'scripts/lane-runner.py', workflow]))
 
     def test_a_diff_touching_the_app_model_suggests_its_whole_workflow_class(self):
         (self.origin / 'scripts').mkdir()

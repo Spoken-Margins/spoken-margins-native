@@ -37,6 +37,7 @@ BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 
 # The lane's own machinery (owner rule 2026-10-01). A PR touching any of these merges only after a clean
 # Codex or Claude audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
+# scripts/lane-runner.py and .github/ go further: only the owner merges those (lane-runner.py, owner_tap_paths).
 # The list: every workflow; the runner and its helpers (lane-runner.py, lane_sim.py, lane_slots.py,
 # lane_guard.py, lane-sim-boot, xcodebuild-lane, host-test-lane, install-lane-guard.py); the policies the
 # runner loads from next (this file, hot_file_ratchet.py, merge_audit.py); verify-tests.py, which runs the
@@ -48,7 +49,8 @@ LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/inst
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
               'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
 LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
-             'findings". The audit runs by itself once the automerge run passes.')
+             'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane-runner.py or '
+             '.github/ also needs the owner\'s merge tap: the runner never merges it.')
 
 SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
 SESSIONKIT_PACKET_FILES = {'SharingModels.swift', 'ShareableLinkPolicy.swift'}
