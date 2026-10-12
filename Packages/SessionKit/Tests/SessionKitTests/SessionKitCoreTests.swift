@@ -144,6 +144,48 @@ final class SessionKitCoreTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1291 APO-14: the emoji-article soak (`EmojiArticlePlaybackUITests`, retired SpeechCanary
+    /// plan) accepted a run that returned Home at 90 percent, so a voice queue missing the
+    /// article's tail could pass. This holds the same claim where it runs: every spoken word of a
+    /// long article with emoji and links reaches the voice, its last sentence is in the final
+    /// utterance, and playback completes only when that utterance finishes.
+    func testLongEmojiArticleQueuesEveryWordAndCompletesOnlyAfterItsLastSentence() throws {
+        let paragraph = "Expression keeps evolving 💪🏿 as people find new ways to say what they mean, "
+            + "and [the guide](https://example.com/emoji-guide) explains why. Color meets contrast ⛲ "
+            + "when the artwork has to read at every size on every screen. "
+        let lastSentence = "Language only truly lives when people use it."
+        let source = Array(repeating: paragraph, count: 24).joined(separator: "\n\n") + "\n\n" + lastSentence
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
+        var queued: [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)] = []
+        client.speakNarration = { queued.append(($0, $1)) } // nothing is spoken, so the test delivers the callbacks
+        let spoken = try client.prepareSpeechText(source)
+        try client.play(targetId: "emoji-article", from: 0)
+
+        let utterances = queued.map(\.utterance)
+        XCTAssertGreaterThan(utterances.count, 2, "a long article is spoken in several utterances")
+        XCTAssertEqual(
+            utterances.map(\.speechString).joined(), spoken,
+            "every spoken word of the article reaches the voice, in order, with nothing dropped"
+        )
+        XCTAssertTrue(utterances.allSatisfy { SpeechTextNormalizer.isSystemSpeechSafe($0.speechString) })
+        let final = try XCTUnwrap(utterances.last)
+        XCTAssertTrue(final.speechString.hasSuffix(lastSentence), "the article's last sentence is the last thing spoken")
+
+        let synthesizer = try XCTUnwrap(queued.first?.synthesizer)
+        client.speechSynthesizer(synthesizer, didStart: utterances[0])
+        for utterance in utterances.dropLast() {
+            client.speechSynthesizer(synthesizer, didFinish: utterance)
+            XCTAssertFalse(
+                client.isPlaybackComplete(targetId: "emoji-article"),
+                "playback completed before the article's last sentence was spoken"
+            )
+        }
+        client.speechSynthesizer(synthesizer, didFinish: final)
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "emoji-article"))
+        XCTAssertEqual(client.currentCharOffset(), source.count)
+        try client.stop()
+    }
+
     /// #221 lane FAIL: with the iOS voice, changing the speed mid-session restarted playback with
     /// the session's old 1× rate, so "1.50×" played at 1× and Now Playing reported rate 1.
     /// Rate is one number (I14): the session's rate follows the listener's speech rate.
