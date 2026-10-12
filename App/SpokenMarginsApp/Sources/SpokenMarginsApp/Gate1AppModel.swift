@@ -60,7 +60,7 @@ final class Gate1AppModel: ObservableObject {
     static let exportPreviewCharacterLimit = 24_000
     nonisolated static let supportedPlaybackRates: [Double] = SpeechRateRule.supportedMultipliers
     static let privateSharingNoteCharacterLimit = 500
-    private static var isRunningUnitTests: Bool {
+    static var isRunningUnitTests: Bool {
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
             || NSClassFromString("XCTestCase") != nil
     }
@@ -444,7 +444,7 @@ final class Gate1AppModel: ObservableObject {
         rawValue: UserDefaults.standard.string(forKey: "automaticEpisodeMapPreparationPolicy") ?? ""
     ) ?? .off
     @Published private(set) var episodeMapPreparationStatus = "Not started"
-    @Published private(set) var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
+    @Published var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published private(set) var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
     @Published private(set) var onDeviceSpeechGenerationStopReason: String?
@@ -515,7 +515,7 @@ final class Gate1AppModel: ObservableObject {
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     let audioPlaybackClientOverride: AudioPlaybackClient?
     var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
-    private(set) var podcastDownloadCoordinator: PodcastDownloadCoordinator?
+    var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     /// Shared by the podcast downloader and the pre-play offline check (#779).
     let connectivity = ConnectivityMonitor()
     private var requestedPodcastTransportReplacements: Set<String> = []
@@ -8878,50 +8878,6 @@ final class Gate1AppModel: ObservableObject {
         return store
     }
 
-    private func configurePodcastDownloads(store: SQLiteSessionStore) throws {
-        try configureOfflineServices(store: store)
-        podcastDownloadCoordinator?.shutdown()
-        let limit = PodcastCacheLimitGB(rawValue: podcastCacheLimitGB) ?? .defaultValue
-        let coordinator = try PodcastDownloadCoordinator(
-            store: store,
-            ledger: try requireOfflineLedger(
-                store: store,
-                rootDirectory: try applicationSupportDirectory()
-            ),
-            applicationSupportDirectory: try applicationSupportDirectory(),
-            cacheLimit: limit,
-            monitorsNetwork: !Self.isRunningUnitTests,
-            connectivity: connectivity,
-            usesBackgroundSession: !Self.isRunningUnitTests
-        )
-        coordinator.onRecordChanged = { [weak self] record in
-            guard let self else { return }
-            podcastDownloadRecords[record.itemId] = record
-            if let index = libraryItems.firstIndex(where: { $0.id == record.itemId }) {
-                let state = LibraryOfflineStateFilter.forItem(
-                    preparedState: nil,
-                    mediaSourceType: nil,
-                    podcastDownloadState: record.state
-                )
-                if libraryItems[index].offlineState != state {
-                    libraryItems[index].offlineState = state
-                }
-            }
-            if diagnostics["podcastDownload:\(record.itemId)"] != record.state.rawValue {
-                recordDeveloperDiagnostic("download.state", ["item": DeveloperDiagnosticRecording.token(record.itemId),
-                    "state": record.state.rawValue, "bytes": String(record.bytesWritten),
-                    "failure": DeveloperDiagnosticRecording.token(record.failureReason)])
-            }
-            diagnostics["podcastDownload:\(record.itemId)"] = record.state.rawValue
-        }
-        coordinator.onLocalAssetReady = { [weak self] itemId, url in
-            self?.podcastLocalAssetDidBecomeReady(itemId: itemId, url: url)
-        }
-        podcastDownloadCoordinator = coordinator
-        podcastDownloadRecords = coordinator.recordsByItemId
-        diagnostics["podcastCacheLimitGB"] = "\(limit.rawValue)"
-    }
-
     private func enqueueExplicitAudioPreparation(item: Item) async {
         guard let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
               !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -9374,7 +9330,7 @@ final class Gate1AppModel: ObservableObject {
         Array(plan.prefix(min(maximumChunkCount ?? plan.count, plan.count)))
     }
 
-    private func configureOfflineServices(store: SQLiteSessionStore) throws {
+    func configureOfflineServices(store: SQLiteSessionStore) throws {
         let support = try applicationSupportDirectory()
         let ledger = OfflineStorageLedger(repository: store, rootDirectory: support)
         offlineStorageLedger = ledger
