@@ -164,17 +164,25 @@ def summarize(manifest: dict) -> dict:
 
 
 def settle(first: dict, reruns: list[dict]) -> dict:
-    """Apply the flake rule to a FAIL: a test that passes in every re-run is flaky, not failing.
+    """Apply the flake rule to a FAIL: a test that passed in a completed re-run on the same build is flaky.
 
-    A re-run that stopped (INCONCLUSIVE) can't clear anything, so the original failure stands."""
+    A re-run that stopped (INCONCLUSIVE) is no information either way: it can't clear a test, and it can't
+    keep a failure confirmed that another re-run's pass has already cleared (#1417). A test that passed in
+    one re-run and failed in another is flaky too, but `flaky_notes` says so, because an order-dependent
+    failure looks the same."""
     if first['verdict'] != 'FAIL':
         return dict(first, flaky=[])
-    def passed_everywhere(test):
-        return len(reruns) == RERUNS and all(
-            r['verdict'] != 'INCONCLUSIVE' and r['tests'].get(test) == 'passed' for r in reruns)
-    flaky = [t for t in first['failed'] if passed_everywhere(t)]
+    completed = [r for r in reruns if r['verdict'] != 'INCONCLUSIVE']
+    flaky, notes = [], {}
+    for test in first['failed']:
+        passes = sum(1 for r in completed if r['tests'].get(test) == 'passed')
+        if not passes:
+            continue
+        flaky.append(test)
+        if any(r['tests'].get(test) == 'failed' for r in completed):
+            notes[test] = f' (passed in {passes} of {len(completed)} re-runs, failed in the rest)'
     confirmed = [t for t in first['failed'] if t not in flaky]
-    return dict(first, verdict='FAIL' if confirmed else 'PASS', failed=confirmed, flaky=flaky,
+    return dict(first, verdict='FAIL' if confirmed else 'PASS', failed=confirmed, flaky=flaky, flaky_notes=notes,
                 errors=first['errors'] + [e for r in reruns for e in r['errors']] if confirmed else first['errors'])
 
 
@@ -216,7 +224,9 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
                      + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
     if result['failed']:
         lines.append('failing: ' + ', '.join(result['failed']))
-    lines.append('flaky: ' + (', '.join(result['flaky']) if result.get('flaky') else 'none this run'))
+    notes = result.get('flaky_notes', {})
+    lines.append('flaky: ' + (', '.join(t + notes.get(t, '') for t in result['flaky']) if result.get('flaky')
+                              else 'none this run'))
     lines.append('crashes: ' + (', '.join(Path(p).name for p in result['crashes'])
                                 if result.get('crashes') else 'none recorded'))
     if result['verdict'] == 'FAIL':

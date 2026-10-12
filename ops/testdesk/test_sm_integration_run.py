@@ -140,7 +140,7 @@ class VerdictTests(unittest.TestCase):
     def test_a_test_that_passes_both_reruns_is_flaky_not_failing(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
         reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'failed'})),
-                  run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))]
+                  run.summarize(manifest({TEST: 'passed', OTHER: 'failed'}))]
         settled = run.settle(first, reruns)
         self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']), ('FAIL', [OTHER], [TEST]))
         clean = run.settle(first, [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))] * 2)
@@ -149,11 +149,33 @@ class VerdictTests(unittest.TestCase):
     def test_a_rerun_cannot_clear_a_test_it_did_not_pass(self):
         first = run.summarize(manifest({TEST: 'failed'}))
         stopped = run.summarize(manifest({TEST: 'passed'}, interrupted=True))
-        passed = run.summarize(manifest({TEST: 'passed'}))
+        failed = run.summarize(manifest({TEST: 'failed'}))
         other_only = run.summarize(manifest({OTHER: 'passed'}))  # the failing test never ran
-        for reruns in ([passed, stopped], [passed], [passed, other_only], []):
+        for reruns in ([stopped, stopped], [failed, failed], [stopped], [other_only, other_only], [failed, stopped], []):
             with self.subTest(reruns=len(reruns)):
                 self.assertEqual(run.settle(first, reruns)['verdict'], 'FAIL')
+
+    def test_a_pass_in_any_completed_rerun_clears_the_test_even_when_the_other_rerun_stopped(self):
+        # #1417: re-run 1 passed both tests; re-run 2 never ran a test (the simulator would not boot).
+        first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
+        passed = run.summarize(manifest({TEST: 'passed', OTHER: 'passed'}))
+        stopped = run.summarize({'status': 'failed_or_incomplete', 'steps': []})
+        for reruns in ([passed, stopped], [stopped, passed], [passed]):
+            with self.subTest(reruns=[r['verdict'] for r in reruns]):
+                settled = run.settle(first, reruns)
+                self.assertEqual((settled['verdict'], settled['failed'], settled['flaky']),
+                                 ('PASS', [], sorted([TEST, OTHER])))
+
+    def test_a_test_that_passes_once_and_fails_once_is_flaky_but_the_report_says_so(self):
+        first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
+        reruns = [run.summarize(manifest({TEST: 'passed', OTHER: 'passed'})),
+                  run.summarize(manifest({TEST: 'failed', OTHER: 'passed'}))]
+        settled = run.settle(first, reruns)
+        self.assertEqual((settled['verdict'], settled['flaky']), ('PASS', sorted([TEST, OTHER])))
+        self.assertEqual(list(settled['flaky_notes']), [TEST])
+        text = run.report_text('a' * 40, dict(settled, reruns=2, crashes=[], counts={'passed': 0, 'failed': 0, 'skipped': 0}),
+                               started=0, finished=1, previous=None, suspects=[], evidence=Path('/e'))
+        self.assertIn(f'{TEST} (passed in 1 of 2 re-runs, failed in the rest)', text)
 
     def test_settle_leaves_pass_and_inconclusive_alone(self):
         for m in (manifest({TEST: 'passed'}), manifest({TEST: 'failed'}, interrupted=True)):
@@ -360,7 +382,7 @@ class TickTests(unittest.TestCase):
         self.assertEqual((ops.diagnosed, ops.filed), ([], []))
 
     def test_confirmed_failure_reports_then_diagnoses_and_files(self):
-        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'passed'})]
+        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'})]
         with tempfile.TemporaryDirectory() as tmp, mac_with_room():
             ops = FakeOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
             self.assertEqual(run.tick(ops), 'FAIL')
@@ -454,8 +476,9 @@ def recording_slot(events):
 def real_scope():
     """test-scope.py from this checkout, reading the checkout's files whatever root the fake ops has."""
     scope = run.revert.load_test_scope(run.REPO_ROOT)
-    return types.SimpleNamespace(is_lane_path=scope.is_lane_path,
-                                 classify_path=lambda root, path: scope.classify_path(run.REPO_ROOT, path))
+    return types.SimpleNamespace(
+        is_lane_path=scope.is_lane_path, build_scripts=lambda root: scope.build_scripts(run.REPO_ROOT),
+        classify_path=lambda root, path, diff='', build=frozenset(): scope.classify_path(run.REPO_ROOT, path, diff, build))
 
 
 FAILING = [manifest({TEST: 'failed'}), manifest({TEST: 'failed'}), manifest({TEST: 'failed'})]
@@ -485,6 +508,7 @@ class CulpritTests(unittest.TestCase):
             ('packet', dict(paths=['Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift']), 'packet'),
             ('lane', dict(paths=['scripts/lane-runner.py']), 'the lane'),
             ('another revert', dict(open_reverts=['#1234']), '#1234'),
+            ('ops only (#1417)', dict(paths=['ops/ledger/ledger.py', 'ops/README.md']), 'outside the app build'),
         ]
         for name, kw, words in cases:
             with self.subTest(name), tempfile.TemporaryDirectory() as tmp:
@@ -524,6 +548,16 @@ class CulpritTests(unittest.TestCase):
 
     def test_a_flaky_pass_never_searches_or_reverts(self):
         plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
+            with recording_slot(ops.events):
+                self.assertEqual(run.tick(ops), 'PASS')
+        self.assertEqual((ops.reverts, ops.comments), ([], []))
+        self.assertFalse(any(e[0] == 'check' for e in ops.events))
+
+    def test_a_pass_in_one_rerun_with_the_other_unable_to_boot_never_searches_or_reverts(self):
+        # #1417: re-run 1 passed, re-run 2 never ran a test.
+        plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), {'status': 'failed_or_incomplete', 'steps': []}]
         with tempfile.TemporaryDirectory() as tmp:
             ops = CulpritOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')])
             with recording_slot(ops.events):
