@@ -1,9 +1,7 @@
 import SwiftUI
-import SessionKit
 
 struct PlaybackChapterRowView: View {
     let title: String?
-    let sourceTitle: String
     let canJumpToNextChapter: Bool
     let showItem: () -> Void
     let nextChapter: () -> Void
@@ -11,7 +9,7 @@ struct PlaybackChapterRowView: View {
     var body: some View {
         HStack(spacing: 8) {
             Button(action: showItem) {
-                Text(PlaybackSourceLabels.chapterTitle(title, sourceTitle: sourceTitle))
+                Text(title ?? "Current source")
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }
