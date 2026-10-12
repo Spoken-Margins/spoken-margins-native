@@ -427,12 +427,38 @@ def identifiers(code: str) -> set:
 MUTATING = r'(=(?!=)|[-+*/%]=|\[[^\]]*\]\s*=(?!=)|\.(append|remove|removeAll|removeValue|removeFirst|removeLast|insert|merge|formUnion|subtract|sort|reverse|toggle|updateValue|popLast)\b)'
 
 
-def mutated(code: str, name: str) -> bool:
-    """Whether code assigns to or mutates `name`, as opposed to reading it or binding a local of that name."""
-    for match in re.finditer(r'(?<![\w.])(self\.)?' + re.escape(name) + r'\??\s*' + MUTATING, code):
+def mutating_methods(*texts: str) -> frozenset:
+    """Names of `mutating func`s declared in the given Swift texts and in the app and package sources.
+
+    A call such as `passes.begin(...)` on a struct-typed stored var needs its setter; the stdlib
+    names in MUTATING don't cover the repo's own structs (#1012: `sharedMarginPlacementPasses`;
+    #990: `microphonePrimer`)."""
+    found = set()
+    sources = list(texts)
+    for folder in ('App', 'Packages'):
+        for path in (ROOT / folder).rglob('*.swift'):
+            if '.build' not in path.parts:
+                sources.append(path.read_text(errors='replace'))
+    for text in sources:
+        found.update(re.findall(r'\bmutating\s+func\s+(\w+)', text))
+    return frozenset(found)
+
+
+def mutated(code: str, name: str, methods: frozenset = frozenset()) -> bool:
+    """Whether code assigns to or mutates `name`, as opposed to reading it or binding a local of that name.
+
+    `methods` are extra mutating method names (see mutating_methods)."""
+    pattern = MUTATING
+    if methods:
+        pattern = MUTATING[:-1] + '|\\.(' + '|'.join(sorted(map(re.escape, methods))) + r')\s*\()'
+    for match in re.finditer(r'(?<![\w.])(self\.)?' + re.escape(name) + r'\??\s*' + pattern, code):
         before = code[max(0, match.start() - 40):match.start()]
         if match.group(1) or not re.search(r'\b(let|var|case)\s+$|,\s*$', before):
             return True
+    # A tuple assignment, `(a, b) = (x, y)` (#1016: skimForwardDestinationMs).
+    tuple_target = r'\(\s*(?:[^()=]*,\s*)?(self\.)?' + re.escape(name) + r'\s*(?:,[^()=]*)?\)\s*=(?!=)'
+    if re.search(tuple_target, code):
+        return True
     return re.search(r'&(self\.)?' + re.escape(name) + r'\b', code) is not None
 
 
@@ -497,13 +523,14 @@ def plan_move(text: str, chosen_specs: list, start: str | None, through: str | N
     remaining_ids = identifiers(remaining_code)
     lines = list(s.lines)
     changes = []
+    methods = mutating_methods(text, *(extra_texts or {}).values())
     for m in chosen:
         if m.is_private and m.name in remaining_ids:
             change = relax_header(lines, m, None)
             if change:
                 changes.append(('moved, used by the model', m.name, change))
         elif 'private(set)' in m.modifiers or 'fileprivate(set)' in m.modifiers:
-            if mutated(remaining_code, m.name):
+            if mutated(remaining_code, m.name, methods):
                 change = relax_header(lines, m, None)
                 if change:
                     changes.append(('moved, set by the model', m.name, change))
@@ -513,7 +540,7 @@ def plan_move(text: str, chosen_specs: list, start: str | None, through: str | N
     for m in staying + top_level:
         if m.name not in moved_ids:
             continue
-        writes = mutated(moved_code, m.name)
+        writes = mutated(moved_code, m.name, methods)
         if m.is_private:
             if m.stored and m.kind == 'var' and not writes:
                 change = relax_header(lines, m, 'private(set)')
