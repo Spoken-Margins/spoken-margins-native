@@ -584,10 +584,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testSleepTimerExpiryDefersThroughInterjectionRecording() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let audio = WorkflowRecordingAudioClient()
         let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: NoopRecordingClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive, "the source must be playing before recording defers expiry")
         model.armSleepTimer(.minutes15)
         defer { model.cancelSleepTimer() }
         guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
@@ -2215,6 +2218,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testPlaybackHeaderOpensCurrentItemWithoutStoppingItsSession() throws {
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
