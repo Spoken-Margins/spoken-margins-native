@@ -29,12 +29,12 @@ struct PiperVoiceOption: Identifiable, Hashable {
     }
 }
 
-private struct ObsidianImportRequest: Sendable {
+struct ObsidianImportRequest: Sendable {
     let url: URL
     let itemId: String
 }
 
-private struct ObsidianImportBatch: Sendable {
+struct ObsidianImportBatch: Sendable {
     let prepared: [PreparedObsidianImport]
     let failures: [String]
 }
@@ -344,7 +344,7 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
     @Published var quickAccessRecentFiles: [QuickAccessFile] = [] { didSet { cachedQuickAddCandidates = nil } }
-    @Published private(set) var dismissedQuickAccessFileKeys = Set(
+    @Published var dismissedQuickAccessFileKeys = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.dismissedQuickAccessFilesKey) ?? []
     ) {
         didSet {
@@ -352,8 +352,8 @@ final class Gate1AppModel: ObservableObject {
             UserDefaults.standard.set(dismissedQuickAccessFileKeys.sorted(), forKey: Gate1AppModel.dismissedQuickAccessFilesKey)
         }
     }
-    @Published private(set) var sourceImportProgressMessage: String?
-    @Published private(set) var isRefreshingQuickAccessFolder = false
+    @Published var sourceImportProgressMessage: String?
+    @Published var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
@@ -581,9 +581,9 @@ final class Gate1AppModel: ObservableObject {
     private var episodeMapPreparationItemId: String?
     private var isUpdatingSkimAvailability = false
     private var backgroundPreparationPlanner = BackgroundPreparationPlanner()
-    private var sourceImportTask: Task<Void, Never>?
-    private var quickAccessRefreshTask: Task<Void, Never>?
-    private var quickAccessRefreshID = UUID()
+    var sourceImportTask: Task<Void, Never>?
+    var quickAccessRefreshTask: Task<Void, Never>?
+    var quickAccessRefreshID = UUID()
     private var liveSpeechFallbackItemIds: Set<String> = []
     private var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
@@ -617,7 +617,7 @@ final class Gate1AppModel: ObservableObject {
     private static let lastPreparedAudioNoticeDateKey = AudioPreparationQueueProjection.lastNoticeDateDefaultsKey
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
-    private let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
+    let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var supertonicPreviewPlayer: AVAudioPlayer?
@@ -1927,146 +1927,7 @@ final class Gate1AppModel: ObservableObject {
         try WelcomeSample.make(itemId: Self.welcomeSampleItemId, remoteProviderExperienceEnabled: remoteProviderExperienceEnabled)
     }
 
-    func importTextItem(startListening: Bool = true) {
-        do {
-            let store = try requireStore()
-            let preservesActiveSession = !startListening && hasActiveSession && engine != nil
-            let itemId = "item-import-\(UUID().uuidString.lowercased())"
-            let enteredTitle = importTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-            let parsed = try ObsidianMarkdownParser.parse(
-                fileName: enteredTitle.isEmpty ? "\(importText.split(whereSeparator: \.isWhitespace).prefix(8).joined(separator: " ")).md" : "\(enteredTitle).md",
-                contents: importText,
-                titleOverride: enteredTitle.isEmpty ? nil : enteredTitle
-            )
-            let deterministicMap = parsed.deterministicListeningMap(itemId: itemId, policy: .authoredSections)
-            let item = Item(
-                id: itemId,
-                title: enteredTitle.isEmpty ? parsed.title : enteredTitle,
-                mediaType: "text",
-                text: parsed.text,
-                externalReference: "manual-import",
-                status: deterministicMap == nil ? "needs_listening_map" : "ready",
-                externalReferenceType: "manual"
-            )
-            try store.seed(item: item)
-            if let deterministicMap {
-                try store.saveListeningMap(deterministicMap)
-                diagnostics["lastListeningMapMode"] = "deterministic_headings"
-                diagnostics["lastGeneratedMapItem"] = item.id
-            }
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
-            libraryItems = try loadLibraryRows(store: store)
-            if !preservesActiveSession && startListening {
-                activeItemId = item.id
-                selectedItem = try loadItemDetail(id: item.id, store: store)
-            }
-            diagnostics["lastImport"] = item.id
-            markOnboardingSteps([.addedOwnSource])
-            importTitle = ""
-            importText = ""
-            if startListening {
-                startItem(id: item.id)
-            } else {
-                reportAddedToLibrary(title: item.title, itemId: item.id)
-            }
-        } catch {
-            reportFailure(error, context: "Import failed")
-        }
-    }
-
-    func pasteImportTextFromClipboard() {
-        #if canImport(UIKit)
-        guard let clipboardText = UIPasteboard.general.string?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !clipboardText.isEmpty else {
-            reportFailure("Clipboard does not contain text.")
-            return
-        }
-        let html = UIPasteboard.general.data(forPasteboardType: "public.html")
-            .flatMap { $0.count <= 2_000_000 ? String(data: $0, encoding: .utf8) : nil }
-        importText = Self.pastedSourceText(plainText: clipboardText, html: html)
-        reportSuccess("Pasted text from Clipboard.")
-        #else
-        reportFailure("Clipboard paste is unavailable on this platform.")
-        #endif
-    }
-
-    func importObsidianMarkdownFiles(urls: [URL]) {
-        beginObsidianMarkdownImport(urls: urls, securityScopedURLs: urls)
-    }
-
-    func importEPUBFile(url: URL, openWhenFinished: Bool = true) {
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let importer = try self.requireLocalSourceImporter()
-                let item = try await importer.importEPUB(from: url)
-                guard let store = self.store else { return }
-                self.libraryItems = try self.loadLibraryRows(store: store)
-                self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
-                self.scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
-                if openWhenFinished {
-                    self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
-                    self.activeItemId = item.id
-                    self.screen = .item
-                    self.reportConfirmation("Imported \(item.title).")
-                } else {
-                    self.reportAddedToLibrary(title: item.title, itemId: item.id)
-                }
-            } catch {
-                self.reportFailure(error, context: "EPUB import failed")
-            }
-        }
-    }
-
-    func importAudiobookFile(url: URL, openWhenFinished: Bool = true) {
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let importer = try self.requireLocalSourceImporter()
-                let item = try await importer.importAudiobook(from: url)
-                guard let store = self.store else { return }
-                self.libraryItems = try self.loadLibraryRows(store: store)
-                self.markOnboardingSteps([.addedOwnSource, .addedFromFiles])
-                self.refreshSpokenMarginsPackageImportAfterAddingSource()
-                if openWhenFinished {
-                    self.selectedItem = try self.loadItemDetail(id: item.id, store: store)
-                    self.activeItemId = item.id
-                    self.screen = .item
-                    self.reportConfirmation("Imported \(item.title).")
-                } else {
-                    self.reportAddedToLibrary(title: item.title, itemId: item.id)
-                }
-            } catch {
-                self.reportFailure(error, context: "Audiobook import failed")
-            }
-        }
-    }
-
-    var isImportingSources: Bool {
-        sourceImportProgressMessage != nil
-    }
-
-    private var cachedQuickAddCandidates: [QuickAddCandidate]?
-
-    var quickAddCandidates: [QuickAddCandidate] {
-        if let cachedQuickAddCandidates { return cachedQuickAddCandidates }
-        let candidates = Self.quickAddCandidates(
-            folderFiles: quickAccessRecentFiles,
-            followedEntries: followedSourceEntries,
-            subscriptions: feedSubscriptions,
-            libraryItems: libraryItems,
-            dismissedFileKeys: dismissedQuickAccessFileKeys
-        )
-        cachedQuickAddCandidates = candidates
-        return candidates
-    }
-
-    var isRefreshingQuickAddFeed: Bool {
-        isRefreshingQuickAccessFolder || isRefreshingFollowedSources
-    }
+    var cachedQuickAddCandidates: [QuickAddCandidate]?
 
     nonisolated static func quickAddCandidates(
         folderFiles: [QuickAccessFile],
@@ -2084,172 +1945,6 @@ final class Gate1AppModel: ObservableObject {
             },
             dismissedFileKeys: dismissedFileKeys
         )
-    }
-
-    func dismissQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.insert(file.dismissalKey) }
-
-    /// Brings a dismissed Quick Folder file back into Following (#477).
-    func restoreQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.remove(file.dismissalKey) }
-
-    private func beginObsidianMarkdownImport(
-        urls: [URL],
-        securityScopedURLs: [URL],
-        refreshQuickFolderWhenFinished: Bool = false,
-        openImportedItemWhenFinished: Bool = false,
-        quickAccessFileToDismiss: QuickAccessFile? = nil
-    ) {
-        guard !urls.isEmpty else {
-            reportFailure("Choose at least one Markdown, text, or PDF file to import.")
-            return
-        }
-        guard sourceImportTask == nil else {
-            reportFailure("Another source is already importing. You can keep using playback while it finishes.")
-            return
-        }
-
-        let requests = urls.enumerated().map { index, url in
-            ObsidianImportRequest(
-                url: url,
-                itemId: obsidianItemId(fileName: url.lastPathComponent, index: index)
-            )
-        }
-        let scopedAccess = securityScopedURLs.map { url in
-            (url: url, didAccess: url.startAccessingSecurityScopedResource())
-        }
-        sourceImportProgressMessage = urls.count == 1 ? "Importing \(urls[0].lastPathComponent)…" : "Importing \(urls.count) files…"
-        statusMessage = sourceImportProgressMessage ?? "Importing sources…"
-        lastError = nil
-
-        sourceImportTask = Task { [weak self] in
-            let batch = await Task.detached(priority: .userInitiated) {
-                await Self.prepareObsidianImports(requests)
-            }.value
-            scopedAccess.forEach { entry in
-                if entry.didAccess {
-                    entry.url.stopAccessingSecurityScopedResource()
-                }
-            }
-            guard let self else { return }
-            self.completeObsidianMarkdownImport(
-                batch,
-                refreshQuickFolderWhenFinished: refreshQuickFolderWhenFinished,
-                openImportedItemWhenFinished: openImportedItemWhenFinished,
-                quickAccessFileToDismiss: quickAccessFileToDismiss
-            )
-        }
-    }
-
-    private nonisolated static func prepareObsidianImports(_ requests: [ObsidianImportRequest]) async -> ObsidianImportBatch {
-        var prepared: [PreparedObsidianImport] = []
-        var failures: [String] = []
-        for request in requests {
-            do {
-                let imported = try await importableText(from: request.url)
-                prepared.append(try SourceFileItemBuilder.prepare(
-                    imported, fileURL: request.url, itemId: request.itemId, createdAt: Date()
-                ))
-            } catch {
-                failures.append("\(request.url.lastPathComponent): \(error)")
-            }
-        }
-        return ObsidianImportBatch(prepared: prepared, failures: failures)
-    }
-
-    private nonisolated static func importableText(from url: URL) async throws -> ImportedSourceText {
-        guard url.pathExtension.lowercased() == "pdf" else {
-            return ImportedSourceText(
-                text: try String(contentsOf: url, encoding: .utf8),
-                documentStructure: nil
-            )
-        }
-        #if canImport(PDFKit)
-        do {
-            let extracted = try NativePDFDocumentExtractor.extractStructured(from: url)
-            return ImportedSourceText(
-                text: extracted.document.text,
-                documentStructure: extracted.documentStructure,
-                structuredDocument: extracted.document,
-                title: extracted.title
-            )
-        } catch PDFStructuredTextExtractor.ExtractionError.noExtractableText {
-            throw SourceFileImportError.pdfHasNoExtractableText
-        }
-        #else
-        throw SourceFileImportError.pdfImportUnavailable
-        #endif
-    }
-
-    private func completeObsidianMarkdownImport(
-        _ batch: ObsidianImportBatch,
-        refreshQuickFolderWhenFinished: Bool,
-        openImportedItemWhenFinished: Bool,
-        quickAccessFileToDismiss: QuickAccessFile?
-    ) {
-        defer {
-            sourceImportTask = nil
-            sourceImportProgressMessage = nil
-            if refreshQuickFolderWhenFinished {
-                refreshQuickAccessFolder()
-            }
-        }
-        do {
-            let store = try requireStore()
-            let preservesActiveSession = hasActiveSession && engine != nil
-            let preservedActiveItemId = activeItemId
-            let preservedSelectedItemId = selectedItem.id
-            var imported: [Item] = []
-            var failures = batch.failures
-            for prepared in batch.prepared {
-                do {
-                    try store.saveItem(prepared.item)
-                    if let listeningMap = prepared.listeningMap {
-                        try store.saveListeningMap(listeningMap)
-                    }
-                    if let document = prepared.structuredDocument {
-                        try store.saveStructuredDocument(document, itemId: prepared.item.id)
-                    }
-                    imported.append(prepared.item)
-                } catch {
-                    failures.append("\(prepared.item.title): \(error)")
-                }
-            }
-            guard !imported.isEmpty else {
-                reportFailure(failures.isEmpty ? "No source files were imported." : failures.joined(separator: "\n"))
-                return
-            }
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            libraryItems = try loadLibraryRows(store: store)
-            if openImportedItemWhenFinished, let item = imported.first {
-                activeItemId = item.id
-                selectedItem = try loadItemDetail(id: item.id, store: store)
-                screen = .item
-            } else if preservesActiveSession {
-                activeItemId = preservedActiveItemId
-                if !preservedSelectedItemId.isEmpty {
-                    selectedItem = try loadItemDetail(id: preservedSelectedItemId, store: store)
-                }
-            } else {
-                activeItemId = imported.first?.id ?? activeItemId
-                selectedItem = try loadItemDetail(id: activeItemId, store: store)
-                screen = .home
-            }
-            if let quickAccessFileToDismiss {
-                dismissQuickAccessFile(quickAccessFileToDismiss)
-            }
-            imported.forEach { scheduleTextAudioPrewarmIfNeeded(itemId: $0.id) }
-            if let structure = imported.compactMap(\.documentStructure).last {
-                recordPDFExtractionDiagnostics(structure)
-            }
-            diagnostics["lastObsidianImportCount"] = "\(imported.count)"
-            diagnostics["lastObsidianImportFailures"] = "\(failures.count)"
-            markOnboardingSteps([.addedOwnSource, .addedFromFiles])
-            let suffix = failures.isEmpty ? "" : " \(failures.count) failed."
-            reportConfirmation("Imported \(imported.count) source file\(imported.count == 1 ? "" : "s").\(suffix)")
-        } catch {
-            reportFailure(error, context: "File import failed")
-        }
     }
 
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
@@ -2279,93 +1974,8 @@ final class Gate1AppModel: ObservableObject {
         return item.id
     }
 
-    func configureQuickAccessFolder(url: URL) {
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
-        do {
-            let bookmark = try url.bookmarkData(options: quickAccessBookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-            UserDefaults.standard.set(bookmark, forKey: quickAccessFolderBookmarkKey)
-            UserDefaults.standard.set(url.lastPathComponent, forKey: "quickAccessFolderName")
-            quickAccessFolderName = url.lastPathComponent
-            refreshQuickAccessFolder()
-            reportSuccess("Quick folder set to \(url.lastPathComponent).")
-        } catch {
-            reportFailure(error, context: "Quick folder setup failed")
-        }
-    }
-
-    func refreshQuickAccessFolder() {
-        guard let folderURL = resolvedQuickAccessFolderURL() else {
-            quickAccessRefreshID = UUID()
-            quickAccessRefreshTask?.cancel()
-            quickAccessRefreshTask = nil
-            isRefreshingQuickAccessFolder = false
-            quickAccessRecentFiles = []
-            return
-        }
-        let refreshID = UUID()
-        quickAccessRefreshID = refreshID
-        quickAccessRefreshTask?.cancel()
-        let didAccess = folderURL.startAccessingSecurityScopedResource()
-        isRefreshingQuickAccessFolder = true
-        quickAccessRefreshTask = Task { [weak self] in
-            let scan = await Task.detached(priority: .utility) {
-                Self.scanQuickAccessFolder(folderURL)
-            }.value
-            if didAccess {
-                folderURL.stopAccessingSecurityScopedResource()
-            }
-            guard let self, self.quickAccessRefreshID == refreshID else { return }
-            self.quickAccessRefreshTask = nil
-            self.isRefreshingQuickAccessFolder = false
-            if let errorDescription = scan.errorDescription {
-                self.quickAccessRecentFiles = []
-                self.diagnostics["quickAccessError"] = errorDescription
-                return
-            }
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .short
-            self.quickAccessRecentFiles = scan.files.map { entry in
-                QuickAccessFile(
-                    id: entry.id,
-                    name: entry.name,
-                    relativePath: entry.relativePath,
-                    modifiedAt: entry.modifiedAt,
-                    modifiedAtDescription: formatter.localizedString(for: entry.modifiedAt, relativeTo: Date())
-                )
-            }
-            self.quickAccessFolderName = folderURL.lastPathComponent
-            self.diagnostics["quickAccessFolder"] = folderURL.lastPathComponent
-            self.diagnostics["quickAccessRecentFiles"] = "\(self.quickAccessRecentFiles.count)"
-        }
-    }
-
     nonisolated static func scanQuickAccessFolder(_ folderURL: URL) -> QuickAccessFolderScan {
         QuickAccessFolderScanner.scan(folderURL)
-    }
-
-    func importQuickAccessFile(_ file: QuickAccessFile, openWhenFinished: Bool = false) {
-        guard let folderURL = resolvedQuickAccessFolderURL() else {
-            reportFailure("Choose a quick folder before importing recent files.")
-            return
-        }
-        let fileURL = folderURL.appending(path: file.relativePath)
-        beginObsidianMarkdownImport(
-            urls: [fileURL],
-            securityScopedURLs: [folderURL],
-            refreshQuickFolderWhenFinished: true,
-            openImportedItemWhenFinished: openWhenFinished,
-            quickAccessFileToDismiss: file
-        )
-    }
-
-    func refreshQuickAddFeed(force: Bool = true) {
-        refreshQuickAccessFolder()
-        refreshFollowedSources(force: force)
     }
 
     @discardableResult
@@ -2410,10 +2020,6 @@ final class Gate1AppModel: ObservableObject {
             reportFailure(error, context: "Browser text import failed")
             return nil
         }
-    }
-
-    func reportImportFailure(_ error: Error) {
-        reportFailure(error, context: "File import failed")
     }
 
     func importPiperVoiceAssets(urls: [URL]) {
@@ -8317,7 +7923,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func resolvedQuickAccessFolderURL() -> URL? {
+    func resolvedQuickAccessFolderURL() -> URL? {
         guard let data = UserDefaults.standard.data(forKey: quickAccessFolderBookmarkKey) else { return nil }
         do {
             var isStale = false
@@ -8344,7 +7950,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private var quickAccessBookmarkCreationOptions: URL.BookmarkCreationOptions {
+    var quickAccessBookmarkCreationOptions: URL.BookmarkCreationOptions {
         #if os(macOS)
         return [.withSecurityScope]
         #else
@@ -8360,7 +7966,7 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    private func obsidianItemId(fileName: String, index: Int) -> String {
+    func obsidianItemId(fileName: String, index: Int) -> String {
         let base = (fileName as NSString).deletingPathExtension
             .lowercased()
             .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "-", options: .regularExpression)
@@ -8940,7 +8546,7 @@ final class Gate1AppModel: ObservableObject {
         if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
     }
 
-    private func requireLocalSourceImporter() throws -> LocalSourceImporter {
+    func requireLocalSourceImporter() throws -> LocalSourceImporter {
         if let localSourceImporter { return localSourceImporter }
         let store = try requireStore()
         try configureOfflineServices(store: store)
