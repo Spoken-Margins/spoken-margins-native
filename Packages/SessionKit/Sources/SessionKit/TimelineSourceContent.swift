@@ -65,17 +65,27 @@ public struct TimelineSourceContent: Equatable, Sendable {
             if coveredEnd < characters.count { append(coveredEnd..<characters.count) }
         } else {
             // Character coordinates preserve grapheme clusters and CRLF. A single
-            // line break stays in its paragraph; blank lines divide paragraphs.
+            // line break stays in its paragraph; blank lines (including spaces
+            // or tabs) divide paragraphs without consuming the next line's indent.
             var paragraphStart = 0
             var index = 0
             while index < characters.count {
                 guard characters[index].isNewline else { index += 1; continue }
                 let breakStart = index
-                while index < characters.count && characters[index].isNewline { index += 1 }
-                if index - breakStart >= 2 {
-                    append(paragraphStart..<breakStart)
-                    paragraphStart = index
+                var separatorEnd = index + 1
+                var candidate = separatorEnd
+                while candidate < characters.count {
+                    while candidate < characters.count && characters[candidate].isWhitespace
+                            && !characters[candidate].isNewline { candidate += 1 }
+                    guard candidate < characters.count && characters[candidate].isNewline else { break }
+                    candidate += 1
+                    separatorEnd = candidate
                 }
+                if separatorEnd > breakStart + 1 {
+                    append(paragraphStart..<breakStart)
+                    paragraphStart = separatorEnd
+                }
+                index = separatorEnd
             }
             append(paragraphStart..<characters.count)
         }

@@ -50,15 +50,39 @@ final class TimelineSourceContentTests: XCTestCase {
         XCTAssertEqual(TimelineSourceContent(text: text, document: document("Old source", segments: [valid])).entries.map(\.text), [text])
     }
 
-    func testDuplicateSegmentIDsRemainDistinctAndEqualPositionsKeepInputOrder() {
+    func testWhitespaceOnlyBlankLinesSeparatePassagesWithoutChangingSourceCoordinates() {
+        let separators = ["\n\n", "\n \n", "\n\t\n", "\n \t\n\t\n", "\r\n \r\n", "\r\n\t\r\n", "\u{2028} \u{2028}"]
+        let firstPassages = ["First!", "é🙂", "e\u{301}🙂", "  Authored indentation", String(repeating: "Long text. ", count: 2_000)]
+        let second = "  Second passage."
+        for first in firstPassages {
+            for separator in separators {
+                let text = first + separator + second
+                let content = TimelineSourceContent(text: text)
+                let secondStart = (first + separator).count
+                XCTAssertEqual(content.entries.map(\.text), [first, second], separator.debugDescription)
+                XCTAssertEqual(content.entries.map(\.start), [0, secondStart], separator.debugDescription)
+                XCTAssertEqual(content.characterCount, text.count)
+                XCTAssertEqual(content.entry(atCharacter: secondStart)?.text, second)
+                XCTAssertEqual(content.entry(atCharacter: secondStart - 1)?.text, first)
+            }
+        }
+        for text in ["First\n  soft wrap", "First\r\n\tsoft wrap", "First\n \t"] {
+            XCTAssertEqual(TimelineSourceContent(text: text).entries.map(\.text), [text])
+        }
+        for text in ["", " \n\t\n  ", "\r\n \r\n\t"] {
+            XCTAssertTrue(TimelineSourceContent(text: text).entries.isEmpty)
+        }
+    }
+
+    func testDuplicateSegmentIDsRemainDistinctAtSeparateSourcePositions() {
         let text = "A long source"
         let segments: [StructuredDocument.Segment] = [
             .init(id: "same", role: .caption, range: .init(start: 0, length: 1)),
-            .init(id: "same", role: .figureText, range: .init(start: 0, length: 1))
+            .init(id: "same", role: .figureText, range: .init(start: 2, length: 4))
         ]
         let entries = TimelineSourceContent(text: text, document: document(text, segments: segments)).entries
         XCTAssertEqual(entries.map(\.role), [.caption, .figureText, .body])
-        XCTAssertEqual(entries.last?.text, " long source")
+        XCTAssertEqual(entries.map(\.text), ["A", "long", " source"])
         XCTAssertEqual(Set(entries.map(\.id)).count, 3)
     }
 
