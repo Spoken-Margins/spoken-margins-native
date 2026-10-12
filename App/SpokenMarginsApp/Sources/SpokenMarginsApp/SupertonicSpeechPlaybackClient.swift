@@ -2753,6 +2753,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }), let cached = renderedCache.removeValue(forKey: entry.key) {
             return cached
         }
+        return nil  // MUTATION (#353 proof A): no saved-result fallback, the #346 audit's first blocker
         guard let planned = generationPlan.first(where: {
             spokenOffset >= $0.startOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
         }), let saved = generationResults[planned.startOffset],
