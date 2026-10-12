@@ -42,6 +42,33 @@ PLANS = {
 # A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
 BUILD_SLOT_WAIT_SECONDS = 1800
 
+# Xcode's compilation cache for the app build-for-testing (#1331). Every T3 builds in fresh DerivedData, so
+# without it each one recompiled every module. Measured on the lane Mac (Xcode 27.0, 2026-10-12): 57-73 s
+# cold; with the cache 46 s after a one-line SessionKit edit, 39 s after an app-only edit, 18-25 s with
+# nothing changed. The store is shared by every checkout on this Mac: the extra prefix map makes paths
+# inside the tree the same in each, which took a second worktree from 23 to all 104 Swift compiles hit.
+# Xcode bounds the store: past the limit it starts a new chunk and drops the oldest, so it stays under
+# about twice the limit (measured: a 1G limit held it to 1.4 GB).
+COMPILATION_CACHE_LIMIT = '3G'
+
+
+def compilation_cache_settings(root=None):
+    """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
+    root = root or ROOT
+    mapping = f'"{root}=/^tree"'
+    return ['COMPILATION_CACHE_ENABLE_CACHING=YES',
+            f'COMPILATION_CACHE_CAS_PATH={state_dir() / "compilation-cache"}',
+            f'COMPILATION_CACHE_LIMIT_SIZE={COMPILATION_CACHE_LIMIT}',
+            'SWIFT_ENABLE_PREFIX_MAPPING=YES', 'SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES',
+            'CLANG_ENABLE_PREFIX_MAPPING=YES', 'CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES',
+            f'SWIFT_OTHER_PREFIX_MAPPINGS={mapping}', f'CLANG_OTHER_PREFIX_MAPPINGS={mapping}']
+
+
+def compilation_cache_hits(log):
+    """Xcode's own count, e.g. '441 hits / 508 cacheable tasks (87%)', or None when it printed none."""
+    found = re.findall(r'note: (\d+ hits / \d+ cacheable tasks \(\d+%\))', log)
+    return found[-1] if found else None
+
 # Keep aligned with project.yml and the SessionKit iOS deployment target.
 MINIMUM_IOS_MAJOR = 26
 
@@ -886,7 +913,11 @@ class Run:
             if require_build:
                 raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
             stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + ['build-for-testing'], timeout=900)
+            self.command('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
+            log = self.output / 'build-for-testing.log'
+            self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
+                if log.is_file() else None
+            self.save()
         if input_identity() != identity:
             raise RuntimeError('Inputs changed during the build; evidence is not for one source state')
         if not reused:
