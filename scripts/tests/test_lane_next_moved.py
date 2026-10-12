@@ -119,6 +119,167 @@ class UntestedMovesTests(RealGit):
         self.assertIn('project.yml', why)
 
 
+class ScriptsTheChecksDontReadTests(RealGit):
+    """#1208: a lane tool on next that a PR's checks never read doesn't make the PR test again."""
+
+    def moves(self, head, tested):
+        return lane.untested_moves(self.tree, tested, lane.fetch_base(self.tree, 'next'), head)
+
+    def test_a_lane_tool_the_pr_s_checks_never_read_is_skipped(self):
+        head = self.pr_head('App/Feature.swift', 'Packages/SessionKit/Sources/SessionKit/Feature.swift')
+        tested = lane.fetch_base(self.tree, 'next')
+        self.move_next('scripts/phone-build', subject='Merge pull request #7: Phone builds')
+        self.move_next('scripts/tests/test_phone_build.py', subject='Merge pull request #8: Phone build tests')
+        self.move_next('scripts/lane_dedupe.py', subject='Merge pull request #9: Dedupe')
+        commits, why = self.moves(head, tested)
+        self.assertEqual(why, '')
+        self.assertEqual(len(commits), 3)
+
+    def test_a_script_the_checks_read_still_needs_a_re_test(self):
+        # lane-runner.py: the readers' T3 classes load it; the rest run as --plan fast steps or decide its tier.
+        for name in ('scripts/lane-runner.py', 'scripts/verify-tests.py', 'scripts/test-scope.py',
+                     'scripts/hot_file_ratchet.py', 'scripts/tests/test_verification.py', 'scripts/a_new_tool.py'):
+            with self.subTest(name=name):
+                self.setUp()
+                head = self.pr_head('App/Feature.swift')
+                tested = lane.fetch_base(self.tree, 'next')
+                self.move_next(name, text=f'{name} changed\n')
+                commits, why = self.moves(head, tested)
+                self.assertIsNone(commits)
+                self.assertIn(name, why)
+
+    def test_a_lane_tool_counts_for_a_pr_whose_own_diff_runs_every_runner_test(self):
+        for mine in ('scripts/lane_sim.py', '.github/workflows/lane.yml', 'ops/dial/dial_gate.py', 'project.yml',
+                     'TestPlans/AppBehavior.xctestplan', 'AGENTS.md', '.gitignore'):
+            with self.subTest(mine=mine):
+                self.setUp()  # a fresh origin and PR each time, so only this path is the PR's
+                head = self.pr_head(mine)
+                tested = lane.fetch_base(self.tree, 'next')
+                self.move_next('scripts/phone-build', text=f'for {mine}\n')
+                commits, why = self.moves(head, tested)
+                self.assertIsNone(commits)
+                self.assertIn('scripts/phone-build', why)
+
+    def test_a_pr_that_moves_a_script_out_of_scripts_still_counts_as_a_lane_change(self):
+        self.move_next('scripts/old_tool.py', text='old\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', '--no-rebase', 'origin', 'next'], check=True)
+        (self.tree / 'tools').mkdir()
+        subprocess.run(self.git + ['-C', str(self.tree), 'mv', 'scripts/old_tool.py', 'tools/old_tool.py'], check=True)
+        subprocess.run(self.git + ['-C', str(self.tree), 'commit', '-q', '-m', 'Move the tool'], check=True)
+        head = self.rev(self.tree, 'HEAD')
+        tested = lane.fetch_base(self.tree, 'next')
+        self.move_next('scripts/phone-build')
+        commits, why = self.moves(head, tested)
+        self.assertIsNone(commits)
+        self.assertIn('scripts/phone-build', why)
+
+
+    def test_a_lane_change_with_a_quoted_name_still_counts(self):
+        head = self.pr_head('scripts/tests/test_caf\u00e9.py')
+        tested = lane.fetch_base(self.tree, 'next')
+        self.move_next('scripts/phone-build')
+        commits, why = self.moves(head, tested)
+        self.assertIsNone(commits)
+        self.assertIn('scripts/phone-build', why)
+
+    def test_a_file_next_renames_is_still_the_pr_s_file(self):
+        self.move_next('App/Old.swift', text='old\n')
+        subprocess.run(self.git + ['-C', str(self.tree), 'pull', '-q', '--no-rebase', 'origin', 'next'], check=True)
+        head = self.pr_head('App/Old.swift')
+        tested = lane.fetch_base(self.tree, 'next')
+        subprocess.run(self.git + ['-C', str(self.other), 'mv', 'App/Old.swift', 'App/New.swift'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'commit', '-q', '-m', 'Rename'], check=True)
+        subprocess.run(self.git + ['-C', str(self.other), 'push', '-q', 'origin', 'HEAD:next'], check=True)
+        commits, why = self.moves(head, tested)
+        self.assertIsNone(commits)
+        self.assertIn('App/Old.swift', why)
+
+
+class HostUnreadScriptsListTests(unittest.TestCase):
+    """Cheap checks that HOST_UNREAD_SCRIPTS still matches what a non-lane PR's checks run. The trace described
+    beside the list is the full measurement; these catch the obvious drift."""
+    ROOT = Path(__file__).resolve().parents[2]
+    verification = test_lane_runner.verification
+
+    def test_every_listed_file_exists_and_is_under_scripts(self):
+        for path in sorted(lane.HOST_UNREAD_SCRIPTS):
+            with self.subTest(path=path):
+                self.assertTrue(path.startswith('scripts/'), path)
+                self.assertTrue((self.ROOT / path).is_file(), path)
+
+    def test_the_full_run_triggers_cover_verify_tests_own(self):
+        for trigger in (*self.verification.RUNNER_TEST_TRIGGERS, *self.verification.OPS_TEST_TRIGGERS):
+            with self.subTest(trigger=trigger):
+                self.assertTrue(lane.widens_host_checks([trigger]), trigger)
+                self.assertTrue(lane.widens_host_checks([trigger.rstrip('/') + '/x' if trigger.endswith('/')
+                                                             else trigger]), trigger)
+
+    def test_no_listed_test_module_is_a_reader(self):
+        readers = {name.split('.')[0] for name in self.verification.RUNNER_TEST_READERS}
+        for path in lane.HOST_UNREAD_SCRIPTS:
+            with self.subTest(path=path):
+                self.assertNotIn(Path(path).stem, readers)
+
+    def test_the_fast_plan_and_the_sessionkit_runner_name_no_listed_file(self):
+        import inspect
+        run = self.verification.Run
+        source = ''.join(inspect.getsource(getattr(run, name))
+                         for name in ('fast', 'host_steps', 'package_steps', 'package_core'))
+        sources = {'verify-tests.py fast steps': source,
+                   'sessionkit_pass.RUNNERS': ' '.join(self.verification.sessionkit_pass.RUNNERS),
+                   'run-sessionkit-tests.sh': (self.ROOT / 'scripts/run-sessionkit-tests.sh').read_text(),
+                   'host-test-lane': (self.ROOT / 'scripts/host-test-lane').read_text(),
+                   'package.json': (self.ROOT / 'package.json').read_text()}
+        for path in lane.HOST_UNREAD_SCRIPTS:
+            for where, text in sources.items():
+                with self.subTest(path=path, where=where):
+                    self.assertNotIn(Path(path).name, text)
+
+    def test_nothing_the_checks_import_is_listed(self):
+        # Python modules the checks load, and what they import from scripts/ at module level in turn, plus
+        # files loaded by path. Imports inside functions and paths named in strings (test-scope.py's lane paths,
+        # lane-runner.py's helpers for other jobs) are left to the trace: most of them never run in these checks.
+        import ast
+        scripts = self.ROOT / 'scripts'
+        readers = {name.split('.')[0] for name in self.verification.RUNNER_TEST_READERS}
+        todo = [scripts / name for name in ('verify-tests.py', 'test-scope.py', 'hot_file_ratchet.py',
+                                            'validate-contracts.py', 'validate-surface-contracts.py',
+                                            'test_inventory.py', 'research_tests.py', 'sessionkit_pass.py',
+                                            'validate-supertonic-assets.py')]
+        todo += [scripts / 'tests' / f'{name}.py' for name in readers]
+        seen = set()
+        while todo:
+            path = todo.pop()
+            if path in seen or not path.is_file():
+                continue
+            seen.add(path)
+            tree = ast.parse(path.read_text())
+            top, stack = [], list(tree.body)
+            while stack:  # every node outside a function body: what importing the module runs
+                node = stack.pop()
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    top.append(node)
+                    stack.extend(ast.iter_child_nodes(node))
+            for node in ast.walk(tree):
+                names = []
+                if isinstance(node, ast.Import) and node in top:
+                    names = [alias.name.split('.')[0] for alias in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.module and not node.level and node in top:
+                    names = [node.module.split('.')[0]]
+                elif isinstance(node, ast.Call) and getattr(node.func, 'attr', '') == 'spec_from_file_location':
+                    # spec_from_file_location('lane_runner', SCRIPTS / 'lane-runner.py')
+                    names = [Path(arg.value).stem for arg in ast.walk(node)
+                             if isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                             and arg.value.endswith('.py')]
+                for name in names:
+                    for candidate in (scripts / f'{name}.py', scripts / 'tests' / f'{name}.py'):
+                        if candidate.is_file():
+                            todo.append(candidate)
+        loaded = {str(path.relative_to(self.ROOT)) for path in seen}
+        self.assertIn('scripts/lane-runner.py', loaded)  # the readers' T3 classes load it
+        self.assertEqual(sorted(loaded & lane.HOST_UNREAD_SCRIPTS), [])
+
+
 class RunAutoAfterNextMovedTests(RealGit):
     """run_auto with real git: the refused push, the decision, and the second push."""
     SCOPE = {'tier': 'T2', 'why': ['app UI'], 'files': [{'path': 'App/Feature.swift', 'category': 'app-ui'}]}

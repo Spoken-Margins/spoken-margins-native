@@ -37,7 +37,8 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   merge commit, with next as its first parent. On PASS it posts a "Merge check (triage desk)"
   comment (the prefix scripts/merge_audit.py looks for) and pushes that commit to next with a plain
   push; if next moved meanwhile, the push is refused and it tests again on the newest next (up to
-  MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs: then
+  MERGE_ATTEMPTS), unless next's new commits touch none of the PR's files and no build inputs its checks
+  read (#1208: a lane tool such as phone-build doesn't count for a PR that isn't a lane change): then
   it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
   (test-scope.py's lane_paths) until a Codex or Claude audit of its head says "No blocking findings": those pass
   or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
@@ -851,19 +852,75 @@ def is_build_input(path: str) -> bool:
         or '.xcodeproj/' in path or '.xcworkspace/' in path or path.endswith('.xcconfig')
 
 
+# scripts/ files a PR's automerge checks never read, unless the PR itself touches a path in
+# HOST_FULL_RUN_TRIGGERS (#1208). Without one, its run is the hot-file ratchet, test-scope.py and --plan fast with
+# only the runner tests' readers (verify-tests.py RUNNER_TEST_READERS) and no ops tests, and no app build
+# (NO_APP_BUILD_PER_PR). next changing one of these alone can't change what that run showed, so the PR re-merges
+# without testing again. Measured 2026-10-12 by tracing every file the readers and a whole --plan fast for an
+# App/ + Packages/ diff open (a Python audit hook in every Python process, leaving out verify-tests.py's
+# input_identity digest, which only spots edits made during the run) and every command they start. Re-measure
+# the same way after adding a reader or a fast step. A file not listed counts as a build input, so a new
+# script is safe until someone lists it. Left off on purpose although the trace didn't read them: the
+# Build 29 compatibility tools (shipped-build-compat.yml runs them), the Linux T1 runner and the Python
+# bootstrap.
+HOST_UNREAD_SCRIPTS = frozenset({
+    # The lane's and the Mac's own tools: job dedupe, ledger, guard, merge audit, the FAIL re-check on next,
+    # integration precheck, phone builds and app builds (no app build per PR).
+    'scripts/lane_dedupe.py', 'scripts/lane_ledger.py', 'scripts/lane_guard.py', 'scripts/install-lane-guard.py',
+    'scripts/merge_audit.py', 'scripts/lane_next_rerun.py', 'scripts/integration-precheck.py',
+    'scripts/phone-build', 'scripts/com.spokenmargins.phone-build.plist', 'scripts/install-phone-build.command',
+    'scripts/xcodebuild-lane',
+    # Release, app-plan, build-phase and site scripts.
+    'scripts/TestFlightUploadOptions.plist', 'scripts/check-release-test-hooks.sh', 'scripts/verify-bundle.py',
+    'scripts/validate-developer-recording.py', 'scripts/normalize-embedded-framework-minimum-os.sh',
+    'scripts/remove-embedded-static-onnxruntime.sh', 'scripts/deploy-spoken-margins-site.sh',
+    'scripts/smoke-simulator.sh', 'scripts/run-podcast-anchor-benchmark.sh', 'scripts/audit-gate1-readiness.py',
+    'scripts/verify-gate1.sh', 'scripts/verify-gate1-closeout.sh', 'scripts/verify-gate1-routine.sh',
+    'scripts/verify-gate2.sh',
+    # Runner test modules that aren't readers, so only a lane PR's own run (all runner tests) runs them.
+    *(f'scripts/tests/{name}.py' for name in (
+        'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe',
+        'test_lane_guard', 'test_lane_ledger', 'test_lane_next_moved', 'test_lane_next_rerun', 'test_lane_sim_pool',
+        'test_lane_slots', 'test_lane_t3_first', 'test_merge_audit', 'test_phone_build', 'test_posterboard_repair',
+        'test_sessionkit_steps', 'test_test_scope', 'test_ui_test_hooks_debug_only', 'test_xcresult_attachments')),
+})
+# A PR touching any of these runs every runner test or the ops tests, which between them read the lane's own
+# scripts, so for it every scripts/ change still counts: verify-tests.py's RUNNER_TEST_TRIGGERS and
+# OPS_TEST_TRIGGERS (a test keeps them covered).
+HOST_FULL_RUN_TRIGGERS = ('scripts/', '.github/', '.gitignore', 'ops/', 'project.yml', 'TestPlans/', 'AGENTS.md')
+
+
+def widens_host_checks(paths) -> bool:
+    return any(path == prefix or path.startswith(prefix) for path in paths for prefix in HOST_FULL_RUN_TRIGGERS)
+
+
+def counts_for_pr(path: str, pr_paths) -> bool:
+    """Whether next changing <path> can change what this PR's automerge checks showed: a build input, unless
+    the checks never read it (HOST_UNREAD_SCRIPTS) and the PR's own diff didn't widen them to every runner test
+    or the ops tests."""
+    if not is_build_input(path):
+        return False
+    return path not in HOST_UNREAD_SCRIPTS or widens_host_checks(pr_paths)
+
+
 def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tuple[list[str] | None, str]:
     """(next's commits since <tested_base>, '') when they can't change what the PR's test showed, else (None, why).
 
-    They can't when they touch none of the PR's files and no build input. Each first-parent commit counts
-    with everything it brought in, so a merge of another PR counts with that PR's files.
+    They can't when they touch none of the PR's files and no build input its checks read (counts_for_pr). Each
+    first-parent commit counts with everything it brought in, so a merge of another PR counts with that PR's files.
     """
     git = ['git', '-C', str(tree)]
     if subprocess.run(git + ['merge-base', '--is-ancestor', tested_base, new_base], capture_output=True).returncode:
         return None, f'it no longer contains the tested commit {tested_base[:7]}'
     merge_base = subprocess.check_output(git + ['merge-base', tested_base, head], text=True).strip()
-    mine = set(subprocess.check_output(git + ['diff', '--name-only', merge_base, head], text=True).split())
-    log = subprocess.check_output(git + ['log', '--first-parent', '-m', '--name-only', '--format=%x00%h %s',
-                                         f'{tested_base}..{new_base}'], text=True)
+    # Both sides of a rename, so a PR that moves a file out of scripts/ still counts as touching scripts/, and
+    # NUL-separated: git quotes a name like scripts/tests/test_café.py otherwise, and it no longer starts with scripts/.
+    mine = {path for path in subprocess.check_output(git + ['diff', '--name-only', '--no-renames', '-z', merge_base,
+                                                             head], text=True).split('\0') if path}
+    # Both sides of a rename on next too (a PR's file renamed there is still its file), and unquoted names.
+    log = subprocess.check_output(git + ['-c', 'core.quotePath=false', 'log', '--first-parent', '-m', '--name-only',
+                                         '--no-renames', '--format=%x00%h %s', f'{tested_base}..{new_base}'],
+                                  text=True)
     commits, touched = [], set()
     for line in log.splitlines():
         if line.startswith('\0'):
@@ -873,7 +930,7 @@ def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tu
     shared = sorted(touched & mine)
     if shared:
         return None, f'its commits touch this PR\'s files ({", ".join(shared[:5])})'
-    inputs = sorted(p for p in touched if is_build_input(p))
+    inputs = sorted(p for p in touched if counts_for_pr(p, mine))
     if inputs:
         return None, f'its commits touch build inputs ({", ".join(inputs[:5])})'
     return commits, ''
@@ -886,7 +943,7 @@ def merge_check_untested(head: str, merge_sha: str, base: str, base_sha: str, te
     shown = ', '.join(f'`{c}`' for c in commits[:SKIPPED_SHOWN]) + \
         (f' and {len(commits) - SKIPPED_SHOWN} more' if len(commits) > SKIPPED_SHOWN else '')
     moved = (f'- {base} has since moved to `{base_sha[:7]}`, and its commits touch none of this PR\'s files and no '
-             f'build inputs: {shown}.\n' if commits else
+             f'build inputs its checks read: {shown}.\n' if commits else
              f'- {base} hasn\'t moved since (the test ran in the automerge run held for T3).\n')
     return (f'{MERGE_CHECK} on `{head[:7]}`: PASS, re-merged onto the newest {base} without re-testing.**\n'
             f'- Tested this PR merged with {base} at `{tested_base[:7]}`. Ran: {ran}.\n'
@@ -902,7 +959,7 @@ def merge_check(head: str, merge_sha: str, base: str, base_sha: str, ran: str) -
             f'- Ran: {ran}.\n'
             f'- Pushing `{merge_sha[:7]}` to {base} now. If {base} moved meanwhile, the push is refused and the '
             'runner tests again on the newest one, unless the new commits touch none of this PR\'s files and no '
-            'build inputs.\n'
+            'build inputs its checks read.\n'
             '_Posted by the lane runner (scripts/lane-runner.py)._')
 
 
@@ -919,7 +976,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
     checked: the checks the automerge run held for T3 on this head passed (held_checks). They stand, as after
-    a refused push, when next's commits since touch none of the PR's files and no build inputs (#834);
+    a refused push, when next's commits since touch none of the PR's files and no build inputs its checks read (#834);
     otherwise this run tests again.
     """
     notes: list[str] = []
@@ -937,7 +994,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             tested_base, ran, where, verdict = checked['next'], checked['ran'], checked['where'], 'PASS'
             tested = (f'not re-tested: {held_run}, and ' + (
                 f'{base}\'s {len(skipped)} commit{"s" if len(skipped) != 1 else ""} since touch none of this PR\'s '
-                'files and no build inputs' if skipped else f'{base} hasn\'t moved since'))
+                'files and no build inputs its checks read' if skipped else f'{base} hasn\'t moved since'))
     for attempt in range(1, attempts + 1):
         if context is not None:
             context.tested_base = base_sha
@@ -1005,8 +1062,8 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             shown = ', '.join(skipped[:SKIPPED_SHOWN]) + \
                 (f' and {len(skipped) - SKIPPED_SHOWN} more' if len(skipped) > SKIPPED_SHOWN else '')
             notes.append(f'{refused}; not re-tested: {base}\'s {len(skipped)} commit{"s" if len(skipped) != 1 else ""} '
-                         f'since the tested {tested_base[:7]} touch none of this PR\'s files and no build inputs, so '
-                         f'the re-merge onto {base_sha[:7]} goes without testing again (skipped: {shown})')
+                         f'since the tested {tested_base[:7]} touch none of this PR\'s files and no build inputs its checks '
+                         f'read, so the re-merge onto {base_sha[:7]} goes without testing again (skipped: {shown})')
     return 'PASS', where, ran, details + notes[-1:] + [
         f'not merged: {base} kept moving ({attempts} attempts). Remove and re-add automerge to try again.']
 
