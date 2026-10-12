@@ -1,7 +1,11 @@
 import Foundation
 
 public enum DeterministicListeningMapPolicy: Equatable, Sendable {
+    /// For web articles: short sections are merged into their neighbours to keep a few useful chapters.
     case adaptiveListeningSections
+    /// For a Markdown file the listener picked (#1435): the adaptive map, except that a section the
+    /// author titled stays a chapter however short it is. Only the 12-chapter cap merges sections.
+    case authoredSections
     case canonicalHeadings
 }
 
@@ -47,13 +51,14 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         // Adaptive maps end the authored sections where the notes start and give the notes one
         // chapter of their own, so the tail is never split into "— part N" chapters of the last
         // section (#124). Canonical maps keep their authored headings.
-        let notesStart = policy == .adaptiveListeningSections ? notesStartChar.flatMap { start in
+        let adaptive = policy != .canonicalHeadings
+        let notesStart = adaptive ? notesStartChar.flatMap { start in
             ordered.contains { $0.startChar < start } && start < text.count ? start : nil
         } : nil
         let contentEnd = notesStart ?? text.count
         let selected: [ParsedMarkdownHeading]
         switch policy {
-        case .adaptiveListeningSections:
+        case .adaptiveListeningSections, .authoredSections:
             selected = headingsAtUsefulDepth(from: ordered.filter { $0.startChar < contentEnd })
         case .canonicalHeadings:
             // Preserve a flat anthology verbatim, but project deeply nested
@@ -86,14 +91,14 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
                 baseTitle: heading.title,
                 partNumber: 1,
                 level: heading.level,
-                startChar: index == 0 && (policy == .adaptiveListeningSections || !hasAuthoredFrontMatter)
+                startChar: index == 0 && (adaptive || !hasAuthoredFrontMatter)
                     ? 0
                     : heading.startChar,
                 endChar: index + 1 < selected.count ? selected[index + 1].startChar : contentEnd
             )
         })
-        if policy == .adaptiveListeningSections {
-            normalizeChapterCountAndDuration(&drafts)
+        if adaptive {
+            normalizeChapterCountAndDuration(&drafts, mergeShortSections: policy == .adaptiveListeningSections)
         }
         if let notesStart {
             drafts.append(DraftChapter(
@@ -149,11 +154,12 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         return selected
     }
 
-    private func normalizeChapterCountAndDuration(_ drafts: inout [DraftChapter]) {
+    private func normalizeChapterCountAndDuration(_ drafts: inout [DraftChapter], mergeShortSections: Bool) {
         while drafts.count > Self.hardMaximumChapterCount {
             mergeShortestChapter(in: &drafts)
         }
-        while drafts.count > Self.minimumChapterCount,
+        while mergeShortSections,
+              drafts.count > Self.minimumChapterCount,
               let shortest = drafts.indices.min(by: { wordCount(in: drafts[$0]) < wordCount(in: drafts[$1]) }),
               wordCount(in: drafts[shortest]) < Self.minimumChapterWords {
             mergeChapter(at: shortest, in: &drafts)
@@ -464,6 +470,7 @@ public enum ObsidianMarkdownParser {
         title = title.replacingOccurrences(of: #"\\([\\`*{}\[\]()#+\-.!_>])"#, with: "$1", options: .regularExpression)
         title = title.replacingOccurrences(of: #"\*\*([^*]+)\*\*"#, with: "$1", options: .regularExpression)
         title = title.replacingOccurrences(of: #"(?<!\*)\*([^*]+)\*(?!\*)"#, with: "$1", options: .regularExpression)
+        title = title.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
         title = SpeechTextNormalizer.normalize(title)
         guard !title.isEmpty else { return nil }
         return (match.1.count, title)

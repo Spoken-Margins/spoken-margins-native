@@ -67,7 +67,7 @@ public enum SourceFileItemBuilder {
         let parsed = try ObsidianMarkdownParser.parse(fileName: fileURL.lastPathComponent, contents: imported.text)
         let mapPolicy: DeterministicListeningMapPolicy = fileURL.pathExtension.lowercased() == "pdf"
             ? .canonicalHeadings
-            : .adaptiveListeningSections
+            : .authoredSections
         let deterministicMap = parsed.deterministicListeningMap(
             itemId: itemId,
             policy: mapPolicy
