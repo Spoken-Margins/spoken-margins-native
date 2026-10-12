@@ -162,4 +162,15 @@ final class MarkdownHeadingChapterTests: XCTestCase {
             XCTAssertEqual(try store.loadListeningMap(itemId: item.id)?.chapters.count, expected, "\(mode)")
         }
     }
+
+    func testAPickedTextFileKeepsTheAdaptiveSections() throws {
+        let text = (1...6).map { "## Section \($0)\n\n\(words($0 == 6 ? 12 : 400))" }.joined(separator: "\n\n")
+        for (name, expected) in [("notes.md", 6), ("notes.markdown", 6), ("notes.txt", 5)] {
+            let prepared = try SourceFileItemBuilder.prepare(
+                ImportedSourceText(text: text, documentStructure: nil),
+                fileURL: URL(fileURLWithPath: "/\(name)"), itemId: "item-1", createdAt: Date(timeIntervalSince1970: 1)
+            )
+            XCTAssertEqual(prepared.listeningMap?.chapters.count, expected, name)
+        }
+    }
 }
