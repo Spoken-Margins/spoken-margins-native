@@ -85,13 +85,31 @@ public enum QuickAddFeed {
             return !importedEpisodeKeys.contains(key)
         }
         return (eligibleFiles.map(QuickAddCandidate.localFile)
-            + eligibleEntries.map(QuickAddCandidate.followedSource))
+            + distinctEpisodes(eligibleEntries, sourceTitles: sourceTitles).map(QuickAddCandidate.followedSource))
             .sorted {
                 if $0.sortDate != $1.sortDate {
                     return $0.sortDate > $1.sortDate
                 }
                 return $0.id < $1.id
             }
+    }
+
+    /// One entry per episode: a show followed twice (two feed links) or a feed that lists an episode
+    /// twice would show the same episode on two rows (#1440). Same show, same title and same
+    /// publish time is the same episode. Episodes sharing a page link (many shows give every episode
+    /// the show's address) or a title alone are different episodes and stay.
+    private static func distinctEpisodes(_ entries: [FeedEntry], sourceTitles: [String: String]) -> [FeedEntry] {
+        var seen = Set<String>()
+        return entries.filter { entry in
+            var key = episodeKey(title: entry.title, sourceTitle: sourceTitles[entry.subscriptionId] ?? entry.subscriptionId)
+            // `episodeKey` keeps only ASCII letters and digits, so a title in another script is empty
+            // there; its own text tells such episodes apart.
+            if key.hasSuffix("|") {
+                key += entry.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }
+            key += "|" + (entry.publishedAt.map { String(Int($0.timeIntervalSince1970)) } ?? "undated")
+            return seen.insert(key).inserted
+        }
     }
 
     // Copied as is. Don't merge with `FollowedSourceMatching.normalizedFollowSourceURL` or

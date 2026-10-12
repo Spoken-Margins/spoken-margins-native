@@ -43,6 +43,60 @@ final class QuickAddFeedTests: XCTestCase {
         )
     }
 
+    // MARK: One row per episode (#1440)
+
+    func testAnEpisodeListedTwiceShowsOnce() {
+        let candidates = QuickAddFeed.candidates(
+            folderFiles: [],
+            followedEntries: [
+                entry("a1", title: "Desert Climb, part 2", subscription: "show", publishedAt: 500),
+                entry("a2", title: "Desert Climb, part 2", subscription: "show", publishedAt: 500)
+            ],
+            subscriptions: [subscription()]
+        )
+        XCTAssertEqual(candidates.map(\.id), ["followed-source:a1"])
+    }
+
+    func testTheSameShowFollowedTwiceShowsEachEpisodeOnce() {
+        let candidates = QuickAddFeed.candidates(
+            folderFiles: [],
+            followedEntries: [
+                entry("one-a", title: "Episode One", subscription: "feed-a", publishedAt: 100),
+                entry("one-b", title: "Episode One", subscription: "feed-b", publishedAt: 100),
+                entry("two-a", title: "Episode Two", subscription: "feed-a", publishedAt: 200),
+                entry("two-b", title: "Episode Two", subscription: "feed-b", publishedAt: 200)
+            ],
+            subscriptions: [subscription("feed-a", title: "The Show"), subscription("feed-b", title: "The Show")]
+        )
+        XCTAssertEqual(candidates.map(\.id), ["followed-source:two-a", "followed-source:one-a"])
+    }
+
+    func testEpisodesWithTitlesInAnotherScriptStayApart() {
+        let candidates = QuickAddFeed.candidates(
+            folderFiles: [],
+            followedEntries: [
+                entry("j1", title: "第一話", publishedAt: 100),
+                entry("j2", title: "第二話", publishedAt: 100),
+                entry("j3", title: "第一話", publishedAt: 100)
+            ],
+            subscriptions: [subscription()]
+        )
+        XCTAssertEqual(candidates.map(\.id), ["followed-source:j1", "followed-source:j2"])
+    }
+
+    func testDifferentEpisodesStayEvenWithOneTitleOrOnePageLink() {
+        let candidates = QuickAddFeed.candidates(
+            folderFiles: [],
+            followedEntries: [
+                entry("w1", title: "Open Thread", url: "https://example.com/show", publishedAt: 100),
+                entry("w2", title: "Open Thread", url: "https://example.com/show", publishedAt: 200),
+                entry("w3", title: "Another Title", url: "https://example.com/show", publishedAt: 200)
+            ],
+            subscriptions: [subscription()]
+        )
+        XCTAssertEqual(candidates.count, 3)
+    }
+
     // MARK: Feed rules
 
     func testFolderFilesAndFollowedEntriesMergeNewestFirst() {
@@ -56,7 +110,7 @@ final class QuickAddFeedTests: XCTestCase {
     func testSortTiesBreakByIdAscendingAcrossFilesAndEntries() {
         let candidates = QuickAddFeed.candidates(
             folderFiles: [file("b.md", modifiedAt: 100), file("a.md", modifiedAt: 100), file("z.md", modifiedAt: 300)],
-            followedEntries: [entry("m", publishedAt: 100), entry("k", publishedAt: 100)]
+            followedEntries: [entry("m", title: "Episode M", publishedAt: 100), entry("k", title: "Episode K", publishedAt: 100)]
         )
         XCTAssertEqual(candidates.map(\.id), [
             "local-file:z.md",
