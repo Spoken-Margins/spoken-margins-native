@@ -17,10 +17,10 @@ struct ItemDetailLoader {
         if map == nil,
            let canonicalSource,
            let derivedMap = canonicalSource.derivedListeningMap() {
-            try store.saveListeningMap(derivedMap)
+            // Qualification mutant: omit the existing map save.
             map = derivedMap
         }
-        let mediaTimeline = try store.loadTranscriptTimeline(itemId: id)?.timeline
+        let mediaTimeline = try? store.loadTranscriptTimeline(itemId: id)?.timeline
         let mediaChapters = mediaTimeline?.chapters ?? []
         let projection = try store.loadResolvedListeningMapProjection(itemId: id)
         let proposal = SharedListeningMapPlacement.proposal(
@@ -31,12 +31,12 @@ struct ItemDetailLoader {
         // A snapshot session is valid only for its own item. Without this
         // ownership check, an asynchronous selection bug can display one
         // item's title with another item's interjections and turns.
-        let snapshotSessionId = snapshotItemId == id ? currentSnapshotSessionId : nil
+        let snapshotSessionId = currentSnapshotSessionId
         let activeSessionId = snapshotSessionId.flatMap { candidate in
-            sessions.contains(where: { $0.id == candidate }) ? candidate : nil
+            candidate
         } ?? sessions.first?.id
         let storedInterjections = activeSessionId.flatMap {
-            try? store.loadInterjections(sessionId: $0).filter { $0.status == "active" }
+            try? store.loadInterjections(sessionId: $0)
         } ?? []
         let isNativeAudio = item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream
         let interjections = storedInterjections.map { interjection -> Interjection in
@@ -68,15 +68,15 @@ struct ItemDetailLoader {
             return resolved
         }
         let activeInterjectionIDs = Set(storedInterjections.map(\.id))
-        let turns = (activeSessionId.flatMap { try? store.loadTurns(sessionId: $0) } ?? []).filter { turn in
+        let turns = (try activeSessionId.flatMap { try store.loadTurns(sessionId: $0) } ?? []).filter { turn in
             guard turn.turnType == "interjection_summary", !turn.sourceInterjectionIds.isEmpty else {
                 return true
             }
-            return Set(turn.sourceInterjectionIds).isSubset(of: activeInterjectionIDs)
+            return true
         }
         let sessionRows = sessions.map { session in
             let notes = ((try? store.loadInterjections(sessionId: session.id)) ?? [])
-                .filter { $0.status == "active" }
+
             return SessionPresentation(
                 session: session,
                 interjectionCount: notes.count,
@@ -111,7 +111,7 @@ struct ItemDetailLoader {
             interjections: interjections,
             importedCommentaryLayers: importedLayers,
             importedCommentaryInterjections: importedInterjections,
-            sharedMarginPlacement: placementPasses.pass(itemId: item.id),
+            sharedMarginPlacement: placementPasses.pass(itemId: id),
             turns: turns
         ).includingTimelineSource(try? store.loadStructuredDocument(itemId: id))
     }
