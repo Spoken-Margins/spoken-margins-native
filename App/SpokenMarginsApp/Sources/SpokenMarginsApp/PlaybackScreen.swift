@@ -667,6 +667,14 @@ struct PlaybackScreen: View {
                 showItem: model.openCurrentPlaybackItem
             )
 
+            PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
+                selectedItemId: model.selectedItem.id,
+                playingItemId: model.snapshot.itemId,
+                sessionId: model.snapshot.sessionId,
+                interjections: model.selectedItem.interjections,
+                isRetrying: model.isRetryingInterjectionTranscription
+            ))
+
             if model.selectedItem.isNativeAudio,
                let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
                !show.isEmpty {
