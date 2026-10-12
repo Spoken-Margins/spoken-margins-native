@@ -85,7 +85,7 @@ Replace this section when the focus changes; do not append to it.
   3. what it is meant to catch, with evidence it catches it (a past failure it would have caught);
   4. the signal that would show it's waste, which the lane's step ledger (`scripts/lane_ledger.py`) watches.
   - The audit and reviewers block a pipeline PR without it. The per-PR app builds ran 140 times in a week and caught nothing (#1196).
-  - Pipeline waste fixes outrank feature work in dispatch. A lane or pipeline fix never waits on the owner's phone check: no `needs-human-validation` on lane fixes.
+  - Pipeline waste fixes outrank feature work in dispatch. A lane or pipeline fix never waits on the owner's phone check: no `needs-human-validation` on lane fixes, model-split moves or test fixes. Close those once merged into `next` ([workstreams README](docs/workstreams/README.md#branches-and-merging)).
   - A PR touching `scripts/lane-runner.py` that the runner won't merge goes to the lead session the same day, for the owner's merge tap.
 - **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
 - **Branches.** Each PR gets its own branch, off `next` or, one level deep, off your own armed branch (project threads: `ws/<issue>-<slug>`). Don't push new work to a branch whose PR is armed: the runner could merge it half done. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
