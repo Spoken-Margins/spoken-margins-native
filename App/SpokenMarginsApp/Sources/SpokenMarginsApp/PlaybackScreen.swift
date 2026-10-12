@@ -194,6 +194,11 @@ struct PlaybackScreen: View {
                         VStack(alignment: .leading, spacing: 18) {
                             playbackRateControl
                             mixedAudioControl
+                            PlaybackFollowOptionsView()
+                            PlaybackPreparedAudioView(
+                                fraction: model.renderedFractionForPlayback,
+                                isNativeAudio: model.selectedItem.isNativeAudio
+                            )
                             onDeviceSpeechGenerationControl
                             Button("Write a Margin", systemImage: "square.and.pencil") {
                                 closeOptions(to: .write)
@@ -226,6 +231,7 @@ struct PlaybackScreen: View {
                 .id("playback.timeline")
             PlaybackChapterRowView(
                 title: model.playbackChapterHeaderTitle,
+                sourceTitle: model.playbackItemHeaderTitle,
                 canJumpToNextChapter: model.canJumpToNextChapter,
                 showItem: model.openCurrentPlaybackItem,
                 nextChapter: model.jumpToNextChapter
@@ -339,7 +345,9 @@ struct PlaybackScreen: View {
                             Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(AppColors.watchSecondary)
-                            Text(MarginRow(interjection: note, itemTitle: model.selectedItem.title, sessionDate: nil).preview)
+                            Text(PlaybackMarginPreview.text(displayText: note.displayText,
+                                                            cleanedTranscript: note.cleanedTranscript,
+                                                            transcript: note.transcript))
                                 .font(.system(.body, design: .serif))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.leading)
@@ -650,14 +658,12 @@ struct PlaybackScreen: View {
 
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: model.openCurrentPlaybackItem) {
-                PlaybackHeaderTitle(title: model.playbackItemHeaderTitle)
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .accessibilityHint("Opens item details and listening-session history")
-            .accessibilityIdentifier("playback.itemTitle.button")
+            PlaybackSourceTitleView(
+                title: model.playbackItemHeaderTitle,
+                sleepTimerState: model.sleepTimerState,
+                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                showItem: model.openCurrentPlaybackItem
+            )
 
             if model.selectedItem.isNativeAudio,
                let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
@@ -715,11 +721,9 @@ struct PlaybackScreen: View {
                             mediaScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback,
                     barContent: mediaBarContent,
                     barPositionUnit: .seconds,
-                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))",
-                    positionAccessibilityHint: model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? ""
+                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
                 )
                 .tint(AppColors.accent)
                 .onCompatibleChange(of: canonicalMediaSeconds) { value in
@@ -760,11 +764,9 @@ struct PlaybackScreen: View {
                             textScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback,
                     barContent: textBarContent,
                     barPositionUnit: .characters,
-                    positionAccessibilityValue: textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent",
-                    positionAccessibilityHint: model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? ""
+                    positionAccessibilityValue: textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent"
                 )
                 .tint(AppColors.accent)
                 .onCompatibleChange(of: canonicalTextOffset) { value in
@@ -788,16 +790,7 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.progress.label")
                 ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
                     .tint(AppColors.accent)
-                    .overlay(alignment: .bottomLeading) {
-                        if let fraction = model.renderedFractionForPlayback {
-                            GeometryReader { geometry in
-                                Capsule().fill(Color(uiColor: .systemTeal))
-                                    .frame(width: geometry.size.width * fraction, height: 3).offset(y: 7)
-                            }.allowsHitTesting(false).accessibilityHidden(true)
-                        }
-                    }
                     .accessibilityLabel("Playback progress")
-                    .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
                     .accessibilityValue(barLabels.accessibilityValue)
                 Text(barLabels.trailing)
                     .frame(minWidth: 34, alignment: .leading)
@@ -818,7 +811,11 @@ struct PlaybackScreen: View {
                         model.skipBack()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
+                    if model.isMediaPlaybackSnapshot {
+                        Image(systemName: "gobackward.\(model.mediaSkipBackSeconds)")
+                    } else {
+                        PlaybackTextSkipIcon(direction: .backward, unit: model.skipUnit)
+                    }
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
@@ -848,7 +845,11 @@ struct PlaybackScreen: View {
                         model.skipForward()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
+                    if model.isMediaPlaybackSnapshot {
+                        Image(systemName: "goforward.\(model.mediaSkipForwardSeconds)")
+                    } else {
+                        PlaybackTextSkipIcon(direction: .forward, unit: model.skipUnit)
+                    }
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
@@ -869,6 +870,7 @@ struct PlaybackScreen: View {
                 HStack(spacing: 14) {
                     Button(action: model.skimBackward) {
                         Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .disabled(!model.snapshot.canSkimBackward)
                     .accessibilityLabel(model.skimBackwardTitle + " by scene summary")
@@ -876,6 +878,7 @@ struct PlaybackScreen: View {
 
                     Button(action: model.skimForward) {
                         Label(model.skimForwardTitle, systemImage: "forward.end.alt.fill")
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .disabled(!model.snapshot.canSkimForward)
                     .accessibilityLabel(model.skimForwardTitle + " by scene summary")
