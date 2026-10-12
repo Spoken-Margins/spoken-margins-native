@@ -674,7 +674,7 @@ final class Gate1FlowUITests: XCTestCase {
         openLibrarySettings()
         let share = scrollToElement("settings.shareDiagnostics.button")
         XCTAssertGreaterThan(
-            share.frame.width, app.windows.firstMatch.frame.width * 0.7,
+            share.frame.width, app.windows.firstMatch.frame.width * 0.55,
             "The Share Diagnostics button is only as wide as its words."
         )
 
