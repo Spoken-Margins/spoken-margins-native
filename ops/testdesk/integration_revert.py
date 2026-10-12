@@ -26,8 +26,10 @@ LANE_EXTRA_PREFIXES = ('.github/', 'scripts/lane')
 # test-scope categories that never change the app's build or its tests, so a merge that touches only these
 # can't have broken an app test (#1417). The lane's own scripts are excluded by path: they run the tests.
 OFF_APP_CATEGORIES = frozenset({'docs', 'ops', 'scripts', 'guard', 'research'})
-# Even a 'docs' file under these ships in the app or its tests (Contracts/ docs are bundled).
-APP_REACH_PREFIXES = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'Config/', 'SpokenMarginsNative.xcodeproj/')
+# Even a 'docs' file under these ships in the app or its tests (Contracts/ docs are bundled, and so is the
+# onboarding catalog under Site/, which test-scope calls docs).
+APP_REACH_PREFIXES = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'Config/', 'SpokenMarginsNative.xcodeproj/',
+                      'Site/onboarding/')
 APP_REACH_FILES = frozenset({'project.yml'})
 
 

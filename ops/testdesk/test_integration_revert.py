@@ -124,7 +124,7 @@ class BlockerTests(unittest.TestCase):
         for path in (APP + 'Gate1RootView.swift', 'App/SpokenMarginsAppTests/FooTests.swift',
                      'Packages/SessionKit/Sources/SessionKit/Session.swift', 'Contracts/docs/recovery-mvp.md',
                      'Contracts/fixtures/other.json', 'TestPlans/scripted-journeys.json', 'project.yml',
-                     'Tools/BrowserExtraction/extract.js', 'App/SpokenMarginsApp/README.md'):
+                     'Tools/BrowserExtraction/extract.js', 'Site/onboarding/catalog/v1/catalog.json', 'App/SpokenMarginsApp/README.md'):
             with self.subTest(path=path):
                 self.assertEqual(self.blockers(['ops/ledger/ledger.py', path]), [])
 
