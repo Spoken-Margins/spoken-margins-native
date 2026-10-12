@@ -41,7 +41,9 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   read (#1208: a lane tool such as phone-build doesn't count for a PR that isn't a lane change): then
   it re-merges onto the newest next and pushes without testing again (untested_moves). It won't merge an audio, persistence, packet or lane change
   (test-scope.py's lane_paths) until a Codex or Claude audit of its head says "No blocking findings": those pass
-  or fail as usual, and the audit script re-arms automerge after a clean audit. Lane changes no longer
+  or fail as usual, and the audit script re-arms automerge after a clean audit. The held report records what
+  passed with which next, and the re-armed run merges on that PASS without the checks again unless next has since
+  moved in ways that matter (untested_moves, #1461). Lane changes no longer
   wait for a person (owner rule 2026-10-01); the audit checks them, because a lane PR's own run uses
   its own workflow and helpers. A PR someone asked T3 for merges only on a
   T3 PASS (#410): while its newest T3 report is FAIL or INCONCLUSIVE, or its newest T3 request has
@@ -158,6 +160,7 @@ REQUEST = re.compile(r'^\s*/lane\s+(T\d)\b', re.M)
 REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
 IDENTICAL = re.compile(r'^Lane: identical (T\d) request for (\w+) already reported \((PASS|FAIL)\)', re.M)
 CHECKS = re.compile(r'^<!-- lane-checks: (\{.*\}) -->$', re.M)  # a held automerge report's passed checks (#834)
+AUDIT_HOLD = re.compile(r'^not merged by the runner: ', re.M)  # the line merge_blockers' hold puts in a report (#1461)
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -777,25 +780,28 @@ def checks_note(head: str, tested_base: str, ran: str, where: str) -> str:
                                              sort_keys=True) + ' -->'
 
 
-def held_checks(comments: list[dict], head: str) -> dict | None:
-    """The checks the automerge run held for T3 on <head> passed: {'next', 'ran', 'where'}, or None.
+def held_checks(comments: list[dict], head: str, hold=None, verdict: str | None = None) -> dict | None:
+    """The checks the automerge run held on <head> passed: {'next', 'ran', 'where', 'url'}, or None.
 
     #834: the lane job that reported a T3 PASS ran --plan fast and both builds on sm-lane-mac, the one runner
     that runs T3s, 7 to 39 minutes a PR (2026-10-04), while the build runner could have run them as the T3
     waited. Now the build runner's automerge run does, and its held report says what passed with which next
     (checks_note). Only the newest automerge report counts, and only when it is the runner's own (posted
-    with the workflow's token), on <head>, held for T3, and names the head and a full next commit.
+    with the workflow's token), on <head>, held (for T3 unless <hold> says another hold line), PASS when
+    <verdict> says so, and names the head and a full next commit.
     The checks line and the hold must each be a whole line of their own: the PR's own test output appears in
     a report only indented (first_errors), so it can't pass for either. The last checks line counts.
     """
+    hold = hold or PENDING_T3_HOLD
     for comment in reversed(comments):
         body = comment.get('body') or ''
         wanted = report_identity(body)
-        if not (wanted and wanted.get('tier') == 'auto' and REPORT.search(body)):
+        reported = REPORT.search(body)
+        if not (wanted and wanted.get('tier') == 'auto' and reported):
             continue
         found = CHECKS.findall(body)
         if wanted.get('commit') != head or (comment.get('user') or {}).get('login') != BOT[0] \
-                or not PENDING_T3_HOLD.search(body) or not found:
+                or not hold.search(body) or not found or (verdict and reported.group(1) != verdict):
             return None
         try:
             checked = json.loads(found[-1])
@@ -805,8 +811,24 @@ def held_checks(comments: list[dict], head: str) -> dict | None:
                 or not re.fullmatch(r'[0-9a-f]{40}', str(checked.get('next') or '')):
             return None
         return {'next': checked['next'], 'ran': str(checked.get('ran') or 'host tests'),
-                'where': str(checked.get('where') or 'no simulator (compile only)')}
+                'where': str(checked.get('where') or 'no simulator (compile only)'),
+                'url': comment.get('html_url') or ''}
     return None
+
+
+def audit_held_checks(comments: list[dict], head: str) -> dict | None:
+    """#1461: the checks an automerge run passed on <head> before the audit hold stopped it, or None.
+
+    A lane, audio, persistence or packet PR passes its automerge run, can't merge until its head is audited,
+    and the audit re-arms automerge: that run used to test the same commit on the same next again (13 to 25
+    times a day, about 6 minutes each). Its hold report carries the passed checks (run_auto), and the re-armed
+    run lets them stand under the same rules as after a T3 hold: unless next has since moved in ways that
+    matter (untested_moves). The newest automerge report must be that PASS, so a later FAIL or run wins.
+    """
+    checked = held_checks(comments, head, AUDIT_HOLD, 'PASS')
+    if checked:
+        checked['held'] = 'the automerge run held for the audit' + (f' ({checked["url"]})' if checked['url'] else '')
+    return checked
 
 
 def t3_request_for_head(comments: list[dict], labels, head: str) -> str | None:
@@ -979,16 +1001,18 @@ def untested_moves(tree: Path, tested_base: str, new_base: str, head: str) -> tu
 
 
 def merge_check_untested(head: str, merge_sha: str, base: str, base_sha: str, tested_base: str, ran: str,
-                         commits: list[str]) -> str:
+                         commits: list[str], reused: str | None = None) -> str:
     """The merge check for a re-merge pushed without testing again. It never says "Pushing `<sha7>`":
     scripts/phone-build reads that as "the runner tested this exact commit"."""
     shown = ', '.join(f'`{c}`' for c in commits[:SKIPPED_SHOWN]) + \
         (f' and {len(commits) - SKIPPED_SHOWN} more' if len(commits) > SKIPPED_SHOWN else '')
     moved = (f'- {base} has since moved to `{base_sha[:7]}`, and its commits touch none of this PR\'s files and no '
              f'build inputs its checks read: {shown}.\n' if commits else
+             f'- {base} hasn\'t moved since that run.\n' if reused else
              f'- {base} hasn\'t moved since (the test ran in the automerge run held for T3).\n')
     return (f'{MERGE_CHECK} on `{head[:7]}`: PASS, re-merged onto the newest {base} without re-testing.**\n'
-            f'- Tested this PR merged with {base} at `{tested_base[:7]}`. Ran: {ran}.\n'
+            + (f'- Reuses the earlier PASS: {reused}.\n' if reused else '')
+            + f'- Tested this PR merged with {base} at `{tested_base[:7]}`. Ran: {ran}.\n'
             + moved +
             f'- So the re-merge `{merge_sha[:7]}` goes to {base} not re-tested. The Test Desk tests {base}\'s merged '
             'tip end to end.\n'
@@ -1011,29 +1035,42 @@ class AutoRunContext:
         self.tested_base = tested_base
 
 
+def checks_stand(checked: dict | None, base_sha: str, head: str) -> bool:
+    """Whether run_auto will let <checked> stand on <base_sha>: next's commits since touch nothing the checks read."""
+    if not checked:
+        return False
+    try:
+        return untested_moves(ROOT, checked['next'], base_sha, head)[0] is not None
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, evidence: Path,
              comments: list[dict], labels=(), attempts: int = MERGE_ATTEMPTS,
              context: AutoRunContext | None = None,
              checked: dict | None = None) -> tuple[str, str, str, list[str]]:
     """The automerge run: test the merge commit, and push it to <base> on PASS unless something blocks it.
 
-    checked: the checks the automerge run held for T3 on this head passed (held_checks). They stand, as after
-    a refused push, when next's commits since touch none of the PR's files and no build inputs its checks read (#834);
-    otherwise this run tests again.
+    checked: the checks the automerge run held for T3 (held_checks) or for the audit (audit_held_checks) on this
+    head passed. They stand, as after a refused push, when next's commits since touch none of the PR's files and no
+    build inputs its checks read (#834, #1461); otherwise this run tests again.
     """
     notes: list[str] = []
     tested_base, skipped = None, None  # the next the last test ran on; next's commits since, when they can't matter
+    reused = None  # the held automerge run whose passed checks stand (#834, #1461), for the merge check
     scope, tested, checks = None, '', []
     if checked:
         try:
             skipped, why = untested_moves(ROOT, checked['next'], base_sha, head)
         except (OSError, subprocess.SubprocessError) as error:  # can't tell: test again
             skipped, why = None, f'the runner could not compare the commits ({error!r})'
-        held_run = f'the automerge run held for T3 passed its checks with {base} at {checked["next"][:7]}'
+        held_by = checked.get('held') or 'the automerge run held for T3'
+        held_run = f'{held_by} passed its checks with {base} at {checked["next"][:7]}'
         if skipped is None:
             notes.append(f'{held_run}; tested again on {base_sha[:7]}, because {why}')
         else:
             tested_base, ran, where, verdict = checked['next'], checked['ran'], checked['where'], 'PASS'
+            reused = checked.get('held')
             tested = (f'not re-tested: {held_run}, and ' + (
                 f'{base}\'s {len(skipped)} commit{"s" if len(skipped) != 1 else ""} since touch none of this PR\'s '
                 'files and no build inputs its checks read' if skipped else f'{base} hasn\'t moved since'))
@@ -1060,8 +1097,10 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             tested = f'tested the merge commit {merge_sha[:7]} ({base} at {base_sha[:7]} first, then this PR); {warm}'
             if verdict != 'PASS':
                 return verdict, where, ran, [tested] + notes + checks
-            tested_base = base_sha
+            tested_base, reused = base_sha, None
         elif scope is None:  # the held run's checks stand; the audit hold still reads the diff's scope
+            if context is not None:  # the report says which next the checks ran with, not the newest
+                context.tested_base = tested_base
             scope = diff_scope(ROOT, base)
             # The ratchet reads the labels, which may have changed since: hot-file-ok taken off (#926 audit).
             too_big = hot_file_violations(ROOT, base, set(labels))
@@ -1075,16 +1114,17 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             return held[0], where, ran, details + [checks_note(head, tested_base, ran, where),
                                                    f'not merged: {held[1]}.']
         blockers = merge_blockers(scope, latest, head)
-        if blockers:
-            return verdict, where, ran, details + [f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
-                                                   'of its head says "No blocking findings".' for b in blockers]
+        if blockers:  # what passed, for the automerge run the audit re-arms (#1461)
+            return verdict, where, ran, details + [checks_note(head, tested_base, ran, where)] + [
+                f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
+                'of its head says "No blocking findings".' for b in blockers]
         now = github.pull()
         if now['head']['sha'] != head or AUTOMERGE not in {label['name'] for label in now.get('labels', [])} \
                 or now.get('state', 'open') != 'open':  # another run merged it meanwhile, or someone closed it
             return verdict, where, ran, details + ['not merged: the PR moved on, lost the automerge label or was '
                                                    'closed while it was tested']
         github.comment(merge_check(head, merge_sha, base, base_sha, ran) if skipped is None else
-                       merge_check_untested(head, merge_sha, base, base_sha, tested_base, ran, skipped))
+                       merge_check_untested(head, merge_sha, base, base_sha, tested_base, ran, skipped, reused))
         pushed, message = push_merge(ROOT, merge_sha, base)
         if pushed:
             sweep_merge_audit(ROOT, base)
@@ -2322,7 +2362,11 @@ def main(argv=None) -> int:
     t3_first = t3_request_for_head(comments, labels, head) if request['tier'] == 'auto' else None
     on_build_runner = os.environ.get('SM_LANE_RUNNER_ROLE') == 'build'
     no_room, beside = None, None
-    if request['tier'] == 'auto' and on_build_runner:  # host tests only (NO_APP_BUILD_PER_PR): the host rules
+    audit_checked = audit_held_checks(comments, head) if request['tier'] == 'auto' else None
+    # A run that only reuses the audit-held PASS runs no tests, so it needs no room (#1461): waiting for one could
+    # end in an INCONCLUSIVE report that is the newest and takes the PASS away.
+    if request['tier'] == 'auto' and on_build_runner and not checks_stand(audit_checked, base_sha, head):
+        # host tests only (NO_APP_BUILD_PER_PR): the host rules
         no_room, beside = wait_for_room_to_test_on_host()
         if beside:
             print(f'[lane] {beside}', flush=True)
@@ -2346,7 +2390,8 @@ def main(argv=None) -> int:
             details = [f'{no_room}. Push again, or remove and re-add automerge, to try again.']
         elif request['tier'] == 'auto':
             verdict, where, ran, details = run_auto(github, pull, args.pr, args.base, head, base_sha, evidence,
-                                                    comments, labels, context=context)
+                                                    comments, labels, context=context,
+                                                    checked=audit_checked)
             details = ([beside] if beside else []) + details
             crashes = 'none'
         elif conflicts:
