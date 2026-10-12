@@ -75,6 +75,48 @@ final class StreamSeekLifecycleTests: XCTestCase {
                       "a real AVPlayer seek jump must record landing even with its completion withheld and watchdog stopped")
     }
 
+    /// #835: the app test that stalls at a Skim destination reads the player's raw state through this, to tell
+    /// AVPlayer's own clock freezing from a pending seek pinning the adapter clock.
+    func testPlaybackStateTraceFieldsReportTheRawPlayerBesideAPendingSeek() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stream-state-fields-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let episodeURL = try Self.writeTone(to: directory.appending(path: "episode.caf"), seconds: 12, hz: 220)
+        let client = AVPlayerStreamPlaybackClient()
+        try client.setPlaybackVolume(0)
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "episode", targetType: .transcriptBackedMedia, targetId: "episode-target",
+            title: "Test episode", playbackURL: episodeURL.absoluteString, durationMs: 12_000,
+            sourceType: .nativeMediaFile
+        ))
+        defer { try? client.stop() }
+        try client.play(targetId: "episode-target", fromMediaTimeMs: 0)
+        let readyDeadline = Date().addingTimeInterval(5)
+        while Date() < readyDeadline, (client.currentMediaTimeMs() ?? 0) < 200 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        let playing = client.playbackStateTraceFields()
+        XCTAssertEqual(playing["pendingSeek"], "none")
+        XCTAssertEqual(playing["timeControl"], "playing")
+        XCTAssertEqual(playing["intendsToPlay"], "1")
+        XCTAssertEqual(playing["itemStatus"], "ready")
+        let playingMs = try XCTUnwrap(playing["playerMs"].flatMap(Int.init), "the raw player clock is reported")
+        XCTAssertGreaterThanOrEqual(playingMs, 200)
+        XCTAssertNotNil(playing["uptimeMs"].flatMap(Int.init), "samples carry a monotonic time so gaps show")
+
+        try client.pause()
+        client.withholdsSeekCompletionsForTesting = true
+        _ = try client.requestMediaSeek(toMediaTimeMs: 5_000)
+        let seeking = client.playbackStateTraceFields()
+        XCTAssertEqual(client.currentMediaTimeMs(), 5_000, "precondition: a pending seek pins the adapter clock")
+        XCTAssertEqual(seeking["pendingSeek"], "navigation:retry0")
+        XCTAssertEqual(seeking["pendingSeekToMs"], "5000")
+        XCTAssertEqual(seeking["intendsToPlay"], "0")
+        XCTAssertEqual(seeking["timeControl"], "paused")
+        XCTAssertNotNil(seeking["playerMs"].flatMap(Int.init), "the raw clock is reported even while a seek pins the adapter clock")
+    }
+
     /// #588 on the real player (#1133, ANC-06): an episode that played to its end stays ended until the listener
     /// scrubs back. The seek must clear the client's own end-of-item flag, or the engine moves the episode
     /// straight back to its end. EpisodeEndSeekTests runs the engine against a fake that copies this rule;

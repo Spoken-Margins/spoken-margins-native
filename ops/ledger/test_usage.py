@@ -40,6 +40,17 @@ class UsageTests(unittest.TestCase):
         self.assertTrue(result['usage_complete'])
         self.assertIsNone(result['usage_missing_reason'])
 
+    def test_headless_claude_result_keeps_its_session_id(self):
+        # The transcript collector skips a session a wrapper row already counted (#899).
+        self.transcript.write_text(json.dumps({
+            'type': 'result', 'is_error': False, 'session_id': '164d7593-486e-4475-8464-6fe99e9300fc',
+            'usage': {'input_tokens': 22, 'cache_creation_input_tokens': 69519,
+                      'cache_read_input_tokens': 564700, 'output_tokens': 12944}}) + '\n')
+        self.assertEqual(usage.read_usage(self.transcript)['session_ids'],
+                         ['164d7593-486e-4475-8464-6fe99e9300fc'])
+        self.transcript.write_text(RECORDED)
+        self.assertNotIn('session_ids', usage.read_usage(self.transcript))
+
     def test_failed_or_partial_claude_result_is_not_complete(self):
         base = {'type': 'result', 'is_error': True, 'subtype': 'error_max_budget_usd',
                 'usage': {'input_tokens': 1, 'cache_creation_input_tokens': 2,

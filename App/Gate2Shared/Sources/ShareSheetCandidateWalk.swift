@@ -33,42 +33,75 @@ public enum ShareSheetCandidateWalk {
         resume: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void = { $0() },
         completion: @escaping @Sendable (Result<Import, Error>?) -> Void
     ) {
-        let identifiers = candidates.map(identifier)
-        let walk = Walk<Import>()
+        Walk(
+            candidates: candidates,
+            identifiers: candidates.map(identifier),
+            load: load,
+            resume: resume,
+            completion: completion
+        ).step(0)
+    }
 
-        @Sendable func step(_ index: Int) {
+    /// The walk and its state. Steps run one at a time, each after the previous load reported; each
+    /// pending load's callback holds the walk, so it lives until the walk completes.
+    ///
+    /// `step` is a method here, not a recursive nested function: with `-O -whole-module-optimization`
+    /// (Release, so the phone build and TestFlight archives), Swift 6.4's AllocBoxToStack pass crashed
+    /// on the self-capturing nested function once it was inlined into the share extension's
+    /// `viewDidAppear` ("invalid operand index", ApplySite.swift:106; #1453).
+    private final class Walk<Candidate: Sendable, Import: Sendable>: @unchecked Sendable {
+        typealias Load = @Sendable (Candidate, @escaping @Sendable (ShareSheetCandidateOutcome<Import>) -> Void) -> Void
+
+        private let candidates: [Candidate]
+        private let identifiers: [String]
+        private let load: Load
+        private let resume: @Sendable (@escaping @Sendable () -> Void) -> Void
+        private let completion: @Sendable (Result<Import, Error>?) -> Void
+        private var linkFallback = ShareSheetLinkFallback<Import>()
+        private var textFallback: Import?
+
+        init(
+            candidates: [Candidate],
+            identifiers: [String],
+            load: @escaping Load,
+            resume: @escaping @Sendable (@escaping @Sendable () -> Void) -> Void,
+            completion: @escaping @Sendable (Result<Import, Error>?) -> Void
+        ) {
+            self.candidates = candidates
+            self.identifiers = identifiers
+            self.load = load
+            self.resume = resume
+            self.completion = completion
+        }
+
+        func step(_ index: Int) {
             guard index < candidates.count else {
-                completion((walk.linkFallback.deferredLink ?? walk.textFallback).map { .success($0) })
+                completion((linkFallback.deferredLink ?? textFallback).map { .success($0) })
                 return
             }
             load(candidates[index]) { outcome in
-                resume {
-                    switch outcome {
-                    case .content(let found):
-                        completion(.success(found))
-                    case .failed(let error):
-                        completion(.failure(error))
-                    case .nothing:
-                        step(index + 1)
-                    case .sharedText(let text):
-                        if walk.textFallback == nil { walk.textFallback = text }
-                        step(index + 1)
-                    case .link(let link):
-                        if let accepted = walk.linkFallback.accept(link, isLink: true, at: index, in: identifiers) {
-                            completion(.success(accepted))
-                        } else {
-                            step(index + 1)
-                        }
-                    }
+                self.resume { self.handle(outcome, at: index) }
+            }
+        }
+
+        private func handle(_ outcome: ShareSheetCandidateOutcome<Import>, at index: Int) {
+            switch outcome {
+            case .content(let found):
+                completion(.success(found))
+            case .failed(let error):
+                completion(.failure(error))
+            case .nothing:
+                step(index + 1)
+            case .sharedText(let text):
+                if textFallback == nil { textFallback = text }
+                step(index + 1)
+            case .link(let link):
+                if let accepted = linkFallback.accept(link, isLink: true, at: index, in: identifiers) {
+                    completion(.success(accepted))
+                } else {
+                    step(index + 1)
                 }
             }
         }
-        step(0)
-    }
-
-    /// The walk's state. Steps run one at a time, each after the previous load reported.
-    private final class Walk<Import: Sendable>: @unchecked Sendable {
-        var linkFallback = ShareSheetLinkFallback<Import>()
-        var textFallback: Import?
     }
 }

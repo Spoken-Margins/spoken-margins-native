@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  Mechanical audit (headless Claude since #1195; the name is legacy) for Spoken Margins PRs into next, every 20 minutes.
+  Mechanical audit (headless Claude since #1195; the name is legacy) for Spoken Margins PRs into next, every 5 minutes.
   Template: not installed by default. Install and switch-over steps are in
   ops/codex/README.md.
   Its own log is artifacts/ops/codex-audit.log; launchd stderr goes to
@@ -32,7 +32,7 @@
   </dict>
 
   <key>StartInterval</key>
-  <integer>1200</integer>
+  <integer>300</integer>
 
   <key>RunAtLoad</key>
   <false/>

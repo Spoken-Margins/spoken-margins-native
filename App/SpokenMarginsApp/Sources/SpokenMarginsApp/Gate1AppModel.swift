@@ -77,7 +77,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var writtenMarginDraft: WrittenMarginDraft?
     @Published private(set) var recordingPermissionDenied = false
     @Published var marginCollectionQuery = MarginCollectionQuery()
-    @Published private(set) var sharedMarginRows: [SharedMarginRow] = []
+    @Published var sharedMarginRows: [SharedMarginRow] = []
     private var pendingVoiceCaptureRequestID: UUID?
     var screen: Gate1Screen {
         get { presentedScreen }
@@ -235,15 +235,15 @@ final class Gate1AppModel: ObservableObject {
     @Published var batchExportResult: BatchSessionExportResult?
     @Published var isWritingBatchExport = false
     @Published private(set) var retryingInterjectionTranscriptionIds: Set<String> = []
-    @Published private(set) var playingInterjectionAudioId: String?
-    @Published private(set) var playingInterjectionAudioSessionID: String?
-    @Published private(set) var playingInterjectionAudioRate: Double = 1
-    private var libraryPresentationRevision = 0
-    private(set) var navigationRefreshTask: Task<Void, Never>?
+    @Published var playingInterjectionAudioId: String?
+    @Published var playingInterjectionAudioSessionID: String?
+    @Published var playingInterjectionAudioRate: Double = 1
+    var libraryPresentationRevision = 0
+    var navigationRefreshTask: Task<Void, Never>?
     var navigationLibraryRead: @Sendable (SQLiteSessionStore) async throws -> LibraryReadSnapshot = { store in
         try await Task.detached(priority: .utility) { try LibraryReadSnapshot.read(store: store) }.value
     }
-    private var activePlaybackDetail: ItemDetailState?
+    var activePlaybackDetail: ItemDetailState?
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { cachedQuickAddCandidates = nil; libraryPresentationRevision += 1 }
     }
@@ -295,16 +295,16 @@ final class Gate1AppModel: ObservableObject {
     @Published var sharedSpokenMarginsPackageURL: URL?
     @Published var isSharedSpokenMarginsPackagePresented = false
     @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview?
-    @Published private(set) var isImportingSpokenMarginsPackage = false
-    @Published private(set) var spokenMarginsPackageImportError: String?
-    @Published private(set) var pendingImportedCommentary: ImportedCommentaryPrompt? {
+    @Published var isImportingSpokenMarginsPackage = false
+    @Published var spokenMarginsPackageImportError: String?
+    @Published var pendingImportedCommentary: ImportedCommentaryPrompt? {
         didSet {
             if oldValue?.id != pendingImportedCommentary?.id {
                 updateGate2CompactState()
             }
         }
     }
-    @Published private(set) var playingImportedCommentary: ImportedCommentaryPrompt?
+    @Published var playingImportedCommentary: ImportedCommentaryPrompt?
     @Published var importedCommentaryIsPaused = false
     /// What the shared Margin's voice is really doing (#941), judged from the player, not from the request to play.
     @Published var importedCommentaryPhase: SharedMarginPlaybackPhase = .loading
@@ -360,9 +360,9 @@ final class Gate1AppModel: ObservableObject {
     @Published var importText = ""
     @Published var sourceLinkURL = ""
     @Published var followedSourceURL = ""
-    @Published private(set) var followedSourceCandidates: [SourceCandidateEvidence] = []
-    @Published private var storedSourceFollowSuggestionCandidates: [SourceCandidateEvidence] = []
-    private var sourceFollowSuggestionItemId: String?
+    @Published var followedSourceCandidates: [SourceCandidateEvidence] = []
+    @Published var storedSourceFollowSuggestionCandidates: [SourceCandidateEvidence] = []
+    var sourceFollowSuggestionItemId: String?
     var sourceFollowSuggestionCandidates: [SourceCandidateEvidence] {
         guard sourceFollowSuggestionItemId == selectedItem.id else { return [] }
         let row = libraryItems.first(where: { $0.id == selectedItem.id })
@@ -372,11 +372,11 @@ final class Gate1AppModel: ObservableObject {
         ) else { return [] }
         return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
     }
-    @Published private(set) var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
-    @Published private(set) var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil; listeningSignals.endListening() } }
-    @Published private(set) var isRefreshingFollowedSources = false
-    @Published private(set) var importingFollowedSourceEntryIds: Set<String> = []
-    @Published private(set) var isFollowingSelectedSource = false
+    @Published var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
+    @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil; listeningSignals.endListening() } }
+    @Published var isRefreshingFollowedSources = false
+    @Published var importingFollowedSourceEntryIds: Set<String> = []
+    @Published var isFollowingSelectedSource = false
     @Published var isResolvingSourceLink = false
     @Published var sourceLinkCandidateReview: SourceLinkCandidateReviewState?
     @Published private(set) var sourceLinkImportState = "idle"
@@ -503,17 +503,17 @@ final class Gate1AppModel: ObservableObject {
     let openAIResponsesClient = OpenAIResponsesClient()
     let streamingSpeechQueue = StreamingSpeechQueue()
     private(set) var speechPlaybackClient: AudioPlaybackClient?
-    private var sessionAudioPlaybackClient: AudioPlaybackClient?
+    var sessionAudioPlaybackClient: AudioPlaybackClient?
     private var supertonicRenderer: SupertonicNarrationRenderer?
     private var preparedAudioCoordinator: PreparedAudioCoordinator?
     private var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
         didSet { if let digest = currentSupertonicRenderSignature?.digest, digest != oldValue?.digest { Task { [ledger = offlineStorageLedger] in _ = try? await ledger?.markSupersededPreparedChunks(currentSignatureDigest: digest) } } }
     }
     private var renderedSpeechDiskCache: RenderedSpeechDiskCache?
-    private let sourceLinkResolver: LinkResolutionClient?
+    let sourceLinkResolver: LinkResolutionClient?
     private let sourceLinkHandoffStore: SourceLinkHandoffStore?
     private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
-    private let audioPlaybackClientOverride: AudioPlaybackClient?
+    let audioPlaybackClientOverride: AudioPlaybackClient?
     private var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     private(set) var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     /// Shared by the podcast downloader and the pre-play offline check (#779).
@@ -521,18 +521,18 @@ final class Gate1AppModel: ObservableObject {
     private var requestedPodcastTransportReplacements: Set<String> = []
     var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
-    private(set) var followedSourceCoordinator: FollowedSourceCoordinator?
+    var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
     private(set) var libraryWasEmptyAtLaunch = false
     var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
     let sharedLinkVoiceover = SharedLinkVoiceover() // tests replace its page fetch (#810)
-    private var sourceSuggestionChecks: Set<String> = []
-    private var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
-    @Published private var followOffers: [String: FollowOffer] = [:]
+    var sourceSuggestionChecks: Set<String> = []
+    var followDiscoveries: [String: Task<[SourceCandidateEvidence], Error>] = [:]
+    @Published var followOffers: [String: FollowOffer] = [:]
     private var guidedOnboardingCoordinator: GuidedOnboardingCoordinator?
     private let recordingClientOverride: RecordingClient?
     let microphoneAccess: MarginMicrophoneAccess
-    private let sourceTranscriptionClient: SourceTranscriptionClient
+    let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
     private let alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler?
     private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
@@ -561,16 +561,16 @@ final class Gate1AppModel: ObservableObject {
     var interjectionAudioCompletionTask: Task<Void, Never>?
     private var skimBridgePlayer: AVPlayer?
     private var skimBridgeTask: Task<Void, Never>?
-    private var preparingLocalAudioMapItems = Set<String>()
-    private var commentaryCuePlayer: AVAudioPlayer?
+    var preparingLocalAudioMapItems = Set<String>()
+    var commentaryCuePlayer: AVAudioPlayer?
     #endif
-    private var sharedMarginOffers = SharedMarginOfferQueue()
-    private var sourceShouldResumeAfterImportedCommentary = false
-    private var sourcePausedForImportedCommentaryPrompt = false
-    private var importedCommentaryAutoPlayTask: Task<Void, Never>?
+    var sharedMarginOffers = SharedMarginOfferQueue()
+    var sourceShouldResumeAfterImportedCommentary = false
+    var sourcePausedForImportedCommentaryPrompt = false
+    var importedCommentaryAutoPlayTask: Task<Void, Never>?
     private var bulkSharePreparationTask: Task<Void, Never>?
     private var bulkSharePreparationGeneration = 0
-    private var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
+    var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     var foregroundAudioPreparationTask: Task<Void, Never>?
     private let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
@@ -590,7 +590,7 @@ final class Gate1AppModel: ObservableObject {
     )
     private var pendingStartupAudioPreparationItemIds: Set<String> = []
     private var failedStartupAudioPreparationItemIds: Set<String> = []
-    private var isImportingPendingSourceLinkHandoffs = false
+    var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     var completedStreamingTurnIds: Set<String> = []
     @Published private(set) var pendingSourceContextInterjectionIds: Set<String> = []
@@ -756,7 +756,7 @@ final class Gate1AppModel: ObservableObject {
         recordTimelineReviewCompleted()
     }
 
-    private func recordTimelineReviewCompleted() {
+    func recordTimelineReviewCompleted() {
         changeOnboardingProgress { $0.timelineReviewed() }
     }
 
@@ -1733,7 +1733,7 @@ final class Gate1AppModel: ObservableObject {
         conductor.observe(mediaTimeMs: current.currentMediaTimeMs)
     }
 
-    private func tryRefreshOfflineStorageUsage() {
+    func tryRefreshOfflineStorageUsage() {
         guard let ledger = offlineStorageLedger else { return }
         Task { [weak self] in
             guard let snapshot = try? await ledger.presentationSnapshot() else { return }
@@ -2556,7 +2556,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func persistResolvedSourceLinkInBackground(
+    func persistResolvedSourceLinkInBackground(
         request: LinkResolutionRequest,
         result: LinkResolutionResult
     ) throws -> Item? {
@@ -2847,7 +2847,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// `importBrowserText`, returning the new item's id, or nil when the import failed.
     /// `opensItem: false` (the Link field, Paste & go) adds an article in the background with the shared add confirmation (#828).
-    private func importBrowserTextItem(_ handoff: BrowserTextHandoff, opensItem: Bool = true) -> String? {
+    func importBrowserTextItem(_ handoff: BrowserTextHandoff, opensItem: Bool = true) -> String? {
         do {
             if hasActiveSession || (!opensItem && !handoff.requestedContinuation.startSession) {
                 let itemId = try importBrowserTextInBackground(handoff)
@@ -3704,12 +3704,12 @@ final class Gate1AppModel: ObservableObject {
             || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
     }
 
-    private func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
+    func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
         let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
         return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
     }
 
-    private func prepareSummaryBridgeAsset(
+    func prepareSummaryBridgeAsset(
         itemId: String,
         proposalId: String,
         scene: PortableListeningMapScene,
@@ -4093,171 +4093,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    var nextPlaybackChapter: Chapter? {
-        guard snapshot.itemId == selectedItem.id,
-              snapshot.targetType == TargetType.itemTextTTS.rawValue,
-              let index = selectedItem.chapters.firstIndex(where: { isCurrentTimelineChapter($0) }),
-              selectedItem.chapters.indices.contains(index + 1) else { return nil }
-        return selectedItem.chapters[index + 1]
-    }
-
-    var nextPlaybackMediaChapter: MediaTimelineChapter? {
-        guard snapshot.itemId == selectedItem.id,
-              snapshot.targetType == TargetType.transcriptBackedMedia.rawValue
-                || snapshot.targetType == TargetType.browserOwnedMedia.rawValue,
-              let position = snapshot.currentMediaTimeMs else { return nil }
-        let chapters = selectedItem.mediaChapters.isEmpty ? selectedItem.listeningMapScenes : selectedItem.mediaChapters
-        return chapters.sorted { $0.startMs < $1.startMs }.first { $0.startMs > position }
-    }
-
-    func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(chapter.title).")
-        }
-    }
-
-    func jumpToMediaChapter(_ chapter: MediaTimelineChapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(chapter.title).")
-        }
-    }
-
-    func jumpToListeningMapScene(_ scene: MediaTimelineChapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(scene.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: scene.startMs)
-            if !snapshot.status.isPlaybackActive {
-                snapshot = try engine.resumePlayback()
-            }
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(scene.title).")
-        }
-    }
-
-    func playSourceFromBeginning(fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning(fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            let startedSelectedItem = try ensureSessionForSelectedItem(engine)
-            if !startedSelectedItem {
-                snapshot = try engine.playSourceFromBeginning()
-            }
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Playing source from the beginning.")
-        }
-    }
-
-    /// Item Detail can be opened while another item remains in the mini player. Chapter
-    /// actions belong to the item being viewed, not merely to whichever session happens
-    /// to be restored in the engine.
-    @discardableResult
-    private func ensureSessionForSelectedItem(_ engine: SessionEngine) throws -> Bool {
-        try prepareSourceMediaPlayback(itemId: activeItemId)
-        if let session = engine.currentSession, session.itemId == activeItemId,
-           session.status != "finished", session.phase != .finished, session.completionPercent < 100 {
-            return false
-        }
-        resetMixWithOtherAudioForNewSession()
-        if engine.currentSession != nil {
-            snapshot = try endEngineSession(engine)
-        }
-        let started = try engine.startSession(itemId: activeItemId)
-        snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)
-        return true
-    }
-
-    var activePlaybackItemId: String? {
-        snapshot.sessionId == nil ? nil : snapshot.itemId
-    }
-
-    var recordingNavigationIsLocked: Bool {
-        isRequestingRecordingPermission || snapshot.isRecording || writtenMarginDraft != nil
-    }
-
-    @discardableResult
-    func rejectNavigationOrSessionMutationWhileRecording(_ operation: String) -> Bool {
-        guard recordingNavigationIsLocked else { return false }
-        diagnostics["recordingNavigationGuard"] = "blocked_\(operation)"
-        statusMessage = "Finish or cancel this Margin before leaving its listening position."
-        return true
-    }
-
-    func openHome() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_home") else { return }
-        screen = .home
-        // Reflect the known source position without loading every saved item.
-        if let index = libraryItems.firstIndex(where: { $0.id == snapshot.itemId }), snapshot.sessionId != nil {
-            libraryItems[index].hasContinuationSession = true
-            libraryItems[index].continuationProgressPercent = snapshot.sourceProgressPercent
-        }
-        navigationRefreshTask?.cancel()
-        guard let store else { return }
-        let revision = libraryPresentationRevision
-        let read = navigationLibraryRead
-        navigationRefreshTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(350))
-                let data = try await read(store)
-                try Task.checkCancellation()
-                guard let self, self.screen == .home,
-                      self.libraryPresentationRevision == revision else { return }
-                let rows = LibraryRowBuilder.rows(from: data, context: self.startupAudioContext)
-                if self.libraryItems != rows { self.libraryItems = rows }
-                self.recentlyDeletedItems = data.items.filter { $0.deletedAt != nil }
-                    .sorted { ($0.deletedAt ?? .distantPast) > ($1.deletedAt ?? .distantPast) }.map {
-                    LibraryItemRow(id: $0.id, title: $0.title, status: "Recently deleted", canDelete: true)
-                }
-            } catch is CancellationError {
-            } catch {
-                self?.diagnostics["homeLibraryRefreshError"] = String(describing: error)
-            }
-        }
-    }
-
-    func openMargins() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_margins") else { return }
-        openHome()
-        requestedExperienceRoot = .margins
-    }
-
-    func openLibrary() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_library") else { return }
-        openHome()
-        requestedExperienceRoot = .library
-    }
-
     var visibleLibraryItems: [LibraryItemRow] {
         LibraryQueryEngine.visibleLibraryItems(libraryItems, query: libraryQuery)
     }
@@ -4301,80 +4136,6 @@ final class Gate1AppModel: ObservableObject {
 
     var librarySortDescription: String {
         LibraryQueryEngine.librarySortDescription(query: libraryQuery)
-    }
-
-    func openSettings() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_settings") else { return }
-        screen = .settings
-    }
-
-    func openHelp() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_help") else { return }
-        isHelpPresented = true
-    }
-
-    func openAISettingsFromSummaryPrompt() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings") else { return }
-        isAISetupNeededPresented = false
-        screen = .settings
-    }
-
-    func openPlayback() {
-        guard !isRequestingRecordingPermission else { return }
-        guard hasActiveSession else { return }
-        screen = .playback
-        if let itemId = snapshot.itemId, let store {
-            activeItemId = itemId
-            if selectedItem.id != itemId {
-                if let detail = activePlaybackDetail, detail.id == itemId {
-                    selectedItem = detail
-                } else {
-                    navigationRefreshTask?.cancel()
-                    navigationRefreshTask = Task { [weak self] in
-                        try? await Task.sleep(for: .milliseconds(350))
-                        guard !Task.isCancelled, let self, self.screen == .playback,
-                              self.snapshot.itemId == itemId,
-                              let detail = try? self.loadItemDetail(id: itemId, store: store) else { return }
-                        self.selectedItem = detail
-                    }
-                }
-            }
-        }
-    }
-
-    func openTimeline(focusMarginID: String? = nil) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_timeline") else { return }
-        guard hasActiveSession else { return }
-        requestedTimelineFocusMarginID = focusMarginID
-        screen = .timeline
-    }
-
-    func openOfflineStorage() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_offline_storage") else { return }
-        tryRefreshOfflineStorageUsage()
-        screen = .offlineStorage
-    }
-
-    func refreshOfflineStoragePresentation() {
-        tryRefreshOfflineStorageUsage()
-    }
-
-    func returnToSettingsFromOfflineStorage() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("return_to_settings") else { return }
-        screen = .settings
-    }
-
-    func openExport() {
-        openExport(sessionId: nil)
-    }
-
-    func openExport(sessionId: String?) {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
-        exportSessionId = sessionId
-            ?? (snapshot.itemId == selectedItem.id ? snapshot.sessionId : nil)
-            ?? selectedItem.sessions.first?.id
-        screen = .export
-        refreshExportPreview(reportStatus: false)
     }
 
     func openItem(id: String) {
@@ -4639,7 +4400,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Seeks the source player, or records the destination when a restored paused session
     /// has no player yet; the next playback start then opens the source there.
-    private func seekOrStageMedia(_ engine: SessionEngine, toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
+    func seekOrStageMedia(_ engine: SessionEngine, toMediaTimeMs mediaTimeMs: Int) throws -> SessionSnapshot {
         do {
             return try engine.seekMedia(toMediaTimeMs: mediaTimeMs)
         } catch SessionKitError.invalidCommandForState(let reason)
@@ -4754,7 +4515,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func resetMixWithOtherAudioForNewSession() {
+    func resetMixWithOtherAudioForNewSession() {
         if mixesWithOtherAudio {
             setMixesWithOtherAudio(false)
         } else {
@@ -5272,7 +5033,7 @@ final class Gate1AppModel: ObservableObject {
         updatePendingAutoPlayDiagnostics(reason: "waiting_for_current_audio")
     }
 
-    private func clearPendingAutoPlayTurns() {
+    func clearPendingAutoPlayTurns() {
         pendingAutoPlayQueue.clear()
         diagnostics["pendingAutoPlayTurnId"] = nil
         diagnostics["pendingAutoPlayQueue"] = "0"
@@ -5302,10 +5063,6 @@ final class Gate1AppModel: ObservableObject {
         marginDiagnosticKey(name, sessionId: request.sessionId, interjectionId: request.interjectionId)
     }
 
-    func isPlayingInterjectionAudio(_ interjection: Interjection) -> Bool {
-        playingInterjectionAudioId == interjection.id && playingInterjectionAudioSessionID == interjection.sessionId
-    }
-
     func isRetryingInterjectionTranscription(_ interjection: Interjection) -> Bool {
         retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
     }
@@ -5332,228 +5089,7 @@ final class Gate1AppModel: ObservableObject {
         reportConfirmation("Retranscribing the saved Margin audio.")
     }
 
-    func toggleInterjectionAudioPlayback(_ interjection: Interjection) {
-        #if canImport(AVFoundation)
-        guard interjection.captureKind != .written else { return }
-        if isPlayingInterjectionAudio(interjection) {
-            stopInterjectionAudioPlayback()
-            reportConfirmation("Stopped playing your Margin.")
-            return
-        }
-        guard let audioPath = interjection.audioPath,
-              let url = resolvedInterjectionAudioURL(for: audioPath),
-              FileManager.default.fileExists(atPath: url.path) else {
-            reportFailure("This Margin's audio is unavailable.")
-            return
-        }
-        if snapshot.status.isPlaybackActive {
-            pause()
-        }
-        stopInterjectionAudioPlayback()
-        do {
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-            let item = AVPlayerItem(url: leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs))
-            item.audioTimePitchAlgorithm = .timeDomain
-            let player = AVPlayer(playerItem: item)
-            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
-            player.defaultRate = Float(rate)
-            interjectionAudioPlayer = player
-            playingInterjectionAudioId = interjection.id
-            playingInterjectionAudioSessionID = interjection.sessionId
-            playingInterjectionAudioRate = rate
-            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
-                while !Task.isCancelled, let item {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard !Task.isCancelled else { return }
-                    if item.status == .failed {
-                        self?.stopInterjectionAudioPlayback()
-                        self?.reportFailure("This Margin's audio couldn't be played.")
-                        return
-                    }
-                    let duration = item.duration.seconds
-                    let current = item.currentTime().seconds
-                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        self?.stopInterjectionAudioPlayback()
-                        return
-                    }
-                }
-            }
-            player.playImmediately(atRate: Float(rate))
-            reportConfirmation("Playing your Margin.")
-        } catch {
-            stopInterjectionAudioPlayback()
-            reportFailure(error, context: "Margin playback failed")
-        }
-        #else
-        reportFailure("Margin playback is unavailable on this device.")
-        #endif
-    }
-
-    func stopInterjectionAudioPlayback() {
-        let hadImportedMargin = playingImportedCommentary != nil
-        playingImportedCommentary = nil
-        importedCommentaryIsPaused = false
-        importedCommentaryHealth = nil
-        importedCommentaryPhase = .loading
-        sourceShouldResumeAfterImportedCommentary = false
-        if hadImportedMargin {
-            importedMarginRemoteControls.end()
-            (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(!mixesWithOtherAudio)
-            gate2CompactControls.setNowPlayingEnabled(!mixesWithOtherAudio)
-        }
-        #if canImport(AVFoundation)
-        interjectionAudioPlayer?.pause()
-        interjectionAudioPlayer?.replaceCurrentItem(with: nil)
-        interjectionAudioPlayer = nil
-        interjectionAudioCompletionTask?.cancel()
-        interjectionAudioCompletionTask = nil
-        #endif
-        playingInterjectionAudioId = nil
-        playingInterjectionAudioSessionID = nil
-        playingInterjectionAudioRate = 1
-    }
-
-    func listenToPendingImportedCommentary() {
-        guard let prompt = pendingImportedCommentary else { return }
-        listenToImportedCommentary(prompt)
-    }
-
-    func dismissPendingImportedCommentary() {
-        guard pendingImportedCommentary != nil else { return }
-        importedCommentaryAutoPlayTask?.cancel()
-        importedCommentaryAutoPlayTask = nil
-        pendingImportedCommentary = nil
-        let shouldResume = sourcePausedForImportedCommentaryPrompt
-        sourcePausedForImportedCommentaryPrompt = false
-        if shouldResume, snapshot.status == .paused {
-            resumePlayback()
-        }
-    }
-
-    func listenToImportedCommentary(layerID: String, interjectionID: String) {
-        guard let layer = selectedItem.importedCommentaryLayers.first(where: { $0.id == layerID }),
-              let records = selectedItem.importedCommentaryInterjections[layerID],
-              let offset = records.firstIndex(where: { $0.id == interjectionID }) else { return }
-        listenToImportedCommentary(ImportedCommentaryPrompt(
-            layer: layer,
-            interjection: records[offset],
-            index: offset + 1,
-            count: records.count
-        ))
-    }
-
-    func returnToSourceFromImportedCommentary() {
-        stopImportedCommentaryPlayback(resumeSource: true)
-    }
-
-    func listenToImportedCommentary(_ prompt: ImportedCommentaryPrompt) {
-        sharedMarginOffers.remove(id: prompt.id)
-        #if canImport(AVFoundation)
-        guard let audioPath = prompt.interjection.audioPath,
-              let audioURL = resolvedApplicationSupportAssetURL(for: audioPath) else {
-            dismissPendingImportedCommentary()
-            reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
-            return
-        }
-        importedCommentaryAutoPlayTask?.cancel()
-        importedCommentaryAutoPlayTask = nil
-        let shouldResumeSource = sourcePausedForImportedCommentaryPrompt
-            || snapshot.status.isPlaybackActive
-            || (playingImportedCommentary != nil && sourceShouldResumeAfterImportedCommentary)
-        sourcePausedForImportedCommentaryPrompt = false
-        if snapshot.status.isPlaybackActive { pause() }
-        stopInterjectionAudioPlayback()
-        sourceShouldResumeAfterImportedCommentary = shouldResumeSource
-        do {
-            #if os(iOS)
-            let options: AVAudioSession.CategoryOptions = mixesWithOtherAudio
-                ? (lowersBackgroundAudio ? [.mixWithOthers, .duckOthers] : [.mixWithOthers]) : []
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-            let item = AVPlayerItem(url: leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs))
-            item.audioTimePitchAlgorithm = .timeDomain
-            let player = AVPlayer(playerItem: item)
-            player.volume = mixesWithOtherAudio ? Float(mixedPlaybackVolume) : 1
-            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
-            player.defaultRate = Float(rate)
-            interjectionAudioPlayer = player
-            playingInterjectionAudioRate = rate
-            playingImportedCommentary = prompt
-            importedCommentaryIsPaused = false
-            let health = SharedMarginPlaybackHealth(startedAt: ProcessInfo.processInfo.systemUptime)
-            importedCommentaryHealth = health
-            importedCommentaryPhase = health.phase
-            let attempt = health.attemptID
-            pendingImportedCommentary = nil
-            (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
-            gate2CompactControls.setNowPlayingEnabled(false)
-            gate2CompactControls.endLiveActivities()
-            if !mixesWithOtherAudio {
-                importedMarginRemoteControls.install { [weak self] command in
-                    guard let self, self.playingImportedCommentary != nil else { return }
-                    self.dispatchGate2CompactCommand(command, origin: "imported_margin_remote")
-                }
-            }
-            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item, weak player] in
-                var heard = false
-                while !Task.isCancelled, let item {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    // A reading from a replaced or retried attempt must not touch the current one.
-                    guard !Task.isCancelled, let self, self.importedCommentaryHealth?.attemptID == attempt else { return }
-                    let duration = item.duration.seconds
-                    let current = item.currentTime().seconds
-                    // Heard once the voice has played; a file that fails to decode stays new (#690).
-                    if !heard, current.isFinite, current > 0 { heard = true; self.markSharedMarginHeard(prompt.interjection) }
-                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        self.stopImportedCommentaryPlayback(resumeSource: true)
-                        return
-                    }
-                    let failed = item.status == .failed || player?.status == .failed
-                    self.observeImportedCommentary(playerFailed: failed, clockSeconds: current, playerAtRest: player?.timeControlStatus == .paused)
-                    if self.importedCommentaryPhase.isFailed { return }
-                    self.publishImportedCommentaryNowPlaying()
-                }
-            }
-            player.playImmediately(atRate: Float(rate))
-        } catch {
-            stopImportedCommentaryPlayback(resumeSource: false)
-            reportFailure(error, context: "Shared Margin playback failed")
-        }
-        #else
-        reportFailure("Shared Margin playback is unavailable on this device.")
-        #endif
-    }
-
-    /// Its voice started playing, so the shared Margin is no longer new to this listener (#469).
-    private func markSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
-        guard margin.isNewToListener, let heard = try? store?.markImportedCommentaryInterjectionHeard(id: margin.id, at: Date()) else { return }
-        selectedItem.importedCommentaryInterjections = SharedMarginHearing.replacing(heard, in: selectedItem.importedCommentaryInterjections)
-        sharedMarginRows = sharedMarginRows.map { $0.interjection.id == heard.id ? SharedMarginRow(interjection: heard, layer: $0.layer, itemTitle: $0.itemTitle, placement: $0.placement) : $0 }
-    }
-
-    private func stopImportedCommentaryPlayback(resumeSource: Bool) {
-        let shouldResume = resumeSource && sourceShouldResumeAfterImportedCommentary
-        stopInterjectionAudioPlayback()
-        playingImportedCommentary = nil
-        sourceShouldResumeAfterImportedCommentary = false
-        if shouldResume, snapshot.status == .paused { resumePlayback() }
-    }
-
-    private func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
-        // Margins crossed together are offered one after another (#918).
-        guard let prompt = sharedMarginOffers.nextOffer(
-            previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil,
-            prompts: importedCommentaryPrompts(includeAnnounced: true)
-        ) else { return }
-        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
-    }
-
-    private func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
+    func importedCommentaryPrompts(includeAnnounced: Bool) -> [ImportedCommentaryPrompt] {
         SharedMarginPrompts.prompts(
             layers: selectedItem.importedCommentaryLayers,
             recordsByLayerID: selectedItem.importedCommentaryInterjections,
@@ -5562,63 +5098,8 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func presentImportedCommentaryPrompt(
-        _ prompt: ImportedCommentaryPrompt,
-        sourceWasPlaying: Bool
-    ) {
-        sourcePausedForImportedCommentaryPrompt = sourceWasPlaying
-        if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
-        if !prompt.layer.isMuted { playImportedCommentaryCue() }
-        pendingImportedCommentary = prompt
-        if prompt.layer.revealMode == .guided {
-            importedCommentaryAutoPlayTask?.cancel()
-            importedCommentaryAutoPlayTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(420))
-                guard !Task.isCancelled,
-                      self?.pendingImportedCommentary?.id == prompt.id else { return }
-                self?.listenToPendingImportedCommentary()
-            }
-        }
-    }
-
-    private func jumpToImportedCommentary(interjectionID: String) -> Bool {
-        guard let prompt = importedCommentaryPrompts(includeAnnounced: true)
-            .first(where: { $0.interjection.id == interjectionID }) else {
-            reportFailure("The selected Shared Margin is no longer available.")
-            return false
-        }
-        let sourceWasPlaying = snapshot.status.isPlaybackActive
-        sharedMarginOffers.markAnnounced(prompt.id)
-        if sourceWasPlaying { pause() }
-        if let mediaTimeMs = prompt.interjection.resolution.localMediaTimeMs {
-            seekMedia(toMediaTimeMs: mediaTimeMs)
-        } else if let charOffset = prompt.interjection.resolution.localStartChar {
-            seekText(toCharOffset: charOffset)
-        } else {
-            reportFailure("The selected Shared Margin does not have a verified local position.")
-            return false
-        }
-        presentImportedCommentaryPrompt(prompt, sourceWasPlaying: sourceWasPlaying)
-        screen = .playback
-        diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
-        return true
-    }
-
     nonisolated static func isPlayableImportedCommentaryResolution(_ resolution: ImportedAnchorResolution) -> Bool {
         SharedMarginPrompts.isPlayable(resolution)
-    }
-
-    nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
-        guard itemPlaybackRate.isFinite else { return 1 }
-        return max(0.25, min(3, itemPlaybackRate))
-    }
-
-    private func playImportedCommentaryCue() {
-        #if canImport(AVFoundation)
-        do { commentaryCuePlayer = try SharedMarginChime.play() } catch {
-            diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
-        }
-        #endif
     }
 
     func deleteTranscript(interjection: Interjection) {
@@ -5711,69 +5192,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func refreshImportInbox() {
-        var entries: [ImportInboxEntry] = []
-        do {
-            for failed in try resolvedSourceLinkHandoffStore().failedHandoffs() {
-                entries.append(ImportInboxEntry(
-                    id: "source:\(failed.id)",
-                    payloadID: failed.id,
-                    kind: .sourceLink,
-                    title: "Podcast or audio link",
-                    source: failed.handoff.inputURL,
-                    reason: failed.reason
-                ))
-            }
-        } catch {
-            diagnostics["sourceLinkImportInbox"] = "unavailable:\(error.localizedDescription)"
-        }
-        do {
-            for failed in try resolvedBrowserTextHandoffStore().failedHandoffs() {
-                entries.append(ImportInboxEntry(
-                    id: "text:\(failed.id)",
-                    payloadID: failed.id,
-                    kind: .browserText,
-                    title: failed.handoff.source.title,
-                    source: failed.handoff.source.url,
-                    reason: failed.reason
-                ))
-            }
-        } catch {
-            diagnostics["browserTextImportInbox"] = "unavailable:\(error.localizedDescription)"
-        }
-        importInbox = entries
-    }
-
-    func retryImportInboxEntry(_ entry: ImportInboxEntry) {
-        do {
-            switch entry.kind {
-            case .sourceLink:
-                try resolvedSourceLinkHandoffStore().retryFailed(payloadID: entry.payloadID)
-            case .browserText:
-                try resolvedBrowserTextHandoffStore().retryFailed(payloadID: entry.payloadID)
-            }
-            importPendingSourceLinkHandoffs()
-            reportConfirmation("Import retry queued.")
-        } catch {
-            reportFailure(error, context: "Import retry failed")
-        }
-    }
-
-    func deleteImportInboxEntry(_ entry: ImportInboxEntry) {
-        do {
-            switch entry.kind {
-            case .sourceLink:
-                try resolvedSourceLinkHandoffStore().deleteFailed(payloadID: entry.payloadID)
-            case .browserText:
-                try resolvedBrowserTextHandoffStore().deleteFailed(payloadID: entry.payloadID)
-            }
-            refreshImportInbox()
-            reportSuccess("Removed failed import.")
-        } catch {
-            reportFailure(error, context: "Import removal failed")
-        }
-    }
-
     /// What the diagnostics export reads from the running app, copied here on the main actor (#1191).
     func diagnosticsExportInputs() -> DiagnosticsExportInputs {
         DiagnosticsExportInputs(
@@ -5832,492 +5250,6 @@ final class Gate1AppModel: ObservableObject {
             chapterId: Gate2CompactCommandURL.chapterId(from: url),
             origin: "compact_url"
         )
-    }
-
-    func importPendingSourceLinkHandoffs() {
-        Task { @MainActor in
-            await importPendingHandoffsAsync()
-        }
-    }
-
-    private func importPendingHandoffsAsync() async {
-        guard !isImportingPendingSourceLinkHandoffs else { return }
-        isImportingPendingSourceLinkHandoffs = true
-        defer {
-            isImportingPendingSourceLinkHandoffs = false
-            refreshImportInbox()
-        }
-
-        do {
-            try consumePendingSpokenMarginsPackageHandoffs(
-                from: SpokenMarginsPackageHandoffStore.appGroup()
-            )
-        } catch {
-            diagnostics["pendingSpokenMarginsPackageImport"] = "unavailable:\(error.localizedDescription)"
-        }
-        var addedItemIds: [String] = []
-        defer { reportPendingHandoffsAdded(itemIds: addedItemIds) }
-
-        do {
-            let handoffStore = try resolvedSourceLinkHandoffStore()
-            let payloadIDs = try handoffStore.pendingPayloadIDs()
-            diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
-            for payloadID in payloadIDs {
-                do {
-                    let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    if let itemId = try await importSourceLinkInBackground(handoff) { addedItemIds.append(itemId) }
-                    try handoffStore.deletePayload(payloadID: payloadID)
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "imported"
-                } catch SourceLinkHandoffStoreError.invalidPayload {
-                    try? handoffStore.deletePayload(payloadID: payloadID)
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_invalid_payload"
-                } catch SourceLinkHandoffStoreError.missingPayload {
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "missing"
-                } catch {
-                    try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
-                }
-            }
-        } catch {
-            diagnostics["pendingSourceLinkImport"] = "unavailable:\(error.localizedDescription)"
-        }
-
-        do {
-            let handoffStore = try resolvedBrowserTextHandoffStore()
-            let payloadIDs = try handoffStore.pendingPayloadIDs()
-            diagnostics["pendingBrowserTextPayloads"] = "\(payloadIDs.count)"
-            for payloadID in payloadIDs {
-                do {
-                    let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    addedItemIds.append(try importBrowserTextInBackground(handoff))
-                    try handoffStore.deletePayload(payloadID: payloadID)
-                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "imported"
-                } catch Gate5BrowserTextHandoffStoreError.invalidPayload {
-                    try? handoffStore.deletePayload(payloadID: payloadID)
-                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "deleted_invalid_payload"
-                } catch Gate5BrowserTextHandoffStoreError.missingPayload {
-                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "missing"
-                } catch {
-                    try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
-                    diagnostics["pendingBrowserTextPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
-                }
-            }
-        } catch {
-            diagnostics["pendingBrowserTextImport"] = "unavailable:\(error.localizedDescription)"
-        }
-    }
-
-    func consumePendingSpokenMarginsPackageHandoffs(
-        from packageStore: SpokenMarginsPackageHandoffStore
-    ) throws {
-        let payloadIDs = try packageStore.pendingPayloadIDs()
-        diagnostics["pendingSpokenMarginsPackages"] = "\(payloadIDs.count)"
-        for payloadID in payloadIDs where spokenMarginsPackageImportReview == nil {
-            do {
-                let packageURL = try packageStore.packageURL(payloadID: payloadID)
-                let didOpen = stageSpokenMarginsPackageImport(from: packageURL)
-                try packageStore.deletePackage(payloadID: payloadID)
-                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = didOpen ? "opened" : "rejected"
-            } catch {
-                try? packageStore.deletePackage(payloadID: payloadID)
-                diagnostics["pendingSpokenMarginsPackage:\(payloadID)"] = "rejected:\(error.localizedDescription)"
-                reportFailure(error, context: "Shared Margins package could not be opened")
-            }
-        }
-    }
-
-    @discardableResult
-    private func stageSpokenMarginsPackageImport(from sourceURL: URL) -> Bool {
-        var workingDirectory: URL?
-        do {
-            bootstrapLibraryIfNeeded()
-            let didAccess = sourceURL.startAccessingSecurityScopedResource()
-            defer { if didAccess { sourceURL.stopAccessingSecurityScopedResource() } }
-            let root = try applicationSupportDirectory()
-                .appending(path: "SpokenMargins/IncomingPackages/\(UUID().uuidString)", directoryHint: .isDirectory)
-            workingDirectory = root
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let copiedPackage = root.appending(path: "package.spokenmargins")
-            try FileManager.default.copyItem(at: sourceURL, to: copiedPackage)
-            let contents = try SpokenMarginsPackageArchive.read(
-                from: copiedPackage,
-                extractingAssetsTo: root.appending(path: "assets", directoryHint: .isDirectory)
-            )
-            guard let digest = contents.manifest.contentDigest else {
-                throw SpokenMarginsPackageArchiveError.invalidDigest
-            }
-            let store = try requireStore()
-            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest),
-               existing.sourceResolutionStatus != .wrongSource,
-               let associatedItemId = existing.itemId,
-               let associatedItem = try? store.loadItem(id: associatedItemId),
-               associatedItem.deletedAt == nil,
-               SharedPacketItemMatcher.layerHasValidItemAssociation(existing, item: associatedItem,
-                   ownedAudiobookDigest: localAudiobookDigest(for: associatedItem)) {
-                if let itemId = existing.itemId {
-                    openItem(id: itemId)
-                    if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
-                        Task { @MainActor [weak self] in
-                            defer { try? FileManager.default.removeItem(at: root) }
-                            guard let self else { return }
-                            do {
-                                try await self.placeOnOwnedAudio(item, contents: contents,
-                                    admission: self.verifyLocalAudioForImport(item, contents: contents))
-                                self.reportSuccess("Restored this listening package. Playback has not started.")
-                            } catch { self.reportFailure(error, context: "Restoring listening package failed") }
-                        }
-                        return true
-                    }
-                    if let localURL = podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
-                        resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
-                    }
-                    reportSuccess("These shared Margins are already in your library. Playback has not started.")
-                } else {
-                    reportSuccess("These shared Margins are already in your library.")
-                }
-                diagnostics["lastSpokenMarginsPackageImport"] = "duplicate:\(digest)"
-                try? FileManager.default.removeItem(at: root)
-                return true
-            }
-            let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
-            spokenMarginsPackageImportError = nil
-            spokenMarginsPackageImportReview = SpokenMarginsPackageImportReview(
-                packageURL: copiedPackage,
-                extractionDirectory: root,
-                contents: contents,
-                matchingItemId: matchingItemId
-            )
-            if try store.loadImportedCommentaryLayer(packageDigest: digest) == nil {
-                diagnostics["lastSpokenMarginsPackageImport"] = "previewed:\(digest)"
-            } else {
-                diagnostics["lastSpokenMarginsPackageImport"] = "repair_previewed:\(digest)"
-            }
-            return true
-        } catch {
-            if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
-            diagnostics["lastSpokenMarginsPackageImport"] = "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))"
-            reportFailure(SharedMarginsImportMessage.userFacing(error))
-            return false
-        }
-    }
-
-    func createRecipientTestSessionFromLastSharedPackage() {
-        guard let packageURL = sharedSpokenMarginsPackageURL else {
-            reportFailure("The last shared package is unavailable.")
-            return
-        }
-        isSharingInterjectionsPresented = false
-        isSharedSpokenMarginsPackagePresented = false
-        Task { @MainActor [weak self] in
-            await Task.yield()
-            self?.stageSpokenMarginsPackageImport(from: packageURL)
-        }
-    }
-
-    func cancelSpokenMarginsPackageImport() {
-        guard !isImportingSpokenMarginsPackage else { return }
-        let directory = spokenMarginsPackageImportReview?.extractionDirectory
-        spokenMarginsPackageImportReview = nil
-        spokenMarginsPackageImportError = nil
-        if let directory { try? FileManager.default.removeItem(at: directory) }
-    }
-
-    /// Reconciles a pending recipient-supplied package after Add Source returns.
-    /// Build 23 presentation code calls this seam instead of asking the user to
-    /// reopen the package and repeat integrity verification.
-    func refreshSpokenMarginsPackageImportAfterAddingSource() {
-        guard let review = spokenMarginsPackageImportReview,
-              review.requiresRecipientItem,
-              !isImportingSpokenMarginsPackage else { return }
-        do {
-            let store = try requireStore()
-            let matchingItemId = try matchingItemID(for: review.contents.manifest.item, store: store)
-            spokenMarginsPackageImportReview = SpokenMarginsPackageImportReview(
-                packageURL: review.packageURL,
-                extractionDirectory: review.extractionDirectory,
-                contents: review.contents,
-                matchingItemId: matchingItemId
-            )
-            if matchingItemId == nil {
-                spokenMarginsPackageImportError = "That source does not match the item described by this package yet. Add the same item or cancel the import."
-            } else {
-                spokenMarginsPackageImportError = nil
-                reportConfirmation("Source matched. Review the shared Margins before importing.")
-            }
-        } catch {
-            spokenMarginsPackageImportError = SharedMarginsImportMessage.userFacing(error)
-            diagnostics["lastSpokenMarginsPackageImport"] = "source_reconciliation_failed:\(error.localizedDescription)"
-        }
-    }
-
-    func confirmSpokenMarginsPackageImport() {
-        guard let review = spokenMarginsPackageImportReview,
-              !isImportingSpokenMarginsPackage else { return }
-        guard !review.requiresRecipientItem else {
-            spokenMarginsPackageImportError = "This package does not include the item. Add the matching source, then return to this pending import."
-            return
-        }
-        isImportingSpokenMarginsPackage = true
-        spokenMarginsPackageImportError = nil
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let store = try self.requireStore()
-                let itemId: String?
-                if let matching = review.matchingItemId {
-                    itemId = matching
-                } else if review.contents.manifest.itemTransport.kind == .embeddedText {
-                    itemId = try self.installEmbeddedItem(from: review.contents, store: store)
-                } else if review.contents.manifest.item.itemType == .podcast {
-                    itemId = try await self.acquirePodcastForImportedPackage(review.contents.manifest.item)
-                } else {
-                    itemId = try await self.acquireArticleForImportedPackage(review.contents.manifest.item)
-                }
-                let item = try itemId.map { try store.loadItem(id: $0) }
-                let localItem = item.map { SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: self.localAudiobookDigest(for: $0)) }
-                var localAudioAdmission: LocalAudioPacketAdmission?
-                if let item, item.mediaType == "audiobook" {
-                    localAudioAdmission = try await self.verifyLocalAudioForImport(item, contents: review.contents)
-                }
-                let itemText = item?.text
-                let disposition: ImportedCommentaryImportDisposition
-                if let digest = review.contents.manifest.contentDigest,
-                   let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
-                    try SpokenMarginsPackageImporter.repairAssociation(
-                        existing: existing,
-                        contents: review.contents,
-                        itemId: itemId,
-                        localItem: localItem,
-                        itemText: itemText,
-                        repository: store
-                    )
-                    if let itemId { self.diagnostics["lastSpokenMarginsPackageRepair"] = "reassociated:\(existing.id):\(itemId)" }
-                    disposition = .duplicate(existingLayerId: existing.id)
-                } else {
-                    disposition = try SpokenMarginsPackageImporter.importPackage(
-                        review.contents,
-                        itemId: itemId,
-                        localItem: localItem,
-                        itemText: itemText,
-                        repository: store
-                    )
-                }
-                switch disposition {
-                case .duplicate(let existingLayerId):
-                    self.diagnostics["lastSpokenMarginsPackageImport"] = "duplicate_layer:\(existingLayerId)"
-                case .imported(let layerId, let interjectionIds):
-                    self.diagnostics["lastSpokenMarginsPackageImport"] = "imported:\(layerId):\(interjectionIds.count)"
-                    self.listeningSignals.packetImport(itemId: itemId, packetId: review.contents.manifest.packageId, marginCount: interjectionIds.count)
-                }
-                if let itemId {
-                    self.activeItemId = itemId
-                    self.libraryItems = try self.loadLibraryRows(store: store)
-                    self.selectedItem = try self.loadItemDetail(id: itemId, store: store)
-                    self.screen = .item
-                    if let item,
-                       item.media?.sourceType == .remoteStream,
-                       let rawURL = item.media?.url,
-                       let remoteURL = URL(string: rawURL) {
-                        self.podcastDownloadCoordinator?.register(
-                            itemId: itemId,
-                            remoteURL: remoteURL,
-                            userInitiated: true
-                        )
-                    }
-                    if let item, let localAudioAdmission {
-                        try await self.placeOnOwnedAudio(item, contents: review.contents, admission: localAudioAdmission)
-                    } else if let localURL = self.podcastDownloadCoordinator?.validatedLocalURL(for: itemId) {
-                        self.resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
-                    }
-                }
-                self.spokenMarginsPackageImportReview = nil
-                self.isImportingSpokenMarginsPackage = false
-                self.reportConfirmation("Imported shared Margins. Playback has not started.")
-            } catch {
-                self.isImportingSpokenMarginsPackage = false
-                self.spokenMarginsPackageImportError = SharedMarginsImportMessage.userFacing(error)
-                self.diagnostics["lastSpokenMarginsPackageImport"] = "failed:\(error.localizedDescription)"
-                self.reportFailure(error, context: "Shared Margins import failed")
-            }
-        }
-    }
-
-    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws -> LocalAudioPacketAdmission {
-        guard let url = resolvedOwnedAudiobookURL(for: item) else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("Local source audio is unavailable")
-        }
-        let actualDigest = try await Task.detached(priority: .utility) {
-            try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
-        }.value
-        return try LocalAudioPacketAdmission.admitted(
-            contents, recipient: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item)), itemId: item.id, actualDigest: actualDigest)
-    }
-
-    /// Exact maps project at the sender's times; a podcast packet on the listener's copy is placed like a download.
-    private func placeOnOwnedAudio(_ item: Item, contents: VerifiedSpokenMarginsPackage, admission: LocalAudioPacketAdmission) async throws {
-        if admission == .exactEdition { return try await activateImportedLocalAudioMaps(item: item, contents: contents) }
-        if let url = resolvedOwnedAudiobookURL(for: item) { resolveImportedPodcastCommentary(itemId: item.id, localURL: url) }
-    }
-
-    private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
-        let store = try requireStore()
-        let recipient = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
-        for proposal in contents.listeningMapProposals {
-            let projection = try ExactLocalAudioImport.projection(
-                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
-            )
-            for scene in proposal.scenes where scene.summaryAssetId != nil {
-                try await adoptSuppliedSummary(scene: scene, proposalId: proposal.id, itemId: item.id, contents: contents, store: store)
-            }
-            try store.savePortableListeningMapProposal(proposal, itemId: item.id)
-            try store.saveResolvedListeningMapProjection(projection)
-        }
-        if selectedItem.id == item.id { refreshSelectedItem() }
-        prepareImportedLocalAudioBridges(itemId: item.id)
-    }
-
-    private func adoptSuppliedSummary(
-        scene: PortableListeningMapScene, proposalId: String, itemId: String,
-        contents: VerifiedSpokenMarginsPackage, store: SQLiteSessionStore
-    ) async throws {
-        guard let suppliedID = scene.summaryAssetId,
-              let descriptor = contents.manifest.assets.first(where: { $0.id == suppliedID && $0.role == SpokenMarginsAssetRole.summaryVoice }),
-              let sourceURL = contents.extractedAssetURLs[suppliedID],
-              let checksum = descriptor.sha256, let byteCount = descriptor.byteCount else {
-            throw SpokenMarginsPackageArchiveError.invalidManifest("Supplied summary audio is unavailable")
-        }
-        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: suppliedID)
-        let relativePath = "SpokenMargins/EpisodeMaps/\(safePodcastEvidenceComponent(itemId))/SummaryBridges/\(assetID).m4a"
-        let support = try applicationSupportDirectory()
-        let destination = support.appending(path: relativePath)
-        let ledger = requireOfflineLedger(store: store, rootDirectory: support)
-        let reservation = try await ledger.reserve(ownerId: assetID, byteCount: Int64(byteCount))
-        do {
-            try await Task.detached(priority: .utility) {
-                guard try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL) == checksum else {
-                    throw SpokenMarginsPackageArchiveError.invalidAsset(suppliedID)
-                }
-                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data(contentsOf: sourceURL).write(to: destination, options: .atomic)
-            }.value
-            try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
-                id: assetID, itemId: itemId, category: .summaryBridge, relativePath: relativePath,
-                byteCount: Int64(byteCount), checksumSHA256: checksum, isReproducible: false
-            ))
-        } catch {
-            try? await ledger.release(reservationId: reservation.id)
-            throw error
-        }
-    }
-
-    func prepareImportedLocalAudioBridges(itemId: String) {
-        guard let store, let item = try? store.loadItem(id: itemId),
-              item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream || item.media?.sourceType == .generatedTTSPrerendered,
-              let projection = try? store.loadResolvedListeningMapProjection(itemId: itemId),
-              let proposals = try? store.loadPortableListeningMapProposals(itemId: itemId),
-              let proposal = proposals.first(where: { $0.id == projection.proposalId }),
-              preparingLocalAudioMapItems.insert(itemId).inserted else { return }
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.preparingLocalAudioMapItems.remove(itemId) }
-            do {
-                for scene in proposal.scenes where scene.eligibility == .eligible {
-                    try Task.checkCancellation()
-                    guard try await self.prepareSummaryBridgeAsset(
-                        itemId: itemId, proposalId: proposal.id, scene: scene, store: store
-                    ) != nil else {
-                        throw SessionKitError.persistenceFailed("Summary audio was not prepared")
-                    }
-                    self.updateSkimAvailability()
-                }
-                self.diagnostics["localAudioSkim:\(itemId)"] = "ready"
-            } catch {
-                self.diagnostics["localAudioSkim:\(itemId)"] = "failed:\(error.localizedDescription)"
-                self.reportWarning("Some Skim summaries are not ready. Reopen the item to retry, or reimport the package to restore its supplied voices.")
-            }
-        }
-    }
-
-    private func installEmbeddedItem(
-        from contents: VerifiedSpokenMarginsPackage,
-        store: SQLiteSessionStore
-    ) throws -> String {
-        guard contents.manifest.itemTransport.kind == .embeddedText,
-              let artifactID = contents.manifest.itemTransport.embeddedArtifactId,
-              let embedded = contents.embeddedTextItems.first(where: { $0.id == artifactID }),
-              let digest = contents.manifest.contentDigest else {
-            throw SessionKitError.persistenceFailed("shared_embedded_item_is_unavailable")
-        }
-        let itemID = "item-shared-\(digest.prefix(20))"
-        let item = Item(
-            id: itemID,
-            title: contents.manifest.item.title,
-            mediaType: "text",
-            text: embedded.text,
-            externalReference: "shared-package:\(contents.manifest.packageId)",
-            status: "ready",
-            externalReferenceType: "spoken_margins_package"
-        )
-        try store.seed(item: item)
-        return itemID
-    }
-
-    private func acquirePodcastForImportedPackage(_ item: SharedItemIdentity) async throws -> String {
-        guard let canonicalURL = item.canonicalURL,
-              SharedPodcastResolutionPolicy.hasReference(item) else {
-            throw SessionKitError.persistenceFailed("shared_podcast_item_has_no_reference")
-        }
-        let request = LinkResolutionRequest(
-            id: "shared-package-\(UUID().uuidString)",
-            inputURL: canonicalURL,
-            sourceSurface: "spoken_margins_package",
-            createdAt: Date()
-        )
-        var result: LinkResolutionResult
-        do {
-            if let sourceLinkResolver {
-                result = try sourceLinkResolver.resolve(request)
-            } else {
-                result = try await PublicPodcastLinkResolver().resolveAsync(request)
-            }
-        } catch {
-            // Keep the existing resolver path first. Some publisher pages reject
-            // automated requests even when the packet has the exact enclosure.
-            // In that case, use its reference through the same source persistence
-            // path; anchor placement still needs recipient evidence.
-            guard let packageResult = SharedPodcastResolutionPolicy.packageReferenceResolution(item: item, request: request) else {
-                throw error
-            }
-            diagnostics["lastSharedPodcastAcquisition"] = "package_reference_after_resolution_failure"
-            result = packageResult
-        }
-        let settled = try SharedPodcastResolutionPolicy.settle(result, item: item, request: request)
-        result = settled.result
-        if let diagnostic = settled.diagnostic {
-            diagnostics["lastSharedPodcastAcquisition"] = diagnostic
-        }
-        guard result.status == .playable,
-              let importedItem = try persistResolvedSourceLinkInBackground(request: request, result: result) else {
-            throw SessionKitError.persistenceFailed("shared_podcast_item_not_created")
-        }
-        return importedItem.id
-    }
-
-    private func matchingItemID(
-        for itemIdentity: SharedItemIdentity,
-        store: SQLiteSessionStore
-    ) throws -> String? {
-        if shouldForceFirstSharedSourceMissForUITesting {
-            shouldForceFirstSharedSourceMissForUITesting = false
-            diagnostics["uiTestSharedSourceMiss"] = "forced_once"
-            return nil
-        }
-        return SharedPacketItemMatcher.matchingItemId(
-            for: itemIdentity, among: try store.listItems(), ownedAudiobookDigest: localAudiobookDigest(for:))
-    }
-
-    private func localAudiobookDigest(for item: Item) -> String? {
-        item.mediaType == "audiobook" ? SharedPacketItemMatcher.ownedAudiobookDigest(for: item, assets: (try? store?.loadOwnedOfflineAssets()) ?? []) : nil
     }
 
     private func normalizedSharingURL(_ value: String?) -> String? {
@@ -8305,7 +7237,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// What the Library row builder needs to know about the app right now.
-    private var startupAudioContext: StartupAudioContext {
+    var startupAudioContext: StartupAudioContext {
         StartupAudioContext(
             hasAcceptedCurrentTerms: hasAcceptedCurrentTerms,
             hasSupertonicVoice: ttsVoiceSelection.supertonicVoice != nil,
@@ -8528,14 +7460,14 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
+    func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
         if let sourceLinkHandoffStore {
             return sourceLinkHandoffStore
         }
         return try SourceLinkHandoffStore.appGroup()
     }
 
-    private func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
+    func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
         if let browserTextHandoffStore {
             return browserTextHandoffStore
         }
@@ -9248,7 +8180,7 @@ final class Gate1AppModel: ObservableObject {
         )
     }
 
-    private func safePodcastEvidenceComponent(_ value: String) -> String {
+    func safePodcastEvidenceComponent(_ value: String) -> String {
         PodcastAnchorEvidencePaths.safeComponent(value)
     }
 
@@ -11000,423 +9932,11 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func followSource() {
-        let value = followedSourceURL
-        guard !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let store = try self.requireStore()
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
-                let candidates = try await coordinator.discover(urlString: value)
-                self.diagnostics["followedSourceNetworkHosts"] = await coordinator.contactedHosts.sorted().joined(separator: ",")
-                guard candidates.count == 1, let candidate = candidates.first, !candidate.needsConfirmation else {
-                    self.followedSourceCandidates = candidates
-                    self.reportConfirmation("Choose which feed to follow.")
-                    return
-                }
-                _ = try await coordinator.follow(candidate: candidate)
-                self.followedSourceCandidates = []
-                self.followedSourceURL = ""
-                await self.performFollowedSourceRefresh(force: true)
-                self.diagnostics["followSourceFailure"] = nil
-                self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
-            } catch {
-                await self.recordFollowFailure(error)
-                self.reportFailure(error, context: "Follow source failed")
-            }
-        }
-    }
-
-    /// #244: a failed Follow said only "FollowedSourceError". Record the case, host and steps.
-    private func recordFollowFailure(_ error: Error) async {
-        var line = FollowedSourceCoordinator.diagnosticCode(for: error)
-        if let coordinator = followedSourceCoordinator { line = await coordinator.failureDiagnostic(for: error) }
-        diagnostics["followSourceFailure"] = FollowedSourceMatching.stampedDiagnostic(line)
-    }
-
-    /// B1 drawer and OPML import (#463): follows a public https feed link. Throws so the caller
-    /// can show the failure on the row. Returns the followed source's id, which the drawer keeps:
-    /// the feed can settle on another URL. An import refreshes once at the end, not per feed.
-    func followCatalogFeed(_ feedURL: String, refreshAfter: Bool = true) async throws -> String {
-        let store = try requireStore()
-        let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-        followedSourceCoordinator = coordinator
-        let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
-        diagnostics["followSourceFailure"] = nil
-        if refreshAfter { await performFollowedSourceRefresh(force: false) }
-        return sourceId
-    }
-
-    /// Read from the store: `feedSubscriptions` lags a follow until its refresh lands (#463).
-    func storedFeedSubscriptions() -> [FeedSubscription] { (try? store?.loadFeedSubscriptions()) ?? feedSubscriptions }
-
-    func followSourceCandidate(_ candidate: SourceCandidateEvidence) {
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let store = try self.requireStore()
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
-                _ = try await coordinator.follow(candidate: candidate)
-                self.followedSourceCandidates = []
-                self.followedSourceURL = ""
-                await self.performFollowedSourceRefresh(force: true)
-                self.diagnostics["followSourceFailure"] = nil
-                self.reportConfirmation("Source followed. New entries stay in the inbox until you import them.")
-            } catch {
-                self.reportFailure(error, context: "Follow source failed")
-            }
-        }
-    }
-
-    func cancelFollowSourceCandidates() {
-        followedSourceCandidates = []
-    }
-
-    /// Follow shows only once discovery found a feed for the selected item (#280).
-    var canManuallyFollowSelectedSource: Bool {
-        guard sourceFollowSuggestionCandidates.isEmpty, selectedFollowOffer != nil else { return false }
-        let row = libraryItems.first(where: { $0.id == selectedItem.id })
-        return !FollowedSourceMatching.isSourceAlreadyFollowed(
-            sourceURL: row?.sourceURL,
-            sourceTitle: row?.sourceTitle,
-            sourceReference: row?.sourceReference,
-            subscriptions: feedSubscriptions
-        )
-    }
-
-    /// Names what will be followed, and is settled when the button first appears (#243, #280).
-    var manualFollowButtonTitle: String {
-        guard let offer = selectedFollowOffer else { return "" }
-        return isFollowingSelectedSource ? offer.followingTitle : offer.title
-    }
-
-    var manualFollowButtonSymbol: String {
-        selectedFollowOffer?.symbol ?? ManualFollowPolicy.buttonSymbol(mediaType: "podcast")
-    }
-
-    /// Built from the same de-duplicated, unfollowed feeds the suggestion card lists, so the
-    /// button and the card name the feed the same way.
-    private var selectedFollowOffer: FollowOffer? {
-        guard let found = followOffers[selectedItem.id] else { return nil }
-        return ManualFollowPolicy.offer(
-            itemId: found.itemId, mediaType: found.mediaType,
-            candidates: FollowedSourceMatching.uniqueUnfollowedCandidates(found.candidates, subscriptions: feedSubscriptions)
-        )
-    }
-
-    /// Starts feed discovery when an item opens. Follow appears when a feed is found, and never
-    /// for a file, a PDF, a Listening Edition or a site with no feed (#280).
-    func discoverFollowOfferIfEligible(itemId: String, store: SQLiteSessionStore) {
-        guard followOffers[itemId] == nil,
-              let item = try? store.loadItem(id: itemId),
-              let url = ManualFollowPolicy.discoveryURL(for: item),
-              !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: feedSubscriptions) else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-            self.followedSourceCoordinator = coordinator
-            var candidates: [SourceCandidateEvidence]?, failure = "none:empty"
-            do { candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator) } catch { failure = "none:" + FollowedSourceCoordinator.diagnosticCode(for: error) }
-            self.diagnostics["followOffer"] = FollowedSourceMatching.discoveryDiagnostic(
-                item: item, candidates: candidates, failure: failure, subscriptions: (try? store.loadFeedSubscriptions()) ?? self.feedSubscriptions
-            )
-        }
-    }
-
-    /// One discovery per item and link, shared by the Follow button, the suggestion card and the
-    /// tap, so all three show the same feeds and the same name. "No feed" is kept for the session;
-    /// other failures (offline, timeouts) are retried on the next open.
-    private func sharedFollowDiscovery(
-        item: Item,
-        preferredURL: URL,
-        coordinator: FollowedSourceCoordinator
-    ) async throws -> [SourceCandidateEvidence] {
-        let key = item.id + "\u{1f}" + preferredURL.absoluteString
-        if let task = followDiscoveries[key] { return try await task.value }
-        let task = Task { try await self.discoverFollowCandidates(item: item, preferredURL: preferredURL, coordinator: coordinator) }
-        followDiscoveries[key] = task
-        do {
-            let candidates = try await task.value
-            // Whichever path ran discovery, the Follow button can use what it found.
-            if followOffers[item.id] == nil {
-                followOffers[item.id] = ManualFollowPolicy.offer(itemId: item.id, mediaType: item.mediaType, candidates: candidates)
-            }
-            return candidates
-        } catch FollowedSourceError.noFeedCandidates {
-            throw FollowedSourceError.noFeedCandidates
-        } catch {
-            followDiscoveries[key] = nil
-            throw error
-        }
-    }
-
-    func followSelectedSource() {
-        guard !isFollowingSelectedSource, let store else { return }
-        let itemId = selectedItem.id
-        isFollowingSelectedSource = true
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.isFollowingSelectedSource = false }
-            do {
-                let item = try store.loadItem(id: itemId)
-                guard let preferredURL = ManualFollowPolicy.discoveryURL(for: item) else { throw FollowedSourceError.invalidURL }
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
-                let candidates = try await self.sharedFollowDiscovery(
-                    item: item,
-                    preferredURL: preferredURL,
-                    coordinator: coordinator
-                )
-                guard let candidate = candidates.first else { throw FollowedSourceError.noFeedCandidates }
-                guard candidates.count == 1, !candidate.needsConfirmation else {
-                    self.followedSourceCandidates = candidates
-                    self.reportConfirmation("Choose the source feed to follow.")
-                    return
-                }
-                let subscriptionsBySourceID = Dictionary(
-                    uniqueKeysWithValues: try store.loadFeedSubscriptions().map { ($0.source.id, $0) }
-                )
-                let subscription = if let existing = subscriptionsBySourceID[candidate.source.id] {
-                    existing
-                } else {
-                    try await coordinator.follow(candidate: candidate)
-                }
-                var updated = item
-                updated.sourceURL = subscription.source.canonicalURL
-                updated.sourceTitle = updated.sourceTitle ?? subscription.source.title
-                if updated != item {
-                    try store.saveItem(updated)
-                    try self.refreshLibraryRows(store: store)
-                }
-                self.feedSubscriptions = try store.loadFeedSubscriptions()
-                await self.performFollowedSourceRefresh(force: true)
-                self.diagnostics["followSourceFailure"] = nil
-                self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
-            } catch {
-                await self.recordFollowFailure(error)
-                self.reportFailure(error, context: "Follow source failed")
-            }
-        }
-    }
-
-    func offerFollowSuggestionIfEligible(itemId: String, store: SQLiteSessionStore) {
-        guard !sourceSuggestionChecks.contains(itemId),
-              sourceFollowSuggestionCandidates.isEmpty,
-              // Files, PDFs and Listening Editions get no suggestion card either (#280).
-              let item = try? store.loadItem(id: itemId), let url = ManualFollowPolicy.discoveryURL(for: item) else { return }
-        // Opening Item loads its sessions synchronously; Home's display cache
-        // may still be awaiting refresh or may have been superseded by navigation.
-        let persistedProgress = selectedItem.id == itemId
-            ? Self.preferredContinuationSession(in: selectedItem.sessions)?.completionPercent
-            : libraryItems.first(where: { $0.id == itemId })?.continuationProgressPercent
-        let progress = SourceFollowSuggestionPolicy.engagementProgress(
-            itemId: itemId, persistedProgress: persistedProgress, snapshot: snapshot
-        )
-        guard SourceFollowSuggestionPolicy.isEngaged(
-            progress: progress, itemHasMargin: selectedItem.id == itemId && !selectedItem.interjections.isEmpty
-        ) else { return }
-        sourceSuggestionChecks.insert(itemId)
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.sourceSuggestionChecks.remove(itemId) }
-            do {
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
-                guard !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: try store.loadFeedSubscriptions()) else { return }
-                let candidates = try await self.sharedFollowDiscovery(
-                    item: item,
-                    preferredURL: url,
-                    coordinator: coordinator
-                )
-                guard self.selectedItem.id == itemId,
-                      self.screen != .playback || self.snapshot.itemId == itemId,
-                      let current = try? store.loadItem(id: itemId),
-                      SourceFollowSuggestionPolicy.hasSameOrigin(item, current) else {
-                    self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("discarded_stale_origin")
-                    return
-                }
-                // Following may finish while network discovery is suspended.
-                let subscriptions = try store.loadFeedSubscriptions()
-                self.feedSubscriptions = subscriptions
-                let unfollowed = FollowedSourceMatching.uniqueUnfollowedCandidates(candidates, subscriptions: subscriptions)
-                guard !FollowedSourceMatching.isItemAlreadyFollowed(current, subscriptions: subscriptions),
-                      !unfollowed.isEmpty || candidates.isEmpty else {
-                    self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("already_followed")
-                    return
-                }
-                let now = Date()
-                let eligible = try FollowedSourceMatching.suggestible(unfollowed, now: now) { try store.loadSourceSuggestionDecision(sourceId: $0) }
-                guard !eligible.isEmpty else { return }
-                for decision in SourceFollowSuggestionPolicy.promptedDecisions(for: eligible, now: now) {
-                    try store.saveSourceSuggestionDecision(decision)
-                }
-                self.sourceFollowSuggestionItemId = itemId
-                self.storedSourceFollowSuggestionCandidates = eligible
-                self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.stampedDiagnostic("offered:\(eligible.count)")
-            } catch { // #539: a background check, not a Follow tap, so no followSourceFailure line.
-                self.diagnostics["sourceFollowSuggestion"] = FollowedSourceMatching.discoveryDiagnostic(
-                    item: item, candidates: nil, failure: "unavailable:" + FollowedSourceCoordinator.diagnosticCode(for: error),
-                    subscriptions: (try? store.loadFeedSubscriptions()) ?? self.feedSubscriptions
-                )
-            }
-        }
-    }
-
     var followCandidateDiscoveryHandler: ((Item, URL) async throws -> [SourceCandidateEvidence])?
-
-    private func discoverFollowCandidates(
-        item: Item,
-        preferredURL: URL,
-        coordinator: FollowedSourceCoordinator
-    ) async throws -> [SourceCandidateEvidence] {
-        if let followCandidateDiscoveryHandler { return try await followCandidateDiscoveryHandler(item, preferredURL) }
-        do {
-            return try await coordinator.discover(urlString: preferredURL.absoluteString, requiringItemMembership: item.sourceURL == nil)
-        } catch {
-            guard let originalReference = item.externalReference,
-                  let originalURL = URL(string: originalReference),
-                  originalURL.scheme?.lowercased() == "https" else { throw error }
-            let resolver = PublicPodcastLinkResolver()
-            let canonicalFeed = try await Task.detached {
-                try resolver.canonicalFeedURL(for: originalURL)
-            }.value
-            guard let canonicalFeed else { throw error }
-            return try await coordinator.discover(urlString: canonicalFeed.absoluteString)
-        }
-    }
-
-    func acceptSourceFollowSuggestion(_ candidate: SourceCandidateEvidence) {
-        guard sourceFollowSuggestionCandidates.contains(where: { $0.id == candidate.id }) else { return }
-        let itemId = sourceFollowSuggestionItemId
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                let store = try self.requireStore()
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
-                let subscription = try await coordinator.follow(candidate: candidate)
-                if let itemId, var item = try? store.loadItem(id: itemId) {
-                    item.sourceURL = subscription.source.canonicalURL
-                    item.sourceTitle = item.sourceTitle ?? subscription.source.title
-                    try store.saveItem(item)
-                    try self.refreshLibraryRows(store: store)
-                }
-                self.feedSubscriptions = try store.loadFeedSubscriptions()
-                try store.saveSourceSuggestionDecision(SourceSuggestionDecision(sourceId: candidate.source.id, decision: .accepted, lastPromptAt: Date()))
-                self.storedSourceFollowSuggestionCandidates = []
-                await self.performFollowedSourceRefresh(force: true)
-                self.diagnostics["followSourceFailure"] = nil
-                self.reportConfirmation("Following \(candidate.source.title ?? candidate.source.host).")
-            } catch {
-                self.reportFailure(error, context: "Follow suggestion failed")
-            }
-        }
-    }
-
-    func deferSourceFollowSuggestion() {
-        persistSourceFollowSuggestionDecision(.notNow)
-    }
-
-    func rejectSourceFollowSuggestion() {
-        persistSourceFollowSuggestionDecision(.neverSuggest)
-    }
-
-    private func persistSourceFollowSuggestionDecision(_ answer: SourceFollowSuggestionPolicy.Answer) {
-        guard let store else { return }
-        let decisions = SourceFollowSuggestionPolicy.decisions(
-            for: answer, candidates: sourceFollowSuggestionCandidates, now: Date()
-        ) { try? store.loadSourceSuggestionDecision(sourceId: $0) }
-        for decision in decisions {
-            try? store.saveSourceSuggestionDecision(decision)
-        }
-        storedSourceFollowSuggestionCandidates = []
-    }
-
-    func refreshFollowedSources(force: Bool = true) {
-        Task { [weak self] in await self?.performFollowedSourceRefresh(force: force) }
-    }
-
-    func performFollowedSourceRefresh(force: Bool) async {
-        guard !isRefreshingFollowedSources else { return }
-        isRefreshingFollowedSources = true
-        defer { isRefreshingFollowedSources = false }
-        do {
-            let store = try requireStore()
-            let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-            followedSourceCoordinator = coordinator
-            for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
-            feedSubscriptions = try store.loadFeedSubscriptions()
-            followedSourceEntries = try await coordinator.entries()
-            diagnostics["followedSourceCount"] = "\(feedSubscriptions.count)"
-            diagnostics["followedSourceEntryCount"] = "\(followedSourceEntries.count)"
-        } catch {
-            diagnostics["followedSourceRefresh"] = "failed:\(String(describing: type(of: error)))"
-        }
-    }
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
         if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
-    }
-
-    func importFollowedSourceEntry(_ entry: FeedEntry, openWhenFinished: Bool = false, playWhenFinished: Bool = false) {
-        guard importingFollowedSourceEntryIds.insert(entry.id).inserted else { return }
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.importingFollowedSourceEntryIds.remove(entry.id) }
-            do {
-                guard let url = URL(string: entry.canonicalURL), url.scheme?.lowercased() == "https" else {
-                    throw ReadablePageExtractionError.invalidURL
-                }
-                let store = try self.requireStore()
-                guard let subscription = try store.loadFeedSubscriptions().first(where: { $0.id == entry.subscriptionId }) else {
-                    throw FollowedSourceError.noFeedCandidates
-                }
-                let entry = await self.followedSourceCoordinator?.publisherAudioEntry(for: entry) ?? entry
-                let imported: Bool
-                // Posts with the publisher's own audio (#545) and text-only posts (#641) import as articles.
-                let route = try await self.followedSourceCoordinator?.importRoute(for: entry, subscriptionKind: subscription.source.kind)
-                    ?? FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscription.source.kind, audio: .stored(in: entry))
-                if case .episode(let importURL) = route {
-                    let importedItemId = try await self.importSourceLinkInBackground(SourceLinkHandoff(
-                        id: "quick-add-\(entry.id)",
-                        inputURL: importURL,
-                        sourceSurface: "followed_source",
-                        startSession: false
-                    ), feedEntry: entry, subscription: subscription)
-                    imported = importedItemId != nil
-                    if let importedItemId { if openWhenFinished { self.openItem(id: importedItemId) }; if playWhenFinished { self.startItem(id: importedItemId) } } // Play now (#478)
-                } else {
-                    let handoff = self.listeningSignals.followedArticle(try await FollowedArticleImport.handoff(for: entry, url: url, using: self.readablePageExtractor, record: { self.diagnostics.merge($0) { _, new in new } }), for: entry)
-                    // With something already playing, importBrowserText only adds; Add and open still opens it (#567).
-                    if openWhenFinished, !playWhenFinished, !entry.hasPublisherAudio, !self.hasActiveSession {
-                        imported = self.importBrowserTextItem(handoff).map { self.listeningSignals.followedArticleImported($0, for: entry) } != nil
-                    } else {
-                        let itemId = self.listeningSignals.followedArticleImported(try self.importBrowserTextInBackground(handoff), for: entry)
-                        if let audio = try PublisherAudioDetector.publisherAudio(for: entry, itemId: itemId)?.keepingTextMap(of: store.loadPublisherAudio(itemId: itemId)) { try store.savePublisherAudio(audio); PublisherAudioTextMapper.start(audio, store: store, transcriber: self.sourceTranscriptionClient) { [weak self] in self?.diagnostics["publisherAudioTextMap"] = "\(itemId): \($0)" } }
-                        if openWhenFinished { self.openItem(id: itemId) }; if playWhenFinished { self.startItem(id: itemId) } // Play now (#478)
-                        imported = true
-                    }
-                }
-                guard imported else { return }
-                try await self.followedSourceCoordinator?.setEntryState(id: entry.id, state: .imported)
-                await self.performFollowedSourceRefresh(force: false)
-                self.reportConfirmation("Imported \(entry.title) into the library.")
-            } catch {
-                self.reportFailure(error, context: "Source entry import failed")
-            }
-        }
-    }
-
-    func unfollowSource(id: String) {
-        guard let coordinator = followedSourceCoordinator else { return }
-        Task { [weak self] in
-            try? await coordinator.unfollow(subscriptionId: id)
-            await self?.performFollowedSourceRefresh(force: false)
-        }
     }
 
     private func requireLocalSourceImporter() throws -> LocalSourceImporter {
@@ -11691,7 +10211,7 @@ final class Gate1AppModel: ObservableObject {
         podcastDownloadCoordinator?.register(itemId: itemId, remoteURL: remoteURL)
     }
 
-    private func resolvedOwnedAudiobookURL(for item: Item) -> URL? {
+    func resolvedOwnedAudiobookURL(for item: Item) -> URL? {
         // iOS can relocate the data container during an update. The ledger path
         // is relative to today's Application Support directory; item URLs are not.
         if let assets = try? store?.loadOwnedOfflineAssets(),
@@ -11703,7 +10223,7 @@ final class Gate1AppModel: ObservableObject {
         return resolvedApplicationSupportAssetURL(for: savedURL.path)
     }
 
-    private func prepareSourceMediaPlayback(itemId: String) throws {
+    func prepareSourceMediaPlayback(itemId: String) throws {
         if let item = try store?.loadItem(id: itemId), item.mediaType == "audiobook" {
             guard let url = resolvedOwnedAudiobookURL(for: item) else {
                 throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")

@@ -71,7 +71,8 @@
           "transcript": { "type": ["string", "null"] },
           "audioPath": { "type": ["string", "null"] },
           "captureKind": { "type": ["string", "null"], "enum": ["audio", "written", null] },
-          "page": { "type": ["integer", "null"], "minimum": 1 }
+          "page": { "type": ["integer", "null"], "minimum": 1 },
+          "sourceCharOffset": { "type": ["integer", "null"], "minimum": 0 }
         }
       }
     }

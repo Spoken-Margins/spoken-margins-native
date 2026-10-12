@@ -110,6 +110,34 @@ class BlockerTests(unittest.TestCase):
                 self.assertEqual(len(reasons), 1, reasons)
                 self.assertIn(word, reasons[0])
 
+    def test_a_merge_that_cannot_reach_the_app_build_is_not_reverted_for_an_app_test(self):
+        # #1417: #1407 changed only ops/ledger and an ops README.
+        for paths in (['ops/ledger/ledger.py', 'ops/README.md'], ['docs/journeys.md'], ['research/B4/server.go'],
+                      ['scripts/some-helper.py'], ['ops/testdesk/integration_revert.py', 'docs/a.md']):
+            with self.subTest(paths=paths):
+                reasons = self.blockers(paths)
+                self.assertEqual(len(reasons), 1, reasons)
+                self.assertIn('outside the app build', reasons[0])
+                self.assertIn(paths[0], reasons[0])
+
+    def test_anything_that_can_reach_the_app_build_or_its_tests_keeps_the_revert_open(self):
+        for path in (APP + 'Gate1RootView.swift', 'App/SpokenMarginsAppTests/FooTests.swift',
+                     'Packages/SessionKit/Sources/SessionKit/Session.swift', 'Contracts/docs/recovery-mvp.md',
+                     'Contracts/fixtures/other.json', 'TestPlans/scripted-journeys.json', 'project.yml',
+                     'Tools/BrowserExtraction/extract.js', 'Site/onboarding/catalog/v1/catalog.json', 'App/SpokenMarginsApp/README.md'):
+            with self.subTest(path=path):
+                self.assertEqual(self.blockers(['ops/ledger/ledger.py', path]), [])
+
+    def test_a_script_the_xcode_build_runs_can_reach_the_app(self):
+        built = sorted(SCOPE.build_scripts(ROOT))
+        self.assertTrue(built, 'project.yml no longer names a build script; pick another example')
+        self.assertEqual(self.blockers([built[0]]), [])
+
+    def test_the_lane_scripts_that_run_the_tests_can_reach_the_app_result(self):
+        reasons = self.blockers(['scripts/verify-tests.py', 'ops/README.md'])
+        self.assertEqual(len(reasons), 1, reasons)
+        self.assertIn('the lane', reasons[0])
+
     def test_another_open_revert_or_one_already_on_next(self):
         self.assertIn('#1234', self.blockers([APP + 'Gate1RootView.swift'], open_reverts=['#1234'])[0])
         self.assertIn('already reverts', self.blockers([APP + 'Gate1RootView.swift'], done='abc1234' + '0' * 33)[0])

@@ -101,7 +101,9 @@ NOTES = {
               'change needs the owner\'s OK.',
     'persistence': 'Persistence: the previous build must still open the database (PriorBuildPersistenceTests); '
                    'prefer new record kinds over new fields.',
-    'audio': 'Audio: host and app tests fake the audio session. Audible behavior is the owner\'s T6 check.',
+    'audio': 'Audio: host and app tests fake the audio session. Audible behavior is the owner\'s T6 check. '
+             'A state-machine change needs one test across a chunk boundary with lifecycle on '
+             '(SupertonicClientHarness, #353).',
     'app-ui': 'If a listener would notice this change, the milestone needs a T4 journey.',
     'guard': 'After changing the guard, run scripts/install-lane-guard.py so new sessions use it.',
     'ui-tests': 'Scripted journeys run only in the integration run on next\'s tip, never per PR. Name the '

@@ -81,6 +81,10 @@ struct PlaybackScreen: View {
                                     if model.selectedItem.isNativeAudio {
                                         PlaybackNowView()
                                     } else {
+                                        PlaybackLivePassageView { offset in
+                                            sourceTextOffsetAtPresentation = offset
+                                            isSourceTextPresented = true
+                                        }
                                         recentMarginPreview
                                     }
                                     if model.shouldShowGuidedOnboardingCoach {
@@ -190,6 +194,11 @@ struct PlaybackScreen: View {
                         VStack(alignment: .leading, spacing: 18) {
                             playbackRateControl
                             mixedAudioControl
+                            PlaybackFollowOptionsView()
+                            PlaybackPreparedAudioView(
+                                fraction: model.renderedFractionForPlayback,
+                                isNativeAudio: model.selectedItem.isNativeAudio
+                            )
                             onDeviceSpeechGenerationControl
                             Button("Write a Margin", systemImage: "square.and.pencil") {
                                 closeOptions(to: .write)
@@ -222,6 +231,7 @@ struct PlaybackScreen: View {
                 .id("playback.timeline")
             PlaybackChapterRowView(
                 title: model.playbackChapterHeaderTitle,
+                sourceTitle: model.playbackItemHeaderTitle,
                 canJumpToNextChapter: model.canJumpToNextChapter,
                 showItem: model.openCurrentPlaybackItem,
                 nextChapter: model.jumpToNextChapter
@@ -335,7 +345,11 @@ struct PlaybackScreen: View {
                             Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(AppColors.watchSecondary)
-                            Text(MarginRow(interjection: note, itemTitle: model.selectedItem.title, sessionDate: nil).preview)
+                            Text(PlaybackMarginPreview.text(displayText: note.displayText,
+                                                            cleanedTranscript: note.cleanedTranscript,
+                                                            transcript: note.transcript,
+                                                            transcriptionStatus: note.transcriptionStatus,
+                                                            captureKind: note.captureKind))
                                 .font(.system(.body, design: .serif))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.leading)
@@ -646,14 +660,12 @@ struct PlaybackScreen: View {
 
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: model.openCurrentPlaybackItem) {
-                PlaybackHeaderTitle(title: model.playbackItemHeaderTitle)
-                    .foregroundStyle(.white)
-            }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .accessibilityHint("Opens item details and listening-session history")
-            .accessibilityIdentifier("playback.itemTitle.button")
+            PlaybackSourceTitleView(
+                title: model.playbackItemHeaderTitle,
+                sleepTimerState: model.sleepTimerState,
+                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                showItem: model.openCurrentPlaybackItem
+            )
 
             if model.selectedItem.isNativeAudio,
                let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
@@ -711,14 +723,11 @@ struct PlaybackScreen: View {
                             mediaScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback,
-                    barContent: mediaBarContent
+                    barContent: mediaBarContent,
+                    barPositionUnit: .seconds,
+                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
                 )
                 .tint(AppColors.accent)
-                .accessibilityLabel("Playback position")
-                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue("\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
-                .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalMediaSeconds) { value in
                     model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": String(value), "displayed": String(mediaScrubState.displayedValue(canonicalValue: value, range: mediaScrubRange)), "editing": String(mediaScrubState.isEditing), "range": String(mediaScrubRange.upperBound)])
                 }
@@ -757,14 +766,11 @@ struct PlaybackScreen: View {
                             textScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback,
-                    barContent: textBarContent
+                    barContent: textBarContent,
+                    barPositionUnit: .characters,
+                    positionAccessibilityValue: textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent"
                 )
                 .tint(AppColors.accent)
-                .accessibilityLabel("Playback position")
-                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue(textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent")
-                .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
@@ -786,16 +792,7 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.progress.label")
                 ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
                     .tint(AppColors.accent)
-                    .overlay(alignment: .bottomLeading) {
-                        if let fraction = model.renderedFractionForPlayback {
-                            GeometryReader { geometry in
-                                Capsule().fill(Color(uiColor: .systemTeal))
-                                    .frame(width: geometry.size.width * fraction, height: 3).offset(y: 7)
-                            }.allowsHitTesting(false).accessibilityHidden(true)
-                        }
-                    }
                     .accessibilityLabel("Playback progress")
-                    .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
                     .accessibilityValue(barLabels.accessibilityValue)
                 Text(barLabels.trailing)
                     .frame(minWidth: 34, alignment: .leading)
@@ -816,7 +813,11 @@ struct PlaybackScreen: View {
                         model.skipBack()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
+                    if model.isMediaPlaybackSnapshot {
+                        Image(systemName: "gobackward.\(model.mediaSkipBackSeconds)")
+                    } else {
+                        PlaybackTextSkipIcon(direction: .backward, unit: model.skipUnit)
+                    }
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
@@ -846,7 +847,11 @@ struct PlaybackScreen: View {
                         model.skipForward()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
+                    if model.isMediaPlaybackSnapshot {
+                        Image(systemName: "goforward.\(model.mediaSkipForwardSeconds)")
+                    } else {
+                        PlaybackTextSkipIcon(direction: .forward, unit: model.skipUnit)
+                    }
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
@@ -867,6 +872,7 @@ struct PlaybackScreen: View {
                 HStack(spacing: 14) {
                     Button(action: model.skimBackward) {
                         Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .disabled(!model.snapshot.canSkimBackward)
                     .accessibilityLabel(model.skimBackwardTitle + " by scene summary")
@@ -874,6 +880,7 @@ struct PlaybackScreen: View {
 
                     Button(action: model.skimForward) {
                         Label(model.skimForwardTitle, systemImage: "forward.end.alt.fill")
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .disabled(!model.snapshot.canSkimForward)
                     .accessibilityLabel(model.skimForwardTitle + " by scene summary")
@@ -910,7 +917,9 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.download.button")
         }
 
-        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
+        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue
+            || (!model.selectedItem.isNativeAudio && model.snapshot.itemId == model.selectedItem.id
+                && model.snapshot.targetType == TargetType.transcriptBackedMedia.rawValue) {
             Button {
                 sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
                 isSourceTextPresented = true
@@ -1809,65 +1818,6 @@ private struct PastedAssistantResponseView: View {
             }
             .onAppear { isFocused = true }
         }
-    }
-}
-
-private struct NativeTextPeekView: View {
-    @Environment(\.dismiss) private var dismiss
-    let title: String
-    let text: String
-    let chapters: [Chapter]
-    let currentOffset: Int
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(chapterTitle)
-                            .font(.headline)
-                        Text(chapterText)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                }
-                .padding(20)
-            }
-            .navigationTitle(title.isEmpty ? "Source Text" : title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }
-                }
-            }
-            .accessibilityIdentifier("nativeText.peek.sheet")
-        }
-    }
-
-    private var selectedChapter: Chapter? {
-        guard !chapters.isEmpty else { return nil }
-        let offset = max(0, min(currentOffset, text.count))
-        return chapters.first(where: { offset >= $0.startChar && offset < $0.endChar })
-            ?? chapters.last(where: { $0.startChar <= offset })
-            ?? chapters.first
-    }
-
-    private var chapterTitle: String {
-        selectedChapter?.title ?? "Full Text"
-    }
-
-    private var chapterText: String {
-        guard !text.isEmpty else { return "No native text is available." }
-        guard let chapter = selectedChapter else { return text }
-        let characters = Array(text)
-        let start = max(0, min(chapter.startChar, characters.count))
-        let end = max(start, min(chapter.endChar, characters.count))
-        return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

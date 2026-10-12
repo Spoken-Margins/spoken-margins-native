@@ -29,6 +29,7 @@ final class J7PDFJourneyUITests: XCTestCase {
 
     func testListenToAPDFAndReopenAMargin() throws {
         var marginPercent = 0
+        var firstPassageID = ""
 
         try XCTContext.runActivity(named: "J7 step 1: The imported PDF is in the Library and plays") { _ in
             app.launch()
@@ -44,6 +45,10 @@ final class J7PDFJourneyUITests: XCTestCase {
             let title = app.buttons["playback.title"].firstMatch.label
             XCTAssertTrue(title.contains("Walking Notes"), "A different item is playing: \(title)")
             try waitUntilPlaying("The PDF never reached the playing state")
+            XCTAssertTrue(element("playback.now.passage").waitForExistence(timeout: 5), "The PDF live passage is missing")
+            XCTAssertTrue(currentPassage.waitForExistence(timeout: 5), "The PDF has no highlighted current sentence")
+            firstPassageID = currentPassage.identifier
+            screenshot("J7 PDF passage, first moment")
             let first = try percent()
             waitUntil("The PDF's position did not advance while playing", timeout: 15) {
                 self.currentPercent().map { $0 > first } ?? false
@@ -60,6 +65,11 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPercent().map { $0 >= 25 } ?? false
             }
             let playingPercent = try percent()
+            XCTAssertTrue(element("playback.now.passage").exists, "The PDF passage disappeared after seeking")
+            waitUntil("The PDF passage stayed at its opening sentence after seeking", timeout: 5) {
+                self.currentPassage.exists && self.currentPassage.identifier != firstPassageID
+            }
+            screenshot("J7 PDF passage, later moment")
             tap("playback.write.button")
             XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 5), "Write a Margin did not open")
             let anchor = element("writtenMargin.anchor")
@@ -85,9 +95,9 @@ final class J7PDFJourneyUITests: XCTestCase {
             }
             tap("playback.timeline.button")
             XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 5), "Timeline did not open")
-            let margin = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.interjection.")).firstMatch
-            XCTAssertTrue(margin.waitForExistence(timeout: 5), "The Margin is not on the timeline")
+            // The Timeline is a lazy list that follows the playing source, which is now well past the
+            // Margin, so the Margin's row isn't materialized until the list is scrolled back to it (#1427).
+            let margin = revealTimelineMargin()
             margin.tap()
             XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "The Margin did not open")
             let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", note)).firstMatch
@@ -98,6 +108,42 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false
             }
         }
+    }
+
+    /// Scrolls the lazy Timeline back, then forward if needed, until the saved Margin's row is on screen.
+    /// A bounded search: if the row is still missing after both passes, the Margin isn't on the Timeline.
+    private func revealTimelineMargin() -> XCUIElement {
+        let margin = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.interjection.")).firstMatch
+        let timeline = element("timeline.screen")
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5), "Timeline did not open")
+        func isRevealed() -> Bool { margin.exists && margin.isHittable }
+        if !isRevealed() { _ = margin.waitForExistence(timeout: 2) }
+        var swipes = 0
+        while !isRevealed() && swipes < 12 {
+            timeline.swipeDown()
+            swipes += 1
+        }
+        swipes = 0
+        while !isRevealed() && swipes < 24 {
+            timeline.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(isRevealed(), "The Margin is not on the timeline, even after scrolling through it")
+        screenshot("J7 Timeline with the saved Margin revealed")
+        return margin
+    }
+
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    private var currentPassage: XCUIElement {
+        app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND value == %@",
+                                         "playback.now.passage.sentence.", "Current sentence")).firstMatch
     }
 
     private var playPause: XCUIElement { app.buttons["playback.play.button"] }

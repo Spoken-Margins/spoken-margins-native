@@ -386,14 +386,17 @@ struct SettingsScreen: View {
                             isDiagnosticsSharePresented = diagnosticsExportURL != nil
                         }
                     } label: {
-                        if isPreparingDiagnostics {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                Text("Preparing diagnostics…")
+                        Group {
+                            if isPreparingDiagnostics {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("Preparing diagnostics…")
+                                }
+                            } else {
+                                Label("Share Diagnostics", systemImage: "square.and.arrow.up")
                             }
-                        } else {
-                            Label("Share Diagnostics", systemImage: "square.and.arrow.up")
                         }
+                        .fullRowTapTarget()
                     }
                     .buttonStyle(.borderless)
                     .disabled(isPreparingDiagnostics)
@@ -419,6 +422,7 @@ struct SettingsScreen: View {
                             hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
                             systemImage: "square.and.arrow.up"
                         )
+                        .fullRowTapTarget()
                     }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("settings.exportListeningSignals.button")
@@ -560,3 +564,12 @@ private struct ShareFileActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 #endif
+
+private extension View {
+    /// A borderless button in a `Form` row only takes taps on its label's own size. Fill the row and
+    /// make the empty space hit-testable so a tap beside the words starts the action (#1436).
+    func fullRowTapTarget() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+}
