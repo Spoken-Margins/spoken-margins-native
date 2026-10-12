@@ -800,7 +800,6 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
                     trackedActivityId: trackedActivityId,
                     isFirstPassInProcess: isFirstPassInProcess
                 )
-                hasSweptEarlierProcess = true
                 guard generation == publishGeneration else { return }
                 activityId = nil
                 status = endedCount > 0 ? "ended" : "not_ready"
@@ -832,7 +831,6 @@ final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             guard generation == publishGeneration else { return }
             // Publishing ends every other session's activity and any duplicate, so it is a sweep too.
             let result = await Self.publishActivity(system, sessionId: sessionId, state: state, staleDate: staleDate)
-            hasSweptEarlierProcess = true
             guard generation == publishGeneration else { return }
             activityId = result.activityId
             status = result.status
