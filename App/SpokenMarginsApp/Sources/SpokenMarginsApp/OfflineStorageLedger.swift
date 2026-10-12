@@ -156,7 +156,7 @@ actor OfflineStorageLedger {
         let assets = try repository.loadOwnedOfflineAssets()
         var removed: Int64 = 0
         var references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
-        for asset in assets where categories.contains(asset.category) && asset.isAutomaticallyEvictable {
+        for asset in assets where categories.contains(asset.category) {
             let url = rootDirectory.appending(path: asset.relativePath)
             guard try releaseReferences(to: url, references: &references) else { continue }
             if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
