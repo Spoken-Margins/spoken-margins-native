@@ -11,6 +11,56 @@ import UIKit
 import PDFKit
 #endif
 
+/// The voice and Terms defaults that building a `Gate1AppModel` and choosing a voice
+/// (`declineCurrentTerms()`) write into the app's shared preferences. A test that exercises
+/// those paths takes a snapshot first and restores it on teardown, so a key that was absent
+/// goes back to absent and a saved choice goes back to what it was (#1448).
+struct VoicePreferencesSnapshot {
+    static let keys = [
+        "speechRate",
+        "speechVoiceIdentifier",
+        "ttsVoiceSelection",
+        "ttsMode",
+        "piperVoiceId",
+        "renderedSpeechCacheLimitMB",
+        "supertonicTTSMigrationV1",
+        "supertonicVoicePendingTermsV1",
+        SpokenMarginsTerms.acceptanceVersionKey,
+        SpokenMarginsTerms.acceptanceDateKey
+    ]
+
+    private let values: [String: Any]
+
+    static func capture(from defaults: UserDefaults = .standard) -> VoicePreferencesSnapshot {
+        var values: [String: Any] = [:]
+        for key in keys {
+            if let value = defaults.object(forKey: key) { values[key] = value }
+        }
+        return VoicePreferencesSnapshot(values: values)
+    }
+
+    func restore(to defaults: UserDefaults = .standard) {
+        for key in Self.keys {
+            if let value = values[key] {
+                defaults.set(value, forKey: key)
+            } else {
+                defaults.removeObject(forKey: key)
+            }
+        }
+    }
+
+    /// The keys in `keys` whose stored value differs from this snapshot, by property-list equality.
+    func differingKeys(in defaults: UserDefaults = .standard) -> [String] {
+        Self.keys.filter { key in
+            switch (values[key], defaults.object(forKey: key)) {
+            case (nil, nil): return false
+            case let (saved?, current?): return !(saved as AnyObject).isEqual(current)
+            default: return true
+            }
+        }
+    }
+}
+
 @MainActor
 final class Gate1AppModelWorkflowTests: XCTestCase {
     func testRichClipboardRestoresOnlyExplicitHTMLHeadings() {
@@ -3613,15 +3663,72 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.sessions.first { $0.id == sessionID }?.status, "finished")
     }
 
+    /// #1448: the interruption fixtures choose a voice, which writes the voice and Terms defaults.
+    /// With nothing saved before, restoring must leave nothing saved, not a stale system-voice
+    /// choice that changes what the next test sees.
+    func testVoicePreferencesSnapshotRestoresAbsentPreferences() {
+        let outer = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { outer.restore() }
+        for key in VoicePreferencesSnapshot.keys { UserDefaults.standard.removeObject(forKey: key) }
+        let snapshot = VoicePreferencesSnapshot.capture()
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        XCTAssertEqual(UserDefaults.standard.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.system.rawValue,
+                       "the fixture's own work must be visible, or this test proves nothing")
+        XCTAssertFalse(snapshot.differingKeys().isEmpty)
+
+        snapshot.restore()
+        XCTAssertEqual(snapshot.differingKeys(), [])
+        for key in VoicePreferencesSnapshot.keys {
+            XCTAssertNil(UserDefaults.standard.object(forKey: key), "\(key) was absent before and must be absent after")
+        }
+    }
+
+    /// #1448: a saved voice and a pending Terms choice must come back as they were, including a
+    /// non-default speech rate, after a voice choice overwrote them.
+    func testVoicePreferencesSnapshotRestoresASavedVoiceAndPendingChoice() {
+        let outer = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { outer.restore() }
+        let defaults = UserDefaults.standard
+        for key in VoicePreferencesSnapshot.keys { defaults.removeObject(forKey: key) }
+        defaults.set(true, forKey: "supertonicTTSMigrationV1")
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "ttsVoiceSelection")
+        defaults.set(AppTTSVoiceSelection.james.rawValue, forKey: "supertonicVoicePendingTermsV1")
+        defaults.set("supertonic", forKey: "ttsMode")
+        defaults.set(0.61, forKey: "speechRate")
+        let snapshot = VoicePreferencesSnapshot.capture()
+        XCTAssertEqual(snapshot.differingKeys(), [])
+
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.system.rawValue)
+        XCTAssertNil(defaults.object(forKey: "supertonicVoicePendingTermsV1"), "declining clears the pending choice")
+        XCTAssertTrue(snapshot.differingKeys().contains("ttsVoiceSelection"))
+        XCTAssertTrue(snapshot.differingKeys().contains("supertonicVoicePendingTermsV1"))
+
+        snapshot.restore()
+        XCTAssertEqual(snapshot.differingKeys(), [])
+        XCTAssertEqual(defaults.string(forKey: "ttsVoiceSelection"), AppTTSVoiceSelection.james.rawValue)
+        XCTAssertEqual(defaults.string(forKey: "supertonicVoicePendingTermsV1"), AppTTSVoiceSelection.james.rawValue)
+        XCTAssertEqual(defaults.string(forKey: "ttsMode"), "supertonic")
+        XCTAssertEqual(defaults.double(forKey: "speechRate"), 0.61, accuracy: 0.0001)
+        XCTAssertTrue(defaults.bool(forKey: "supertonicTTSMigrationV1"))
+    }
+
     /// #771: a call during a spoken Margin stopped the recorder while the screen still said
     /// "Recording". Now what was said is saved, marked cut short, the source waits through the call,
     /// and plays on when the call ends with "should resume".
     func testACallMidMarginSavesItCutShortAndResumesAfterTheCall() async throws {
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
         let audio = WorkflowCompletionAudioClient()
         let recorder = InterruptibleRecordingClient()
         let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
         model.resetAndSeed()
-        model.declineCurrentTerms() // these sort first; on a fresh simulator the terms sheet would hold the start
+        model.declineCurrentTerms() // on a fresh simulator the terms sheet would hold the start; the snapshot undoes this on teardown
         model.startItem(id: "item-pill")
         let marginIDsBefore = Set(model.selectedItem.interjections.map(\.id))
         model.beginInterjection()
@@ -3646,11 +3753,13 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// Codex audit P2 on f11032e: during the call the listener started another session and paused
     /// it. The call's end must not play that session.
     func testACallsEndDoesNotPlayASessionOpenedDuringTheCall() async throws {
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
         let audio = WorkflowCompletionAudioClient()
         let recorder = InterruptibleRecordingClient()
         let model = Gate1AppModel(audioPlaybackClient: audio, recordingClient: recorder)
         model.resetAndSeed()
-        model.declineCurrentTerms() // these sort first; on a fresh simulator the terms sheet would hold the start
+        model.declineCurrentTerms() // on a fresh simulator the terms sheet would hold the start; the snapshot undoes this on teardown
         model.startItem(id: "item-pill")
         let interruptedSession = model.snapshot.sessionId
         model.beginInterjection()
