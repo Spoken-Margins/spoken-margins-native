@@ -11,9 +11,6 @@ struct NativeTextPeekView: View {
     let currentOffset: Int
     @State private var reader: PlaybackLivePassage.Reader?
 
-    static let sheetIdentifier = "nativeText.peek.sheet"
-    static let textIdentifier = "nativeText.peek.text"
-
     private struct Input: Equatable {
         let text: String
         let chapters: [Chapter]
@@ -26,9 +23,6 @@ struct NativeTextPeekView: View {
                 Text(reader?.chapterTitle ?? "Full Text").font(.headline)
                 if let reader, !reader.text.isEmpty {
                     NativeTextReader(reader: reader)
-                        // Set at the SwiftUI layer too: an identifier on an ancestor replaces the
-                        // UITextView's own, so the child must state its identifier explicitly.
-                        .accessibilityIdentifier(NativeTextPeekView.textIdentifier)
                 } else if reader != nil || text.isEmpty {
                     Text("No native text is available.")
                     Spacer()
@@ -49,10 +43,7 @@ struct NativeTextPeekView: View {
                     Button("Close") { dismiss() }
                 }
             }
-            // Contain the children so the sheet's identifier labels this container
-            // instead of being pushed down onto the text view.
-            .accessibilityElement(children: .contain)
-            .accessibilityIdentifier(NativeTextPeekView.sheetIdentifier)
+            .accessibilityIdentifier("nativeText.peek.sheet")
             .task(id: Input(text: text, chapters: chapters, offset: currentOffset)) {
                 var index = PlaybackLivePassage.Index(text: text, chapters: chapters)
                 index.update(offset: currentOffset)
@@ -88,7 +79,7 @@ final class NativeTextReaderView: UITextView {
         adjustsFontForContentSizeCategory = true
         backgroundColor = .clear
         textContainerInset = UIEdgeInsets(top: 8, left: 0, bottom: 16, right: 0)
-        accessibilityIdentifier = NativeTextPeekView.textIdentifier
+        accessibilityIdentifier = "nativeText.peek.text"
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
