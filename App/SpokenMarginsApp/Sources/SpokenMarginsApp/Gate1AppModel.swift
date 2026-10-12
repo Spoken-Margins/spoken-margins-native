@@ -55,7 +55,7 @@ final class Gate1AppModel: ObservableObject {
     static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     private static let showsMixWithOtherAudioOptionKey = "showsMixWithOtherAudioOption"
     private static let mixedPlaybackVolumeKey = "mixedPlaybackVolume"
-    private static let suppressedAudioPreparationItemIdsKey = AudioPreparationQueueProjection.suppressedItemIdsDefaultsKey
+    static let suppressedAudioPreparationItemIdsKey = AudioPreparationQueueProjection.suppressedItemIdsDefaultsKey
     static let mixedPlaybackVolumeMaximum = 1.0
     static let exportPreviewCharacterLimit = 24_000
     nonisolated static let supportedPlaybackRates: [Double] = SpeechRateRule.supportedMultipliers
@@ -247,8 +247,8 @@ final class Gate1AppModel: ObservableObject {
     @Published var libraryItems: [LibraryItemRow] = [] {
         didSet { cachedQuickAddCandidates = nil; libraryPresentationRevision += 1 }
     }
-    @Published private(set) var audioPreparationQueue: [AudioPreparationQueueRow] = []
-    @Published private(set) var recentlyPreparedAudio: [RecentlyPreparedAudioRow] = []
+    @Published var audioPreparationQueue: [AudioPreparationQueueRow] = []
+    @Published var recentlyPreparedAudio: [RecentlyPreparedAudioRow] = []
     @Published var libraryQuery = LibraryQuery(
         contentType: LibraryContentTypeFilter(rawValue: UserDefaults.standard.string(forKey: "libraryContentTypeFilter") ?? "") ?? .all,
         listeningState: Gate1AppModel.loadLibraryListeningFilter(defaults: .standard),
@@ -443,7 +443,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var automaticEpisodeMapPreparationPolicy = AutomaticEpisodeMapPreparationPolicy(
         rawValue: UserDefaults.standard.string(forKey: "automaticEpisodeMapPreparationPolicy") ?? ""
     ) ?? .off
-    @Published private(set) var episodeMapPreparationStatus = "Not started"
+    @Published var episodeMapPreparationStatus = "Not started"
     @Published var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
@@ -518,7 +518,7 @@ final class Gate1AppModel: ObservableObject {
     var podcastDownloadCoordinator: PodcastDownloadCoordinator?
     /// Shared by the podcast downloader and the pre-play offline check (#779).
     let connectivity = ConnectivityMonitor()
-    private var requestedPodcastTransportReplacements: Set<String> = []
+    var requestedPodcastTransportReplacements: Set<String> = []
     var offlineStorageLedger: OfflineStorageLedger?
     private var localSourceImporter: LocalSourceImporter?
     var followedSourceCoordinator: FollowedSourceCoordinator?
@@ -535,7 +535,7 @@ final class Gate1AppModel: ObservableObject {
     let sourceTranscriptionClient: SourceTranscriptionClient
     private let interjectionTranscriptionHandler: InterjectionTranscriptionHandler
     private let alignedInterjectionTranscriptionHandler: AlignedInterjectionTranscriptionHandler?
-    private let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
+    let preparedTextAudioPrewarmHandler: PreparedTextAudioPrewarmHandler?
     private let shareMarginSilenceAnalysisHandler: ShareMarginSilenceAnalysisHandler
     private let shareMarginAudioCleanupHandler: ShareMarginAudioCleanupHandler
     let trashUndoDismissDelay: Duration
@@ -559,8 +559,8 @@ final class Gate1AppModel: ObservableObject {
     #if canImport(AVFoundation)
     var interjectionAudioPlayer: AVPlayer?
     var interjectionAudioCompletionTask: Task<Void, Never>?
-    private var skimBridgePlayer: AVPlayer?
-    private var skimBridgeTask: Task<Void, Never>?
+    var skimBridgePlayer: AVPlayer?
+    var skimBridgeTask: Task<Void, Never>?
     var preparingLocalAudioMapItems = Set<String>()
     var commentaryCuePlayer: AVAudioPlayer?
     #endif
@@ -577,44 +577,44 @@ final class Gate1AppModel: ObservableObject {
     var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
     var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
     var foregroundAudioPreparationGeneration = 0
-    private var episodeMapPreparationTask: Task<Void, Never>?
-    private var episodeMapPreparationItemId: String?
-    private var isUpdatingSkimAvailability = false
+    var episodeMapPreparationTask: Task<Void, Never>?
+    var episodeMapPreparationItemId: String?
+    var isUpdatingSkimAvailability = false
     private var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
     var quickAccessRefreshTask: Task<Void, Never>?
     var quickAccessRefreshID = UUID()
-    private var liveSpeechFallbackItemIds: Set<String> = []
-    private var suppressedAutomaticAudioPreparationItemIds = Set(
+    private(set) var liveSpeechFallbackItemIds: Set<String> = []
+    var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
     )
-    private var pendingStartupAudioPreparationItemIds: Set<String> = []
-    private var failedStartupAudioPreparationItemIds: Set<String> = []
+    var pendingStartupAudioPreparationItemIds: Set<String> = []
+    var failedStartupAudioPreparationItemIds: Set<String> = []
     var isImportingPendingSourceLinkHandoffs = false
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     var completedStreamingTurnIds: Set<String> = []
     @Published private(set) var pendingSourceContextInterjectionIds: Set<String> = []
     private let sourceWindowJobQueue = SourceWindowJobQueue()
-    private var pendingFullSourceTranscriptionItemIds: Set<String> = []
-    private let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
-    private var importedPodcastResolutionURLs: [String: URL] = [:]
+    var pendingFullSourceTranscriptionItemIds: Set<String> = []
+    let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
+    var importedPodcastResolutionURLs: [String: URL] = [:]
     var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
     /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
-    private var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
+    var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
         if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
         if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
-    private var importedTranscriptRetryDates: [String: Date] = [:]
+    var importedTranscriptRetryDates: [String: Date] = [:]
     var importedPodcastRecipientLocalURLs: [String: URL] = [:]
-    private var pendingMapGenerationItemId: String?
+    var pendingMapGenerationItemId: String?
     var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
     var pendingTermsVoiceSelection: AppTTSVoiceSelection?
     var pendingPlaybackAfterTerms: PendingPlaybackAfterTerms?
     private let preparedTextAudioStarterDurationMs = 30_000
-    private static let startupAudioChunkCount = LibraryRowBuilder.startupAudioChunkCount
+    static let startupAudioChunkCount = LibraryRowBuilder.startupAudioChunkCount
     var preparationSeams = PreparationPassSeams()
     var isWaitingOutPreparationHeat = false // the foreground loop sleeps until the phone cools (#905)
-    private static let lastPreparedAudioNoticeDateKey = AudioPreparationQueueProjection.lastNoticeDateDefaultsKey
+    static let lastPreparedAudioNoticeDateKey = AudioPreparationQueueProjection.lastNoticeDateDefaultsKey
     private let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     private let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
     let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
@@ -1423,24 +1423,6 @@ final class Gate1AppModel: ObservableObject {
         refreshQuickAddFeed(force: false)
     }
 
-    func automaticAudioPreparationPolicyChanged() {
-        UserDefaults.standard.set(
-            automaticAudioPreparationPolicy.rawValue,
-            forKey: "automaticAudioPreparationPolicy"
-        )
-        diagnostics["automaticAudioPreparation"] = automaticAudioPreparationPolicy.rawValue
-        scheduleAutomaticAudioPreparationIfNeeded()
-    }
-
-    func automaticEpisodeMapPreparationPolicyChanged() {
-        UserDefaults.standard.set(
-            automaticEpisodeMapPreparationPolicy.rawValue,
-            forKey: "automaticEpisodeMapPreparationPolicy"
-        )
-        diagnostics["automaticEpisodeMapPreparation"] = automaticEpisodeMapPreparationPolicy.rawValue
-        submitAutomaticEpisodeMapPreparationIfNeeded()
-    }
-
     func offlineStorageBudgetChanged() {
         guard OfflineStorageBudget.allowedGigabytes.contains(offlineStorageLimitGB) else {
             offlineStorageLimitGB = 5
@@ -1745,18 +1727,6 @@ final class Gate1AppModel: ObservableObject {
                     : base
             }
         }
-    }
-
-    private func scheduleAutomaticAudioPreparationIfNeeded() {
-        #if canImport(BackgroundTasks) && canImport(UIKit)
-        let enabled = automaticAudioPreparationPolicy == .whileCharging
-        Task { [weak self] in
-            if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
-            AudioPreparationBackgroundController.shared.submitIfEnabled(
-                enabled || self?.automaticEpisodeMapPreparationPolicy == .whileCharging
-            )
-        }
-        #endif
     }
 
     private func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
@@ -2416,402 +2386,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func prepareEpisodeMap(itemId: String? = nil, policy: PreparationJobPolicy = .explicit) {
-        let requestedItemId = itemId ?? activeItemId
-        guard episodeMapPreparationTask == nil else {
-            reportWarning("An episode map is already being prepared.")
-            return
-        }
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: requestedItemId)
-            guard item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream else {
-                throw SessionKitError.invalidCommandForState("episode_map_requires_native_audio")
-            }
-            let existingJob = (try store.loadEpisodeMapPreparationJobs()).first {
-                $0.itemId == requestedItemId && !$0.isCancelled
-            }
-            var job = existingJob ?? EpisodeMapPreparationJob(
-                id: "episode-map-job-\(safePodcastEvidenceComponent(requestedItemId))",
-                itemId: requestedItemId,
-                policy: policy
-            )
-            job.policy = policy
-            if existingJob == nil {
-                job.stage = .verifySource
-                job.nextUnitIndex = 0
-            }
-            job.lastFailureCode = nil
-            try store.saveEpisodeMapPreparationJob(job)
-
-            guard let localURL = podcastDownloadCoordinator?.validatedLocalURL(for: requestedItemId)
-                ?? item.media?.url.flatMap(URL.init(string:)).flatMap({ $0.isFileURL ? $0 : nil }) else {
-                pendingMapGenerationItemId = requestedItemId
-                episodeMapPreparationStatus = "Waiting for download"
-                diagnostics["episodeMapPreparation:\(requestedItemId)"] = "waiting_for_local_audio"
-                if podcastDownloadCoordinator?.downloadNow(itemId: requestedItemId) != true,
-                   let remote = item.media?.url.flatMap(URL.init(string:)) {
-                    podcastDownloadCoordinator?.register(
-                        itemId: requestedItemId,
-                        remoteURL: remote,
-                        userInitiated: policy == .explicit
-                    )
-                }
-                if policy == .explicit {
-                    reportSuccess("Downloading the episode. Its private Listening Map will continue automatically.")
-                }
-                return
-            }
-            runEpisodeMapPreparation(item: item, localURL: localURL, job: job)
-        } catch {
-            episodeMapPreparationStatus = "Failed"
-            reportFailure(error, context: "Episode map preparation failed")
-        }
-    }
-
-    private func runEpisodeMapPreparation(
-        item: Item,
-        localURL: URL,
-        job initialJob: EpisodeMapPreparationJob
-    ) {
-        episodeMapPreparationStatus = "Preparing"
-        diagnostics["episodeMapPreparation:\(item.id)"] = "started"
-        episodeMapPreparationItemId = item.id
-        episodeMapPreparationTask = Task { [weak self] in
-            guard let self else { return }
-            var job = initialJob
-            defer {
-                self.episodeMapPreparationTask = nil
-                self.episodeMapPreparationItemId = nil
-            }
-            do {
-                let store = try self.requireStore()
-                job.stage = .generateFingerprintSpine
-                try store.saveEpisodeMapPreparationJob(job)
-                let mapDirectory = try self.episodeMapDirectory(itemId: item.id)
-                try FileManager.default.createDirectory(at: mapDirectory, withIntermediateDirectories: true)
-                let digest = try await Task.detached(priority: .utility) {
-                    try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
-                }.value
-                try Task.checkCancellation()
-                let durationMs: Int
-                if let declaredDurationMs = item.media?.durationMs {
-                    durationMs = declaredDurationMs
-                } else if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
-                    durationMs = Int((CMTimeGetSeconds(duration) * 1_000).rounded())
-                } else {
-                    durationMs = 0
-                }
-                var generatedLandmarks: [EpisodeFingerprintLandmark] = []
-                var gridIndex = 0
-                var startMs = SparseFingerprintSchedule.initialMediaTimeMs
-                while gridIndex < job.nextUnitIndex,
-                      startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
-                    let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
-                    let existingURL = mapDirectory.appending(path: "\(assetID).shazamsignature")
-                    guard FileManager.default.fileExists(atPath: existingURL.path) else {
-                        job.nextUnitIndex = gridIndex
-                        break
-                    }
-                    generatedLandmarks.append(EpisodeFingerprintLandmark(
-                        id: "downloaded-landmark-\(gridIndex)",
-                        order: gridIndex,
-                        sourceMediaStartMs: startMs,
-                        sourceMediaEndMs: startMs + SparseFingerprintSchedule.targetDurationMs,
-                        anchorMediaTimeMs: startMs,
-                        continuityEpoch: 0,
-                        trigger: .downloadedPreparation,
-                        provenance: .downloadedSourceReference,
-                        signatureAssetId: assetID
-                    ))
-                    gridIndex += 1
-                    startMs += SparseFingerprintSchedule.periodicIntervalMs
-                }
-                while startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
-                    try Task.checkCancellation()
-                    let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
-                    let ledger = try self.requireOfflineLedger(store: store, rootDirectory: try self.applicationSupportDirectory())
-                    let reservation = try await ledger.reserve(
-                        ownerId: "episode-fingerprint-\(item.id)-\(gridIndex)",
-                        byteCount: 2 * 1_024 * 1_024
-                    )
-                    let generated: GeneratedPodcastAnchorEvidence
-                    do {
-                        generated = try await PodcastAnchorEvidenceGenerator.generateLandmark(
-                            sourceURL: localURL,
-                            sourceStartMs: startMs,
-                            outputDirectory: mapDirectory,
-                            id: assetID
-                        )
-                    } catch {
-                        try? await ledger.release(reservationId: reservation.id)
-                        throw error
-                    }
-                    generatedLandmarks.append(EpisodeFingerprintLandmark(
-                        id: "downloaded-landmark-\(gridIndex)",
-                        order: gridIndex,
-                        sourceMediaStartMs: startMs,
-                        sourceMediaEndMs: startMs + generated.durationMs,
-                        anchorMediaTimeMs: startMs,
-                        continuityEpoch: 0,
-                        trigger: .downloadedPreparation,
-                        provenance: .downloadedSourceReference,
-                        signatureAssetId: assetID
-                    ))
-                    try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
-                        id: assetID,
-                        itemId: item.id,
-                        category: .fingerprintMap,
-                        relativePath: "SpokenMargins/EpisodeMaps/\(self.safePodcastEvidenceComponent(item.id))/\(assetID).shazamsignature",
-                        byteCount: Int64((try? Data(contentsOf: generated.fileURL).count) ?? 0),
-                        isReproducible: true,
-                        protections: [.activeEpisodeMapPreparation]
-                    ))
-                    gridIndex += 1
-                    startMs += SparseFingerprintSchedule.periodicIntervalMs
-                    job.nextUnitIndex = gridIndex
-                    try store.saveEpisodeMapPreparationJob(job)
-                    if job.policy == .whileCharging {
-                        self.episodeMapPreparationStatus = "Fingerprinting paused at landmark \(gridIndex)"
-                        self.diagnostics["episodeMapPreparation:\(item.id)"] = "checkpoint:fingerprint_landmark=\(gridIndex)"
-                        return
-                    }
-                }
-
-                job.stage = .transcribe
-                try store.saveEpisodeMapPreparationJob(job)
-                self.episodeMapPreparationStatus = "Transcribing on device"
-                let supportDirectory = try self.applicationSupportDirectory()
-                var timeline: TranscriptTimeline
-                if let relativePath = job.transientTranscriptRelativePath,
-                   let cached = try? Data(contentsOf: supportDirectory.appending(path: relativePath)),
-                   let decoded = try? JSONDecoder().decode(TranscriptTimeline.self, from: cached) {
-                    timeline = decoded
-                } else {
-                    timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
-                        url: localURL,
-                        itemId: item.id,
-                        durationMs: durationMs
-                    )
-                    let transcriptData = try JSONEncoder().encode(timeline)
-                    let safeItemID = self.safePodcastEvidenceComponent(item.id)
-                    let relativePath = "SpokenMargins/EpisodeMaps/\(safeItemID)/Transient/timeline.json"
-                    let transcriptURL = supportDirectory.appending(path: relativePath)
-                    try FileManager.default.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    let ledger = self.requireOfflineLedger(store: store, rootDirectory: supportDirectory)
-                    let reservation = try await ledger.reserve(
-                        ownerId: "episode-transcript-\(item.id)",
-                        byteCount: Int64(transcriptData.count)
-                    )
-                    do {
-                        try transcriptData.write(to: transcriptURL, options: .atomic)
-                        try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
-                            id: "episode-transcript-\(safeItemID)",
-                            itemId: item.id,
-                            category: .transientEpisodeTranscript,
-                            relativePath: relativePath,
-                            byteCount: Int64(transcriptData.count),
-                            isReproducible: true,
-                            protections: [.activeEpisodeMapPreparation]
-                        ))
-                    } catch {
-                        try? await ledger.release(reservationId: reservation.id)
-                        try? FileManager.default.removeItem(at: transcriptURL)
-                        throw error
-                    }
-                    job.transientTranscriptRelativePath = relativePath
-                    try store.saveEpisodeMapPreparationJob(job)
-                }
-                try self.purgeSourceTranscriptionAudioCaches(itemId: item.id)
-                if let publisherChapters = try store.loadTranscriptTimeline(itemId: item.id)?.timeline.chapters,
-                   !publisherChapters.isEmpty {
-                    timeline.chapters = publisherChapters
-                }
-                CommunityMapUploadService.shared.episodeTranscribed(itemId: item.id, timeline: timeline, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 }
-
-                job.stage = .generatePhraseSketch
-                try store.saveEpisodeMapPreparationJob(job)
-                let sketch = TranscriptPhraseSketchBuilder.makeArtifact(
-                    id: "episode-sketch-\(self.safePodcastEvidenceComponent(item.id))",
-                    itemId: item.id,
-                    timeline: timeline
-                )
-
-                let existingPlaybackLandmarks = try store.loadEditionFingerprintSpine(itemId: item.id)?.landmarks
-                    .filter { $0.provenance == .observedDecodedPlayback } ?? []
-                let allLandmarks = (existingPlaybackLandmarks + generatedLandmarks)
-                    .sorted { $0.sourceMediaStartMs < $1.sourceMediaStartMs }
-                    .enumerated().map { index, landmark in
-                        let sketchWindow = sketch.windows.first {
-                            landmark.anchorMediaTimeMs >= $0.sourceStartMs
-                                && landmark.anchorMediaTimeMs < $0.sourceEndMs
-                        }
-                        return EpisodeFingerprintLandmark(
-                            id: landmark.id,
-                            order: index,
-                            sourceMediaStartMs: landmark.sourceMediaStartMs,
-                            sourceMediaEndMs: landmark.sourceMediaEndMs,
-                            anchorMediaTimeMs: landmark.anchorMediaTimeMs,
-                            continuityEpoch: landmark.continuityEpoch,
-                            trigger: landmark.trigger,
-                            provenance: landmark.provenance,
-                            signatureAssetId: landmark.signatureAssetId,
-                            transcriptSketchWindowId: sketchWindow?.id,
-                            generatorVersion: landmark.generatorVersion
-                        )
-                    }
-                let spine = EditionFingerprintSpineArtifact(
-                    id: "episode-spine-\(self.safePodcastEvidenceComponent(item.id))",
-                    itemId: item.id,
-                    canonicalURL: item.externalReference ?? item.media?.url,
-                    producingEditionDurationMs: durationMs,
-                    producingEditionSHA256: digest,
-                    landmarks: allLandmarks
-                )
-
-                job.stage = .segmentScenes
-                try store.saveEpisodeMapPreparationJob(job)
-                let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
-                var scenes: [PortableListeningMapScene] = []
-                job.stage = .generateSummaries
-                try store.saveEpisodeMapPreparationJob(job)
-                for draft in drafts {
-                    try Task.checkCancellation()
-                    let text = timeline.segments
-                        .filter { $0.endMs > draft.startMs && $0.startMs < draft.endMs }
-                        .map(\.text)
-                        .joined(separator: " ")
-                    var label: ListeningMapSummaryValidator.SceneLabel?
-                    if self.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
-                        for _ in 0..<2 where label == nil {
-                            if let candidate = try? await self.localFoundationModelClient.labelListeningMapChapter(
-                                text: text,
-                                chapterNumber: draft.order + 1
-                            ) {
-                                label = try? ListeningMapSummaryValidator.validate(candidate, sourceText: text)
-                            }
-                        }
-                    }
-                    let nearestEvidence = allLandmarks.min {
-                        abs($0.anchorMediaTimeMs - draft.startMs) < abs($1.anchorMediaTimeMs - draft.startMs)
-                    }?.signatureAssetId
-                    let machineEvidence = nearestEvidence.map { [$0] } ?? []
-                    let eligibility = label?.eligibility ?? .unknown
-                    scenes.append(PortableListeningMapScene(
-                        id: draft.id,
-                        order: draft.order,
-                        title: label?.title ?? draft.publisherTitle,
-                        summaryText: ListeningMapSummaryValidator.storedSummary(for: label).text,
-                        summaryAssetId: nil,
-                        summaryProvenance: ListeningMapSummaryValidator.storedSummary(for: label).provenance,
-                        eligibility: eligibility,
-                        eligibilityReason: label?.eligibilityReason,
-                        startAnchor: PortableAnchorEvidence(
-                            anchorType: .transcript,
-                            mediaTimeMs: draft.startMs,
-                            transcriptSegmentId: draft.startTranscriptSegmentId,
-                            chapterTitle: label?.title ?? draft.publisherTitle,
-                            machineEvidenceAssetIds: machineEvidence
-                        ),
-                        endAnchor: PortableAnchorEvidence(
-                            anchorType: .transcript,
-                            mediaTimeMs: draft.endMs,
-                            transcriptSegmentId: draft.endTranscriptSegmentId,
-                            chapterTitle: label?.title ?? draft.publisherTitle,
-                            machineEvidenceAssetIds: machineEvidence
-                        )
-                    ))
-                }
-                let proposal = PortableListeningMapProposalArtifact(
-                    id: "episode-map-proposal-\(self.safePodcastEvidenceComponent(item.id))",
-                    createdAt: Date(),
-                    generator: self.localFoundationModelClient.availability().isAvailable
-                        ? "on-device-scene-map.v1"
-                        : "deterministic-scene-boundaries.v1",
-                    scenes: scenes
-                )
-
-                job.stage = .renderBridges
-                try store.saveEpisodeMapPreparationJob(job)
-                for scene in scenes where scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
-                    try Task.checkCancellation()
-                    _ = try await self.prepareSummaryBridgeAsset(
-                        itemId: item.id,
-                        proposalId: proposal.id,
-                        scene: scene,
-                        store: store
-                    )
-                }
-
-                job.stage = .commit
-                try store.saveEpisodeMapPreparationJob(job)
-                try store.saveEditionFingerprintSpine(spine)
-                try store.saveTranscriptPhraseSketch(sketch)
-                try store.savePortableListeningMapProposal(proposal, itemId: item.id)
-                let identityMatches = allLandmarks.map { landmark in
-                    FingerprintLandmarkMatch(
-                        id: "exact-\(landmark.id)",
-                        landmarkId: landmark.id,
-                        sourceMediaTimeMs: landmark.anchorMediaTimeMs,
-                        recipientMediaTimeMs: landmark.anchorMediaTimeMs,
-                        acousticConfidence: 1,
-                        transcriptCorroborated: true,
-                        isUniqueWithinEpisode: true
-                    )
-                }
-                try store.saveResolvedListeningMapProjection(EpisodeFingerprintAlignment.makeProjection(
-                    id: "episode-projection-\(self.safePodcastEvidenceComponent(item.id))",
-                    itemId: item.id,
-                    proposalId: proposal.id,
-                    recipientEditionSHA256: digest,
-                    matches: identityMatches,
-                    exactEdition: true
-                ))
-                for asset in try store.loadOwnedOfflineAssets() where
-                    asset.itemId == item.id && asset.category == .fingerprintMap {
-                    try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
-                }
-                try self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                job.stage = .completed
-                try store.saveEpisodeMapPreparationJob(job)
-                try store.deleteEpisodeMapPreparationJob(id: job.id)
-                self.episodeMapPreparationStatus = scenes.contains(where: { $0.summaryText != nil })
-                    ? "Ready with scene summaries"
-                    : "Fingerprint map ready; scene summaries unavailable"
-                self.diagnostics["episodeMapPreparation:\(item.id)"] =
-                    "complete:landmarks=\(allLandmarks.count):scenes=\(scenes.count):transcript_deleted"
-                if item.id == self.activeItemId {
-                    self.refreshSelectedItem()
-                    self.updateSkimAvailability()
-                    self.reportConfirmation(self.episodeMapPreparationStatus)
-                }
-            } catch is CancellationError {
-                job.isCancelled = true
-                job.lastFailureCode = "cancelled"
-                try? self.store?.saveEpisodeMapPreparationJob(job)
-                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                self.episodeMapPreparationStatus = "Cancelled"
-            } catch {
-                job.lastFailureCode = String(describing: error)
-                try? self.store?.saveEpisodeMapPreparationJob(job)
-                self.episodeMapPreparationStatus = "Failed"
-                self.diagnostics["episodeMapPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
-                if item.id == self.activeItemId { self.reportFailure(error, context: "Episode map preparation failed", itemId: item.id) }
-            }
-        }
-    }
-
-    private func episodeMapDirectory(itemId: String) throws -> URL {
-        try applicationSupportDirectory()
-            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
-            .appending(path: safePodcastEvidenceComponent(itemId), directoryHint: .isDirectory)
-    }
-
-    private func currentSummaryBridgeVoiceKey() -> String {
-        let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
-        return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
-    }
-
     /// Why a friend's shared map couldn't be placed on this item's copy, as stored on its packets (#481).
     func sharedListeningMapRefusal(itemId: String) -> String? {
         guard let store, let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
@@ -2820,376 +2394,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     /// The listener's own map or the publisher's chapters, which a friend's map never replaces.
-    private static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
+    static func listenerHasListeningMap(itemId: String, store: SQLiteSessionStore) throws -> Bool {
         try store.loadPortableListeningMapProposals(itemId: itemId).contains { !CommunityMapConverter.isCommunityProposal(id: $0.id) } // a community map never blocks a friend's (#553)
             || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
     }
 
-    func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
-        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
-        return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
-    }
-
-    func prepareSummaryBridgeAsset(
-        itemId: String,
-        proposalId: String,
-        scene: PortableListeningMapScene,
-        store: SQLiteSessionStore
-    ) async throws -> OwnedOfflineAsset? {
-        guard let summary = scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !summary.isEmpty else { return nil }
-        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: scene.summaryAssetId)
-        if let existing = try store.loadOwnedOfflineAssets().first(where: {
-            $0.id == assetID && $0.integrity == .valid
-        }), resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
-        // An authored voice is part of the imported experience, not a request
-        // to silently synthesize replacement speech in the current system voice.
-        guard scene.summaryAssetId == nil else { return nil }
-        let directory = try episodeMapDirectory(itemId: itemId)
-            .appending(path: "SummaryBridges", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let ledger = try requireOfflineLedger(store: store, rootDirectory: try applicationSupportDirectory())
-        let reservation = try await ledger.reserve(
-            ownerId: "summary-bridge-\(assetID)",
-            byteCount: 64 * 1_024 * 1_024
-        )
-        do {
-            let sourceURL: URL
-            if let voice = ttsVoiceSelection.supertonicVoice {
-                let renderer = try makeSupertonicRenderer()
-                let result = try await renderer.render(
-                    text: summary,
-                    voice: voice,
-                    language: "en",
-                    speed: SummaryBridgeRatePolicy.synthesisSpeed,
-                    synthesisSteps: 8
-                )
-                sourceURL = result.audioURL
-            } else {
-                let title = scene.title ?? "Scene summary"
-                // An injected preparation job renders in place of the system voice, as it does for text items.
-                let prepared: PreparedTextAudio?
-                if let prewarm = preparedTextAudioPrewarmHandler {
-                    prepared = try await prewarm(
-                        assetID, title, summary, directory, speechVoiceIdentifier, SummaryBridgeRatePolicy.systemSynthesisRate
-                    ).get()
-                } else {
-                    prepared = try SystemTextAudioPreparationClient(
-                        outputDirectory: directory,
-                        voiceIdentifier: speechVoiceIdentifier,
-                        speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
-                        allowsSynchronousRendering: true
-                    ).prepareTextAudio(itemId: assetID, title: title, text: summary)
-                }
-                guard let prepared, let value = prepared.media.url, let url = URL(string: value) else {
-                    try? await ledger.release(reservationId: reservation.id)
-                    return nil
-                }
-                sourceURL = url
-            }
-            let destination = directory.appending(path: "\(assetID).\(sourceURL.pathExtension.isEmpty ? "caf" : sourceURL.pathExtension)")
-            if sourceURL.standardizedFileURL != destination.standardizedFileURL {
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    try FileManager.default.removeItem(at: destination)
-                }
-                try FileManager.default.copyItem(at: sourceURL, to: destination)
-            }
-            let bytes = (try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
-            let asset = OwnedOfflineAsset(
-                id: assetID,
-                itemId: itemId,
-                category: .summaryBridge,
-                relativePath: "SpokenMargins/EpisodeMaps/\(safePodcastEvidenceComponent(itemId))/SummaryBridges/\(destination.lastPathComponent)",
-                byteCount: bytes,
-                isReproducible: true
-            )
-            try await ledger.commit(reservationId: reservation.id, asset: asset)
-            return asset
-        } catch {
-            try? await ledger.release(reservationId: reservation.id)
-            throw error
-        }
-    }
-
-    @Published private(set) var skimForwardDestinationMs: Int?
-    @Published private(set) var skimBackwardDestinationMs: Int?
-    var skimForwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimForwardDestinationMs, backward: false) }
-    var skimBackwardTitle: String { PlaybackQualityPresentation.skimTitle(destinationMs: skimBackwardDestinationMs, backward: true) }
-    private var skimResourceContext: SkimResourceContext?
+    @Published var skimForwardDestinationMs: Int?
+    @Published var skimBackwardDestinationMs: Int?
+    var skimResourceContext: SkimResourceContext?
     #if DEBUG
-    private(set) var skimResourceLoadCount = 0
-    var skimAudioTransportRate: Float? { skimBridgePlayer?.rate }
-    func refreshSkimAvailabilityForTesting() { updateSkimAvailability() }
+    var skimResourceLoadCount = 0
     #endif
-
-    func updateSkimAvailability(refreshResources: Bool = true) {
-        if refreshResources { skimResourceContext = nil }
-        guard !isUpdatingSkimAvailability else { return }
-        let effectiveTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? snapshot.currentMediaTimeMs
-        let forward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .forward, at: $0) }
-        let backward = effectiveTime.flatMap { resolvedSkimPlaybackPlan(direction: .backward, at: $0) }
-        let forwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? forward?.destinationMediaTimeMs
-        let backwardTime = snapshot.skimBridgeState?.destinationMediaTimeMs ?? backward?.destinationMediaTimeMs
-        let destinationsChanged = skimForwardDestinationMs != forwardTime || skimBackwardDestinationMs != backwardTime
-        if destinationsChanged { (skimForwardDestinationMs, skimBackwardDestinationMs) = (forwardTime, backwardTime) }
-        let canForward = forwardTime != nil, canBackward = backwardTime != nil
-        // A map can move where Skim lands with no availability flip (paused, say); the Lock Screen still needs it (#115).
-        guard snapshot.canSkimForward != canForward || snapshot.canSkimBackward != canBackward else { if destinationsChanged { updateGate2CompactState() }; return }
-        isUpdatingSkimAvailability = true
-        snapshot.canSkimForward = canForward
-        snapshot.canSkimBackward = canBackward
-        isUpdatingSkimAvailability = false
-    }
-
-    func resolvedSkimPlaybackPlan(
-        direction: SkimDirection,
-        at recipientMediaTimeMs: Int
-    ) -> ResolvedSkimPlaybackPlan? {
-        guard isMediaPlaybackSnapshot, !snapshot.isRecording, let store else { return nil }
-        if skimResourceContext?.itemId != activeItemId {
-            #if DEBUG
-            skimResourceLoadCount += 1
-            #endif
-            let projection = try? store.loadResolvedListeningMapProjection(itemId: activeItemId)
-            skimResourceContext = SkimResourceContext(
-                itemId: activeItemId,
-                projection: projection,
-                proposal: SharedListeningMapPlacement.proposal(
-                    for: projection, committed: (try? store.loadPortableListeningMapProposals(itemId: activeItemId)) ?? [],
-                    layers: (try? store.loadImportedCommentaryLayers(itemId: activeItemId)) ?? []),
-                assets: (try? store.loadOwnedOfflineAssets()) ?? []
-            )
-        }
-        guard let resources = skimResourceContext, let projection = resources.projection else { return nil }
-        guard let proposal = resources.proposal else { return nil }
-        guard let plan = SceneStarts(scenes: proposal.scenes, projection: projection).skimPlan(
-            direction: direction, at: recipientMediaTimeMs,
-            durationMs: snapshot.currentPlaybackDurationMs ?? selectedItem.mediaDurationMs
-        ) else { return nil }
-        let summaryScene = plan.summaryScene
-        let assetID = summaryBridgeAssetID(
-            itemId: activeItemId,
-            proposalId: SharedListeningMapPlacement.isSharedProjection(id: projection.id) ? projection.id : proposal.id,
-            sceneId: summaryScene.id,
-            suppliedAssetId: summaryScene.summaryAssetId
-        )
-        guard let asset = resources.assets.first(where: {
-            $0.id == assetID && $0.category == .summaryBridge && $0.integrity == .valid
-        }), let url = resolvedApplicationSupportAssetURL(for: asset.relativePath) else {
-            return nil
-        }
-        return ResolvedSkimPlaybackPlan(
-            direction: direction,
-            itemId: activeItemId,
-            originMediaTimeMs: recipientMediaTimeMs,
-            summarySceneId: summaryScene.id,
-            destinationSceneId: plan.destinationSceneId,
-            destinationMediaTimeMs: plan.destinationMediaTimeMs,
-            summaryAssetId: assetID,
-            summaryAudioURL: url
-        )
-    }
-
-    func skimForward() {
-        performSkim(direction: .forward)
-    }
-
-    func skimBackward() {
-        performSkim(direction: .backward)
-    }
-
-    private func performSkim(direction: SkimDirection) {
-        if snapshot.skimBridgeState != nil {
-            // A second tap exits the current bridge at its destination. Do not
-            // resolve another summary against the asynchronous source seek.
-            completeSkimBridge()
-            return
-        }
-        let effectiveTime = snapshot.currentMediaTimeMs ?? 0
-        guard let plan = resolvedSkimPlaybackPlan(direction: direction, at: effectiveTime) else {
-            reportWarning("Skim is unavailable until a verified scene summary is ready.")
-            return
-        }
-        startSkimBridge(plan)
-    }
-
-    func startSkimBridge(_ plan: ResolvedSkimPlaybackPlan, continueAfterSummary: Bool = false) {
-        #if canImport(AVFoundation)
-        guard let engine else { return }
-        let wasPlaying = snapshot.status.isPlaybackActive || continueAfterSummary
-        do {
-            snapshot = try engine.pause()
-            var state = SkimBridgeState(
-                direction: plan.direction,
-                itemId: plan.itemId,
-                originMediaTimeMs: plan.originMediaTimeMs,
-                summarySceneId: plan.summarySceneId,
-                destinationSceneId: plan.destinationSceneId,
-                destinationMediaTimeMs: plan.destinationMediaTimeMs,
-                summaryAssetId: plan.summaryAssetId,
-                wasSourcePlaying: wasPlaying,
-                status: .preparing
-            )
-            snapshot.skimBridgeState = state
-            protectSummaryBridgeAsset(plan.summaryAssetId, protected: true)
-            let player = AVPlayer(url: plan.summaryAudioURL)
-            skimBridgePlayer = player
-            state.status = .playing
-            snapshot.skimBridgeState = state
-            player.currentItem?.audioTimePitchAlgorithm = .timeDomain
-            player.playImmediately(atRate: SummaryBridgeRatePolicy.transportRate(mediaPlaybackRate))
-            skimBridgeTask?.cancel()
-            skimBridgeTask = Task { @MainActor [weak self, weak player] in
-                while !Task.isCancelled {
-                    guard let self, let player, let item = player.currentItem else { return }
-                    if item.status == .failed {
-                        self.cancelSkimBridge(restoringOrigin: true, resumeSource: false)
-                        self.reportWarning("The scene summary could not be played. Your original position was restored.")
-                        return
-                    }
-                    let duration = CMTimeGetSeconds(item.duration)
-                    let current = CMTimeGetSeconds(player.currentTime())
-                    if duration.isFinite, duration > 0, current >= duration - 0.08 {
-                        self.completeSkimBridge()
-                        return
-                    }
-                    try? await Task.sleep(for: .milliseconds(100))
-                }
-            }
-            reportSuccess(plan.direction == .forward ? "Skimming forward." : "Skimming backward.")
-        } catch {
-            protectSummaryBridgeAsset(plan.summaryAssetId, protected: false)
-            reportFailure(error, context: "Skim failed")
-        }
-        #else
-        reportWarning("Skim audio is unavailable on this device.")
-        #endif
-    }
-
-    func completeSkimBridge() {
-        guard var bridge = snapshot.skimBridgeState, let engine else { return }
-        bridge.status = .completing
-        snapshot.skimBridgeState = bridge
-        skimBridgePlayer?.pause()
-        skimBridgePlayer = nil
-        skimBridgeTask?.cancel()
-        skimBridgeTask = nil
-        protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
-        do {
-            snapshot.skimBridgeState = nil
-            snapshot = try seekOrStageMedia(engine, toMediaTimeMs: bridge.destinationMediaTimeMs)
-            if bridge.destinationSceneId == nil {
-                snapshot = try engine.pause()
-                reportConfirmation("Finished the final scene summary.")
-            } else if bridge.wasSourcePlaying {
-                snapshot = try engine.resumePlayback()
-            } else {
-                snapshot = try engine.pause()
-            }
-            refreshSelectedItem()
-        } catch {
-            cancelSkimBridge(restoringOrigin: true, resumeSource: false)
-            reportFailure(error, context: "Completing Skim failed")
-        }
-    }
-
-    private func setSkimBridgePaused(_ paused: Bool) {
-        #if canImport(AVFoundation)
-        guard var bridge = snapshot.skimBridgeState, let player = skimBridgePlayer else { return }
-        if paused {
-            player.pause()
-            bridge.status = .paused
-        } else {
-            player.playImmediately(atRate: SummaryBridgeRatePolicy.transportRate(mediaPlaybackRate))
-            bridge.status = .playing
-        }
-        snapshot.skimBridgeState = bridge
-        #endif
-    }
-
-    func returnFromSkim() {
-        cancelSkimBridge(restoringOrigin: true, resumeSource: true)
-    }
-
-    func cancelSkimBridge(restoringOrigin: Bool, resumeSource: Bool) {
-        guard var bridge = snapshot.skimBridgeState else { return }
-        bridge.status = .cancelled
-        skimBridgePlayer?.pause()
-        skimBridgePlayer = nil
-        skimBridgeTask?.cancel()
-        skimBridgeTask = nil
-        protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
-        snapshot.skimBridgeState = nil
-        guard restoringOrigin, let engine else { return }
-        snapshot = (try? seekOrStageMedia(engine, toMediaTimeMs: bridge.originMediaTimeMs)) ?? snapshot
-        if resumeSource && bridge.wasSourcePlaying {
-            snapshot = (try? engine.resumePlayback()) ?? snapshot
-        } else {
-            snapshot = (try? engine.pause()) ?? snapshot
-        }
-    }
-
-    private func restoreSkimOriginBeforeCanonicalTransport() {
-        if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
-        guard let bridge = snapshot.skimBridgeState else { return }
-        cancelSkimBridge(restoringOrigin: true, resumeSource: bridge.wasSourcePlaying)
-    }
-
-    private func protectSummaryBridgeAsset(_ assetID: String, protected: Bool) {
-        _ = try? store?.updateOwnedOfflineAsset(id: assetID) { asset in
-            if protected {
-                asset.protections.insert(.activeSummaryBridge)
-            } else {
-                asset.protections.remove(.activeSummaryBridge)
-            }
-        }
-    }
-
-    private func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
-        try purgeSourceTranscriptionAudioCaches(itemId: itemId)
-        let transientDirectory = try episodeMapDirectory(itemId: itemId)
-            .appending(path: "Transient", directoryHint: .isDirectory)
-        if FileManager.default.fileExists(atPath: transientDirectory.path) {
-            try FileManager.default.removeItem(at: transientDirectory)
-        }
-        if let store {
-            for asset in try store.loadOwnedOfflineAssets() where
-                asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
-                try store.deleteOwnedOfflineAsset(id: asset.id)
-            }
-        }
-    }
-
-    private func purgeSourceTranscriptionAudioCaches(itemId: String) throws {
-        try SourceTranscriptionCaches.purge(itemId: itemId)
-    }
-
-    private func submitAutomaticEpisodeMapPreparationIfNeeded() {
-        guard automaticEpisodeMapPreparationPolicy == .whileCharging,
-              let store else { return }
-        let candidates = libraryItems.compactMap { row -> Item? in
-            guard (try? store.loadEditionFingerprintSpine(itemId: row.id)) == nil,
-                  let item = try? store.loadItem(id: row.id),
-                  item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
-                  podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
-            return item
-        }
-        for item in candidates {
-            let id = "episode-map-job-\(safePodcastEvidenceComponent(item.id))"
-            if let existing = try? store.loadEpisodeMapPreparationJobs().first(where: { $0.id == id && !$0.isCancelled }) {
-                _ = existing
-                continue
-            }
-            try? store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
-                id: id,
-                itemId: item.id,
-                policy: .whileCharging
-            ))
-        }
-        #if canImport(BackgroundTasks) && canImport(UIKit)
-        AudioPreparationBackgroundController.shared.submitIfEnabled(!candidates.isEmpty)
-        #endif
-    }
 
     func applyListeningMapJSON() {
         do {
@@ -4965,119 +4180,6 @@ final class Gate1AppModel: ObservableObject {
         LibraryRowBuilder.startupPreparationCandidates(rows)
     }
 
-    private func scheduleStartupAudioPreparationIfNeeded(itemId: String) {
-        guard audioPlaybackClientOverride == nil,
-              hasAcceptedCurrentTerms,
-              ttsVoiceSelection.supertonicVoice != nil,
-              !suppressedAutomaticAudioPreparationItemIds.contains(itemId),
-              !liveSpeechFallbackItemIds.contains(itemId),
-              !pendingStartupAudioPreparationItemIds.contains(itemId),
-              libraryItems.first(where: { $0.id == itemId })?.startupAudioState != .ready else {
-            return
-        }
-        do {
-            let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard item.sourceCompletedAt == nil,
-                  !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
-                  LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
-                  item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
-                return
-            }
-            pendingStartupAudioPreparationItemIds.insert(itemId)
-            failedStartupAudioPreparationItemIds.remove(itemId)
-            updateLibraryStartupAudioState(itemId: itemId, state: .waiting)
-            diagnostics["startupAudioPreparation:\(itemId)"] = "queued"
-            Task { @MainActor [weak self] in
-                await self?.enqueueStartupAudioPreparation(itemId: itemId)
-            }
-        } catch {
-            failedStartupAudioPreparationItemIds.insert(itemId)
-            updateLibraryStartupAudioState(itemId: itemId, state: .failed)
-            diagnostics["startupAudioPreparation:\(itemId)"] = "enqueue_failed:\(error.localizedDescription)"
-        }
-    }
-
-    private func enqueueStartupAudioPreparation(itemId: String) async {
-        defer { pendingStartupAudioPreparationItemIds.remove(itemId) }
-        do {
-            try Task.checkCancellation()
-            let store = try requireStore()
-            let item = try store.loadItem(id: itemId)
-            guard item.sourceCompletedAt == nil,
-                  !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
-                  let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
-                  LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
-                  let voice = ttsVoiceSelection.supertonicVoice,
-                  let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
-                updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
-                return
-            }
-            let plan = await Task.detached(priority: .utility) {
-                Self.preparedChunkPlan(for: sourceText)
-            }.value
-            guard !plan.isEmpty else {
-                updateLibraryStartupAudioState(itemId: itemId, state: .notRequired)
-                return
-            }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
-            let signature = try await Task.detached(priority: .utility) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
-            }.value
-            try Task.checkCancellation()
-            let support = try applicationSupportDirectory()
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
-            currentSupertonicRenderSignature = signature
-            let manifest = try await coordinator.begin(
-                itemId: item.id,
-                sourceText: sourceText,
-                signature: signature,
-                plan: plan
-            )
-            let targetChunkCount = min(Self.startupAudioChunkCount, plan.count)
-            if manifest.chunks.count < targetChunkCount {
-                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                    ?? AudioPreparationJob(
-                        id: "job-\(manifest.id)",
-                        itemId: item.id,
-                        manifestId: manifest.id,
-                        policy: .demandWindow
-                    )
-                if job.policy == .demandWindow {
-                    job.requestedAt = item.createdAt ?? job.requestedAt
-                    job.maximumChunkCount = targetChunkCount
-                }
-                job.isCancelled = false
-                job.lastFailureCode = nil
-                try store.saveAudioPreparationJob(job)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "queued_0_of_\(targetChunkCount)"
-            } else if let job = try store.loadAudioPreparationJobs().first(where: {
-                $0.manifestId == manifest.id && $0.policy == .demandWindow && $0.maximumChunkCount != nil
-            }) {
-                try store.deleteAudioPreparationJob(id: job.id)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "ready_from_cache"
-            }
-            try refreshLibraryRows(store: store)
-            startForegroundAudioPreparationIfNeeded()
-        } catch is CancellationError {
-            diagnostics["startupAudioPreparation:\(itemId)"] = "cancelled"
-        } catch {
-            failedStartupAudioPreparationItemIds.insert(itemId)
-            updateLibraryStartupAudioState(itemId: itemId, state: .failed)
-            diagnostics["startupAudioPreparation:\(itemId)"] = "failed:\(error.localizedDescription)"
-        }
-    }
-
-    private func updateLibraryStartupAudioState(itemId: String, state: NativeTextStartupAudioState) {
-        guard let index = libraryItems.firstIndex(where: { $0.id == itemId }),
-              libraryItems[index].startupAudioState != state else { return }
-        libraryItems[index].startupAudioState = state
-    }
-
     @discardableResult
     func attachPreparedTextAudio(
         _ prepared: PreparedTextAudio,
@@ -5199,14 +4301,6 @@ final class Gate1AppModel: ObservableObject {
             startupChunkCount: Self.startupAudioChunkCount)
     }
 
-    func libraryStartupAudioPresentation(
-        item: Item,
-        manifest: PreparedAudioManifest?,
-        job: AudioPreparationJob?
-    ) -> (state: NativeTextStartupAudioState, completed: Int, target: Int) {
-        LibraryRowBuilder.startupAudioPresentation(item: item, manifest: manifest, job: job, context: startupAudioContext)
-    }
-
     func refreshBatchExportRows(store: SQLiteSessionStore) throws {
         let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
         batchExportRows = try store.loadSessions().compactMap { session in
@@ -5230,182 +4324,10 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func applyPreparedChunkProgress(item: Item, manifest: PreparedAudioManifest, remainingJobs: [AudioPreparationJob]) {
-        var manifest = manifest
-        // Finishing the final chunk persists a terminal state and removes its
-        // job. The caller's pre-finalization snapshot must not downgrade that
-        // result. Intermediate chunks still avoid any persistence reload.
-        if manifest.state == .preparing,
-           manifest.chunks.count == manifest.plannedChunkCount,
-           !remainingJobs.contains(where: { $0.manifestId == manifest.id && !$0.isCancelled }),
-           let persisted = try? store?.loadPreparedAudioManifest(id: manifest.id) {
-            manifest = persisted
-        }
-        let job = remainingJobs.first { $0.manifestId == manifest.id && !$0.isCancelled }
-        if let index = libraryItems.firstIndex(where: { $0.id == item.id }), !libraryItems[index].isCompleted {
-            let startup = libraryStartupAudioPresentation(item: item, manifest: manifest, job: job)
-            var row = libraryItems[index]
-            row.startupAudioState = startup.state
-            row.startupAudioCompletedChunkCount = startup.completed
-            row.startupAudioTargetChunkCount = startup.target
-            row.offlineState = LibraryOfflineStateFilter.forItem(
-                preparedState: [.preparing, .pausedForThermal].contains(manifest.state) && job == nil ? .notPrepared : manifest.state,
-                mediaSourceType: item.media?.sourceType, podcastDownloadState: nil)
-            if row != libraryItems[index] { libraryItems[index] = row }
-        }
-        let rows = AudioPreparationQueueProjection.rows(
-            audioPreparationQueue, afterProgressOn: manifest, currentJob: job,
-            remainingJobs: remainingJobs, activeItemId: activePlaybackItemId)
-        if audioPreparationQueue != rows { audioPreparationQueue = rows }
-    }
-
     func refreshLibraryRows(store: SQLiteSessionStore) throws {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
-    }
-
-    func refreshAudioPreparationPresentation() {
-        guard let store else { return }
-        do {
-            try refreshAudioPreparationPresentation(store: store)
-        } catch {
-            diagnostics["audioPreparationPresentation"] = "failed:\(String(describing: type(of: error)))"
-        }
-    }
-
-    private func refreshAudioPreparationPresentation(
-        store: SQLiteSessionStore,
-        announceNewCompletions: Bool = false,
-        now: Date = Date()
-    ) throws {
-        let itemsById = Dictionary(uniqueKeysWithValues: try store.listItems().map { ($0.id, $0) })
-        let manifests = try store.loadPreparedAudioManifests()
-        let manifestsById = Dictionary(uniqueKeysWithValues: manifests.map { ($0.id, $0) })
-        let activeItemId = activePlaybackItemId
-        let storedJobs = try store.loadAudioPreparationJobs()
-        let staleJobIds = Set(LibraryAudioPreparationAdmission.staleJobIds(
-            storedJobs, items: Array(itemsById.values), sessionsByItemId: Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-        ))
-        try store.deleteAudioPreparationJobs(ids: Array(staleJobIds))
-        let jobs = AudioPreparationQueueProjection.orderedJobs(storedJobs, staleJobIds: staleJobIds, activeItemId: activeItemId)
-        let titlesByItemId = itemsById.mapValues(\.title)
-        audioPreparationQueue = AudioPreparationQueueProjection.queueRows(
-            jobs: jobs, manifestsById: manifestsById, titlesByItemId: titlesByItemId, activeItemId: activeItemId)
-        recentlyPreparedAudio = AudioPreparationQueueProjection.recentlyPrepared(manifests: manifests, titlesByItemId: titlesByItemId)
-
-        guard announceNewCompletions else { return }
-        let defaults = UserDefaults.standard
-        guard let notice = AudioPreparationQueueProjection.preparedAudioNotice(
-            recentlyPrepared: recentlyPreparedAudio,
-            lastNoticeTimestamp: defaults.object(forKey: Self.lastPreparedAudioNoticeDateKey) as? Double,
-            now: now
-        ) else { return }
-        defaults.set(notice.newestCompletedAt.timeIntervalSince1970, forKey: Self.lastPreparedAudioNoticeDateKey)
-        reportConfirmation(notice.message)
-    }
-
-    func moveAudioPreparationJobEarlier(id: String) {
-        moveAudioPreparationJob(id: id, offset: -1)
-    }
-
-    func moveAudioPreparationJobLater(id: String) {
-        moveAudioPreparationJob(id: id, offset: 1)
-    }
-
-    func skipAudioPreparationJob(id: String) {
-        do {
-            let store = try requireStore()
-            let jobs = try store.loadAudioPreparationJobs()
-            guard let selected = jobs.first(where: { $0.id == id }) else { return }
-            suppressAudioPreparation(itemId: selected.itemId)
-            try store.deleteAudioPreparationJobs(
-                ids: jobs.filter { $0.itemId == selected.itemId }.map(\.id)
-            )
-            pendingStartupAudioPreparationItemIds.remove(selected.itemId)
-            failedStartupAudioPreparationItemIds.remove(selected.itemId)
-            try refreshLibraryRows(store: store)
-            diagnostics["audioPreparationSuppressed:\(selected.itemId)"] = "user"
-            reportConfirmation("Removed \(itemsTitle(itemId: selected.itemId, store: store)) from audio preparation.")
-        } catch {
-            reportFailure(error, context: "Removing the item from audio preparation failed")
-        }
-    }
-
-    func clearAudioPreparationQueue() {
-        do {
-            let store = try requireStore()
-            let jobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            let itemIds = Set(jobs.map(\.itemId))
-            foregroundAudioPreparationTask?.cancel()
-            foregroundAudioPreparationGeneration += 1
-            foregroundAudioPreparationTask = nil
-            suppressAudioPreparation(itemIds: itemIds)
-            try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
-            pendingStartupAudioPreparationItemIds.subtract(itemIds)
-            failedStartupAudioPreparationItemIds.subtract(itemIds)
-            try refreshLibraryRows(store: store)
-            diagnostics["audioPreparationQueueCleared"] = "\(jobs.count)"
-            reportConfirmation("Cleared \(jobs.count) audio preparation job\(jobs.count == 1 ? "" : "s"). Existing audio and Library items were kept.")
-        } catch {
-            reportFailure(error, context: "Clearing the audio preparation queue failed")
-        }
-    }
-
-    func suppressAudioPreparation(itemId: String) {
-        suppressAudioPreparation(itemIds: Set([itemId]))
-    }
-
-    private func suppressAudioPreparation(itemIds: Set<String>) {
-        suppressedAutomaticAudioPreparationItemIds.formUnion(itemIds)
-        UserDefaults.standard.set(
-            suppressedAutomaticAudioPreparationItemIds.sorted(),
-            forKey: Self.suppressedAudioPreparationItemIdsKey
-        )
-    }
-
-    func allowAudioPreparation(itemId: String) {
-        guard suppressedAutomaticAudioPreparationItemIds.remove(itemId) != nil else { return }
-        UserDefaults.standard.set(
-            suppressedAutomaticAudioPreparationItemIds.sorted(),
-            forKey: Self.suppressedAudioPreparationItemIdsKey
-        )
-    }
-
-    private func itemsTitle(itemId: String, store: SQLiteSessionStore) -> String {
-        (try? store.loadItem(id: itemId).title) ?? "this item"
-    }
-
-    func prioritizeAudioPreparationJob(id: String) {
-        do {
-            let store = try requireStore()
-            let jobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            guard var selected = jobs.first(where: { $0.id == id }) else { return }
-            // Pin only the selected job. Assigning ranks to the whole queue
-            // would demote every future import behind all existing work.
-            selected.userPriority = AudioPreparationQueueProjection.nextUserPriority(among: jobs)
-            try store.saveAudioPreparationJob(selected)
-            try refreshAudioPreparationPresentation(store: store)
-            startForegroundAudioPreparationIfNeeded()
-        } catch {
-            reportFailure(error, context: "Unable to prepare this item next")
-        }
-    }
-
-    private func moveAudioPreparationJob(id: String, offset: Int) {
-        guard offset == -1 || offset == 1 else { return }
-        do {
-            let store = try requireStore()
-            let allJobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
-            guard let reordered = AudioPreparationQueueProjection.reorderedTier(
-                of: allJobs, moving: id, by: offset, activeItemId: activePlaybackItemId
-            ) else { return }
-            for job in reordered { try store.saveAudioPreparationJob(job) }
-            try refreshAudioPreparationPresentation(store: store)
-            reportConfirmation("Updated the audio preparation order.")
-        } catch {
-            reportFailure(error, context: "Updating the audio preparation queue failed")
-        }
     }
 
     func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
@@ -5825,7 +4747,7 @@ final class Gate1AppModel: ObservableObject {
         return true
     }
 
-    private func retrySourceWindowContexts(itemId: String) {
+    func retrySourceWindowContexts(itemId: String) {
         guard let store else { return }
         let sessions = (try? store.loadSessions(itemId: itemId)) ?? []
         for session in sessions {
@@ -7143,67 +6065,6 @@ final class Gate1AppModel: ObservableObject {
         return store
     }
 
-    private func enqueueExplicitAudioPreparation(item: Item) async {
-        guard let sourceText = PreparedSpeechHooks.preparedText(of: item, in: store),
-              !sourceText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let voice = ttsVoiceSelection.supertonicVoice else { return }
-        do {
-            allowAudioPreparation(itemId: item.id)
-            failedStartupAudioPreparationItemIds.remove(item.id)
-            let store = try requireStore()
-            let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else {
-                reportFailure("The bundled speech assets are unavailable.")
-                return
-            }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
-            let signature = try await Task.detached(priority: .utility) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
-            }.value
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
-            currentSupertonicRenderSignature = signature
-            let plan = await Task.detached(priority: .utility) {
-                Self.preparedChunkPlan(for: sourceText)
-            }.value
-            guard !plan.isEmpty else { return }
-            let manifest = try await coordinator.begin(
-                itemId: item.id,
-                sourceText: sourceText,
-                signature: signature,
-                plan: plan
-            )
-            guard manifest.state != .readyOffline else {
-                try refreshLibraryRows(store: store)
-                reportConfirmation("\(item.title) is already available offline.")
-                return
-            }
-            var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                ?? AudioPreparationJob(
-                    id: "job-\(manifest.id)",
-                    itemId: item.id,
-                    manifestId: manifest.id,
-                    policy: .explicit
-                )
-            job.policy = .explicit
-            job.userPriority = 0
-            job.maximumChunkCount = nil
-            job.requestedAt = Date()
-            job.isCancelled = false
-            try store.saveAudioPreparationJob(job)
-            try refreshLibraryRows(store: store)
-            diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
-            reportConfirmation("Prioritized \(item.title) for audio preparation.")
-            startForegroundAudioPreparationIfNeeded()
-        } catch {
-            diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
-            reportFailure(error, context: "Preparing audio failed to start")
-        }
-    }
-
     func startForegroundAudioPreparationIfNeeded() {
         requestContinuedAudioPreparationIfNeeded() // before the guard: a loop may already be running when the listener asks (#905)
         guard foregroundAudioPreparationTask == nil else { return }
@@ -7236,64 +6097,6 @@ final class Gate1AppModel: ObservableObject {
         if canPrepareLibraryAudio, UIApplication.shared.applicationState == .active { startForegroundAudioPreparationIfNeeded() }
     }
     #endif
-
-    private func enqueueAutomaticAudioPreparationJobs() async {
-        guard automaticAudioPreparationPolicy == .whileCharging,
-              hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { return }
-        do {
-            let store = try requireStore()
-            let support = try applicationSupportDirectory()
-            guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Supertonic", directoryHint: .isDirectory) else { return }
-            let assets = SupertonicAssetLocation(rootURL: resourceRoot)
-            let signature = try await Task.detached(priority: .utility) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
-            }.value
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
-            currentSupertonicRenderSignature = signature
-            let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
-            for row in libraryItems {
-                guard let item = try? store.loadItem(id: row.id),
-                      !LibraryAudioPreparationAdmission.playsItsOwnAudio(item),
-                      let text = PreparedSpeechHooks.preparedText(of: item, in: store),
-                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      !suppressedAutomaticAudioPreparationItemIds.contains(item.id) else { continue }
-                guard LibraryAudioPreparationAdmission.admitsAutomatically(item, sessions: sessionsByItemId[item.id] ?? []) else {
-                    diagnostics["automaticAudioPreparation:\(item.id)"] = "skipped_existing_progress"
-                    continue
-                }
-                let plan = await Task.detached(priority: .utility) {
-                    Self.preparedChunkPlan(for: text)
-                }.value
-                guard !plan.isEmpty else { continue }
-                let manifest = try await coordinator.begin(
-                    itemId: item.id,
-                    sourceText: text,
-                    signature: signature,
-                    plan: plan
-                )
-                guard manifest.state != .readyOffline else { continue }
-                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                    ?? AudioPreparationJob(id: "job-\(manifest.id)", itemId: item.id, manifestId: manifest.id, policy: .whileCharging, requestedAt: item.createdAt ?? Date())
-                let unfinishedStartupHorizon = job.policy == .demandWindow
-                    && job.maximumChunkCount.map { manifest.chunks.count < $0 } == true
-                if !unfinishedStartupHorizon {
-                    job.policy = .whileCharging
-                    job.maximumChunkCount = nil
-                }
-                job.isCancelled = false
-                try store.saveAudioPreparationJob(job)
-            }
-            try refreshAudioPreparationPresentation(store: store)
-            diagnostics["automaticAudioPreparationQueue"] = "queued"
-        } catch {
-            diagnostics["automaticAudioPreparationQueue"] = "failed:\(error.localizedDescription)"
-        }
-    }
 
     var canPrepareLibraryAudio: Bool {
         !preparationSeams.memoryBackoffActive() && playbackAllowsLibraryAudioPreparation
@@ -7504,21 +6307,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    nonisolated static func audioPreparationJobPrecedes(
-        _ lhs: AudioPreparationJob,
-        _ rhs: AudioPreparationJob
-    ) -> Bool {
-        audioPreparationJobPrecedes(lhs, rhs, activeItemId: nil)
-    }
-
-    nonisolated static func audioPreparationJobPrecedes(
-        _ lhs: AudioPreparationJob,
-        _ rhs: AudioPreparationJob,
-        activeItemId: String?
-    ) -> Bool {
-        LibraryAudioPreparationQueue.precedes(lhs, rhs, activeItemId: activeItemId)
-    }
-
     private func finishBackgroundPreparedAudio(
         item: Item,
         sourceText: String,
@@ -7580,19 +6368,6 @@ final class Gate1AppModel: ObservableObject {
             try? await ledger.release(reservationId: assemblyReservation.id)
             throw error
         }
-    }
-
-    private nonisolated static let preparationPlanCache = PreparedChunkPlanCache()
-
-    private nonisolated static func preparedChunkPlan(for sourceText: String) -> [PreparedChunkPlan] {
-        preparationPlanCache.value(for: sourceText) { PreparedChunkPlan.articlePlan(sourceText) }
-    }
-
-    nonisolated static func preparationHorizon(
-        plan: [PreparedChunkPlan],
-        maximumChunkCount: Int?
-    ) -> [PreparedChunkPlan] {
-        Array(plan.prefix(min(maximumChunkCount ?? plan.count, plan.count)))
     }
 
     func configureOfflineServices(store: SQLiteSessionStore) throws {
@@ -7698,304 +6473,6 @@ final class Gate1AppModel: ObservableObject {
             throw SessionKitError.persistenceFailed("local_source_importer_unavailable")
         }
         return localSourceImporter
-    }
-
-    func podcastLocalAssetDidBecomeReady(itemId: String, url: URL) {
-        guard let engine, let store else { return }
-        importedPodcastRecipientLocalURLs[itemId] = url
-        let requestedReplacement = requestedPodcastTransportReplacements.remove(itemId) != nil
-        run { _ in
-            // Automatic completion keeps the current session's audio edition.
-            // Explicit Download Again and a pending startup may adopt the new
-            // file, including when a paused session's old local file was replaced.
-            snapshot = try engine.updatePlaybackTransport(
-                itemId: itemId,
-                playbackURL: url.absoluteString,
-                replaceActivePlayback: snapshot.status == .starting || requestedReplacement
-            )
-            refreshSelectedItem()
-        }
-        if requestedReplacement, let record = podcastDownloadRecords[itemId] { reportConfirmation(PodcastDownloadStatusText.downloaded(record) + ".") }
-        scheduleEmbeddedPublisherChapterImport(itemId: itemId, localURL: url)
-        retrySourceWindowContexts(itemId: itemId)
-        resolveImportedPodcastCommentary(itemId: itemId, localURL: url)
-        if deferredPodcastPlacementURLs[itemId] == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store),
-           let item = try? store.loadItem(id: itemId) {
-            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_for_imported_commentary"
-            scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: url)
-            return
-        }
-        guard pendingMapGenerationItemId == itemId,
-              (try? store.loadItem(id: itemId)) != nil else {
-            diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "not_requested"
-            return
-        }
-        pendingMapGenerationItemId = nil
-        diagnostics["sourceTranscriptionAfterDownload:\(itemId)"] = "requested_private_episode_map"
-        prepareEpisodeMap(itemId: itemId, policy: .explicit)
-    }
-
-    private func scheduleTransientRecipientAlignmentTranscript(for item: Item, localSourceURL: URL) {
-        guard let sourceFile = try? PodcastPlacementFile(url: localSourceURL),
-              importedTranscriptRetryDates[item.id].map({ Date().timeIntervalSince($0) >= 60 }) ?? true,
-              pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
-        importedTranscriptRetryDates[item.id] = Date()
-        diagnostics["recipientAlignmentTranscript:\(item.id)"] = "transcribing_transiently"
-        sharedMarginPlacementPasses.begin(.transcript, itemId: item.id)
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.sharedMarginPlacementPasses.end(.transcript, itemId: item.id) }
-            do {
-                let timeline = try await self.sourceTranscriptionClient.transcribeSourceAudio(
-                    url: localSourceURL,
-                    itemId: item.id,
-                    durationMs: item.media?.durationMs
-                )
-                self.pendingFullSourceTranscriptionItemIds.remove(item.id)
-                if self.importedPodcastResolutionURLs[item.id] == localSourceURL,
-                   (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
-                    self.resolveImportedPodcastCommentary(
-                        itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
-                }
-                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "consumed_and_deleted"
-            } catch {
-                self.pendingFullSourceTranscriptionItemIds.remove(item.id)
-                try? self.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
-                self.diagnostics["recipientAlignmentTranscript:\(item.id)"] = "failed_and_deleted:\(error.localizedDescription)"
-            }
-        }
-    }
-
-    func resolveImportedPodcastCommentary(
-        itemId: String,
-        localURL: URL,
-        recipientTranscriptOverride: TranscriptTimeline? = nil
-    ) {
-        guard let store,
-              let file = try? PodcastPlacementFile(url: localURL),
-              let item = try? store.loadItem(id: itemId),
-              let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { deferredPodcastPlacementURLs[itemId] = nil; return }
-        guard !deferPlacementWhileSessionKeepsItsEdition(item: item, localURL: localURL) else { return }
-        importedPodcastResolutionURLs[itemId] = localURL
-        let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: localAudiobookDigest(for: item))
-        // Persisted transcripts have no byte-edition binding. Only this pass's
-        // transient transcript is evidence for the supplied recipient file.
-        let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
-            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
-        }
-        guard !work.isEmpty else { podcastPlacementPassCoordinator.cancel(itemId: itemId); sharedMarginPlacementPasses.end(.matching, itemId: itemId); return }
-        if recipientTranscriptOverride == nil, importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
-            scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
-        }
-        let applicationSupportDirectory = try? applicationSupportDirectory()
-        let submission = podcastPlacementPassCoordinator.schedule(.init(itemId: itemId, file: file,
-            layers: work.map { .init(layer: $0.0, records: $0.1) }, transcript: recipientTranscriptOverride)) { [weak self] context in
-            let recipientTranscript = context.request.transcript
-            do {
-                try Task.checkCancellation()
-                let recipientDigest = try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
-                let isCurrent = try await MainActor.run { [weak self] in
-                    guard !Task.isCancelled, let self, self.podcastPlacementPassCoordinator.isCurrent(context) else { return false }
-                    try store.invalidateImportedPodcastPlacements(itemId: itemId, editionSHA256: recipientDigest)
-                    if self.selectedItem.id == itemId { self.refreshSelectedItem() }; self.refreshMarginRows()
-                    return true
-                }
-                guard isCurrent else { return }
-                var resolvedWork: [(ImportedCommentaryLayer, [ImportedCommentaryInterjection], SharedListeningMapPlacement.Outcome?)] = []
-                for (var layer, records) in work {
-                    try Task.checkCancellation()
-                    let queries = records.map { record in
-                        let evidence = (record.podcastAnchorEvidence ?? []).compactMap { asset -> PodcastAcousticEvidenceQuery? in
-                            guard let assetURL = Self.resolvedApplicationSupportAssetURL(
-                                for: asset.localPath,
-                                applicationSupportDirectory: applicationSupportDirectory
-                            ), let data = try? Data(contentsOf: assetURL) else { return nil }
-                            return PodcastAcousticEvidenceQuery(
-                                id: asset.id,
-                                signatureData: data,
-                                anchorOffsetMs: asset.anchorOffsetMs
-                            )
-                        }
-                        return PodcastPortableAnchorQuery(
-                            packageScopedId: record.packageScopedId,
-                            senderMediaTimeMs: record.anchorEvidence.mediaTimeMs,
-                            evidence: evidence,
-                            evidenceWasDeclared: !record.anchorEvidence.machineEvidenceAssetIds.isEmpty
-                        )
-                    }
-                    let resolutions = (try? await PodcastAcousticAnchorResolver.resolve(
-                        queries: queries,
-                        recipientAudioURL: localURL,
-                        senderExactEditionSHA256: layer.itemIdentity.exactEditionSHA256,
-                        senderDurationMs: layer.itemIdentity.durationMs,
-                        strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(
-                            layer.itemIdentity,
-                            localItem
-                        )
-                    )) ?? [:]
-                    try Task.checkCancellation()
-                    let fusedResolutions = ImportedPodcastPlacement.fuse(
-                        queries: queries, records: records, acoustic: resolutions,
-                        recipientTranscript: recipientTranscript)
-                    let updated = ImportedPodcastPlacement.apply(
-                        fusedResolutions, to: records, layer: &layer,
-                        recipientDigest: recipientDigest, hasTranscript: recipientTranscript != nil)
-                    var mapOutcome: SharedListeningMapPlacement.Outcome?
-                    if layer.listeningMapProposals?.first != nil, layer.editionFingerprintSpines?.first == nil {
-                        mapOutcome = .notPlaced(.init(sceneId: nil, sceneLabel: nil, reason: .noEvidence))
-                    } else if let spine = layer.editionFingerprintSpines?.first, let proposal = layer.listeningMapProposals?.first {
-                        let evidencePaths = layer.episodeMapEvidencePaths ?? [:]
-                        mapOutcome = try await SharedListeningMapResolver.resolve(
-                            proposal: proposal, spine: spine,
-                            signatureData: { id in evidencePaths[id].flatMap {
-                                Self.resolvedApplicationSupportAssetURL(for: $0, applicationSupportDirectory: applicationSupportDirectory)
-                            }.flatMap { try? Data(contentsOf: $0) } },
-                            recipientAudioURL: localURL, recipientEditionSHA256: recipientDigest,
-                            itemId: itemId, projectionId: SharedListeningMapPlacement.projectionId(layerId: layer.id),
-                            strongSourceIdentity: ImportedItemResolver.canRepresentSameWork(layer.itemIdentity, localItem)
-                        )
-                    }
-                    resolvedWork.append((layer, updated, mapOutcome))
-                }
-                await MainActor.run {
-                    guard !Task.isCancelled, let self, self.podcastPlacementPassCoordinator.isCurrent(context) else { return }
-                    defer { self.sharedMarginPlacementPasses.end(.matching, itemId: itemId) }
-                    guard let store = self.store else { return }
-                    do {
-                        let livingWork = try resolvedWork.filter { try store.isLiveImportedCommentaryLayer(id: $0.0.id) } // #915
-                        let outcomes = livingWork.sorted { $0.0.importedAt < $1.0.importedAt }.compactMap(\.2)
-                        let current = try store.loadResolvedListeningMapProjection(itemId: itemId)
-                        let activation = SharedListeningMapPlacement.activation(
-                            outcomes, listenerHasMap: try Self.listenerHasListeningMap(itemId: itemId, store: store),
-                            activeProjectionId: current?.id)
-                        for (var layer, records, outcome) in livingWork {
-                            layer.sharedMapRefusalReason = activation.refusal == nil ? nil : outcome?.refusal?.listenerReason
-                            try store.savePlacementResult(of: layer, records: records)
-                        }
-                        let sharedProposals = Dictionary(livingWork.compactMap { work in
-                            work.0.listeningMapProposals?.first.map { (SharedListeningMapPlacement.projectionId(layerId: work.0.id), $0) }
-                        }, uniquingKeysWith: { first, _ in first })
-                        if activation.refusal != nil, let stale = current, sharedProposals[stale.id] != nil {
-                            try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
-                                id: stale.id, itemId: itemId, proposalId: stale.proposalId,
-                                recipientEditionSHA256: stale.recipientEditionSHA256, points: [], intervals: []))
-                        }
-                        if let projection = activation.projection {
-                            try store.saveResolvedListeningMapProjection(projection)
-                            if let proposal = sharedProposals[projection.id] {
-                                Task { @MainActor [weak self] in
-                                    guard let self else { return }
-                                    for scene in proposal.scenes where
-                                        scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
-                                        _ = try? await self.prepareSummaryBridgeAsset(
-                                            itemId: itemId,
-                                            proposalId: projection.id,
-                                            scene: scene,
-                                            store: store
-                                        )
-                                    }
-                                    self.updateSkimAvailability()
-                                }
-                            }
-                        }
-                        if self.selectedItem.id == itemId { self.refreshSelectedItem() }
-                        let resolvedCount = livingWork.filter { $0.0.sourceResolutionStatus == .resolved }.count
-                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "complete:\(resolvedCount)/\(livingWork.count) \(SharedMarginPlacementSummary(livingWork.map { ($0.0, $0.1) }).diagnosticValue)"
-                        if recipientTranscript == nil, self.importedPodcastCommentaryNeedsTranscript(itemId: itemId, store: store) {
-                            self.scheduleTransientRecipientAlignmentTranscript(for: item, localSourceURL: localURL)
-                        }
-                    } catch {
-                        self.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "persistence_failed:\(error.localizedDescription)"
-                    }
-                }
-            } catch {
-                await MainActor.run {
-                    guard !Task.isCancelled, self?.podcastPlacementPassCoordinator.isCurrent(context) == true else { return }
-                    self?.sharedMarginPlacementPasses.end(.matching, itemId: itemId)
-                    self?.diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "failed:\(error.localizedDescription)"
-                }
-            }
-        }
-        if !submission.joined {
-            diagnostics["importedPodcastAnchorResolution:\(itemId)"] = "scheduled:\(work.count)"
-            // Only a request that starts a pass records "placing"; a joined one could set it after its pass ended it.
-            sharedMarginPlacementPasses.begin(.matching, itemId: itemId, previous: Dictionary(work.flatMap(\.1).map { ($0.id, $0.resolution) }, uniquingKeysWith: { first, _ in first }))
-        }
-    }
-
-    private func importedPodcastCommentaryNeedsTranscript(
-        itemId: String,
-        store: SQLiteSessionStore
-    ) -> Bool {
-        guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
-        return ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
-            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
-        }.contains { $0.1.contains(where: ImportedPodcastPlacement.recordNeedsTranscript) }
-    }
-
-    private func scheduleEmbeddedPublisherChapterImport(itemId: String, localURL: URL) {
-        Task { @MainActor [weak self] in
-            guard let collection = await EmbeddedPublisherChapterLoader.load(from: localURL),
-                  let self,
-                  let engine = self.engine else {
-                self?.diagnostics["publisherChaptersEmbedded:\(itemId)"] = "not_found"
-                return
-            }
-            self.run { _ in
-                self.snapshot = try engine.attachPublisherChapters(itemId: itemId, collection: collection)
-                if self.activeItemId == itemId {
-                    self.refreshSelectedItem()
-                }
-                self.diagnostics["publisherChaptersEmbedded:\(itemId)"] = "imported_\(collection.chapters.count)"
-            }
-        }
-    }
-
-    func schedulePodcastDownloadIfNeeded(itemId: String) {
-        guard let store,
-              let item = try? store.loadItem(id: itemId),
-              item.media?.sourceType == .remoteStream,
-              let rawURL = item.media?.url,
-              let remoteURL = URL(string: rawURL) else { return }
-        podcastDownloadCoordinator?.register(itemId: itemId, remoteURL: remoteURL)
-    }
-
-    func resolvedOwnedAudiobookURL(for item: Item) -> URL? {
-        // iOS can relocate the data container during an update. The ledger path
-        // is relative to today's Application Support directory; item URLs are not.
-        if let assets = try? store?.loadOwnedOfflineAssets(),
-           let asset = assets.first(where: { $0.itemId == item.id && $0.category == .audiobook && $0.integrity == .valid }),
-           let url = resolvedApplicationSupportAssetURL(for: asset.relativePath) {
-            return url
-        }
-        guard let savedURL = item.media?.url.flatMap(URL.init(string:)), savedURL.isFileURL else { return nil }
-        return resolvedApplicationSupportAssetURL(for: savedURL.path)
-    }
-
-    func prepareSourceMediaPlayback(itemId: String) throws {
-        if let item = try store?.loadItem(id: itemId), item.mediaType == "audiobook" {
-            guard let url = resolvedOwnedAudiobookURL(for: item) else {
-                throw SessionKitError.invalidCommandForState("The imported audio file is unavailable. Restore the source audio to continue listening.")
-            }
-            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: url.absoluteString, replaceActivePlayback: false)
-            return
-        }
-        guard let coordinator = podcastDownloadCoordinator else { return }
-        coordinator.configureActiveItem(itemId)
-        if let record = podcastDownloadRecords[itemId], record.state == .evicted,
-           coordinator.networkTransport == .wifi,
-           let remoteURL = URL(string: record.remoteURL) {
-            coordinator.register(itemId: itemId, remoteURL: remoteURL)
-        }
-        guard let localURL = coordinator.validatedLocalURL(for: itemId) else {
-            // Clear a cached local override when its file has disappeared.
-            _ = try engine?.updatePlaybackTransport(itemId: itemId, playbackURL: nil, replaceActivePlayback: false)
-            return
-        }
-        _ = try? engine?.updatePlaybackTransport(itemId: itemId, playbackURL: localURL.absoluteString, replaceActivePlayback: false)
-        resolveImportedPodcastCommentary(itemId: itemId, localURL: localURL)
     }
 
     private func databaseURL() throws -> URL {
