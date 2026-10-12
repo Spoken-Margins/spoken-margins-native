@@ -757,20 +757,30 @@ def check_texts(source_path: str, base: dict, head: dict) -> tuple:
     removed_runs: list = []      # [(path, [(line_no, text), ...])]
     added: dict = {}              # path -> list of (line_no, text) added
     access_changes: list = []
+    head_scans = {p: scan(t) for p, t in head.items()}
+    base_scans = {p: scan(t) for p, t in base.items()}
     for path in sorted(set(base) | set(head)):
-        old = base.get(path, '').split('\n') if path in base else []
-        new = head.get(path, '').split('\n') if path in head else []
-        matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
+        old = base[path].split('\n') if path in base else []
+        new = head[path].split('\n') if path in head else []
+        # Diff with access modifiers ignored, so a relaxed declaration is an unchanged line, not a
+        # delete and insert that splits the moves around it.
+        old_n, new_n = [normalize(x) for x in old], [normalize(x) for x in new]
+        matcher = difflib.SequenceMatcher(None, old_n, new_n, autojunk=False)
         adds = []
         for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                access_changes += [(path, i1 + k + 1, old[i1 + k].strip(), new[j1 + k].strip())
+                                   for k in range(i2 - i1) if old[i1 + k] != new[j1 + k]]
+                continue
+            if tag == 'delete' and path in base_scans:
+                i1, i2 = _slide(old_n, i1, i2, base_scans[path])
+            if tag == 'insert' and path in head_scans:
+                j1, j2 = _slide(new_n, j1, j2, head_scans[path])
             if tag in ('delete', 'replace'):
-                run = [(i, old[i]) for i in range(i1, i2)]
-                removed_runs.append((path, run))
+                removed_runs.append((path, [(i, old[i]) for i in range(i1, i2)]))
             if tag in ('insert', 'replace'):
                 adds += [(j, new[j]) for j in range(j1, j2)]
         added[path] = adds
-    head_scans = {p: scan(t) for p, t in head.items()}
-    base_scans = {p: scan(t) for p, t in base.items()}
     pools = {p: [(j, normalize(t)) for j, t in a if t.strip()] for p, a in added.items()}
     used = {p: [False] * len(v) for p, v in pools.items()}
     unmatched_removed: list = []
@@ -857,6 +867,33 @@ def check_texts(source_path: str, base: dict, head: dict) -> tuple:
     for p, i, d, j, t in bad_boundaries:
         report.append(f'Run starts inside a member: {Path(p).name}:{i} -> {Path(d).name}:{j}  {t}')
     return ok, report
+
+
+def _slide(lines: list, a: int, b: int, s: Scan) -> tuple:
+    """Shift a pure delete or insert of lines[a:b] to the equivalent place that starts on a member boundary.
+
+    When the block ends with the same lines as the text just before it (two members both ending in
+    `    }`), a diff may take the neighbour's closing braces and leave the block's own behind. The text is
+    the same either way; the boundary-aligned choice is the one a reader means."""
+    def boundary(i: int) -> bool:
+        return i < len(s.depth) and s.depth[i] == 1 and not s.quiet[i]
+
+    def good(x: int, y: int) -> bool:
+        return boundary(x) and (y >= len(lines) or boundary(y))
+
+    if good(a, b):
+        return a, b
+    x, y = a, b
+    while x > 0 and lines[x - 1] == lines[y - 1]:
+        x, y = x - 1, y - 1
+        if good(x, y):
+            return x, y
+    x, y = a, b
+    while y < len(lines) and lines[x] == lines[y]:
+        x, y = x + 1, y + 1
+        if good(x, y):
+            return x, y
+    return a, b
 
 
 def _benign(text: str) -> bool:

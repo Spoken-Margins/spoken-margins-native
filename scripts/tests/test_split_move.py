@@ -238,6 +238,16 @@ class CheckTests(unittest.TestCase):
         ok, _ = self.check(source=self.source.replace('return countThing("a") + counter', 'return countThing("b") + counter'))
         self.assertFalse(ok)
 
+    def test_a_diff_that_slides_across_identical_closing_braces_still_passes(self):
+        # Two members ending in the same braces: a line diff may delete the first one's closing braces
+        # and keep the moved one's. That is the same text, and check must see the move it is.
+        member = ('    func {}() {{\n        do {{\n            w()\n        }} catch {{\n            e()\n'
+                  '        }}\n    }}\n')
+        model = 'final class Gate1AppModel {\n' + '\n'.join(member.format(n) for n in 'abc') + '}\n'
+        source, dest, _ = split_move.move_texts(model, None, ['b'])
+        ok, report = split_move.check_texts(SOURCE, {SOURCE: model}, {SOURCE: source, self.dest_path: dest})
+        self.assertTrue(ok, '\n'.join(report))
+
     def test_comments_are_listed_not_failed(self):
         dest = self.dest.replace('extension Gate1AppModel {', '/// Things, moved unchanged.\nextension Gate1AppModel {')
         ok, report = self.check(dest=dest)
