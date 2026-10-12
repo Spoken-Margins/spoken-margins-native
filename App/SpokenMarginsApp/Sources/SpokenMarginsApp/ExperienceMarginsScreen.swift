@@ -179,14 +179,19 @@ struct ExperienceMarginsScreen: View {
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
                                     .frame(width: 28, height: 32)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(row.preview)
-                                        .font(.system(.body, design: .serif))
-                                        .foregroundStyle(AppColors.text)
-                                        .multilineTextAlignment(.leading)
-                                        .lineLimit(3)
+                                    // Where it was made comes first, then the opening words. A bold one-line gist
+                                    // missed the point on 15 of 40 of the owner's real Margins, so none is shown (#777).
                                     Text(row.needsAttention ? row.attentionDescription : row.placeDescription())
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.text)
+                                        .multilineTextAlignment(.leading)
+                                    if !row.needsAttention || row.preview != row.attentionDescription {
+                                        Text(row.preview)
+                                            .font(.system(.body, design: .serif))
+                                            .foregroundStyle(AppColors.secondaryText)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(2)
+                                    }
                                 }
                                 Spacer(minLength: 8)
                                 Image(systemName: "chevron.right")
@@ -198,7 +203,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("My Margin. \(row.preview). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(group.itemTitle).")
+                        .accessibilityLabel("My Margin. \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
