@@ -81,6 +81,10 @@ struct PlaybackScreen: View {
                                     if model.selectedItem.isNativeAudio {
                                         PlaybackNowView()
                                     } else {
+                                        PlaybackLivePassageView { offset in
+                                            sourceTextOffsetAtPresentation = offset
+                                            isSourceTextPresented = true
+                                        }
                                         recentMarginPreview
                                     }
                                     if model.shouldShowGuidedOnboardingCoach {
@@ -910,7 +914,9 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.download.button")
         }
 
-        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
+        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue
+            || (!model.selectedItem.isNativeAudio && model.snapshot.itemId == model.selectedItem.id
+                && model.snapshot.targetType == TargetType.transcriptBackedMedia.rawValue) {
             Button {
                 sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
                 isSourceTextPresented = true
@@ -1809,65 +1815,6 @@ private struct PastedAssistantResponseView: View {
             }
             .onAppear { isFocused = true }
         }
-    }
-}
-
-private struct NativeTextPeekView: View {
-    @Environment(\.dismiss) private var dismiss
-    let title: String
-    let text: String
-    let chapters: [Chapter]
-    let currentOffset: Int
-
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(chapterTitle)
-                            .font(.headline)
-                        Text(chapterText)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                }
-                .padding(20)
-            }
-            .navigationTitle(title.isEmpty ? "Source Text" : title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }
-                }
-            }
-            .accessibilityIdentifier("nativeText.peek.sheet")
-        }
-    }
-
-    private var selectedChapter: Chapter? {
-        guard !chapters.isEmpty else { return nil }
-        let offset = max(0, min(currentOffset, text.count))
-        return chapters.first(where: { offset >= $0.startChar && offset < $0.endChar })
-            ?? chapters.last(where: { $0.startChar <= offset })
-            ?? chapters.first
-    }
-
-    private var chapterTitle: String {
-        selectedChapter?.title ?? "Full Text"
-    }
-
-    private var chapterText: String {
-        guard !text.isEmpty else { return "No native text is available." }
-        guard let chapter = selectedChapter else { return text }
-        let characters = Array(text)
-        let start = max(0, min(chapter.startChar, characters.count))
-        let end = max(start, min(chapter.endChar, characters.count))
-        return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
