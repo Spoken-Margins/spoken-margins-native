@@ -84,11 +84,12 @@ extension Gate1AppModel {
                 return
             }
             let recordings = try store.loadInterjections(itemId: id)
+            let quarantinedRecordings = try store.quarantinedMarginAudioPaths(itemId: id)
             podcastDownloadCoordinator?.removeItem(id)
             removeDurableGeneratedAudio(for: item)
             removeEpisodeMapArtifacts(itemId: id)
             try store.deleteItem(id: id)
-            removeMarginRecordings(recordings, store: store)
+            removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)
             guard !libraryItems.contains(where: { $0.id == id }),
                   !recentlyDeletedItems.contains(where: { $0.id == id }),
@@ -120,11 +121,12 @@ extension Gate1AppModel {
                 }
             }
             let recordings = try ids.flatMap { try store.loadInterjections(itemId: $0) }
+            let quarantinedRecordings = try ids.flatMap { try store.quarantinedMarginAudioPaths(itemId: $0) }
             ids.forEach { podcastDownloadCoordinator?.removeItem($0) }
             items.forEach(removeDurableGeneratedAudio)
             ids.forEach(removeEpisodeMapArtifacts)
             try store.deleteItems(ids: ids)
-            removeMarginRecordings(recordings, store: store)
+            removeMarginRecordings(recordings, quarantinedAudioPaths: quarantinedRecordings, store: store)
             try refreshLibraryRows(store: store)
             guard recentlyDeletedItems.isEmpty,
                   ids.allSatisfy({ (try? store.loadItem(id: $0)) == nil }) else {

@@ -435,13 +435,23 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
-    private func marginAudioPaths(sql: String) throws -> [String] {
+    /// The audio paths of the Margins quarantined under `itemId` (#1466): the recordings of rows this build
+    /// can't decode, which `loadInterjections(itemId:)` doesn't return. Read them before `deleteItem(id:)`,
+    /// which takes the rows, so the files that only those rows named can be removed too.
+    public func quarantinedMarginAudioPaths(itemId: String) throws -> [String] {
+        try marginAudioPaths(
+            sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection' AND (\(Self.quarantinedRowBelongsToItem));",
+            bindings: [itemId])
+    }
+
+    private func marginAudioPaths(sql: String, bindings: [String] = []) throws -> [String] {
         try withConnectionLock {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
             }
             defer { sqlite3_finalize(statement) }
+            for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(offset + 1), value: value) }
             var paths: [String] = []
             while true {
                 let step = sqlite3_step(statement)
@@ -1088,6 +1098,46 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try saveItem(item)
     }
 
+    private static func quarantinedJSON(_ path: String) -> String {
+        "CASE WHEN json_valid(payload) THEN json_extract(payload, '\(path)') END"
+    }
+
+    /// A `quarantined_records` row (`?1` is the item id) that belongs to the item: the item itself, or any row
+    /// whose payload names it. The payload is read as JSON, not decoded, because these are the rows this build
+    /// can't decode. A payload that isn't JSON can't be tied to an item, so it isn't matched. Turns carry only
+    /// a session id and imported Margins only a layer id, so they go with the item's sessions and layers,
+    /// live or quarantined.
+    private static let quarantinedRowBelongsToItem = """
+        (kind = 'item' AND id = ?1)
+        OR \(quarantinedJSON("$.itemId")) = ?1
+        OR (kind = 'turn' AND \(quarantinedJSON("$.sessionId")) IN (\(quarantinedSessionIdsOfItem)))
+        OR (kind = 'imported_commentary_interjection' AND \(quarantinedJSON("$.layerId")) IN (\(quarantinedLayerIdsOfItem)))
+        """
+
+    private static let quarantinedSessionIdsOfItem = """
+        SELECT id FROM records WHERE kind = 'session' AND item_id = ?1
+        UNION SELECT id FROM quarantined_records WHERE kind = 'session' AND \(quarantinedJSON("$.itemId")) = ?1
+        """
+
+    private static let quarantinedLayerIdsOfItem = """
+        SELECT id FROM records WHERE kind = 'imported_commentary_layer' AND item_id = ?1
+        UNION SELECT id FROM quarantined_records WHERE kind = 'imported_commentary_layer' AND \(quarantinedJSON("$.itemId")) = ?1
+        """
+
+    /// Takes the item's quarantined rows with it (#1466). Turns and imported Margins go first, as their own
+    /// statements, while the sessions and layers they are tied through are still there to be found.
+    private func deleteQuarantinedRows(ofItem id: String) throws {
+        try runDelete(
+            "DELETE FROM quarantined_records WHERE kind = 'turn' AND \(Self.quarantinedJSON("$.sessionId")) IN (\(Self.quarantinedSessionIdsOfItem));",
+            prepareError: "prepare_delete_item_quarantined_turns", stepError: "step_delete_item_quarantined_turns", ids: [id])
+        try runDelete(
+            "DELETE FROM quarantined_records WHERE kind = 'imported_commentary_interjection' AND \(Self.quarantinedJSON("$.layerId")) IN (\(Self.quarantinedLayerIdsOfItem));",
+            prepareError: "prepare_delete_item_quarantined_imports", stepError: "step_delete_item_quarantined_imports", ids: [id])
+        try runDelete(
+            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR \(Self.quarantinedJSON("$.itemId")) = ?1;",
+            prepareError: "prepare_delete_item_quarantined", stepError: "step_delete_item_quarantined", ids: [id])
+    }
+
     public func deleteItem(id: String) throws {
         defer { noteItemWritten(id) }
         // Turns are saved with a session id and no item id, so they are found through the item's
@@ -1096,6 +1146,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         // (SQLite 3.37 on Linux did, #1219). One transaction, so a failure leaves the item whole.
         try withTransaction {
             try withConnectionLock {
+                try deleteQuarantinedRows(ofItem: id)
                 try runDelete(
                     """
                     DELETE FROM records
