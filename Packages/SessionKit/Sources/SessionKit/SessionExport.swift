@@ -58,6 +58,9 @@ public struct ExportInterjection: Codable, Equatable {
     /// The 1-based PDF page the Margin's anchor sits on, when the item's structured
     /// document knows it (#206).
     public var page: Int? = nil
+    /// Where a source Margin's anchor starts in the item's text. A text item has no media clock, so
+    /// this orders its Margins within a percent (#1439).
+    public var sourceCharOffset: Int? = nil
 }
 
 public struct ExportOptions: Equatable {
@@ -194,7 +197,7 @@ public enum SessionExportMarkdownRenderer {
 
         let interjectionsById = Dictionary(uniqueKeysWithValues: export.interjections.map { ($0.id, $0) })
         let turnsById = Dictionary(uniqueKeysWithValues: export.turns.map { ($0.id, $0) })
-        let contextualSourceInterjections = export.timeline.compactMap { entry -> ExportInterjection? in
+        let contextualSourceInterjections = inSourceOrder(export.timeline.compactMap { entry -> ExportInterjection? in
             guard entry.type == "interjection",
                   let id = entry.interjectionId,
                   let interjection = interjectionsById[id],
@@ -202,7 +205,7 @@ public enum SessionExportMarkdownRenderer {
                 return nil
             }
             return interjection
-        }
+        })
         let contextualTurnInterjections = Dictionary(grouping: export.timeline.compactMap { entry -> ExportInterjection? in
             guard entry.type == "interjection",
                   let id = entry.interjectionId,
@@ -248,9 +251,9 @@ public enum SessionExportMarkdownRenderer {
             }
         }
         if export.timeline.isEmpty, !export.interjections.isEmpty {
-            let sourceInterjections = export.interjections
-                .filter { $0.targetType == InterjectionTargetType.item.rawValue }
-                .sorted { ($0.mediaTimeMs ?? 0) < ($1.mediaTimeMs ?? 0) }
+            let sourceInterjections = inSourceOrder(
+                export.interjections.filter { $0.targetType == InterjectionTargetType.item.rawValue }
+            )
             appendContextualSourceInterjections(sourceInterjections, to: &lines)
             let turnInterjections = Dictionary(
                 grouping: export.interjections.filter { $0.targetType != InterjectionTargetType.item.rawValue },
@@ -326,6 +329,69 @@ public enum SessionExportMarkdownRenderer {
         )
     }
 
+    /// Source Margins as they sit in the source. Audio and video Margins all carry a media time and
+    /// go by it. A text item's don't, and a missing time used to count as zero, which put a Margin
+    /// from the middle of the text first (#1439); those go by percent, then by where the anchor
+    /// starts. Margins that tie keep their given order.
+    static func inSourceOrder(_ interjections: [ExportInterjection]) -> [ExportInterjection] {
+        let timed = interjections.allSatisfy { $0.mediaTimeMs != nil }
+        return interjections.enumerated().sorted { lhs, rhs in
+            let left = lhs.element, right = rhs.element
+            let leftKey = timed
+                ? [left.mediaTimeMs ?? 0, left.sourceCharOffset ?? 0, lhs.offset]
+                : [left.roughPercent, left.sourceCharOffset ?? 0, left.mediaTimeMs ?? 0, lhs.offset]
+            let rightKey = timed
+                ? [right.mediaTimeMs ?? 0, right.sourceCharOffset ?? 0, rhs.offset]
+                : [right.roughPercent, right.sourceCharOffset ?? 0, right.mediaTimeMs ?? 0, rhs.offset]
+            return leftKey.lexicographicallyPrecedes(rightKey)
+        }.map(\.element)
+    }
+
+    private static let minimumSharedTokens = 4
+
+    /// The source passages printed so far in one block. Margins close together carry context windows
+    /// that overlap, so a window is printed only for the words not already above it (#1439).
+    private struct PrintedPassages {
+        private var printed: [[String]] = []
+
+        /// The part of `passage` not yet printed, or nil when all of it is. `passage` counts as
+        /// printed afterwards, because what was cut was printed before.
+        mutating func unprinted(_ passage: String) -> String? {
+            let tokens = SessionExportMarkdownRenderer.whitespaceTokens(passage)
+            guard !tokens.isEmpty else { return nil }
+            let compared = tokens.map(SessionExportMarkdownRenderer.comparisonToken)
+            var result: String? = tokens.joined(separator: " ")
+            if compared.count >= SessionExportMarkdownRenderer.minimumSharedTokens {
+                if printed.contains(where: { Self.contains($0, compared) }) {
+                    result = nil
+                } else {
+                    let overlap = printed.map { Self.overlap(ending: $0, starting: compared) }.max() ?? 0
+                    if overlap > 0 {
+                        result = overlap == tokens.count ? nil : tokens.dropFirst(overlap).joined(separator: " ")
+                    }
+                }
+            }
+            printed.append(compared)
+            return result
+        }
+
+        fileprivate static func contains(_ whole: [String], _ part: [String]) -> Bool {
+            guard part.count <= whole.count else { return false }
+            return (0...(whole.count - part.count)).contains { whole[$0..<($0 + part.count)].elementsEqual(part) }
+        }
+
+        /// The most words that end `earlier` and start `later` (at least `minimumSharedTokens`), or 0.
+        private static func overlap(ending earlier: [String], starting later: [String]) -> Int {
+            let most = min(earlier.count, later.count)
+            guard most >= SessionExportMarkdownRenderer.minimumSharedTokens else { return 0 }
+            for count in stride(from: most, through: SessionExportMarkdownRenderer.minimumSharedTokens, by: -1)
+            where earlier.suffix(count).elementsEqual(later.prefix(count)) {
+                return count
+            }
+            return 0
+        }
+    }
+
     private static func appendContextualInterjections(
         _ interjections: [ExportInterjection],
         heading: String,
@@ -335,12 +401,17 @@ public enum SessionExportMarkdownRenderer {
         to lines: inout [String]
     ) {
         guard let first = interjections.first else { return }
+        var printed = PrintedPassages()
+        func appendPassage(_ label: String, _ passage: String) {
+            guard let fresh = printed.unprinted(passage) else { return }
+            lines.append(label)
+            lines.append(fresh)
+            lines.append("")
+        }
         lines.append("### \(heading)")
         lines.append("")
         if !first.anchorBefore.isEmpty {
-            lines.append(initialContextLabel)
-            lines.append(first.anchorBefore)
-            lines.append("")
+            appendPassage(initialContextLabel, first.anchorBefore)
         }
         appendInterjectionMarker(first, to: &lines)
 
@@ -359,20 +430,14 @@ public enum SessionExportMarkdownRenderer {
             if !sameMoment,
                let shared = sharedPassage(after: previous.anchorAfter, before: current.anchorBefore) {
                 if !shared.isEmpty {
-                    lines.append(continuationLabel)
-                    lines.append(shared)
-                    lines.append("")
+                    appendPassage(continuationLabel, shared)
                 }
-            } else if !sameMoment {
+            } else if !sameMoment, !startsWithin(current.anchorAfter, previous.anchorAfter) {
                 if !previous.anchorAfter.isEmpty {
-                    lines.append(continuationLabel)
-                    lines.append(previous.anchorAfter)
-                    lines.append("")
+                    appendPassage(continuationLabel, previous.anchorAfter)
                 }
                 if !current.anchorBefore.isEmpty {
-                    lines.append(laterContextLabel)
-                    lines.append(current.anchorBefore)
-                    lines.append("")
+                    appendPassage(laterContextLabel, current.anchorBefore)
                 }
             }
             appendInterjectionMarker(current, to: &lines)
@@ -380,9 +445,7 @@ public enum SessionExportMarkdownRenderer {
         }
 
         if !previous.anchorAfter.isEmpty {
-            lines.append(continuationLabel)
-            lines.append(previous.anchorAfter)
-            lines.append("")
+            appendPassage(continuationLabel, previous.anchorAfter)
         }
     }
 
@@ -413,8 +476,8 @@ public enum SessionExportMarkdownRenderer {
         let afterTokens = whitespaceTokens(after)
         let beforeTokens = whitespaceTokens(before)
         let maximum = min(afterTokens.count, beforeTokens.count)
-        guard maximum >= 4 else { return nil }
-        for count in stride(from: maximum, through: 4, by: -1) {
+        guard maximum >= minimumSharedTokens else { return nil }
+        for count in stride(from: maximum, through: minimumSharedTokens, by: -1) {
             let afterCandidate = afterTokens.prefix(count).map(comparisonToken)
             let beforeCandidate = beforeTokens.suffix(count).map(comparisonToken)
             if afterCandidate == beforeCandidate {
@@ -422,6 +485,14 @@ public enum SessionExportMarkdownRenderer {
             }
         }
         return nil
+    }
+
+    /// True when `later` starts inside `earlier`: the two Margins sit so close together that no source
+    /// text lies between them, and the one passage after them is printed once, after the last.
+    private static func startsWithin(_ later: String, _ earlier: String) -> Bool {
+        let head = whitespaceTokens(later).prefix(minimumSharedTokens).map(comparisonToken)
+        guard head.count == minimumSharedTokens else { return false }
+        return PrintedPassages.contains(whitespaceTokens(earlier).map(comparisonToken), head)
     }
 
     private static func whitespaceTokens(_ source: String) -> [String] {
