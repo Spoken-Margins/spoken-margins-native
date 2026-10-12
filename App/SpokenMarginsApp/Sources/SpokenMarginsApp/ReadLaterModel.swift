@@ -93,12 +93,15 @@ final class ReadLaterModel: ObservableObject {
         tracker.credentialChanged(for: service)
         token = ""; refresh()
     }
-    func disconnect() {
+    /// Returns whether the token was removed.
+    @discardableResult
+    func disconnect() -> Bool {
         guard credentials.save("", service) == 0 else {
-            fail("The token could not be removed. Try again while the device is unlocked."); return
+            fail("The token could not be removed. Try again while the device is unlocked."); return false
         }
         tracker.credentialChanged(for: service)
         selectService(); status = "Disconnected. Imported items and Margins remain in your Library."
+        return true
     }
     func refresh(more: Bool = false) {
         guard !isLoading, let secret = credentials.load(service) else { return }
