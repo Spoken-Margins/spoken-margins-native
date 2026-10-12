@@ -37,7 +37,7 @@ extension Gate1AppModel {
             if let summary { startSkimBridge(summary.landing(at: landingMs), continueAfterSummary: true) }
         case .unavailable: return
         case .jump:
-            if let chapter = textChapter { jumpToChapter(chapter) }
+            if textChapter != nil { /* MUTATION (#1291 APO-09 proof): Next chapter does nothing */ }
             else if let chapter = mediaChapter {
                 if selectedItem.mediaChapters.isEmpty { jumpToListeningMapScene(chapter) }
                 else { jumpToMediaChapter(chapter) }

@@ -4564,7 +4564,7 @@ final class Gate1AppModel: ObservableObject {
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
         run { engine in
-            snapshot = try engine.skipBack(unit: skipUnitForCurrentTarget())
+            _ = engine // MUTATION (#1291 APO-09 proof): text skip back does nothing
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             refreshSelectedItem()
             reportSuccess("Skipped back.")
