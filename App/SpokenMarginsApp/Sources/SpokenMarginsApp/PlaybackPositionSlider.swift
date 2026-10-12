@@ -11,16 +11,24 @@ struct PlaybackPositionSlider: UIViewRepresentable {
     var preparedFraction: Double? = nil
     /// Chapters and Margins to draw on the bar (#428). Display only; nil draws the plain slider.
     var barContent: PlaybackBarContent? = nil
+    var barPositionUnit: PlaybackBarAccessibility.PositionUnit = .seconds
+    var positionAccessibilityValue: String? = nil
+    var positionAccessibilityHint: String = ""
     @Environment(\.isEnabled) private var isEnabled
 
-    func makeUIView(context: Context) -> TrackingPlaybackSlider {
-        let slider = TrackingPlaybackSlider()
-        slider.minimumTrackTintColor = UIColor(AppColors.accent)
-        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return slider
+    func makeUIView(context: Context) -> PlaybackBarAccessibilityView {
+        let view = PlaybackBarAccessibilityView()
+        view.slider.minimumTrackTintColor = UIColor(AppColors.accent)
+        return view
     }
 
-    func updateUIView(_ slider: TrackingPlaybackSlider, context: Context) {
+    func updateUIView(_ view: PlaybackBarAccessibilityView, context: Context) {
+        let slider = view.slider
+        view.positionUnit = barPositionUnit
+        slider.accessibilityLabel = "Playback position"
+        slider.accessibilityIdentifier = "playback.scrubber"
+        slider.accessibilityValue = positionAccessibilityValue
+        slider.accessibilityHint = positionAccessibilityHint
         slider.onValue = { value = $0 }
         slider.onEditing = onEditingChanged
         slider.isEnabled = isEnabled
@@ -35,17 +43,20 @@ struct PlaybackPositionSlider: UIViewRepresentable {
         if !slider.isTracking, !slider.gestureActive {
             slider.setValue(Float(value), animated: false)
         }
+        view.setNeedsLayout()
     }
 
-    static func dismantleUIView(_ slider: TrackingPlaybackSlider, coordinator: ()) {
-        slider.onValue = nil
-        slider.onEditing = nil
+    static func dismantleUIView(_ view: PlaybackBarAccessibilityView, coordinator: ()) {
+        view.slider.onValue = nil
+        view.slider.onEditing = nil
+        view.slider.onBarLayout = nil
     }
 }
 
 final class TrackingPlaybackSlider: UISlider {
     var onValue: ((Double) -> Void)?
     var onEditing: ((Bool) -> Void)?
+    var onBarLayout: (([PlaybackBarRenderer.RenderedStack]) -> Void)?
     private(set) var gestureActive = false
     var preparedFraction: Double? { didSet { if oldValue != preparedFraction { setNeedsLayout() } } }
     private let preparedTrack = CALayer()
@@ -87,6 +98,7 @@ final class TrackingPlaybackSlider: UISlider {
             fill: (minimumTrackTintColor ?? tintColor).resolvedColor(with: traitCollection).cgColor
         )
         let replacesTrack = bar.update(content: barContent, value: Double(value), geometry: geometry)
+        onBarLayout?(bar.renderedStacks)
         guard replacesTrack != systemTrackHidden else { return }
         systemTrackHidden = replacesTrack
         let image = replacesTrack ? Self.clearTrackImage : nil
@@ -151,6 +163,13 @@ final class TrackingPlaybackSlider: UISlider {
         gestureActive = false
         isHighlighted = false
         onEditing?(false)
+    }
+
+    /// UISlider only reports `.adjustable` once UIKit's accessibility bundle loads (VoiceOver on), so the
+    /// scrubber states it itself: it now sits inside a container that lists it beside the Margin stacks.
+    override var accessibilityTraits: UIAccessibilityTraits {
+        get { super.accessibilityTraits.union(.adjustable) }
+        set { super.accessibilityTraits = newValue }
     }
 
     override func accessibilityIncrement() { accessibilityStep(1) }
