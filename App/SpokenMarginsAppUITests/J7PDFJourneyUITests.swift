@@ -95,9 +95,9 @@ final class J7PDFJourneyUITests: XCTestCase {
             }
             tap("playback.timeline.button")
             XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 5), "Timeline did not open")
-            let margin = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.interjection.")).firstMatch
-            XCTAssertTrue(margin.waitForExistence(timeout: 5), "The Margin is not on the timeline")
+            // The Timeline is a lazy list that follows the playing source, which is now well past the
+            // Margin, so the Margin's row isn't materialized until the list is scrolled back to it (#1427).
+            let margin = revealTimelineMargin()
             margin.tap()
             XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "The Margin did not open")
             let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", note)).firstMatch
@@ -108,6 +108,30 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false
             }
         }
+    }
+
+    /// Scrolls the lazy Timeline back, then forward if needed, until the saved Margin's row is on screen.
+    /// A bounded search: if the row is still missing after both passes, the Margin isn't on the Timeline.
+    private func revealTimelineMargin() -> XCUIElement {
+        let margin = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.interjection.")).firstMatch
+        let timeline = element("timeline.screen")
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5), "Timeline did not open")
+        func isRevealed() -> Bool { margin.exists && margin.isHittable }
+        if !isRevealed() { _ = margin.waitForExistence(timeout: 2) }
+        var swipes = 0
+        while !isRevealed() && swipes < 12 {
+            timeline.swipeDown()
+            swipes += 1
+        }
+        swipes = 0
+        while !isRevealed() && swipes < 24 {
+            timeline.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(isRevealed(), "The Margin is not on the timeline, even after scrolling through it")
+        screenshot("J7 Timeline with the saved Margin revealed")
+        return margin
     }
 
     private func screenshot(_ name: String) {
