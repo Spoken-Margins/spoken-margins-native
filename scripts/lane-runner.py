@@ -325,6 +325,48 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
     return failed, counted == 0
 
 
+STALL_ISSUE = 705  # the open regression for the app test host that launches and never reaches XCTest
+
+
+def recovered_startup_stalls(manifest: dict) -> list[dict]:
+    """The steps of a verify-tests.py manifest that stalled once at startup, recovered on the first retry and passed.
+
+    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on #705. Two or more stalls
+    before a pass stay a step error, so they never show up here.
+    """
+    return [{'step': step.get('name'), 'stall': step['startup_stalls'][0],
+             'passed': sum(r.get('status') == 'passed' for r in (step.get('tests') or {}).values())}
+            for step in manifest.get('steps', [])
+            if step.get('startup_recovered') and len(step.get('startup_stalls') or []) == 1 and not step.get('errors')]
+
+
+def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post) -> int:
+    """Post each recovered startup stall in the verify-* manifests under <evidence> on #705 with post(body).
+
+    Best effort: the report is already posted, and nothing here can fail the job. Returns how many were posted.
+    """
+    posted = 0
+    for output in sorted(evidence.glob('verify-*')):
+        plan = output.name.removeprefix('verify-')
+        for found in recovered_startup_stalls(_read_manifest(output)):
+            stall = found['stall']
+            body = (f'Startup stall recovered on the first retry, counted as a PASS (owner\'s call 2026-10-11): '
+                    f'the `{plan}` plan of the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).\n'
+                    f'- No test output {stall.get("after_seconds")}s after launch (launch {stall.get("attempt")}); '
+                    f'last log line: `{stall.get("last_log_line")}`.\n'
+                    f'- The retry then passed {found["passed"]} test(s) in `{found["step"]}`.\n'
+                    f'- Evidence on the Mac: `{output}/{found["step"]}-stall-{stall.get("attempt")}/` '
+                    '(simulator processes and a `sample` of the host app) and the partial result bundle '
+                    f'`{output}/tests-stalled-{stall.get("attempt")}.xcresult`.\n'
+                    '_Posted by the lane runner (scripts/lane-runner.py)._')
+            try:
+                post(body)
+                posted += 1
+            except Exception as error:  # noqa: BLE001 - the report already says the stall happened
+                print(f'Could not log the recovered stall on #{STALL_ISSUE}: {error!r}', flush=True)
+    return posted
+
+
 def flush_ledger(pr: int, head: str, post) -> list[str]:
     """Put this job's step runs in the step ledger and post each new alarm with post(body). Returns the alarms.
     Best effort: the job has already reported, and nothing here can fail it."""
@@ -1443,6 +1485,12 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
         if attachments:  # older PR checkouts have no exporter/helper; load only when evidence exists
             from lane_xcresult_attachments import report_lines
             details.extend(report_lines(attachments))
+        for found in recovered_startup_stalls(manifest):
+            stall = found['stall']
+            details.append(f'{plan}: recovered after 1 startup stall ({found["step"]} printed no test output '
+                           f'{stall.get("after_seconds")}s after launch); the first retry passed '
+                           f'{found["passed"]} test(s), which counts as a PASS (owner\'s call 2026-10-11). Logged '
+                           f'on #{STALL_ISSUE}. evidence: {output}/{found["step"]}-stall-{stall.get("attempt")}/')
         for test in summary['failed'][:10]:
             details.append(f'{test} — expected: passes. observed: failed. evidence: {output}/tests.xcresult')
         if summary['out_of_time']:
@@ -2276,6 +2324,8 @@ def main(argv=None) -> int:
     (evidence / 'report.md').write_text(body)
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
+    if request['tier'] == 'T3':
+        log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text))
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
