@@ -30,7 +30,7 @@ struct PlaybackLivePassageView: View {
     }
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
             if let sourceOffset, !rows.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(rows) { row in

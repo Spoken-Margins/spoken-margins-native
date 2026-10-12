@@ -72,6 +72,8 @@ final class PlaybackLivePassageViewTests: XCTestCase {
             Color.clear.frame(height: 1).onAppear { appeared.value = true }
         }.environmentObject(model)
         let host = UIHostingController(rootView: AnyView(root))
+        // Measure the passage itself, without the test phone's status-bar safe area.
+        host.safeAreaRegions = []
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
         window.rootViewController = host
@@ -96,8 +98,10 @@ final class PlaybackLivePassageViewTests: XCTestCase {
         return mounted.height
     }
 
+    @MainActor
     private final class Appearance { var value = false }
 
+    @MainActor
     private struct MountedPassage {
         let host: UIHostingController<AnyView>
         let window: UIWindow
