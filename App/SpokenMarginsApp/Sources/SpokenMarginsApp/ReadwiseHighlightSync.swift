@@ -50,6 +50,25 @@ final class ReadwiseHighlightSync: ObservableObject {
         else { stop(); status = enabled ? "" : "Sending is off. Highlights already in Readwise stay there." }
     }
 
+    /// The Readwise connection was removed (#1467). Whatever connects next is a new destination: sending is
+    /// off until the listener chooses it again, and nothing counts as already sent to it. Saving a new token
+    /// without disconnecting is the same account and keeps both.
+    func destinationDisconnected() {
+        stop()
+        enabled = false
+        UserDefaults.standard.set(false, forKey: "readwiseHighlightsEnabled")
+        rejectedTokenDigest = nil
+        lastSummary = nil; lastSentAt = nil
+        do {
+            try Self.ledger().startNewDestination()
+            links = [:]
+            status = "Sending is off. Highlights already in Readwise stay there."
+        } catch {
+            status = "Sending is off, but the history of what was sent could not be reset: \(error.localizedDescription)"
+            statusIsFailure = true
+        }
+    }
+
     func sendPass() async {
         guard enabled, !isSending, let store = storeProvider?() else { return }
         guard let token = KeychainStore.load(service: ReadLaterModel.credentialService, account: ReadLaterService.reader.rawValue),
