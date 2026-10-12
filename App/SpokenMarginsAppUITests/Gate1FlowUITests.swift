@@ -667,6 +667,25 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
+    /// #1436: only the words of the row were tappable. A tap beside them, at the row's right edge,
+    /// starts it too.
+    func testShareDiagnosticsRowTakesATapBesideTheWords() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        openLibrarySettings()
+        let share = scrollToElement("settings.shareDiagnostics.button")
+        XCTAssertGreaterThan(
+            share.frame.width, app.windows.firstMatch.frame.width * 0.7,
+            "The Share Diagnostics button is only as wide as its words."
+        )
+
+        share.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+
+        let shareSheet = element("ActivityListView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "A tap beside the words did not open the share sheet.")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
+    }
+
     func testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries() throws {
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let seededStart = app.buttons["queue.start.item-pill"]
