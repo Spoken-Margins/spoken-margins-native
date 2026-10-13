@@ -145,16 +145,15 @@ final class MarginCaptureCoordinatorTests: XCTestCase {
         XCTAssertNil(capture.pendingVoiceRequestID, "a compact request has no ID")
     }
 
-    /// With no draft nothing is written, so nothing is announced.
-    func testAnEditWithoutADraftIsNotAnnounced() {
+    /// Closing the draft is a write, so it announces even when there is no draft to close.
+    func testClosingADraftAlwaysAnnounces() {
         let capture = MarginCaptureCoordinator()
         var notices = 0
         let observation = capture.objectWillChange.sink { notices += 1 }
         defer { observation.cancel() }
-        capture.setDraftText("text")
         capture.closeDraft()
         XCTAssertNil(capture.writtenDraft)
-        XCTAssertEqual(notices, 1, "closing always writes; an edit without a draft writes nothing")
+        XCTAssertEqual(notices, 1)
     }
 
     /// Equal-value writes still announce: nothing compares first.
