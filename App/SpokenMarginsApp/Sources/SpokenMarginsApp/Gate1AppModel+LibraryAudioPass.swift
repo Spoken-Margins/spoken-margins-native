@@ -110,7 +110,7 @@ extension Gate1AppModel {
 
     /// The foreground loop and the background task take turns, so two Library items never render at once (#281).
     func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
-        await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) // MUTATION CHECK (#991): render gate removed on purpose
+        await libraryAudioRenderGate.run { await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) }
     }
 
     private func preparationPassInTurn(foregroundDemandOnly: Bool) async -> Bool {
