@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Security
 import SessionKit
@@ -222,9 +223,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var batchExportResult: BatchSessionExportResult?
     @Published var isWritingBatchExport = false
     @Published var retryingInterjectionTranscriptionIds: Set<String> = []
-    @Published var playingInterjectionAudioId: String?
-    @Published var playingInterjectionAudioSessionID: String?
-    @Published var playingInterjectionAudioRate: Double = 1
     var libraryPresentationRevision = 0
     var navigationRefreshTask: Task<Void, Never>?
     var navigationLibraryRead: @Sendable (SQLiteSessionStore) async throws -> LibraryReadSnapshot = { store in
@@ -293,12 +291,15 @@ final class Gate1AppModel: ObservableObject {
             }
         }
     }
-    @Published var playingImportedCommentary: ImportedCommentaryPrompt?
-    @Published var importedCommentaryIsPaused = false
-    /// What the shared Margin's voice is really doing (#941), judged from the player, not from the request to play.
-    @Published var importedCommentaryPhase: SharedMarginPlaybackPhase = .loading
-    var importedCommentaryHealth: SharedMarginPlaybackHealth?
-    let importedMarginRemoteControls = ImportedMarginRemoteControls()
+    /// The Margin voice transport (#993). Its published state reaches views as this model's own names
+    /// (`playingImportedCommentary` and the rest, in `Gate1AppModel+MarginVoicePlayback.swift`), and its changes are
+    /// forwarded here synchronously, before the value changes, as the model's own `@Published` copies were.
+    private var marginVoiceObservation: AnyCancellable?
+    private(set) lazy var marginVoicePlayer: MarginVoicePlayer = {
+        let voice = MarginVoicePlayer(host: self)
+        self.marginVoiceObservation = voice.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        return voice
+    }()
     /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.
     @Published private(set) var marginMoment: MarginMomentSequence?
     @Published private(set) var marginMomentVoiceIsPaused = false
@@ -532,10 +533,7 @@ final class Gate1AppModel: ObservableObject {
         record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
     )
     #if canImport(AVFoundation)
-    var interjectionAudioPlayer: AVPlayer?
-    var interjectionAudioCompletionTask: Task<Void, Never>?
     var preparingLocalAudioMapItems = Set<String>()
-    var commentaryCuePlayer: AVAudioPlayer?
     #endif
     var sharedMarginOffers = SharedMarginOfferQueue()
     var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
@@ -996,7 +994,6 @@ final class Gate1AppModel: ObservableObject {
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
         libraryAudioLoop.cancelOnly()
         sourceImportTask?.cancel()
-        interjectionAudioCompletionTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
         bulkSharePreparationTask?.cancel()
     }
