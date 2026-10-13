@@ -267,7 +267,7 @@ final class Gate1AppModel: ObservableObject {
     private var marginCaptureObservation: AnyCancellable?
     private(set) lazy var marginCapture: MarginCaptureCoordinator = {
         let capture = MarginCaptureCoordinator()
-        self.marginCaptureObservation = capture.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        self.marginCaptureObservation = capture.objectWillChange.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.objectWillChange.send() }
         return capture
     }()
     @Published var isDismissingMiniPlayer = false

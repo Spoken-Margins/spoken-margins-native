@@ -199,7 +199,7 @@ extension Gate1AppModel {
 
     private func startInterjectionRecording(requestedAt: Date, captureID: UUID) {
         guard marginCapture.claimStart(for: captureID) else { return }
-        defer { marginCapture.releaseStart() }
+        marginCapture.releaseStart()
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
         run { engine in

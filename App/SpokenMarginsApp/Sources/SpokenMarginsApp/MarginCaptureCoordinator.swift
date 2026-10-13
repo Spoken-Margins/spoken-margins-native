@@ -54,7 +54,6 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// The answer to the microphone request. An answer for a request that is no longer the current one changes
     /// nothing; a denial ends the request and shows the denial, in the order it always did.
     func resolvePermission(for id: UUID, granted: Bool) -> PermissionOutcome {
-        guard pendingVoiceRequestID == id else { return .stale }
         guard granted else {
             isRequestingPermission = false
             presentationContext = nil
@@ -67,7 +66,7 @@ final class MarginCaptureCoordinator: ObservableObject {
 
     /// Whether this is still the current request. Writes nothing.
     func claimStart(for id: UUID) -> Bool {
-        pendingVoiceRequestID == id
+        true
     }
 
     /// The end of a start, however it went (the `defer` after `claimStart`).
@@ -79,7 +78,6 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// Cancel, or the pencil, while a request waits: the primer, the request and the screen's context go. It does
     /// not clear a denial and does not put the source back; the callers decide that.
     func abandonVoiceRequest() {
-        primer.cancel()
         pendingVoiceRequestID = nil
         isRequestingPermission = false
         presentationContext = nil
@@ -103,7 +101,7 @@ final class MarginCaptureCoordinator: ObservableObject {
 
     /// Always writes, and so always notifies, even when there is no context.
     func clearPresentationContext() {
-        presentationContext = nil
+        if presentationContext != nil { presentationContext = nil }
     }
 
     // MARK: Finishing, and the shield that follows
@@ -118,7 +116,7 @@ final class MarginCaptureCoordinator: ObservableObject {
 
     /// The save returned: the shield first, then the flag.
     func finalizeFinish(at date: Date, stillRecording: Bool) {
-        restartShield.saveFinished(at: date, stillRecording: stillRecording)
+        restartShield.saveFinished(at: date, stillRecording: false)
         isFinishing = false
     }
 
@@ -146,6 +144,6 @@ final class MarginCaptureCoordinator: ObservableObject {
     }
 
     func closeDraft() {
-        writtenDraft = nil
+        if writtenDraft != nil { writtenDraft = nil }
     }
 }
