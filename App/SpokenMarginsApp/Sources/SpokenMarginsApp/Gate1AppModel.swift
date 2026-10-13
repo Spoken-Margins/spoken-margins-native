@@ -576,15 +576,8 @@ final class Gate1AppModel: ObservableObject {
     var completedStreamingTurnIds: Set<String> = []
     @Published var pendingSourceContextInterjectionIds: Set<String> = []
     let sourceWindowJobQueue = SourceWindowJobQueue()
-    var pendingFullSourceTranscriptionItemIds: Set<String> = []
-    let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
-    var importedPodcastResolutionURLs: [String: URL] = [:]
+    lazy var importedPodcastPlacement = makeImportedPodcastPlacementCoordinator() // placing shared podcast Margins and the transcript slot (#1015)
     var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
-    /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
-    var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
-        if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
-        if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
-    var importedTranscriptRetryDates: [String: Date] = [:]
     var importedPodcastRecipientLocalURLs: [String: URL] = [:]
     var pendingMapGenerationItemId: String?
     var pendingProviderJobForConsent: PendingProviderJob?
@@ -3494,12 +3487,12 @@ final class Gate1AppModel: ObservableObject {
               let canonicalURL = URL(string: sourceURLString) else {
             return
         }
-        guard pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
+        guard importedPodcastPlacement.beginFullSourceTranscription(itemId: item.id) else { return }
         let sourceURL = localSourceURL
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
             ?? canonicalURL
         guard sourceURL.isFileURL else {
-            pendingFullSourceTranscriptionItemIds.remove(item.id)
+            importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
             diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
             return
         }
@@ -3518,12 +3511,12 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 await MainActor.run {
-                    self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
                     self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
                 }
             } catch {
                 await MainActor.run {
-                    self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
                     self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
                     self.diagnostics["sourceTranscriptionError"] = String(describing: error)
                     if self.activeItemId == item.id {
