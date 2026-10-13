@@ -303,7 +303,18 @@ scripts/desk-batch.py --json     # the whole plan, writes nothing
 
 - **What counts as waiting.** A `/lane T4` comment on a PR with no later desk report on that PR. A desk report is a comment whose first line starts "Lane report" and says PASS, FAIL or INCONCLUSIVE; the runner's `pr<N>-r<run>` reports don't count, and neither do hand-offs, so a check a desk left half done stays on the list. A newer request on the same PR replaces an older one. Requests older than ten days are not read (`--window-days`).
 - **Batches.** A merged PR's check runs on `next`'s tip and an open PR's on its head, and checks that share a build share a batch, so the desk builds and installs once. A batch holds about 24 steps (the numbered lines of `scenario:`, plus the steps of each journey named in `run:`) and at most 4 checks. `priority` PRs go first, then the oldest request. A check bigger than a batch gets a batch of its own.
-- **When to start a desk.** GO when any batch has 3 checks or 12 steps, or its oldest request has waited 6 hours (that batch is the one written); STOP otherwise, with what the first batch is waiting for. These are defaults (`--min-checks`, `--min-steps`, `--max-wait-hours`); the owner picks how a desk gets started, such as the hourly dispatch or the Mac tick running the script and starting a desk on GO. The script reads GitHub and starts nothing. Exit code 0 is GO, 1 STOP, 2 an error (never GO).
+- **When to start a desk.** GO when any batch has 3 checks or 12 steps, or its oldest request has waited 6 hours (that batch is the one written); STOP otherwise, with what the first batch is waiting for. These are defaults (`--min-checks`, `--min-steps`, `--max-wait-hours`); the Mac tick runs the script (owner's choice, 2026-10-13; text below). The script reads GitHub and starts nothing. Exit code 0 is GO, 1 STOP, 2 an error (never GO).
+- **Text for the Mac tick (#1559).** In `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, after the usage-breaker step and before the advice line, add:
+
+  ```text
+  TEST DESK BATCH. Run `/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/desk-batch.py`. It only reads GitHub and takes about 15 seconds.
+  - Exit 0 (GO): add one line to this tick: `- Test Desk: GO, <its first output line after "GO:">, work list <the path on its "work list:" line>`.
+  - Exit 1 (STOP): add nothing.
+  - Exit 2 (error): add `- Test Desk batch check failed: <its ERROR line>`.
+  - During a HALT (usage breaker: Claude) the GO line is information only: start nothing until RESUMED.
+  ```
+
+  The tick reports; it doesn't start a desk. The desk drives the simulator with computer use from the desktop app, which a scheduled task can't open. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.
 - **After the batch.** The desk posts one report per check on its PR, which takes it off the list. When its context runs short it stops between checks and posts a hand-off on #184; the next run of the script lists what is left, so nothing is passed along by hand.
 - **Cost.** No model tokens, and no state. About 60 `gh api` reads for the ten-day window. If a batch keeps going with one check, or desks still run out before finishing a batch, change the step budget.
 
