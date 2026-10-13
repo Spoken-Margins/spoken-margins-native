@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 import SessionKit
+import SessionKitPersistence
 
 /// An X post imported through the Safari extension gets a short title, and the post stays in the item's text (#885).
 final class BrowserTextTitleTests: XCTestCase {
@@ -29,6 +30,10 @@ final class BrowserTextTitleTests: XCTestCase {
             ("a post of several lines", "Ann Lee on X: \"One.\nTwo.\nThree.\"", "https://x.com/ann/status/1", "Ann Lee on X"),
             ("a very long post", "Ann Lee on X: \"" + String(repeating: "word ", count: 2_000) + "\"", "https://x.com/ann/status/1", "Ann Lee on X"),
             ("spaces around the title", "  Ann Lee on X: \"Hello there.\"  \n", "https://x.com/ann/status/1", "Ann Lee on X"),
+            ("decomposed Unicode name", "Se\u{301}b Krier on X: \"Hello.\"", postURL, "Se\u{301}b Krier on X"),
+            ("punctuation in the name", "Ann: \"Lee\" on X: \"Hello.\"", "https://x.com/ann/status/1", "Ann: \"Lee\" on X"),
+            ("a trailing t.co link", "Ann Lee on X: \"Hello. https://t.co/abc\" / X", "https://x.com/ann/status/1", "Ann Lee on X"),
+            ("a legacy collapsed t.co link", "Ann Lee on X: \"Hello. https:/t.co/abc\"", "https://x.com/ann/status/1", "Ann Lee on X"),
 
             // Not a post title: left to the caller unchanged.
             ("a profile page", "Séb Krier (@sebkrier) / X", "https://x.com/sebkrier", nil),
@@ -79,6 +84,54 @@ final class BrowserTextTitleTests: XCTestCase {
         XCTAssertEqual(repo.items.count, 1, "no second copy of the post")
     }
 
+    /// Seed the actual old title and id in SQLite, rather than importing twice with the new code.
+    /// A re-import must repair the title on the saved row and leave the listener's item intact.
+    func testReimportShortensAnExistingPostWithoutChangingItsIdentityOrBody() throws {
+        for format in [BrowserTextContentFormat.markdown, .plainText] {
+            for legacyTitle in [postTitle, ObsidianMarkdownParser.fileNameTitle(postTitle)] {
+                let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: root) }
+                let store = try SQLiteSessionStore(path: root.appendingPathComponent("library.sqlite").path)
+                let engine = SessionEngine(
+                    profile: RuntimeCapabilityProfile(id: "browser", displayName: "Browser", capabilities: ["sync": ["canonical_persistence"]]),
+                    repository: store
+                )
+                let id = "item-browser-séb-krier-on-x-i-haven-t-posted-in-a-while-so-he"
+                // Markdown imports already omit URLs from narration text; plain text keeps them.
+                let body = format == .markdown ? postBody : postBody + " Read more at https://t.co/dySw7tFEly"
+                let original = Item(
+                    id: id, title: legacyTitle, mediaType: "text", text: body,
+                    externalReference: postURL, status: "ready", externalReferenceType: "url",
+                    author: "Séb Krier", createdAt: Date(timeIntervalSince1970: 100)
+                )
+                try store.saveItem(original)
+                let session = Session(
+                    id: "saved-session", itemId: id, status: "in_progress", phase: .itemPlayback,
+                    currentTargetType: .itemTextTTS, currentTargetId: id, position: Position(charOffset: 12),
+                    completionPercent: 20, playbackRate: 1.25
+                )
+                try store.saveSession(session)
+                let capture = handoff(title: postTitle, url: postURL, text: body, format: format)
+                var expected = original
+                expected.title = "Séb Krier on X"
+
+                XCTAssertEqual(try engine.importBrowserTextInBackground(capture), expected, "\(format): returned item")
+                XCTAssertEqual(try store.loadItem(id: id), expected, "\(format): stored item")
+                XCTAssertEqual(try store.loadSession(id: session.id), session, "saved listening position")
+                XCTAssertEqual(try store.listItems(includeDeleted: true).count, 1, "no duplicate")
+                XCTAssertEqual(try engine.importBrowserTextInBackground(capture), expected, "second re-import")
+                XCTAssertEqual(try store.listItems(includeDeleted: true).count, 1)
+
+                var renamed = expected
+                renamed.title = "My AI reading notes"
+                try store.saveItem(renamed)
+                XCTAssertEqual(try engine.importBrowserTextInBackground(capture), renamed, "custom title survives")
+                XCTAssertEqual(try store.loadItem(id: id), renamed)
+            }
+        }
+    }
+
     func testPostWithAHeadingKeepsTheHeadingAsItsTitle() throws {
         let (engine, _) = makeEngine()
         let item = try engine.importBrowserTextInBackground(handoff(
@@ -90,14 +143,24 @@ final class BrowserTextTitleTests: XCTestCase {
         XCTAssertEqual(item.title, "Hello there")
     }
 
-    /// The markdown parser still rewrites some page titles on every site (a trailing quote, a dot or a
-    /// double slash), so these avoid those characters and pin only what this change must not touch.
+    func testPostBodySectionsStillUseTheShortPageTitle() throws {
+        for body in ["## A take\n\nWords from the post.", "**A take**\n\nWords from the post."] {
+            let (engine, _) = makeEngine()
+            let item = try engine.importBrowserTextInBackground(handoff(title: postTitle, url: postURL, text: body, format: .markdown))
+            XCTAssertEqual(item.title, "Séb Krier on X")
+            XCTAssertEqual(item.text, "A take\n\nWords from the post.")
+        }
+    }
+
+    /// Other sites keep punctuation, quotes and URL slashes exactly as given.
     func testOtherSitesKeepThePageTitleAsGiven() throws {
         let cases = [
             ("https://blog.example/notes", "Notes: \"A quote\" and more"),
             ("https://example.com/ann", "Ann Lee on X: \"Hello there\" says Ann"),
             ("https://x.com/sebkrier", "Séb Krier (@sebkrier) / X"),
             ("https://news.example/story", "Why we left X: a story"),
+            ("https://blog.example/quoted", "Notes: \"A quote\""),
+            ("https://blog.example/link", "Ann Lee on X: \"Hello. https://t.co/abc\""),
         ]
         for (url, title) in cases {
             let (engine, _) = makeEngine()

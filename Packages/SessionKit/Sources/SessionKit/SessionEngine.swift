@@ -4042,6 +4042,13 @@ public final class SessionEngine {
         // The id keeps the title this importer gave before page titles stopped being read as file
         // names (#1059), so a page already in the Library is found again on re-import.
         let idTitle = parsedMarkdown.map { $0.titleIsFallback ? ObsidianMarkdownParser.fileNameTitle(fallbackTitle) : $0.title } ?? fallbackTitle
+        // A front-matter title or a title heading beats the page title. Body sections do not.
+        // Resolve the display title separately from the legacy title used for item identity (#885).
+        let titleCameFromPage = document == nil && (parsedMarkdown?.titleIsFallback ?? true)
+        let postTitle = titleCameFromPage
+            ? BrowserTextTitle.postTitle(pageTitle: fallbackTitle, url: handoff.source.url)
+            : nil
+        let displayTitle = postTitle ?? title
         let text = document?.text ?? (parsedMarkdown?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
@@ -4069,6 +4076,12 @@ public final class SessionEngine {
                 itemId += "-edition-\(digest)"
             }
             if var existing = try existingItem(id: itemId) {
+                // Repair an old automatic title on re-import, retaining the item and its anchors.
+                // Match both raw and legacy filename titles, even if the capture format changed.
+                // A title the listener changed to something else remains theirs.
+                if let postTitle, existing.title == fallbackTitle || existing.title == ObsidianMarkdownParser.fileNameTitle(fallbackTitle) {
+                    existing.title = postTitle
+                }
                 existing.deletedAt = nil
                 return .records(existing, try repository.loadListeningMap(itemId: itemId), document)
             }
@@ -4080,12 +4093,6 @@ public final class SessionEngine {
                 policy: mapPolicy
             )
         let source = parsedMarkdown?.source ?? handoff.source.url
-        // A front-matter title or a heading beats the page title; only a title that came from the page
-        // can be a whole X post (#885).
-        let titleCameFromPage = document == nil && (parsedMarkdown.map { $0.metadata["title"] == nil && $0.headings.isEmpty } ?? true)
-        let displayTitle = titleCameFromPage
-            ? BrowserTextTitle.postTitle(pageTitle: fallbackTitle, url: handoff.source.url) ?? title
-            : title
         let item = Item(
             id: itemId,
             title: displayTitle,
