@@ -1121,11 +1121,12 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         'imported_commentary_layer', 'canonical_source', 'audio_asset', 'source_transcript_timeline', \
         'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
         'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
-        'resolved_listening_map_projection', 'watch_audio_package'
+        'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request'
         """
 
     private static let quarantinedRowBelongsToItem = """
         (kind = 'item' AND id = ?1)
+        OR (kind = 'publisher_audio' AND id = ?1)
         OR (kind IN (\(itemScopedQuarantineKinds)) AND \(quarantinedJSON("$.itemId")) = ?1)
         OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v')
         OR (kind = 'turn' AND \(quarantinedJSON("$.sessionId")) IN (\(quarantinedSessionIdsOfItem)))
@@ -1154,7 +1155,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             "DELETE FROM quarantined_records WHERE kind = 'imported_commentary_interjection' AND \(Self.quarantinedJSON("$.layerId")) IN (\(Self.quarantinedLayerIdsOfItem));",
             prepareError: "prepare_delete_item_quarantined_imports", stepError: "step_delete_item_quarantined_imports", ids: [id])
         try runDelete(
-            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind IN (\(Self.itemScopedQuarantineKinds)) AND \(Self.quarantinedJSON("$.itemId")) = ?1) OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v');",
+            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind = 'publisher_audio' AND id = ?1) OR (kind IN (\(Self.itemScopedQuarantineKinds)) AND \(Self.quarantinedJSON("$.itemId")) = ?1) OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v');",
             prepareError: "prepare_delete_item_quarantined", stepError: "step_delete_item_quarantined", ids: [id])
     }
 
