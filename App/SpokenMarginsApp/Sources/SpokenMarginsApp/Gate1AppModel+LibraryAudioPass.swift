@@ -171,11 +171,7 @@ extension Gate1AppModel {
                 maximumChunkCount: job.maximumChunkCount
             )
             let ledger = requireOfflineLedger(store: store, rootDirectory: support)
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
+            let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             let atRender = preparationSeams.deviceConditions() // read again here: heat can rise during the setup above (Codex audit on 27fd1bd)
             let gate = try PreparationChunkGate.decide(policy: job.policy, thermal: atRender.thermal, isLowPowerModeEnabled: atRender.isLowPowerModeEnabled,
                                                        itemAlreadyListened: item.sourceCompletedAt != nil || PreparationChunkGate.itemAlreadyListened(store.loadSessions(itemId: item.id)))
