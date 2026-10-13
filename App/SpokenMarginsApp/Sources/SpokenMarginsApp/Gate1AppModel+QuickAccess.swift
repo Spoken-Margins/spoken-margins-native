@@ -1,120 +1,65 @@
 import Foundation
-import Security
 import SessionKit
-import SessionKitAI
-import SessionKitAudio
-import SessionKitSharing
-import SessionKitSupertonic
-import SessionKitPersistence
-import SessionKitFeeds
-#if canImport(UIKit)
-import UIKit
-#endif
-#if canImport(AVFoundation)
-import AVFoundation
-#endif
-#if canImport(PDFKit)
-import PDFKit
-#endif
 
-/// Quick Add candidates and the Quick Access folder (#970), moved unchanged out of the central model.
+/// Quick Add candidates and the Quick Access folder (#970, #981). The folder's state and logic live in
+/// `QuickAccessFolderState`; these are the model's forwarders and the parts that need the model.
 extension Gate1AppModel {
+    var quickAccessFolderName: String { quickAccess.folderName }
+    var quickAccessRecentFiles: [QuickAccessFile] { quickAccess.recentFiles }
+
     var quickAddCandidates: [QuickAddCandidate] {
-        if let cachedQuickAddCandidates { return cachedQuickAddCandidates }
-        let candidates = Self.quickAddCandidates(
-            folderFiles: quickAccessRecentFiles,
+        quickAccess.candidates(
             followedEntries: followedSourceEntries,
             subscriptions: feedSubscriptions,
-            libraryItems: libraryItems,
-            dismissedFileKeys: dismissedQuickAccessFileKeys
+            libraryItems: libraryItems
         )
-        cachedQuickAddCandidates = candidates
-        return candidates
+    }
+
+    nonisolated static func quickAddCandidates(
+        folderFiles: [QuickAccessFile],
+        followedEntries: [FeedEntry],
+        subscriptions: [FeedSubscription] = [],
+        libraryItems: [LibraryItemRow] = [],
+        dismissedFileKeys: Set<String> = []
+    ) -> [QuickAddCandidate] {
+        QuickAccessFolderState.candidates(
+            folderFiles: folderFiles,
+            followedEntries: followedEntries,
+            subscriptions: subscriptions,
+            libraryItems: libraryItems,
+            dismissedFileKeys: dismissedFileKeys
+        )
     }
 
     var isRefreshingQuickAddFeed: Bool {
-        isRefreshingQuickAccessFolder || isRefreshingFollowedSources
+        quickAccess.isRefreshing || isRefreshingFollowedSources
     }
 
-    func dismissQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.insert(file.dismissalKey) }
+    func dismissQuickAccessFile(_ file: QuickAccessFile) { quickAccess.dismiss(file) }
 
     /// Brings a dismissed Quick Folder file back into Following (#477).
-    func restoreQuickAccessFile(_ file: QuickAccessFile) { dismissedQuickAccessFileKeys.remove(file.dismissalKey) }
+    func restoreQuickAccessFile(_ file: QuickAccessFile) { quickAccess.restore(file) }
 
     func configureQuickAccessFolder(url: URL) {
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer {
-            if didAccess {
-                url.stopAccessingSecurityScopedResource()
-            }
-        }
         do {
-            let bookmark = try url.bookmarkData(options: quickAccessBookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-            UserDefaults.standard.set(bookmark, forKey: quickAccessFolderBookmarkKey)
-            UserDefaults.standard.set(url.lastPathComponent, forKey: "quickAccessFolderName")
-            quickAccessFolderName = url.lastPathComponent
-            refreshQuickAccessFolder()
-            reportSuccess("Quick folder set to \(url.lastPathComponent).")
+            try quickAccess.configure(url: url) {
+                reportSuccess("Quick folder set to \(url.lastPathComponent).")
+            }
         } catch {
             reportFailure(error, context: "Quick folder setup failed")
         }
     }
 
-    func refreshQuickAccessFolder() {
-        guard let folderURL = resolvedQuickAccessFolderURL() else {
-            quickAccessRefreshID = UUID()
-            quickAccessRefreshTask?.cancel()
-            quickAccessRefreshTask = nil
-            isRefreshingQuickAccessFolder = false
-            quickAccessRecentFiles = []
-            return
-        }
-        let refreshID = UUID()
-        quickAccessRefreshID = refreshID
-        quickAccessRefreshTask?.cancel()
-        let didAccess = folderURL.startAccessingSecurityScopedResource()
-        isRefreshingQuickAccessFolder = true
-        quickAccessRefreshTask = Task { [weak self] in
-            let scan = await Task.detached(priority: .utility) {
-                Self.scanQuickAccessFolder(folderURL)
-            }.value
-            if didAccess {
-                folderURL.stopAccessingSecurityScopedResource()
-            }
-            guard let self, self.quickAccessRefreshID == refreshID else { return }
-            self.quickAccessRefreshTask = nil
-            self.isRefreshingQuickAccessFolder = false
-            if let errorDescription = scan.errorDescription {
-                self.quickAccessRecentFiles = []
-                self.diagnostics["quickAccessError"] = errorDescription
-                return
-            }
-            let formatter = RelativeDateTimeFormatter()
-            formatter.unitsStyle = .short
-            self.quickAccessRecentFiles = scan.files.map { entry in
-                QuickAccessFile(
-                    id: entry.id,
-                    name: entry.name,
-                    relativePath: entry.relativePath,
-                    modifiedAt: entry.modifiedAt,
-                    modifiedAtDescription: formatter.localizedString(for: entry.modifiedAt, relativeTo: Date())
-                )
-            }
-            self.quickAccessFolderName = folderURL.lastPathComponent
-            self.diagnostics["quickAccessFolder"] = folderURL.lastPathComponent
-            self.diagnostics["quickAccessRecentFiles"] = "\(self.quickAccessRecentFiles.count)"
-        }
-    }
+    func refreshQuickAccessFolder() { quickAccess.refresh() }
 
     func importQuickAccessFile(_ file: QuickAccessFile, openWhenFinished: Bool = false) {
-        guard let folderURL = resolvedQuickAccessFolderURL() else {
+        guard let urls = quickAccess.importURLs(for: file) else {
             reportFailure("Choose a quick folder before importing recent files.")
             return
         }
-        let fileURL = folderURL.appending(path: file.relativePath)
         beginObsidianMarkdownImport(
-            urls: [fileURL],
-            securityScopedURLs: [folderURL],
+            urls: [urls.fileURL],
+            securityScopedURLs: [urls.folderURL],
             refreshQuickFolderWhenFinished: true,
             openImportedItemWhenFinished: openWhenFinished,
             quickAccessFileToDismiss: file

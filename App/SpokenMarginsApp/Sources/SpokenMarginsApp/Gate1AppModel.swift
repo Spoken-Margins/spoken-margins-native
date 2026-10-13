@@ -38,7 +38,6 @@ final class Gate1AppModel: ObservableObject {
     static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
     static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
     static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
-    private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
     static let showsMixWithOtherAudioOptionKey = "showsMixWithOtherAudioOption"
@@ -233,7 +232,7 @@ final class Gate1AppModel: ObservableObject {
     }
     var activePlaybackDetail: ItemDetailState?
     @Published var libraryItems: [LibraryItemRow] = [] {
-        didSet { cachedQuickAddCandidates = nil; libraryPresentationRevision += 1 }
+        didSet { quickAccess.invalidateCandidates(); libraryPresentationRevision += 1 }
     }
     @Published var audioPreparationQueue: [AudioPreparationQueueRow] = []
     @Published var recentlyPreparedAudio: [RecentlyPreparedAudioRow] = []
@@ -330,18 +329,8 @@ final class Gate1AppModel: ObservableObject {
             countStyle: .file
         )
     }
-    @Published var quickAccessFolderName = UserDefaults.standard.string(forKey: "quickAccessFolderName") ?? "No folder selected"
-    @Published var quickAccessRecentFiles: [QuickAccessFile] = [] { didSet { cachedQuickAddCandidates = nil } }
-    @Published var dismissedQuickAccessFileKeys = Set(
-        UserDefaults.standard.stringArray(forKey: Gate1AppModel.dismissedQuickAccessFilesKey) ?? []
-    ) {
-        didSet {
-            cachedQuickAddCandidates = nil
-            UserDefaults.standard.set(dismissedQuickAccessFileKeys.sorted(), forKey: Gate1AppModel.dismissedQuickAccessFilesKey)
-        }
-    }
+    let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     @Published var sourceImportProgressMessage: String?
-    @Published var isRefreshingQuickAccessFolder = false
     @Published var importInbox: [ImportInboxEntry] = []
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
@@ -360,8 +349,8 @@ final class Gate1AppModel: ObservableObject {
         ) else { return [] }
         return FollowedSourceMatching.uniqueUnfollowedCandidates(storedSourceFollowSuggestionCandidates, subscriptions: feedSubscriptions)
     }
-    @Published var followedSourceEntries: [FeedEntry] = [] { didSet { cachedQuickAddCandidates = nil } }
-    @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { cachedQuickAddCandidates = nil; listeningSignals.endListening() } }
+    @Published var followedSourceEntries: [FeedEntry] = [] { didSet { quickAccess.invalidateCandidates() } }
+    @Published var feedSubscriptions: [FeedSubscription] = [] { didSet { quickAccess.invalidateCandidates(); listeningSignals.endListening() } }
     @Published var isRefreshingFollowedSources = false
     @Published var importingFollowedSourceEntryIds: Set<String> = []
     @Published var isFollowingSelectedSource = false
@@ -567,8 +556,6 @@ final class Gate1AppModel: ObservableObject {
     var isUpdatingSkimAvailability = false
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
-    var quickAccessRefreshTask: Task<Void, Never>?
-    var quickAccessRefreshID = UUID()
     var liveSpeechFallbackItemIds: Set<String> = []
     var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
@@ -602,7 +589,6 @@ final class Gate1AppModel: ObservableObject {
     static let lastPreparedAudioNoticeDateKey = AudioPreparationQueueProjection.lastNoticeDateDefaultsKey
     let sourceWindowContextBeforeMs = SourceAnchorContextResolver.windowBeforeMs
     let sourceWindowContextAfterMs = SourceAnchorContextResolver.windowAfterMs
-    let quickAccessFolderBookmarkKey = "quickAccessFolderBookmark"
     #if canImport(AVFoundation)
     private let speechPreviewSynthesizer = AVSpeechSynthesizer()
     private var supertonicPreviewPlayer: AVAudioPlayer?
@@ -746,6 +732,8 @@ final class Gate1AppModel: ObservableObject {
         // are still starting, and the catalog is not needed on other screens.
         sanitizeTTSMode()
         settingsValueChanged()
+        quickAccess.forwardWillChange(to: objectWillChange)
+        quickAccess.recordDiagnostic = { [weak self] key, value in self?.diagnostics[key] = value }
         refreshQuickAccessFolder()
         streamingSpeechQueue.onTurnDrained = { [weak self] turnId in
             self?.finishStreamingTurnIfReady(turnId)
@@ -1023,7 +1011,6 @@ final class Gate1AppModel: ObservableObject {
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
         foregroundAudioPreparationTask?.cancel()
         sourceImportTask?.cancel()
-        quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
         bulkSharePreparationTask?.cancel()
@@ -1520,26 +1507,6 @@ final class Gate1AppModel: ObservableObject {
         try WelcomeSample.make(itemId: Self.welcomeSampleItemId, remoteProviderExperienceEnabled: remoteProviderExperienceEnabled)
     }
 
-    var cachedQuickAddCandidates: [QuickAddCandidate]?
-
-    nonisolated static func quickAddCandidates(
-        folderFiles: [QuickAccessFile],
-        followedEntries: [FeedEntry],
-        subscriptions: [FeedSubscription] = [],
-        libraryItems: [LibraryItemRow] = [],
-        dismissedFileKeys: Set<String> = []
-    ) -> [QuickAddCandidate] {
-        QuickAddFeed.candidates(
-            folderFiles: folderFiles,
-            followedEntries: followedEntries,
-            subscriptions: subscriptions,
-            libraryItems: libraryItems.map {
-                QuickAddImportedItem(sourceReference: $0.sourceReference, title: $0.title, sourceTitle: $0.sourceTitle)
-            },
-            dismissedFileKeys: dismissedFileKeys
-        )
-    }
-
     @discardableResult func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> String {
         let item = try browserTextImportEngine().importBrowserTextInBackground(Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument)
         return try finishBackgroundBrowserTextImport(item, handoff: handoff)
@@ -1565,10 +1532,6 @@ final class Gate1AppModel: ObservableObject {
         }
         markOnboardingSteps(onboardingSteps(for: handoff))
         return item.id
-    }
-
-    nonisolated static func scanQuickAccessFolder(_ folderURL: URL) -> QuickAccessFolderScan {
-        QuickAccessFolderScanner.scan(folderURL)
     }
 
     @discardableResult
@@ -4449,49 +4412,6 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["\(setting.bookmarkKey)Error"] = String(describing: error)
             return nil
         }
-    }
-
-    func resolvedQuickAccessFolderURL() -> URL? {
-        guard let data = UserDefaults.standard.data(forKey: quickAccessFolderBookmarkKey) else { return nil }
-        do {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: data,
-                options: quickAccessBookmarkResolutionOptions,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            if isStale {
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didAccess {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-                let refreshed = try url.bookmarkData(options: quickAccessBookmarkCreationOptions, includingResourceValuesForKeys: nil, relativeTo: nil)
-                UserDefaults.standard.set(refreshed, forKey: quickAccessFolderBookmarkKey)
-            }
-            return url
-        } catch {
-            diagnostics["quickAccessBookmarkError"] = String(describing: error)
-            return nil
-        }
-    }
-
-    var quickAccessBookmarkCreationOptions: URL.BookmarkCreationOptions {
-        #if os(macOS)
-        return [.withSecurityScope]
-        #else
-        return []
-        #endif
-    }
-
-    private var quickAccessBookmarkResolutionOptions: URL.BookmarkResolutionOptions {
-        #if os(macOS)
-        return [.withSecurityScope]
-        #else
-        return []
-        #endif
     }
 
     func obsidianItemId(fileName: String, index: Int) -> String {
