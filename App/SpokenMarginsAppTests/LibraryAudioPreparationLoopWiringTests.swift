@@ -103,9 +103,9 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
     }
 
     /// 10-12 characterization on #995: a foreground run queued behind a held pass is invalidated, a replacement is
-    /// queued, and the holder is released. The cancelled run must not render, the replacement must, and no two
-    /// renders ever overlap.
-    func testAnInvalidatedRunQueuedBehindAHeldPassNeverRendersAndItsReplacementDoes() async throws {
+    /// queued, and the holder is released. The replacement must render and no two renders ever overlap (that the
+    /// invalidated run renders nothing is the next test).
+    func testTheReplacementOfAnInvalidatedRunRendersAfterTheHeldPassLetsGo() async throws {
         let fixture = try await makeFixture()
         let model = fixture.model
         let renderer = fixture.renderer
@@ -141,11 +141,37 @@ final class LibraryAudioPreparationLoopWiringTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(400))
     }
 
-    private func waitFor(_ renderer: LoopHeldRenderer, toStart count: Int, within limit: Duration) async throws {
+    /// No replacement this time: the invalidated run is the only thing waiting behind the held pass. If it were not
+    /// cancelled it would take the next chunk the moment the holder let go, so nothing but the holder's chunk may render.
+    func testAnInvalidatedRunQueuedBehindAHeldPassRendersNothing() async throws {
+        let fixture = try await makeFixture()
+        let model = fixture.model
+        let renderer = fixture.renderer
+        let holder = Task { await model.performBackgroundAudioPreparationPass() }
+        defer { holder.cancel() }
+        try await waitFor(renderer, toStart: 1, within: .seconds(30))
+
+        model.startForegroundAudioPreparationIfNeeded() // A queues behind the holder at the render gate
+        try await Task.sleep(for: .milliseconds(300))
+        model.stopForegroundAudioPreparation()
+
+        await renderer.release()
+        _ = await holder.value
+        try await Task.sleep(for: .seconds(1)) // long enough for A to take the gate and, wrongly, render
+        let started = await renderer.started
+        XCTAssertEqual(started, 1, "the holder's render is the only one; the invalidated run never renders")
+        let committed = try XCTUnwrap(try fixture.store.loadPreparedAudioManifest(id: fixture.manifestId)).chunks.map(\.index)
+        XCTAssertEqual(committed.sorted(), [0], "one chunk committed, by the holder")
+    }
+
+    private func waitFor(_ renderer: LoopHeldRenderer, toStart count: Int, within limit: Duration,
+                         file: StaticString = #filePath, line: UInt = #line) async throws {
         let deadline = ContinuousClock.now + limit
         while await renderer.started < count, ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
+        let started = await renderer.started
+        XCTAssertGreaterThanOrEqual(started, count, "the renderer did not reach render \(count) in time", file: file, line: line)
     }
 
     private func makeSilentWAV() throws -> URL {

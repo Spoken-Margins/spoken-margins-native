@@ -27,7 +27,6 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         if let store { try? refreshLibraryRows(store: store) }
     }
 
-
     func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
         guard let store else { return .finished }
         let progressToken = {
