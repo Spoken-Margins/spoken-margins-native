@@ -119,6 +119,7 @@ extension Gate1AppModel {
         if snapshot.status.isPlaybackActive { pause() }
         stopInterjectionAudioPlayback()
         sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
+        pendingImportedCommentary = nil
         do {
             try marginVoicePlayer.prepareShared(
                 prompt,
@@ -128,7 +129,6 @@ extension Gate1AppModel {
                 lowersBackgroundAudio: lowersBackgroundAudio,
                 mixedPlaybackVolume: mixedPlaybackVolume
             )
-            pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)
             gate2CompactControls.endLiveActivities()
