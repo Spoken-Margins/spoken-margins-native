@@ -308,6 +308,7 @@ struct SettingsScreen: View {
                     }
                 }
                 Section("Import Inbox") {
+                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
                     if model.importInbox.isEmpty {
                         Text("No failed shares.")
                             .foregroundStyle(AppColors.secondaryText)

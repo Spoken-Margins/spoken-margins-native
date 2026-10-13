@@ -333,6 +333,7 @@ final class Gate1AppModel: ObservableObject {
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
+    @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
     @Published var importText = ""
@@ -552,6 +553,7 @@ final class Gate1AppModel: ObservableObject {
     var pendingStartupAudioPreparationItemIds: Set<String> = []
     var failedStartupAudioPreparationItemIds: Set<String> = []
     var isImportingPendingSourceLinkHandoffs = false
+    let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     var completedStreamingTurnIds: Set<String> = []
     @Published var pendingSourceContextInterjectionIds: Set<String> = []
