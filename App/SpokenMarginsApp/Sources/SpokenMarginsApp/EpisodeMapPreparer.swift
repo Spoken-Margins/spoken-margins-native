@@ -1,0 +1,392 @@
+import Foundation
+import SessionKit
+import SessionKitAudio
+import SessionKitPersistence
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
+
+/// What the preparer asks of the model that owns it (#957). The preparer holds its host weakly; a run promotes it
+/// once and holds it to the end, so a run in flight keeps the model alive exactly as it did when the model owned the task.
+@MainActor
+protocol EpisodeMapPreparerHost: AnyObject {
+    var store: SQLiteSessionStore? { get }
+    /// Read live at each use: tests and the model replace these services.
+    var sourceTranscriptionClient: SourceTranscriptionClient { get }
+    var localFoundationModelClient: any LocalFoundationModelClient { get }
+    var podcastDownloadCoordinator: PodcastDownloadCoordinator? { get }
+
+    func requireStore() throws -> SQLiteSessionStore
+    func applicationSupportDirectory() throws -> URL
+    func episodeMapDirectory(itemId: String) throws -> URL
+    func requireOfflineLedger(store: SQLiteSessionStore, rootDirectory: @autoclosure () throws -> URL) rethrows -> OfflineStorageLedger
+    func safePodcastEvidenceComponent(_ value: String) -> String
+    func purgeSourceTranscriptionAudioCaches(itemId: String) throws
+    func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws
+    /// The summary bridge audio for one scene. It is shared with package import and imported-podcast placement.
+    func prepareSummaryBridgeAsset(
+        itemId: String,
+        proposalId: String,
+        scene: PortableListeningMapScene,
+        store: SQLiteSessionStore
+    ) async throws -> OwnedOfflineAsset?
+
+    /// The status is about to change. The model publishes it to its observers, as its `@Published` copy did.
+    func episodeMapPreparationStatusWillChange()
+    func recordEpisodeMapDiagnostic(_ key: String, _ value: String)
+    /// The phone transcribed the episode for its map: the opt-in community upload hook sees the transcript here.
+    func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore)
+
+    func episodeMapWarn(_ message: String)
+    func episodeMapSucceeded(_ message: String)
+    /// Preparation could not start (no store, not a native audio item, a failed save).
+    func episodeMapFailedToStart(_ error: Error)
+    /// A run finished: when the item is the one on screen, refresh it, then Skim availability, then confirm.
+    func episodeMapPreparationDidComplete(itemId: String, status: String)
+    /// A run failed: when the item is the one on screen, report it.
+    func episodeMapPreparationDidFail(itemId: String, error: Error)
+}
+
+/// Private episode map preparation (#957): the task, the item it runs for, the status and the one pending
+/// request, moved out of the central model. The stages, the order they are saved in, every id, path and string
+/// are the ones the model saved before the move; the pure steps are `EpisodeMapAssembly`.
+///
+/// Cancellation is cooperative and unchanged: checks sit where they sat, a cancelled run records
+/// `isCancelled` and the next request starts a new job at landmark zero.
+@MainActor
+final class EpisodeMapPreparer {
+    /// What the item screen shows. Every assignment tells the host first, as `@Published` did.
+    private(set) var status = "Not started" {
+        willSet { host?.episodeMapPreparationStatusWillChange() }
+    }
+    private(set) var task: Task<Void, Never>?
+    private(set) var itemId: String?
+    /// The one item whose map was asked for and is waiting on something else: its download, or a transcript
+    /// the model is making. The model sets and clears it through `pendingMapGenerationItemId`.
+    var pendingRequestItemId: String?
+
+    private weak var host: (any EpisodeMapPreparerHost)?
+
+    init(host: any EpisodeMapPreparerHost) {
+        self.host = host
+    }
+
+    /// Cancels the running preparation when it is for `itemId`.
+    func cancel(itemId: String) {
+        if self.itemId == itemId {
+            task?.cancel()
+        }
+    }
+
+    /// Starts preparing the private map for `itemId`, or waits for its download.
+    func prepare(itemId requestedItemId: String, policy: PreparationJobPolicy = .explicit) {
+        guard let host else { return }
+        guard task == nil else {
+            host.episodeMapWarn("An episode map is already being prepared.")
+            return
+        }
+        do {
+            let store = try host.requireStore()
+            let item = try store.loadItem(id: requestedItemId)
+            guard item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream else {
+                throw SessionKitError.invalidCommandForState("episode_map_requires_native_audio")
+            }
+            let existingJob = (try store.loadEpisodeMapPreparationJobs()).first {
+                $0.itemId == requestedItemId && !$0.isCancelled
+            }
+            var job = existingJob ?? EpisodeMapPreparationJob(
+                id: "episode-map-job-\(host.safePodcastEvidenceComponent(requestedItemId))",
+                itemId: requestedItemId,
+                policy: policy
+            )
+            job.policy = policy
+            if existingJob == nil {
+                job.stage = .verifySource
+                job.nextUnitIndex = 0
+            }
+            job.lastFailureCode = nil
+            try store.saveEpisodeMapPreparationJob(job)
+
+            guard let localURL = host.podcastDownloadCoordinator?.validatedLocalURL(for: requestedItemId)
+                ?? item.media?.url.flatMap(URL.init(string:)).flatMap({ $0.isFileURL ? $0 : nil }) else {
+                pendingRequestItemId = requestedItemId
+                status = "Waiting for download"
+                host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(requestedItemId)", "waiting_for_local_audio")
+                if host.podcastDownloadCoordinator?.downloadNow(itemId: requestedItemId) != true,
+                   let remote = item.media?.url.flatMap(URL.init(string:)) {
+                    host.podcastDownloadCoordinator?.register(
+                        itemId: requestedItemId,
+                        remoteURL: remote,
+                        userInitiated: policy == .explicit
+                    )
+                }
+                if policy == .explicit {
+                    host.episodeMapSucceeded("Downloading the episode. Its private Listening Map will continue automatically.")
+                }
+                return
+            }
+            run(item: item, localURL: localURL, job: job)
+        } catch {
+            status = "Failed"
+            host.episodeMapFailedToStart(error)
+        }
+    }
+
+    private func run(
+        item: Item,
+        localURL: URL,
+        job initialJob: EpisodeMapPreparationJob
+    ) {
+        status = "Preparing"
+        host?.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", "started")
+        itemId = item.id
+        // The task holds the preparer weakly, then the model strongly for the whole run, as it did when the model
+        // owned the task. It is not cancelled when the model goes away.
+        task = Task { [weak self] in
+            guard let self, let host = self.host else { return }
+            var job = initialJob
+            defer {
+                self.task = nil
+                self.itemId = nil
+            }
+            do {
+                let store = try host.requireStore()
+                job.stage = .generateFingerprintSpine
+                try store.saveEpisodeMapPreparationJob(job)
+                let mapDirectory = try host.episodeMapDirectory(itemId: item.id)
+                try FileManager.default.createDirectory(at: mapDirectory, withIntermediateDirectories: true)
+                let digest = try await Task.detached(priority: .utility) {
+                    try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: localURL)
+                }.value
+                try Task.checkCancellation()
+                let durationMs: Int
+                if let declaredDurationMs = item.media?.durationMs {
+                    durationMs = declaredDurationMs
+                } else if let duration = try? await AVURLAsset(url: localURL).load(.duration) {
+                    durationMs = Int((CMTimeGetSeconds(duration) * 1_000).rounded())
+                } else {
+                    durationMs = 0
+                }
+                let resumed = EpisodeMapAssembly.resumeFingerprints(
+                    safeItemComponent: host.safePodcastEvidenceComponent(item.id),
+                    nextUnitIndex: job.nextUnitIndex,
+                    durationMs: durationMs,
+                    minimumEvidenceDurationMs: PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs,
+                    signatureExists: { assetID in
+                        FileManager.default.fileExists(
+                            atPath: mapDirectory.appending(path: "\(assetID).shazamsignature").path
+                        )
+                    }
+                )
+                var generatedLandmarks = resumed.landmarks
+                var gridIndex = resumed.gridIndex
+                var startMs = resumed.startMs
+                job.nextUnitIndex = resumed.nextUnitIndex
+                while startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
+                    try Task.checkCancellation()
+                    let assetID = EpisodeMapAssembly.signatureAssetId(
+                        safeItemComponent: host.safePodcastEvidenceComponent(item.id),
+                        gridIndex: gridIndex
+                    )
+                    let ledger = try host.requireOfflineLedger(store: store, rootDirectory: try host.applicationSupportDirectory())
+                    let reservation = try await ledger.reserve(
+                        ownerId: "episode-fingerprint-\(item.id)-\(gridIndex)",
+                        byteCount: 2 * 1_024 * 1_024
+                    )
+                    let generated: GeneratedPodcastAnchorEvidence
+                    do {
+                        generated = try await PodcastAnchorEvidenceGenerator.generateLandmark(
+                            sourceURL: localURL,
+                            sourceStartMs: startMs,
+                            outputDirectory: mapDirectory,
+                            id: assetID
+                        )
+                    } catch {
+                        try? await ledger.release(reservationId: reservation.id)
+                        throw error
+                    }
+                    generatedLandmarks.append(EpisodeMapAssembly.downloadedLandmark(
+                        safeItemComponent: host.safePodcastEvidenceComponent(item.id),
+                        gridIndex: gridIndex,
+                        startMs: startMs,
+                        durationMs: generated.durationMs
+                    ))
+                    try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                        id: assetID,
+                        itemId: item.id,
+                        category: .fingerprintMap,
+                        relativePath: "SpokenMargins/EpisodeMaps/\(host.safePodcastEvidenceComponent(item.id))/\(assetID).shazamsignature",
+                        byteCount: Int64((try? Data(contentsOf: generated.fileURL).count) ?? 0),
+                        isReproducible: true,
+                        protections: [.activeEpisodeMapPreparation]
+                    ))
+                    gridIndex += 1
+                    startMs += SparseFingerprintSchedule.periodicIntervalMs
+                    job.nextUnitIndex = gridIndex
+                    try store.saveEpisodeMapPreparationJob(job)
+                    if job.policy == .whileCharging {
+                        self.status = "Fingerprinting paused at landmark \(gridIndex)"
+                        host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", "checkpoint:fingerprint_landmark=\(gridIndex)")
+                        return
+                    }
+                }
+
+                job.stage = .transcribe
+                try store.saveEpisodeMapPreparationJob(job)
+                self.status = "Transcribing on device"
+                let supportDirectory = try host.applicationSupportDirectory()
+                var timeline: TranscriptTimeline
+                if let relativePath = job.transientTranscriptRelativePath,
+                   let cached = try? Data(contentsOf: supportDirectory.appending(path: relativePath)),
+                   let decoded = try? JSONDecoder().decode(TranscriptTimeline.self, from: cached) {
+                    timeline = decoded
+                } else {
+                    timeline = try await host.sourceTranscriptionClient.transcribeSourceAudio(
+                        url: localURL,
+                        itemId: item.id,
+                        durationMs: durationMs
+                    )
+                    let transcriptData = try JSONEncoder().encode(timeline)
+                    let safeItemID = host.safePodcastEvidenceComponent(item.id)
+                    let relativePath = "SpokenMargins/EpisodeMaps/\(safeItemID)/Transient/timeline.json"
+                    let transcriptURL = supportDirectory.appending(path: relativePath)
+                    try FileManager.default.createDirectory(at: transcriptURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    let ledger = host.requireOfflineLedger(store: store, rootDirectory: supportDirectory)
+                    let reservation = try await ledger.reserve(
+                        ownerId: "episode-transcript-\(item.id)",
+                        byteCount: Int64(transcriptData.count)
+                    )
+                    do {
+                        try transcriptData.write(to: transcriptURL, options: .atomic)
+                        try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                            id: "episode-transcript-\(safeItemID)",
+                            itemId: item.id,
+                            category: .transientEpisodeTranscript,
+                            relativePath: relativePath,
+                            byteCount: Int64(transcriptData.count),
+                            isReproducible: true,
+                            protections: [.activeEpisodeMapPreparation]
+                        ))
+                    } catch {
+                        try? await ledger.release(reservationId: reservation.id)
+                        try? FileManager.default.removeItem(at: transcriptURL)
+                        throw error
+                    }
+                    job.transientTranscriptRelativePath = relativePath
+                    try store.saveEpisodeMapPreparationJob(job)
+                }
+                try host.purgeSourceTranscriptionAudioCaches(itemId: item.id)
+                if let publisherChapters = try store.loadTranscriptTimeline(itemId: item.id)?.timeline.chapters,
+                   !publisherChapters.isEmpty {
+                    timeline.chapters = publisherChapters
+                }
+                host.episodeMapTranscribed(itemId: item.id, timeline: timeline, store: store)
+
+                job.stage = .generatePhraseSketch
+                try store.saveEpisodeMapPreparationJob(job)
+                let sketch = TranscriptPhraseSketchBuilder.makeArtifact(
+                    id: "episode-sketch-\(host.safePodcastEvidenceComponent(item.id))",
+                    itemId: item.id,
+                    timeline: timeline
+                )
+
+                let allLandmarks = EpisodeMapAssembly.mergedLandmarks(
+                    existing: try store.loadEditionFingerprintSpine(itemId: item.id)?.landmarks ?? [],
+                    generated: generatedLandmarks,
+                    sketchWindows: sketch.windows
+                )
+                let spine = EditionFingerprintSpineArtifact(
+                    id: "episode-spine-\(host.safePodcastEvidenceComponent(item.id))",
+                    itemId: item.id,
+                    canonicalURL: item.externalReference ?? item.media?.url,
+                    producingEditionDurationMs: durationMs,
+                    producingEditionSHA256: digest,
+                    landmarks: allLandmarks
+                )
+
+                job.stage = .segmentScenes
+                try store.saveEpisodeMapPreparationJob(job)
+                let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
+                var scenes: [PortableListeningMapScene] = []
+                job.stage = .generateSummaries
+                try store.saveEpisodeMapPreparationJob(job)
+                for draft in drafts {
+                    try Task.checkCancellation()
+                    let text = EpisodeMapAssembly.sceneText(for: draft, in: timeline)
+                    var label: ListeningMapSummaryValidator.SceneLabel?
+                    if host.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
+                        for _ in 0..<2 where label == nil {
+                            if let candidate = try? await host.localFoundationModelClient.labelListeningMapChapter(
+                                text: text,
+                                chapterNumber: draft.order + 1
+                            ) {
+                                label = try? ListeningMapSummaryValidator.validate(candidate, sourceText: text)
+                            }
+                        }
+                    }
+                    scenes.append(EpisodeMapAssembly.scene(draft: draft, label: label, landmarks: allLandmarks))
+                }
+                let proposal = PortableListeningMapProposalArtifact(
+                    id: "episode-map-proposal-\(host.safePodcastEvidenceComponent(item.id))",
+                    createdAt: Date(),
+                    generator: EpisodeMapAssembly.proposalGenerator(
+                        foundationModelAvailable: host.localFoundationModelClient.availability().isAvailable
+                    ),
+                    scenes: scenes
+                )
+
+                job.stage = .renderBridges
+                try store.saveEpisodeMapPreparationJob(job)
+                for scene in scenes where scene.eligibility == .eligible && scene.summaryText?.isEmpty == false {
+                    try Task.checkCancellation()
+                    _ = try await host.prepareSummaryBridgeAsset(
+                        itemId: item.id,
+                        proposalId: proposal.id,
+                        scene: scene,
+                        store: store
+                    )
+                }
+
+                job.stage = .commit
+                try store.saveEpisodeMapPreparationJob(job)
+                try store.saveEditionFingerprintSpine(spine)
+                try store.saveTranscriptPhraseSketch(sketch)
+                try store.savePortableListeningMapProposal(proposal, itemId: item.id)
+                try store.saveResolvedListeningMapProjection(EpisodeFingerprintAlignment.makeProjection(
+                    id: "episode-projection-\(host.safePodcastEvidenceComponent(item.id))",
+                    itemId: item.id,
+                    proposalId: proposal.id,
+                    recipientEditionSHA256: digest,
+                    matches: EpisodeMapAssembly.identityMatches(for: allLandmarks),
+                    exactEdition: true
+                ))
+                for asset in try store.loadOwnedOfflineAssets() where
+                    asset.itemId == item.id && asset.category == .fingerprintMap {
+                    try store.updateOwnedOfflineAsset(id: asset.id) { $0.protections.remove(.activeEpisodeMapPreparation) }
+                }
+                try host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                job.stage = .completed
+                try store.saveEpisodeMapPreparationJob(job)
+                try store.deleteEpisodeMapPreparationJob(id: job.id)
+                self.status = EpisodeMapAssembly.completionStatus(scenes: scenes)
+                host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", EpisodeMapAssembly.completionDiagnostic(
+                    landmarkCount: allLandmarks.count,
+                    sceneCount: scenes.count
+                ))
+                host.episodeMapPreparationDidComplete(itemId: item.id, status: self.status)
+            } catch is CancellationError {
+                job.isCancelled = true
+                job.lastFailureCode = "cancelled"
+                try? host.store?.saveEpisodeMapPreparationJob(job)
+                try? host.purgeTransientEpisodeTranscriptionCaches(itemId: item.id)
+                self.status = "Cancelled"
+            } catch {
+                job.lastFailureCode = String(describing: error)
+                try? host.store?.saveEpisodeMapPreparationJob(job)
+                self.status = "Failed"
+                host.recordEpisodeMapDiagnostic("episodeMapPreparation:\(item.id)", "failed:\(error.localizedDescription)")
+                host.episodeMapPreparationDidFail(itemId: item.id, error: error)
+            }
+        }
+    }
+}
