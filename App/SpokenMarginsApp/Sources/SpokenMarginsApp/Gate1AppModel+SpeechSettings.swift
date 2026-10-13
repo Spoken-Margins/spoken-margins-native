@@ -37,7 +37,6 @@ extension Gate1AppModel {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         let keychainStatus = KeychainStore.save(providerAPIKey, service: "SpokenMargins", account: "OpenAICompatibleAPIKey")
         guard keychainStatus == errSecSuccess else {
@@ -59,8 +58,6 @@ extension Gate1AppModel {
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
         diagnostics["ttsMode"] = ttsMode
-        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-        diagnostics["piperStatus"] = piperStatus
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["apiKeyConfigured"] = providerAPIKey.isEmpty ? "false" : "true"
         if rebuildEngineForCurrentSettings() {
@@ -75,15 +72,12 @@ extension Gate1AppModel {
         UserDefaults.standard.set(speechVoiceIdentifier, forKey: "speechVoiceIdentifier")
         UserDefaults.standard.set(ttsVoiceSelection.rawValue, forKey: "ttsVoiceSelection")
         UserDefaults.standard.set(ttsMode, forKey: "ttsMode")
-        UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
         UserDefaults.standard.set(renderedSpeechCacheLimitMB, forKey: "renderedSpeechCacheLimitMB")
         cancelTextAudioPrewarmTasks()
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsVoiceSelection"] = ttsVoiceSelection.rawValue
         diagnostics["ttsMode"] = ttsMode
-        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-        diagnostics["piperStatus"] = piperStatus
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
         diagnostics["speechTranscriptionEngine"] = systemSpeechTranscriptionEngineDescription()
     }
@@ -236,8 +230,6 @@ extension Gate1AppModel {
         diagnostics["speechRate"] = String(format: "%.2f", speechRate)
         diagnostics["speechVoice"] = speechVoiceDescription
         diagnostics["ttsMode"] = ttsMode
-        diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-        diagnostics["piperStatus"] = piperStatus
         diagnostics["renderedSpeechCacheLimitMB"] = String(renderedSpeechCacheLimitMB)
     }
 
