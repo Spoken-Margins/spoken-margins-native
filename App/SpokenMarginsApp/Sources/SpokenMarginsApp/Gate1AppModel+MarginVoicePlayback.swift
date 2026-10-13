@@ -6,9 +6,21 @@ import AVFoundation
 #endif
 
 /// Own and shared Margin voice playback, prompts and source return. Moved out of `Gate1AppModel.swift` unchanged (#987).
+/// The transport (player, poll, chime, system transport, health) is `MarginVoicePlayer` (#993); what stays here is the
+/// orchestration around it, in the order it always ran: pausing and resuming the source, the return claim, offers,
+/// the autoplay task, heard persistence, and the hand-off of system transport.
 extension Gate1AppModel {
+    /// The voice player's published state, as the model's own names. The player holds the canonical values.
+    var playingImportedCommentary: ImportedCommentaryPrompt? { marginVoicePlayer.sharedMargin }
+    var importedCommentaryIsPaused: Bool { marginVoicePlayer.sharedIsPaused }
+    /// What the shared Margin's voice is really doing (#941), judged from the player, not from the request to play.
+    var importedCommentaryPhase: SharedMarginPlaybackPhase { marginVoicePlayer.sharedPhase }
+    var playingInterjectionAudioId: String? { marginVoicePlayer.ownMarginID }
+    var playingInterjectionAudioSessionID: String? { marginVoicePlayer.ownMarginSessionID }
+    var playingInterjectionAudioRate: Double { marginVoicePlayer.rate }
+
     func isPlayingInterjectionAudio(_ interjection: Interjection) -> Bool {
-        playingInterjectionAudioId == interjection.id && playingInterjectionAudioSessionID == interjection.sessionId
+        marginVoicePlayer.isPlayingOwn(interjection)
     }
 
     func toggleInterjectionAudioPlayback(_ interjection: Interjection) {
@@ -30,37 +42,11 @@ extension Gate1AppModel {
         }
         stopInterjectionAudioPlayback()
         do {
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-            let item = AVPlayerItem(url: leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs))
-            item.audioTimePitchAlgorithm = .timeDomain
-            let player = AVPlayer(playerItem: item)
-            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
-            player.defaultRate = Float(rate)
-            interjectionAudioPlayer = player
-            playingInterjectionAudioId = interjection.id
-            playingInterjectionAudioSessionID = interjection.sessionId
-            playingInterjectionAudioRate = rate
-            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item] in
-                while !Task.isCancelled, let item {
-                    try? await Task.sleep(for: .milliseconds(250))
-                    guard !Task.isCancelled else { return }
-                    if item.status == .failed {
-                        self?.stopInterjectionAudioPlayback()
-                        self?.reportFailure("This Margin's audio couldn't be played.")
-                        return
-                    }
-                    let duration = item.duration.seconds
-                    let current = item.currentTime().seconds
-                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        self?.stopInterjectionAudioPlayback()
-                        return
-                    }
-                }
-            }
-            player.playImmediately(atRate: Float(rate))
+            try marginVoicePlayer.startOwn(
+                interjection,
+                url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
+                rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+            )
             reportConfirmation("Playing your Margin.")
         } catch {
             stopInterjectionAudioPlayback()
@@ -73,26 +59,14 @@ extension Gate1AppModel {
 
     func stopInterjectionAudioPlayback() {
         let hadImportedMargin = playingImportedCommentary != nil
-        playingImportedCommentary = nil
-        importedCommentaryIsPaused = false
-        importedCommentaryHealth = nil
-        importedCommentaryPhase = .loading
+        marginVoicePlayer.resetSharedState()
         sharedMarginReturn.voiceStopped()
         if hadImportedMargin {
-            importedMarginRemoteControls.end()
+            marginVoicePlayer.endRemoteControls()
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(!mixesWithOtherAudio)
             gate2CompactControls.setNowPlayingEnabled(!mixesWithOtherAudio)
         }
-        #if canImport(AVFoundation)
-        interjectionAudioPlayer?.pause()
-        interjectionAudioPlayer?.replaceCurrentItem(with: nil)
-        interjectionAudioPlayer = nil
-        interjectionAudioCompletionTask?.cancel()
-        interjectionAudioCompletionTask = nil
-        #endif
-        playingInterjectionAudioId = nil
-        playingInterjectionAudioSessionID = nil
-        playingInterjectionAudioRate = 1
+        marginVoicePlayer.releasePlayer()
     }
 
     func listenToPendingImportedCommentary() {
@@ -146,57 +120,19 @@ extension Gate1AppModel {
         stopInterjectionAudioPlayback()
         sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
         do {
-            #if os(iOS)
-            let options: AVAudioSession.CategoryOptions = mixesWithOtherAudio
-                ? (lowersBackgroundAudio ? [.mixWithOthers, .duckOthers] : [.mixWithOthers]) : []
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-            let item = AVPlayerItem(url: leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs))
-            item.audioTimePitchAlgorithm = .timeDomain
-            let player = AVPlayer(playerItem: item)
-            player.volume = mixesWithOtherAudio ? Float(mixedPlaybackVolume) : 1
-            let rate = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
-            player.defaultRate = Float(rate)
-            interjectionAudioPlayer = player
-            playingInterjectionAudioRate = rate
-            playingImportedCommentary = prompt
-            importedCommentaryIsPaused = false
-            let health = SharedMarginPlaybackHealth(startedAt: ProcessInfo.processInfo.systemUptime)
-            importedCommentaryHealth = health
-            importedCommentaryPhase = health.phase
-            let attempt = health.attemptID
+            try marginVoicePlayer.prepareShared(
+                prompt,
+                url: { leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs) },
+                rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate),
+                mixesWithOtherAudio: mixesWithOtherAudio,
+                lowersBackgroundAudio: lowersBackgroundAudio,
+                mixedPlaybackVolume: mixedPlaybackVolume
+            )
             pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)
             gate2CompactControls.endLiveActivities()
-            if !mixesWithOtherAudio {
-                importedMarginRemoteControls.install { [weak self] command in
-                    guard let self, self.playingImportedCommentary != nil else { return }
-                    self.dispatchGate2CompactCommand(command, origin: "imported_margin_remote")
-                }
-            }
-            interjectionAudioCompletionTask = Task { @MainActor [weak self, weak item, weak player] in
-                var heard = false
-                while !Task.isCancelled, let item {
-                    try? await Task.sleep(for: .milliseconds(200))
-                    // A reading from a replaced or retried attempt must not touch the current one.
-                    guard !Task.isCancelled, let self, self.importedCommentaryHealth?.attemptID == attempt else { return }
-                    let duration = item.duration.seconds
-                    let current = item.currentTime().seconds
-                    // Heard once the voice has played; a file that fails to decode stays new (#690).
-                    if !heard, current.isFinite, current > 0 { heard = true; self.markSharedMarginHeard(prompt.interjection) }
-                    if duration.isFinite, duration > 0, current.isFinite, current >= duration - 0.05 {
-                        self.stopImportedCommentaryPlayback(resumeSource: true)
-                        return
-                    }
-                    let failed = item.status == .failed || player?.status == .failed
-                    self.observeImportedCommentary(playerFailed: failed, clockSeconds: current, playerAtRest: player?.timeControlStatus == .paused)
-                    if self.importedCommentaryPhase.isFailed { return }
-                    self.publishImportedCommentaryNowPlaying()
-                }
-            }
-            player.playImmediately(atRate: Float(rate))
+            marginVoicePlayer.beginShared(installRemoteControls: !mixesWithOtherAudio)
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
@@ -216,7 +152,7 @@ extension Gate1AppModel {
     func stopImportedCommentaryPlayback(resumeSource: Bool) {
         let shouldResume = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: resumeSource)
         stopInterjectionAudioPlayback()
-        playingImportedCommentary = nil
+        marginVoicePlayer.forgetSharedMargin()
         sharedMarginReturn.voiceStopped()
         if shouldResume, snapshot.status == .paused { resumePlayback() }
     }
@@ -280,9 +216,34 @@ extension Gate1AppModel {
 
     private func playImportedCommentaryCue() {
         #if canImport(AVFoundation)
-        do { commentaryCuePlayer = try SharedMarginChime.play() } catch {
+        do { try marginVoicePlayer.playCue() } catch {
             diagnostics["importedCommentaryCue"] = "failed:\(error.localizedDescription)"
         }
         #endif
+    }
+}
+
+extension Gate1AppModel: MarginVoicePlayerHost {
+    var marginVoiceMixesWithOtherAudio: Bool { mixesWithOtherAudio }
+
+    func marginVoiceOwnPlaybackEnded() {
+        stopInterjectionAudioPlayback()
+    }
+
+    func marginVoiceOwnPlaybackFailed() {
+        stopInterjectionAudioPlayback()
+        reportFailure("This Margin's audio couldn't be played.")
+    }
+
+    func marginVoiceSharedMarginHeard(_ margin: ImportedCommentaryInterjection) {
+        markSharedMarginHeard(margin)
+    }
+
+    func marginVoiceSharedPlaybackEnded() {
+        stopImportedCommentaryPlayback(resumeSource: true)
+    }
+
+    func marginVoiceRemoteCommand(_ command: CompactControlCommand) {
+        dispatchGate2CompactCommand(command, origin: "imported_margin_remote")
     }
 }

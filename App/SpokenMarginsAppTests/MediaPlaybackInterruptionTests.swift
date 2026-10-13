@@ -221,7 +221,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         } else {
             model.listenToImportedCommentary(layerID: layer.id, interjectionID: record.id)
         }
-        let player = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
         for _ in 0..<150 where player.currentTime().seconds < 0.2 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertGreaterThan(player.currentTime().seconds, 0.1)
         XCTAssertEqual(model.snapshot.status, .paused)
@@ -329,7 +329,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
         XCTAssertNotNil(model.playingImportedCommentary)
         XCTAssertNotEqual(model.importedCommentaryPhase, .playing, "asking to play is not playing")
-        let firstPlayer = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        let firstPlayer = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
+        let pollTask = try XCTUnwrap(model.marginVoicePlayer.completionTask)
 
         try waitUntil("the failure shows") { model.importedCommentaryPhase.isFailed }
         XCTAssertEqual(model.importedCommentaryPhase, .failed(.unreadable))
@@ -338,13 +339,13 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(firstPlayer.currentItem, "the failed player is released")
         XCTAssertNil(try fixture.storedRecord()?.firstHeardAt, "a voice that never played stays new")
         XCTAssertNotEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 1, "Now Playing does not claim playback")
-        let task = Mirror(reflecting: model).children.first { $0.label == "interjectionAudioCompletionTask" }?.value
-        XCTAssertNil(Mirror(reflecting: try XCTUnwrap(task)).children.first, "the polling task is gone")
+        XCTAssertNil(model.marginVoicePlayer.completionTask, "the polling task is gone")
+        XCTAssertTrue(pollTask.isCancelled, "the polling task was cancelled, not just forgotten")
 
         // Retry starts a fresh attempt on a new player; it fails afresh because the file is still unreadable.
         model.retryImportedCommentary()
         XCTAssertEqual(model.importedCommentaryPhase, .loading, "a retry starts over rather than inheriting the failure")
-        let secondPlayer = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        let secondPlayer = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
         XCTAssertFalse(secondPlayer === firstPlayer)
         try waitUntil("the retry fails too") { model.importedCommentaryPhase.isFailed }
 
@@ -380,7 +381,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { fixture.cleanUp() }
         let model = fixture.model
         model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
-        let player = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
         try waitUntil("its clock advances") { model.importedCommentaryPhase == .playing }
         player.pause() // the system's pause: the model is not told
         try waitUntil("it reads Paused") { model.importedCommentaryPhase == .paused }
@@ -389,7 +390,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let pausedAt = player.currentTime().seconds
         model.playPause() // Play resumes the same player; it must not be treated as a pause request
         XCTAssertTrue(model.activePlaybackIsPlaying)
-        XCTAssertTrue(player === (Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer))
+        XCTAssertTrue(player === model.marginVoicePlayer.currentPlayer)
         try waitUntil("it plays on from where it stopped") { player.currentTime().seconds > pausedAt + 0.05 }
         model.stopInterjectionAudioPlayback()
     }
@@ -696,7 +697,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     }
 
     private func playingInterjectionFileName(_ model: Gate1AppModel) throws -> String {
-        let player = try XCTUnwrap(Mirror(reflecting: model).children.first { $0.label == "interjectionAudioPlayer" }?.value as? AVPlayer)
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
         return try XCTUnwrap((player.currentItem?.asset as? AVURLAsset)?.url.lastPathComponent)
     }
 
