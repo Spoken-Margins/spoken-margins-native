@@ -388,6 +388,12 @@ class InheritedFindings(unittest.TestCase):
         ok, why = A.evaluate_pr(pr(), audited + [self.resolution(111, head="f" * 40)], FIXTURE["files_risky"])
         self.assertEqual((ok, why), (False, "already audited on head"))
 
+    def test_the_reaudit_prompt_shows_the_resolution_evidence_not_unresolved(self):
+        blocked = {"created_at": "2026-09-30T15:40:00Z", "body": "**Claude audit on `68fc333`**\n\n[P1] still wrong"}
+        text = A.inherited_text([blocked, self.resolution(111)], [self.HOLD], None, HEAD)
+        self.assertNotIn("UNRESOLVED", text)
+        self.assertIn("fixed and tested", text)
+
     def test_the_prompt_lists_inherited_findings_and_what_a_clean_verdict_needs(self):
         text = A.inherited_text([], [self.HOLD], None, HEAD)
         self.assertIn("UNRESOLVED", text)

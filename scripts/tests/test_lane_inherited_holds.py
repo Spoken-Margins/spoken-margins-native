@@ -293,6 +293,23 @@ class Incident(unittest.TestCase):
         self.assertFalse(holds.needs_reaudit([resolution(111, self.head), clean], self.head))
         self.assertFalse(holds.needs_reaudit([clean, resolution(111, 'f' * 40)], self.head))
 
+    def test_the_audit_that_follows_a_resolution_sees_it_and_its_evidence(self):
+        # The real order: the resolution lands after the head's blocking audit; the re-audit's prompt is built before
+        # the audit that would clear it exists (#1531 audit).
+        found, _ = self.find({1: [self.blocked]})
+        first = audit(self.head, BLOCKED, 222)
+        note = resolution(111, self.head, evidence='the merge now plays only the playing item; see test_x')
+        note['html_url'] = 'https://github.test/owner/repo/pull/2#issuecomment-900'
+        text = holds.context(found, [first, note], self.head)
+        self.assertNotIn('UNRESOLVED', text)
+        self.assertIn('the merge now plays only the playing item', text)
+        self.assertIn('issuecomment-900', text)
+        self.assertEqual(holds.unresolved(found, [first, note], self.head), found)  # still held until the audit passes
+        other = holds.context(found, [first, resolution(112, self.head)], self.head)
+        self.assertIn('UNRESOLVED', other)  # a resolution of another finding doesn't count
+        stale = holds.context(found, [first, resolution(111, 'f' * 40)], self.head)
+        self.assertIn('UNRESOLVED', stale)
+
     def test_the_auditor_is_told_what_is_unresolved(self):
         found, _ = self.find({1: [self.blocked]})
         text = holds.context(found, [], self.head)
