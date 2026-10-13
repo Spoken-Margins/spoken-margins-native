@@ -50,9 +50,13 @@ final class PlaybackDockLayoutTests: XCTestCase {
         let sliderHeight = TrackingPlaybackSlider().intrinsicContentSize.height
         XCTAssertEqual(frame.height, sliderHeight, accuracy: 4,
                        "\(phone): the playback bar must stay slider height; it was \(frame.height) points")
-        // Everything in the dock above the bar (pane switch, chapter row, spacing) is under 200 points
-        // at default text size, so a bar this low leaves the Now pane well over 40% of the screen.
-        XCTAssertGreaterThan(frame.minY, size.height * 0.4 + 200,
+        // The dock above the bar is the pane switch (52), the chapter row (44), two 4-point gaps and 6 points of top
+        // padding: 110 points at default text size. Allowing 140 keeps 30 points of slack and still asks for a
+        // Now pane over 40% of the screen. The build 32 fault put the bar's top near 130 on any phone.
+        let dockAboveBar: CGFloat = 110
+        let estimatedDockShare = (size.height - (frame.minY - dockAboveBar)) / size.height
+        print("PlaybackDockLayout \(phone) \(Int(size.width))x\(Int(size.height)): bar top \(frame.minY), bar height \(frame.height), estimated dock share \(Int((estimatedDockShare * 100).rounded()))%")
+        XCTAssertGreaterThan(frame.minY, size.height * 0.4 + 140,
                              "\(phone): the dock reaches too far up the screen; the bar starts at \(frame.minY) of \(size.height)")
         XCTAssertLessThanOrEqual(frame.maxY, size.height, "\(phone): the bar must stay on screen")
     }

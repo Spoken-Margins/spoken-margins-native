@@ -223,8 +223,10 @@ struct PlaybackScreen: View {
         }
     }
 
+    /// Spacing only is tightened (owner, 2026-10-13): the rows, their order and their controls stay as approved, so
+    /// the dock is about 40% of a 6.1-inch phone and still leaves the Now pane half of an iPhone SE (#1475).
     private var playbackControls: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 4) {
             PlaybackPaneSwitchView(selection: $selectedPane)
                 .id("playback.timeline")
             PlaybackChapterRowView(
@@ -279,8 +281,8 @@ struct PlaybackScreen: View {
             }
         }
         .padding(.horizontal, 22)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
         .frame(maxWidth: 620)
         .frame(maxWidth: .infinity)
         .background(AppColors.listeningBackground)
