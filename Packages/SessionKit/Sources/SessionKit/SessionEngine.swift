@@ -45,6 +45,7 @@ public final class SessionEngine {
     private static let publisherAudioRetryInterval: TimeInterval = 10 * 60
     private let audio: AudioPlaybackClient
     private let recorder: RecordingClient
+    private var marginCaptureTiming: MarginCaptureTiming?
     private let transcriber: TranscriptionClient
     private let aiProvider: AIProviderClient
     private let linkResolver: LinkResolutionClient
@@ -1409,12 +1410,13 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func beginInterjection() throws -> SessionSnapshot {
+    public func beginInterjection(request: MarginCaptureRequest = MarginCaptureRequest()) throws -> SessionSnapshot {
         try require("beginInterjection", category: "interjection", capabilities: ["record_audio", "delegate_interjection_to_canonical_runtime"])
         guard pendingWrittenInterjection == nil else {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        marginCaptureTiming = MarginCaptureTiming(request: request)
         let wasPlaying = snapshot.status.isPlaybackActive
         let usesNativeMediaClock = session.currentTargetType == .transcriptBackedMedia
             || session.currentTargetType == .browserOwnedMedia
@@ -1447,7 +1449,10 @@ public final class SessionEngine {
         closedRecordingRef = nil
         storedMarginFinish = nil
         do {
+            marginCaptureTiming?.recorderRequested(at: ProcessInfo.processInfo.systemUptime)
             try recorder.beginRecording()
+            marginCaptureTiming?.recorderStarted(at: ProcessInfo.processInfo.systemUptime,
+                                                inputRoute: recorder.captureDiagnostics()["inputs"])
         } catch {
             try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
             abandonInterjectionStart(session, wasPlaying: wasPlaying)
@@ -1489,7 +1494,12 @@ public final class SessionEngine {
     }
 
     /// What the recorder has taken in so far while a Margin is recording (#937). Nil when it can't tell.
-    public func recordingCaptureReading() -> RecordingCaptureReading? { recorder.captureReading() }
+    public func recordingCaptureReading() -> RecordingCaptureReading? {
+        let reading = recorder.captureReading()
+        let observedAt = ProcessInfo.processInfo.systemUptime
+        marginCaptureTiming?.observe(reading, at: observedAt, inputRoute: reading?.inputRoute)
+        return reading
+    }
 
     /// Starts a new recorder after one that never got audio; the session stays in `recordingInterjection`.
     public func restartRecordingCapture() throws {
@@ -1499,7 +1509,9 @@ public final class SessionEngine {
         try recorder.restartCapture()
     }
 
-    public func recordingCaptureDiagnostics() -> [String: String] { recorder.captureDiagnostics() }
+    public func recordingCaptureDiagnostics() -> [String: String] {
+        recorder.captureDiagnostics().merging(marginCaptureTiming?.fields ?? [:]) { _, timing in timing }
+    }
 
     @discardableResult
     public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {

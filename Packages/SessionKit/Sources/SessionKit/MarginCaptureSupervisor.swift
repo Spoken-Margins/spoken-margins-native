@@ -11,11 +11,17 @@ public struct RecordingCaptureReading: Equatable, Sendable {
     /// False while a stopped recorder's file is still being measured, or could not be read. `capturedMs` is
     /// then only a lower bound, and the recording may hold speech: it is kept, never restarted or discarded.
     public var durationKnown: Bool
+    /// Instantaneous input peak in dB, when available. Used only for startup diagnostics (#1506).
+    public var peakPowerDb: Float?
+    public var inputRoute: String?
 
-    public init(recorderRunning: Bool, capturedMs: Int, durationKnown: Bool = true) {
+    public init(recorderRunning: Bool, capturedMs: Int, durationKnown: Bool = true,
+                peakPowerDb: Float? = nil, inputRoute: String? = nil) {
         self.recorderRunning = recorderRunning
         self.capturedMs = max(0, capturedMs)
         self.durationKnown = durationKnown
+        self.peakPowerDb = peakPowerDb
+        self.inputRoute = inputRoute
     }
 }
 
