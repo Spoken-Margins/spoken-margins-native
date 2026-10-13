@@ -282,3 +282,53 @@ class CheckTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SummaryTests(unittest.TestCase):
+    """summary turns a moves-only diff into PR text: members per file and the widened names."""
+
+    def summarize(self, existing_dest=None):
+        source, dest, _ = split_move.move_texts(MODEL, existing_dest, ['countThing', 'readTitle'])
+        dest_path = 'App/Model/Gate1AppModel+Things.swift'
+        base = {SOURCE: MODEL}
+        if existing_dest is not None:
+            base[dest_path] = existing_dest
+        return split_move.summary_texts(SOURCE, base, {SOURCE: source, dest_path: dest})
+
+    def test_lists_moved_members_by_file_and_the_widened_names(self):
+        ok, out = self.summarize()
+        text = '\n'.join(out)
+        self.assertTrue(ok, text)
+        self.assertIn('into `+Things` (new file): `countThing`, `readTitle`.', text)
+        self.assertIn('**Access changes (3), declaration lines only:** `counter`, `cache`, `countThing`.', text)
+        self.assertRegex(text, r'out of `Gate1AppModel\.swift` \(\d+ to \d+ lines\)')
+
+    def test_an_existing_file_lists_only_the_members_added_to_it(self):
+        existing = 'import Foundation\n\nextension Gate1AppModel {\n    func countThingHelper() {}\n}\n'
+        ok, out = self.summarize(existing)
+        text = '\n'.join(out)
+        self.assertTrue(ok, text)
+        self.assertIn('into `+Things`: `countThing`, `readTitle`.', text)
+        self.assertNotIn('countThingHelper', text)
+
+    def test_a_diff_that_is_not_moves_only_gives_the_check_report(self):
+        source, dest, _ = split_move.move_texts(MODEL, None, ['countThing'])
+        dest = dest.replace('return Self.limit + counter', 'return Self.limit - counter')
+        ok, out = split_move.summary_texts(SOURCE, {SOURCE: MODEL},
+                                           {SOURCE: source, 'App/Model/Gate1AppModel+Things.swift': dest})
+        self.assertFalse(ok)
+        self.assertIn('Removed, not found elsewhere', '\n'.join(out))
+
+    def test_declared_name_reads_through_modifiers_and_attributes(self):
+        rows = {
+            '    @Published var queue: [Int] = []': 'queue',
+            '    nonisolated static let cache = Cache()': 'cache',
+            '    private(set) var count = 0': 'count',
+            '    @discardableResult func run() -> Int {': 'run',
+            '    static func precedes(_ a: Int, _ b: Int) -> Bool {': 'precedes',
+            '    init(value: Int) {': 'init',
+            '    // a comment': None,
+        }
+        for line, expected in rows.items():
+            with self.subTest(line=line):
+                self.assertEqual(split_move.declared_name(line), expected)
