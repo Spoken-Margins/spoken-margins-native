@@ -188,14 +188,15 @@ class MainWiringTests(unittest.TestCase):
         self.t3_job(github, '', 'Lane report pr5-r42-auto — FAIL\n')
         self.assertIn('lane:done', github.labeled)  # a release that didn't merge still wakes the dispatcher
 
-    def release_job(self, github, released, *, head=HEAD, merged_state='open'):
+    def release_job(self, github, released, *, head=HEAD, merged_state='open', repo='o/r'):
         self.role = 'build'
         with tempfile.TemporaryDirectory() as outputs:
             out = Path(outputs) / 'out'
             with mock.patch.object(lane, 'merge_after_t3', return_value=released) as release, \
                     mock.patch.dict('os.environ', {'GITHUB_OUTPUT': str(out)}), \
                     mock.patch.object(lane, 'drop_workspace_builds'):
-                github.pull = lambda: {'state': merged_state, 'head': {'sha': HEAD}, 'base': {'ref': 'next'},
+                github.pull = lambda: {'state': merged_state, 'head': {'sha': HEAD, 'repo': {'full_name': repo}},
+                                       'base': {'ref': 'next'},
                                        'labels': [{'name': n} for n in sorted(github.labels)]}
                 self.run_main(github, head, 'PASS', '--mode', 'release', '--t3-report', 'https://example.test/t3')
             outcome = dict(line.split('=', 1) for line in out.read_text().splitlines()) if out.exists() else {}
@@ -224,6 +225,17 @@ class MainWiringTests(unittest.TestCase):
         _, outcome = self.release_job(github, None)
         self.assertEqual(outcome, {})
         self.assertEqual(github.posted, [])
+
+    def test_a_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
+        release, _ = self.release_job(FakeGitHub(labels=('automerge',)), None, repo='someone/fork')
+        release.assert_not_called()
+        github = FakeGitHub(labels=('automerge',))
+        with mock.patch.object(lane, 'merge_after_t3') as release:
+            self.role = 'build'
+            github.pull = lambda: {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}},
+                                   'base': {'ref': 'main'}, 'labels': []}
+            self.run_main(github, HEAD, 'PASS', '--mode', 'release')
+        release.assert_not_called()
 
     def test_a_dispatch_without_a_full_head_sha_does_nothing(self):
         github = FakeGitHub(labels=('automerge',))

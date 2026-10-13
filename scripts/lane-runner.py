@@ -1300,6 +1300,10 @@ def run_release(github, pr: int, base: str, head: str, request_id: str, evidence
     if (pull.get('base') or {}).get('ref', base) != base:
         print(f'PR #{pr} targets {pull["base"]["ref"]}, not {base}; nothing to release.')
         return 0
+    # Only same-repository PRs ever get lane runs (lane.yml); a dispatch naming a fork's PR runs none of its code.
+    if ((pull.get('head') or {}).get('repo') or {}).get('full_name') != os.environ.get('GH_REPO'):
+        print(f'PR #{pr} is not from a branch in this repository; nothing to release.')
+        return 0
     link_tools(tools_source())
     why = f'started by the T3 PASS ({t3_report or "the lane job"}), handed to the build runner by its lane job'
     released = merge_after_t3(github, pr, base, head, request_id, evidence, fetch_base(ROOT, base), why,
