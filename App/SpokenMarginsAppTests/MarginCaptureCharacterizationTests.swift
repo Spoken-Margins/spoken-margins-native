@@ -9,6 +9,20 @@ import XCTest
 /// recorder starts. Each test names the line of the rule it guards.
 @MainActor
 final class MarginCaptureCharacterizationTests: XCTestCase {
+    private var voicePreferences = VoicePreferencesSnapshot.capture()
+
+    /// Choosing a voice (`declineCurrentTerms()`) writes the app's shared preferences; without a choice a first
+    /// run holds `startItem` behind the Terms sheet and nothing can record. The suite puts them back after.
+    override func setUp() {
+        super.setUp()
+        voicePreferences = VoicePreferencesSnapshot.capture()
+    }
+
+    override func tearDown() {
+        voicePreferences.restore()
+        super.tearDown()
+    }
+
     /// A plain model that has dropped every reference its owner holds can be released. The lifetime tests that
     /// follow the extraction depend on this; if it fails, they cannot be written and the cause comes first.
     func testAPlainModelCanBeReleased() async throws {
@@ -16,6 +30,7 @@ final class MarginCaptureCharacterizationTests: XCTestCase {
         do {
             let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient())
             model.resetAndSeed()
+            model.declineCurrentTerms()
             model.startItem(id: "item-pill")
             released = model
         }
@@ -168,6 +183,7 @@ final class MarginCaptureCharacterizationTests: XCTestCase {
 
         XCTAssertFalse(model.recordingPermissionDenied, "cleared by the tap, not by the answer")
         XCTAssertTrue(model.isRequestingRecordingPermission)
+        try await waitFor("the second request to ask") { gate.requests == 2 }
         gate.answer(1, granted: false)
         try await waitFor("the second denial to show") { model.recordingPermissionDenied }
     }
@@ -237,6 +253,7 @@ final class MarginCaptureCharacterizationTests: XCTestCase {
             model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: recorder)
         }
         model.resetAndSeed()
+        model.declineCurrentTerms()
         model.startItem(id: "item-pill")
         model.pause()
         return model
