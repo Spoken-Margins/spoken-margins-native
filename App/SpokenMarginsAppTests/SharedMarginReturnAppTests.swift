@@ -211,6 +211,9 @@ private struct ReturnFixture {
             anchorEvidence: PortableAnchorEvidence(anchorType: .media),
             approvedTranscript: "Reviewed words", audioPath: voiceURL.path, audioDurationMs: 30_000,
             resolution: ImportedAnchorResolution(evidenceClass: .acousticVerified, localMediaTimeMs: 1_000, confidence: 1))
+        // In the store, not only on the model: pause, seek and every transport call refresh the selected item
+        // from the store, which would otherwise empty its Margins and make Listen and jump find nothing.
+        _ = try store.importCommentaryLayer(layer, interjections: [record])
         model.selectedItem.importedCommentaryLayers = [layer]
         model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
         return ReturnFixture(model: model, layer: layer, record: record, root: root, files: [sourceURL, voiceURL])
