@@ -119,6 +119,203 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         hold.interruptionBegan()
         XCTAssertTrue(hold.isHolding)
     }
+    // MARK: - Watching for the other audio to stop (#1434, owner's phone on 437fbc9: no end ever arrived)
+
+    func testAnAnnouncementThatNeverReportsItsEndResumesOnceTheOtherAudioStops() async throws {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        // The owner's trace: the announcement plays for a while, with the hint to silence secondary audio on.
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: true)
+        for _ in 0..<8 { advance(rig, by: 0.5) }
+        XCTAssertEqual(resumes, 0, "the announcement is still playing")
+        XCTAssertTrue(hold.isHolding)
+
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        XCTAssertEqual(resumes, 0, "clear for an instant is not yet the end")
+        advance(rig, by: 0.5)
+        advance(rig, by: 0.5)
+
+        XCTAssertEqual(resumes, 1)
+        XCTAssertEqual(rig.activations, 1)
+        XCTAssertFalse(hold.isHolding)
+        XCTAssertEqual(hold.outcome, .otherAudioStopped)
+        XCTAssertEqual(rig.ledger.events.last?.fields, ["outcome": "other_audio_stopped", "heldMs": "5500"])
+        XCTAssertEqual(rig.ledger.ends, 0, "the background time outlasts the resume until playback starts")
+        advance(rig, by: 3)
+        XCTAssertEqual(rig.ledger.ends, 1)
+
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+        XCTAssertEqual(resumes, 1, "one resume per interruption")
+        XCTAssertEqual(rig.ledger.events.count, 1)
+    }
+
+    func testAShortGapInTheOtherAudioIsNotTakenForItsEnd() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: true)
+        advance(rig, by: 0.5)
+        advance(rig, by: 0.5)
+        advance(rig, by: 0.5)
+
+        XCTAssertEqual(resumes, 0, "the hint alone still means another sound has the floor")
+        XCTAssertTrue(hold.isHolding)
+    }
+
+    func testTheListenerPausingDuringTheHoldKeepsPlaybackPaused() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: true)
+        advance(rig, by: 0.5)
+        hold.listenerActed()
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<30 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0)
+        XCTAssertEqual(rig.activations, 0)
+        XCTAssertEqual(hold.outcome, .listenerActed)
+        XCTAssertEqual(rig.ledger.events.count, 1)
+    }
+
+    func testOtherAudioThatNeverStopsEndsTheWatchPausedWhenTheWindowRunsOut() async throws {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: false)
+        for _ in 0..<200 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0)
+        XCTAssertFalse(hold.isHolding)
+        XCTAssertEqual(hold.outcome, .otherAudioStillPlaying)
+        XCTAssertEqual(rig.ledger.ends, 1)
+        XCTAssertEqual(rig.ledger.events.map(\.fields), [["outcome": "other_audio_still_playing", "heldMs": "60000"]])
+        XCTAssertTrue(rig.pending.isEmpty, "the watch stops polling")
+    }
+
+    func testARealEndArrivingFirstMeansTheWatchNeverResumesToo() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        hold.interruptionEnded()
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0, "the player's own end handling resumes; the watch must not resume a second time")
+        XCTAssertEqual(hold.outcome, .ended)
+        XCTAssertEqual(rig.activations, 0)
+        XCTAssertEqual(rig.ledger.events.count, 1)
+    }
+
+    func testASessionThatCannotBeActivatedLeavesPlaybackPausedAndSaysWhy() async throws {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+        // A phone call: no "other audio" reported, but the call won't give up the audio session.
+        rig.activationFailure = "Session activation failed (CannotInterruptOthers)"
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0)
+        XCTAssertEqual(rig.activations, 1, "one try, then the real end from iOS decides")
+        XCTAssertFalse(hold.isHolding)
+        XCTAssertEqual(hold.outcome, .activationFailed)
+        XCTAssertEqual(rig.ledger.events.last?.fields, [
+            "outcome": "activation_failed",
+            "heldMs": "1500",
+            "error": "Session activation failed (CannotInterruptOthers)"
+        ])
+    }
+
+    func testWithoutAResumeRequestTheHoldOnlyWaitsForTheEnd() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+
+        hold.interruptionBegan()
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+
+        XCTAssertTrue(hold.isHolding)
+        XCTAssertEqual(rig.activations, 0)
+        XCTAssertTrue(rig.pending.isEmpty)
+    }
+
+    func testAnExpiryEndsTheWatch() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: true, secondaryShouldBeSilenced: true)
+        advance(rig, by: 0.5)
+        rig.ledger.expire(0)
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0, "a suspended app can't resume; the next Play does")
+        XCTAssertEqual(hold.outcome, .expired)
+    }
+
+    /// Moves the clock on and runs every check that has come due.
+    private func advance(_ rig: OtherAudioRig, by seconds: TimeInterval) {
+        now = now.addingTimeInterval(seconds)
+        rig.runDue(at: now)
+    }
+}
+
+/// The audio session's state and a manual scheduler for the hold's checks.
+@MainActor
+private final class OtherAudioRig {
+    let ledger = InterruptionHoldLedger()
+    var audio = InterruptionBackgroundHold.OtherAudio(isPlaying: true, secondaryShouldBeSilenced: true)
+    var activationFailure: String?
+    var activations = 0
+    private(set) var pending: [(due: Date, work: @MainActor () -> Void)] = []
+    private var clock: () -> Date = Date.init
+
+    func hold(now: @escaping () -> Date) -> InterruptionBackgroundHold {
+        clock = now
+        return ledger.hold(
+            now: now,
+            watch: .init(
+                probe: { [unowned self] in self.audio },
+                activate: { [unowned self] in
+                    self.activations += 1
+                    return self.activationFailure
+                }
+            ),
+            schedule: { [unowned self] delay, work in
+                self.pending.append((self.clock().addingTimeInterval(delay), work))
+            }
+        )
+    }
+
+    func runDue(at time: Date) {
+        while let index = pending.firstIndex(where: { $0.due <= time }) {
+            let item = pending.remove(at: index)
+            item.work()
+        }
+    }
 }
 
 /// Counts the background time asked for and given back, standing in for UIApplication's background tasks.
@@ -131,7 +328,11 @@ private final class InterruptionHoldLedger {
     var events: [(kind: String, fields: [String: String])] = []
     private var expiries: [@MainActor () -> Void] = []
 
-    func hold(now: @escaping () -> Date) -> InterruptionBackgroundHold {
+    func hold(
+        now: @escaping () -> Date,
+        watch: InterruptionBackgroundHold.OtherAudioWatch? = nil,
+        schedule: InterruptionBackgroundHold.Schedule? = nil
+    ) -> InterruptionBackgroundHold {
         InterruptionBackgroundHold(
             begin: { [unowned self] name, expired in
                 guard !self.refuses else { return nil }
@@ -146,7 +347,9 @@ private final class InterruptionHoldLedger {
                 }
             },
             record: { [unowned self] kind, fields in self.events.append((kind, fields)) },
-            now: now
+            now: now,
+            otherAudioWatch: watch,
+            schedule: schedule ?? InterruptionBackgroundHold.mainQueueSchedule
         )
     }
 
