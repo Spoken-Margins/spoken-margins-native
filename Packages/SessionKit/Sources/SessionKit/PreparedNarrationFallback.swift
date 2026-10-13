@@ -95,6 +95,16 @@ public enum PreparedNarrationFallback {
         return max(startChar, min(offset, endChar))
     }
 
+    /// Where a Margin is heard in an article's generated narration (#1537). A Margin recorded while the narration
+    /// played keeps its own media time. One recorded while the article was read with on-device speech (before it
+    /// was prepared, or while a render was still on its way) has only a text place, which the narration timeline
+    /// finds. Nil when the render doesn't reach that place: the caller reads it with on-device speech instead.
+    public static func mediaTimeMs(forMargin anchor: Anchor, timeline: TranscriptTimeline?) -> Int? {
+        if let mediaTimeMs = anchor.mediaTimeMs { return mediaTimeMs }
+        guard let timeline else { return nil }
+        return mediaTimeMs(textOffset: anchor.startChar, timeline: timeline)
+    }
+
     /// The media time generated narration reaches `textOffset`, interpolated within a segment. Text between two
     /// segments maps to the next segment's start. Nil when the rendered audio has no text positions or ends
     /// before `textOffset` (a partly rendered article), so a caller never seeks to a place the audio can't reach.

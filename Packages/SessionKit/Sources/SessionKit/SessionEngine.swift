@@ -1730,14 +1730,24 @@ public final class SessionEngine {
             guard stored.targetId == item.id else {
                 throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
             }
-            let targetType = playbackTargetType(for: playingItem)
+            var targetType = playbackTargetType(for: playingItem)
+            // An article's prepared narration finds a Margin's text place on its timeline; a place the render
+            // doesn't reach is read with on-device speech, as a publisher recording's is (#1537).
+            var narrationMediaTimeMs: Int?
+            if targetType == .transcriptBackedMedia, publisher == nil, isGeneratedTextMedia(playingItem.media) {
+                narrationMediaTimeMs = PreparedNarrationFallback.mediaTimeMs(
+                    forMargin: stored.anchor,
+                    timeline: sourceTranscriptTimeline(itemId: item.id)
+                )
+                if narrationMediaTimeMs == nil { targetType = .itemTextTTS }
+            }
             session.currentTargetType = targetType
             session.currentTargetId = itemPlaybackTargetId(for: playingItem, targetType: targetType)
             session.phase = .itemPlayback
             if targetType == .transcriptBackedMedia || targetType == .browserOwnedMedia {
                 let anchorMediaTimeMs = publisher.flatMap {
                     $0.mediaTimeMs(textOffset: stored.anchor.startChar)
-                } ?? stored.anchor.mediaTimeMs
+                } ?? narrationMediaTimeMs ?? stored.anchor.mediaTimeMs
                 guard let mediaTimeMs = anchorMediaTimeMs,
                       mediaTimeMs >= 0 else {
                     throw SessionKitError.invalidCommandForState("playInterjectionAnchor")
