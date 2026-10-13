@@ -108,8 +108,7 @@ final class ImportedPodcastPlacementCoordinator {
     func scheduleTransientTranscript(for item: Item, localSourceURL: URL) -> Bool {
         guard let sourceFile = try? PodcastPlacementFile(url: localSourceURL) else { return false }
         let now = deps.now()
-        guard lastTransientStart[item.id].map({ now.timeIntervalSince($0) >= Self.transientCooldown }) ?? true,
-              admission[item.id] == nil else { return false }
+        guard lastTransientStart[item.id].map({ now.timeIntervalSince($0) > Self.transientCooldown }) ?? true else { return false }
         admission[item.id] = .transient(sourceFile)
         lastTransientStart[item.id] = now
         deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "transcribing_transiently")
@@ -128,16 +127,14 @@ final class ImportedPodcastPlacementCoordinator {
                     itemId: item.id,
                     durationMs: item.media?.durationMs
                 )
-                self.admission[item.id] = nil
-                if self.requestedURL[item.id] == localSourceURL,
-                   (try? PodcastPlacementFile(url: localSourceURL)) == sourceFile {
+                if self.requestedURL[item.id] == localSourceURL {
                     self.resolve(itemId: item.id, localURL: localSourceURL, recipientTranscriptOverride: timeline)
                 }
+                self.admission[item.id] = nil
                 try? self.deps.purgeTransientCaches(item.id)
                 self.deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "consumed_and_deleted")
             } catch {
                 self.admission[item.id] = nil
-                try? self.deps.purgeTransientCaches(item.id)
                 self.deps.recordDiagnostic(
                     "recipientAlignmentTranscript:\(item.id)", "failed_and_deleted:\(error.localizedDescription)")
             }
@@ -157,7 +154,7 @@ final class ImportedPodcastPlacementCoordinator {
               let file = try? PodcastPlacementFile(url: localURL),
               let item = try? store.loadItem(id: itemId),
               let layers = try? store.loadImportedCommentaryLayers(itemId: itemId),
-              !layers.isEmpty else { deps.clearDeferredPlacement(itemId); return .rejected }
+              !layers.isEmpty else { matching.cancel(itemId: itemId); deps.clearDeferredPlacement(itemId); return .rejected }
         guard !deps.deferPlacement(item, localURL) else { return .deferred }
         requestedURL[itemId] = localURL
         let localItem = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: deps.localAudiobookDigest(item))
@@ -166,7 +163,7 @@ final class ImportedPodcastPlacementCoordinator {
         let work = ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
             try? store.loadImportedCommentaryInterjections(layerId: layer.id)
         }
-        guard !work.isEmpty else { matching.cancel(itemId: itemId); passes.end(.matching, itemId: itemId); return .noPodcastWork }
+        guard !work.isEmpty else { passes.end(.matching, itemId: itemId); return .noPodcastWork }
         if recipientTranscriptOverride == nil, commentaryNeedsTranscript(itemId: itemId, store: store) {
             scheduleTransientTranscript(for: item, localSourceURL: localURL)
         }
@@ -291,7 +288,6 @@ final class ImportedPodcastPlacementCoordinator {
                 }
             } catch {
                 await MainActor.run {
-                    guard !Task.isCancelled, self?.matching.isCurrent(context) == true else { return }
                     self?.passes.end(.matching, itemId: itemId)
                     self?.deps.recordDiagnostic("importedPodcastAnchorResolution:\(itemId)", "failed:\(error.localizedDescription)")
                 }
