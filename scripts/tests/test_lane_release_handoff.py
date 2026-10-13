@@ -7,6 +7,8 @@ commit on sm-lane-mac, the one runner that runs T3s: 7 re-tests and about 63 run
 dispatches lane.yml's release job to a build runner and moves on; a merge still needs a host PASS on the tree
 that merges.
 """
+from __future__ import annotations
+
 import datetime
 import json
 import os
@@ -389,6 +391,11 @@ class WorkflowTests(unittest.TestCase):
                               '${{'):
             self.assertNotIn(checkout_file, run)
         self.assertNotRegex(run, r'\.(py|sh|rb|js)\b')  # no script of any kind (`.head.sha` is jq, not a file)
+        # A redirect creates its file even when git show fails; an empty lane-runner.py exits 0, so the tidy step
+        # would "succeed" without posting and this step would be skipped. The runner arrives whole or not at all.
+        fetch = next(step for step in steps if step.get('name', '').startswith('Take the lane runner'))
+        self.assertIn('> "$RUNNER_TEMP/lane-runner.py.part" &&', fetch['run'])
+        self.assertIn('mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"', fetch['run'])
         tidy = next(step for step in steps if step.get('name', '').startswith('Tidy up'))
         self.assertIn('steps.tidy.outcome', last['if'])  # one note: the tidy step's when it could post its own
         self.assertEqual(tidy.get('id'), 'tidy')

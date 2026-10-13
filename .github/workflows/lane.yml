@@ -308,8 +308,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           lfs: true
+      # Written under another name first: a redirect creates the file even when git show fails, and an empty
+      # lane-runner.py would let the tidy step "succeed" without posting anything (#1542).
       - name: Take the lane runner from the base branch
-        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+        run: >-
+          git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py.part" &&
+          mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
       - name: Run the released automerge run
         id: run
         run: >-
