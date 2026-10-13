@@ -15,13 +15,19 @@ public enum RecordingInputChoice: String, Equatable, Sendable {
 }
 
 public enum RecordingInputPolicy {
+    /// Whether Margins on A2DP headphones may record from the phone's microphone. Off until the owner has answered
+    /// whether the wait or the microphone distance matters more (#1506): the recorded voice is his to judge.
+    /// Turning it on is this one value and the pinned test.
+    public static let phoneMicrophoneOnA2DPAllowed = false
+
     /// `outputPortTypes` are the raw values of the audio session's current output ports (`AVAudioSession.Port`),
     /// read before the session is reconfigured for recording.
     ///
     /// The phone's microphone is chosen only when the listener is on A2DP and not already on the hands-free
     /// profile (a call, or another app holding the headset microphone): there the switch is free or already paid,
     /// and the headset microphone is the better one to use. Every other route keeps the earlier behavior.
-    public static func choice(outputPortTypes: [String]) -> RecordingInputChoice {
+    public static func choice(outputPortTypes: [String], phoneMicrophoneAllowed: Bool = phoneMicrophoneOnA2DPAllowed) -> RecordingInputChoice {
+        guard phoneMicrophoneAllowed else { return .headsetMicrophoneAllowed }
         let onA2DP = outputPortTypes.contains(Port.bluetoothA2DP)
         let onHandsFree = outputPortTypes.contains(Port.bluetoothHandsFree)
         return onA2DP && !onHandsFree ? .phoneMicrophoneKeepingA2DP : .headsetMicrophoneAllowed

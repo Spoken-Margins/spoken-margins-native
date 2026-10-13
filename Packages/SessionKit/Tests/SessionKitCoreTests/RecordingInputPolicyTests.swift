@@ -5,7 +5,7 @@ import XCTest
 /// headphones to the hands-free profile, which took over a second. The phone's microphone avoids the switch.
 final class RecordingInputPolicyTests: XCTestCase {
     func testHeadphonesPlayingOverA2DPRecordFromThePhoneAndStayOnA2DP() {
-        XCTAssertEqual(RecordingInputPolicy.choice(outputPortTypes: ["BluetoothA2DPOutput"]), .phoneMicrophoneKeepingA2DP)
+        XCTAssertEqual(RecordingInputPolicy.choice(outputPortTypes: ["BluetoothA2DPOutput"], phoneMicrophoneAllowed: true), .phoneMicrophoneKeepingA2DP)
     }
 
     func testEveryOtherRouteKeepsTheEarlierBehavior() {
@@ -21,8 +21,14 @@ final class RecordingInputPolicyTests: XCTestCase {
             ("a lookalike name", ["BluetoothA2DP", "a2dp", "bluetoothA2DPOutput", ""]),
         ]
         for (name, ports) in routes {
-            XCTAssertEqual(RecordingInputPolicy.choice(outputPortTypes: ports), .headsetMicrophoneAllowed, name)
+            XCTAssertEqual(RecordingInputPolicy.choice(outputPortTypes: ports, phoneMicrophoneAllowed: true), .headsetMicrophoneAllowed, name)
         }
+    }
+
+    func testUntilTheOwnerAnswersTheHeadsetMicrophoneStaysTheBehavior() {
+        XCTAssertFalse(RecordingInputPolicy.phoneMicrophoneOnA2DPAllowed, "the recorded voice is the owner's call (#1506)")
+        XCTAssertEqual(RecordingInputPolicy.choice(outputPortTypes: ["BluetoothA2DPOutput"]), .headsetMicrophoneAllowed)
+        XCTAssertEqual(RecordingInputPolicy.choice(outputPortTypes: ["BluetoothA2DPOutput"], phoneMicrophoneAllowed: false), .headsetMicrophoneAllowed)
     }
 
     func testThePortNamesAreTheOnesTheAudioSessionReports() {

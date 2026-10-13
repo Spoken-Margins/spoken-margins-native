@@ -6,16 +6,21 @@ public struct MarginCaptureRequest: Equatable, Sendable {
     public let id: UUID
     public let tappedAt: Date
     public let uptime: TimeInterval
+    /// True when `tappedAt` is only when the engine was called: Margins that start from the Live Activity, the
+    /// Lock Screen or a widget don't carry the time of the tap, so their figures leave out what came before.
+    public let startsAtEngineCall: Bool
 
-    public init(id: UUID = UUID(), tappedAt: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    public init(id: UUID = UUID(), tappedAt: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime,
+                startsAtEngineCall: Bool = true) {
         self.id = id
         self.tappedAt = tappedAt
         self.uptime = uptime
+        self.startsAtEngineCall = startsAtEngineCall
     }
 
     /// A tap noted as a wall-clock `Date` earlier in the same run: the uptime is that many seconds before now.
     public static func tapped(at date: Date, now: Date = Date(), uptimeNow: TimeInterval = ProcessInfo.processInfo.systemUptime) -> MarginCaptureRequest {
-        MarginCaptureRequest(tappedAt: date, uptime: uptimeNow - max(0, now.timeIntervalSince(date)))
+        MarginCaptureRequest(tappedAt: date, uptime: uptimeNow - max(0, now.timeIntervalSince(date)), startsAtEngineCall: false)
     }
 }
 
@@ -60,6 +65,7 @@ public struct MarginCaptureTiming: Equatable, Sendable {
         return [
             "captureID": request.id.uuidString,
             "tapAt": formatter.string(from: request.tappedAt),
+            "tapSource": request.startsAtEngineCall ? "engine_call" : "app_tap",
             "tapToRecorderRequestedMs": recorderRequestedMs.map(String.init) ?? "not_observed",
             "tapToRecorderStartedMs": recorderStartedMs.map(String.init) ?? "not_observed",
             "tapToFirstAudioObservedMs": firstAudioObservedMs.map(String.init) ?? "not_observed",
