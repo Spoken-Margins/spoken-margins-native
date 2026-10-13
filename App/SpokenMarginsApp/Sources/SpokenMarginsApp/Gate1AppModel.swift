@@ -297,7 +297,7 @@ final class Gate1AppModel: ObservableObject {
     private var marginVoiceObservation: AnyCancellable?
     private(set) lazy var marginVoicePlayer: MarginVoicePlayer = {
         let voice = MarginVoicePlayer(host: self)
-        self.marginVoiceObservation = voice.objectWillChange.sink { _ in }
+        self.marginVoiceObservation = voice.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
         return voice
     }()
     /// "Play this moment" (#159). The sequence is published for the playback screen; the conductor runs it.

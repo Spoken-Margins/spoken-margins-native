@@ -76,7 +76,7 @@ final class MarginVoicePlayer: ObservableObject {
     /// leaves no leveling diagnostics and starts no leveling work, as it did when the model made the URL inline.
     func startOwn(_ interjection: Interjection, url: () -> URL, rate: Double) throws {
         #if os(iOS)
-        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [])
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
         let item = AVPlayerItem(url: url())
@@ -156,7 +156,7 @@ final class MarginVoicePlayer: ObservableObject {
                 guard !Task.isCancelled, let self, self.health?.attemptID == attempt else { return }
                 let reading = MarginVoiceClockReading(duration: item.duration.seconds, current: item.currentTime().seconds)
                 // Heard once the voice has played; a file that fails to decode stays new (#690).
-                if reading.hasSounded { heard = true; self.host?.marginVoiceSharedMarginHeard(prompt.interjection) }
+                if !heard, reading.hasSounded { heard = true; self.host?.marginVoiceSharedMarginHeard(prompt.interjection) }
                 if reading.hasReachedEnd {
                     self.host?.marginVoiceSharedPlaybackEnded()
                     return
@@ -208,6 +208,7 @@ final class MarginVoicePlayer: ObservableObject {
         completionTask = nil
         currentPlayer?.pause()
         currentPlayer?.replaceCurrentItem(with: nil)
+        currentPlayer = nil
         sharedIsPaused = false
         publishNowPlaying()
     }
@@ -241,6 +242,7 @@ final class MarginVoicePlayer: ObservableObject {
         currentPlayer?.pause()
         currentPlayer?.replaceCurrentItem(with: nil)
         currentPlayer = nil
+        completionTask?.cancel()
         completionTask = nil
         ownMarginID = nil
         ownMarginSessionID = nil
