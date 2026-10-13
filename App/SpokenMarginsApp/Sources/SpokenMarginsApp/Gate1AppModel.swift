@@ -43,11 +43,11 @@ struct ObsidianImportBatch: Sendable {
 final class Gate1AppModel: ObservableObject {
     static let welcomeSampleItemId = "item-spoken-margins-overview"
     static let guidedOnboardingItemId = "guided-onboarding"
-    private static let welcomeSampleSeedVersion = 2
-    private static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
+    static let welcomeSampleSeedVersion = 2
+    static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
     private static let onboardingStepsKey = "onboardingCompletedStepsV1"
     private static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
-    private static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
+    static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
     static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
     private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
@@ -257,7 +257,7 @@ final class Gate1AppModel: ObservableObject {
     )
     @Published private(set) var sleepTimerState: SleepTimerState = .inactive
     @Published private(set) var sleepTimerRemainingSeconds: Int?
-    @Published private(set) var libraryAccessError: String?
+    @Published var libraryAccessError: String?
     @Published var recentlyDeletedItems: [LibraryItemRow] = []
     @Published var trashUndo: TrashUndoState?
     @Published var selectedItem = ItemDetailState() {
@@ -491,7 +491,7 @@ final class Gate1AppModel: ObservableObject {
     ]
 
     var engine: SessionEngine?
-    private(set) var store: SQLiteSessionStore?
+    var store: SQLiteSessionStore?
     /// The UI-test seed this launch still has to write; nil once written and for a normal launch. Written even when
     /// something opened the store before the root view bootstrapped the Library, else the last run's Library shows (#1175).
     var pendingUITestingSeed: UITestingLaunchSeed? = UITestingHooks.seed.writesLibrary ? UITestingHooks.seed : nil
@@ -523,7 +523,7 @@ final class Gate1AppModel: ObservableObject {
     private var localSourceImporter: LocalSourceImporter?
     var followedSourceCoordinator: FollowedSourceCoordinator?
     /// A fresh install: the Library was empty before the welcome sample was added (B1 drawer).
-    private(set) var libraryWasEmptyAtLaunch = false
+    var libraryWasEmptyAtLaunch = false
     var readablePageExtractor: any ReadablePageExtracting = AppOwnedReadablePageExtractor() // tests replace it (#223)
     let sharedLinkVoiceover = SharedLinkVoiceover() // tests replace its page fetch (#810)
     var sourceSuggestionChecks: Set<String> = []
@@ -584,7 +584,7 @@ final class Gate1AppModel: ObservableObject {
     var sourceImportTask: Task<Void, Never>?
     var quickAccessRefreshTask: Task<Void, Never>?
     var quickAccessRefreshID = UUID()
-    private(set) var liveSpeechFallbackItemIds: Set<String> = []
+    var liveSpeechFallbackItemIds: Set<String> = []
     var suppressedAutomaticAudioPreparationItemIds = Set(
         UserDefaults.standard.stringArray(forKey: Gate1AppModel.suppressedAudioPreparationItemIdsKey) ?? []
     )
@@ -711,7 +711,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func reconcileOnboardingEvidence(store: SQLiteSessionStore) throws {
+    func reconcileOnboardingEvidence(store: SQLiteSessionStore) throws {
         let items = try store.listItems()
         var evidence = OnboardingEvidenceClassifier.sourceSteps(items: items)
         let hasSavedInterjection = try store.loadSessions().contains { session in
@@ -1277,127 +1277,6 @@ final class Gate1AppModel: ObservableObject {
         return updated
     }
 
-    func bootstrapLibraryIfNeeded() {
-        guard pendingUITestingSeed != nil || (libraryItems.isEmpty && store == nil) else { return }
-        do {
-            let store = try requireStore()
-            libraryAccessError = nil
-            purgeExpiredEpisodeMapPreparationJobs(store: store)
-            let seed = pendingUITestingSeed ?? UITestingLaunchSeed.none; pendingUITestingSeed = nil
-            switch seed {
-            case .none, .keepLibrary: break
-            case .fixture: resetAndSeed(); return
-            case .importedPDF: resetAndSeed(); try importObsidianMarkdownFiles(urls: [UITestingLaunchSeedWriter.writePDF()]); return
-            case .text, .offlinePodcast:
-                try seedUITesting(store: store, item: UITestingLaunchSeedWriter.write(seed, into: store)); return
-            }
-            var rows = try loadLibraryRows(store: store)
-            libraryWasEmptyAtLaunch = rows.isEmpty
-            let storedWelcomeSampleVersion = UserDefaults.standard.integer(
-                forKey: Self.welcomeSampleSeedVersionKey
-            )
-            if Self.shouldSeedWelcomeSample(
-                libraryIsEmpty: rows.isEmpty,
-                storedVersion: storedWelcomeSampleVersion,
-                isUITesting: UITestingHooks.isActive
-            ) {
-                let (item, map) = try makeAppOverviewSample()
-                try store.saveItem(item)
-                try store.saveListeningMap(map)
-                rows = try loadLibraryRows(store: store)
-                diagnostics["welcomeSample"] = "seeded:v\(Self.welcomeSampleSeedVersion)"
-            }
-            if !UITestingHooks.isActive,
-               !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
-               UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
-               !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
-                try store.saveItem(Self.makeBundledGuidedOnboardingItem())
-                try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
-                UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
-                rows = try loadLibraryRows(store: store)
-                diagnostics["guidedOnboardingItem"] = "bundled_fallback_seeded"
-            }
-            if !UITestingHooks.isActive,
-               storedWelcomeSampleVersion < Self.welcomeSampleSeedVersion {
-                UserDefaults.standard.set(
-                    Self.welcomeSampleSeedVersion,
-                    forKey: Self.welcomeSampleSeedVersionKey
-                )
-            }
-            if engine == nil {
-                installEngine(try makeEngine(store: store))
-            }
-            // Installing the Supertonic client establishes the current render
-            // signature. Re-project rows so startup readiness never reuses a
-            // manifest from an obsolete voice or model identity.
-            rows = try loadLibraryRows(store: store)
-            try reconcileOnboardingEvidence(store: store)
-            try recoverInterruptedAIJobs(store: store, rows: rows); settleOrphanedTranscriptions(store: store)
-            libraryItems = rows
-            recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
-            let availableItemIDs = Set(rows.map(\.id))
-            if let restoredSession = try store.loadSessions().first(where: {
-                Self.isResumableSession($0) && availableItemIDs.contains($0.itemId)
-            }), let engine {
-                activeItemId = restoredSession.itemId
-                snapshot = try engine.inspectSession(sessionId: restoredSession.id)
-                try prepareSourceMediaPlayback(itemId: restoredSession.itemId)
-                selectedItem = try loadItemDetail(id: restoredSession.itemId, store: store)
-                diagnostics["restoredSession"] = restoredSession.id
-                diagnostics["restoredSessionMode"] = "paused_without_autoplay"
-            } else if let first = rows.first {
-                activeItemId = first.id
-                selectedItem = try loadItemDetail(id: first.id, store: store)
-            } else {
-                selectedItem = ItemDetailState()
-            }
-            refreshMarginRows()
-            tryRefreshOfflineStorageUsage()
-            diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
-            reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
-            try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
-            scheduleAutomaticAudioPreparationIfNeeded()
-            // Recover missing opening windows as well as durable jobs. Yield
-            // between items so a populated Library remains interactive.
-            let startupCandidates = Self.startupPreparationCandidates(rows)
-            Task { @MainActor [weak self] in
-                for itemId in startupCandidates {
-                    guard !Task.isCancelled, let self else { return }
-                    self.scheduleStartupAudioPreparationIfNeeded(itemId: itemId)
-                    await Task.yield()
-                }
-            }
-            startForegroundAudioPreparationIfNeeded()
-        } catch {
-            libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
-            diagnostics["libraryBootstrap"] = "failed_without_reset:\(error.localizedDescription)"
-            reportFailure(error, context: "Library bootstrap failed")
-        }
-    }
-
-    /// Finishes a UI-test launch whose seed writer has reset the store and added `item`.
-    private func seedUITesting(store: SQLiteSessionStore, item: Item) throws {
-        self.store = store
-        try configurePodcastDownloads(store: store)
-        installEngine(try makeEngine(store: store))
-        activeItemId = item.id
-        if item.mediaType == "text" { liveSpeechFallbackItemIds.insert(item.id) }
-        snapshot = SessionSnapshot()
-        libraryItems = try loadLibraryRows(store: store)
-        recentlyDeletedItems = []; dismissTrashUndo()
-        selectedItem = try loadItemDetail(id: item.id, store: store)
-        diagnostics = ["runtimeProfile": selectedProfileId, "uiTestFixture": item.id, "speechRate": String(format: "%.2f", speechRate)]
-        reportSuccess("Loaded UI test item \(item.title).")
-    }
-
-    static func shouldSeedWelcomeSample(
-        libraryIsEmpty: Bool,
-        storedVersion: Int,
-        isUITesting: Bool
-    ) -> Bool {
-        libraryIsEmpty && storedVersion < welcomeSampleSeedVersion && !isUITesting
-    }
-
     func handleAppBecameActive() {
         narrationStartupProtection.appEnteredForeground()
         openReadyListeningEdition()
@@ -1893,7 +1772,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func makeAppOverviewSample() throws -> (Item, ListeningMap) {
+    func makeAppOverviewSample() throws -> (Item, ListeningMap) {
         try WelcomeSample.make(itemId: Self.welcomeSampleItemId, remoteProviderExperienceEnabled: remoteProviderExperienceEnabled)
     }
 
@@ -4256,7 +4135,7 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    private func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
+    func purgeExpiredEpisodeMapPreparationJobs(store: SQLiteSessionStore, now: Date = Date()) {
         let expiration = now.addingTimeInterval(-7 * 24 * 60 * 60)
         for job in (try? store.loadEpisodeMapPreparationJobs()) ?? [] where
             job.isCancelled || job.requestedAt < expiration {
@@ -4318,7 +4197,7 @@ final class Gate1AppModel: ObservableObject {
         selectedBatchExportSessionIds.formIntersection(availableIds)
     }
 
-    private func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
+    func loadDeletedLibraryRows(store: SQLiteSessionStore) throws -> [LibraryItemRow] {
         try store.listDeletedItems().map { item in
             LibraryItemRow(id: item.id, title: item.title, status: "Recently deleted", canDelete: true)
         }
