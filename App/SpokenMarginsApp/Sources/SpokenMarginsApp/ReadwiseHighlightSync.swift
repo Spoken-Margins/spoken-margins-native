@@ -24,6 +24,9 @@ final class ReadwiseHighlightSync: ObservableObject {
     private var task: Task<Void, Never>?
     private var isSending = false
     private var rejectedTokenDigest: String?
+    /// Bumped when the connection ends, so a pass that finishes after Disconnect doesn't write its summary (#1467).
+    private var connectionEpoch = 0
+    private static let resetOwedKey = "readwiseDestinationResetOwed"
     private let session = URLSession(configuration: .ephemeral, delegate: ReadLaterSessionDelegate(), delegateQueue: nil)
 
     /// Called when the app becomes active. Starts the loop if sending is on.
@@ -46,8 +49,41 @@ final class ReadwiseHighlightSync: ObservableObject {
     func enabledChanged() {
         UserDefaults.standard.set(enabled, forKey: "readwiseHighlightsEnabled")
         // Turning it back on retries a rejected token once, so the reason shows again under the toggle.
+        // A reset that failed at Disconnect is retried before anything is sent; sending stays off until it works.
+        if enabled, UserDefaults.standard.bool(forKey: Self.resetOwedKey) {
+            do { try Self.ledger().startNewDestination(); UserDefaults.standard.set(false, forKey: Self.resetOwedKey); links = [:] }
+            catch {
+                enabled = false; UserDefaults.standard.set(false, forKey: "readwiseHighlightsEnabled")
+                status = "Sending can't start yet: the history of what was sent to the last account could not be reset (\(error.localizedDescription))."
+                statusIsFailure = true
+                return
+            }
+        }
         if enabled, let storeProvider { rejectedTokenDigest = nil; start(store: storeProvider) }
-        else { stop(); status = enabled ? "" : "Sending is off. Highlights already in Readwise stay there." }
+        else { stop(); if enabled || !statusIsFailure { status = enabled ? "" : "Sending is off. Highlights already in Readwise stay there." } }
+    }
+
+    /// The Readwise connection was removed (#1467). Whatever connects next is a new destination: sending is
+    /// off until the listener chooses it again, and nothing counts as already sent to it. Saving a new token
+    /// without disconnecting is the same account and keeps both.
+    func destinationDisconnected() {
+        stop()
+        enabled = false
+        UserDefaults.standard.set(false, forKey: "readwiseHighlightsEnabled")
+        rejectedTokenDigest = nil
+        lastSummary = nil; lastSentAt = nil
+        connectionEpoch += 1
+        do {
+            try Self.ledger().startNewDestination()
+            UserDefaults.standard.set(false, forKey: Self.resetOwedKey)
+            links = [:]
+            status = "Sending is off. Highlights already in Readwise stay there."
+        } catch {
+            // Retried when sending is next turned on; the section is hidden until then.
+            UserDefaults.standard.set(true, forKey: Self.resetOwedKey)
+            status = "Sending is off, but the history of what was sent could not be reset: \(error.localizedDescription)"
+            statusIsFailure = true
+        }
     }
 
     func sendPass() async {
@@ -60,6 +96,7 @@ final class ReadwiseHighlightSync: ObservableObject {
         guard tokenDigest != rejectedTokenDigest else { return }
         isSending = true
         defer { isSending = false }
+        let epoch = connectionEpoch
         do {
             let ledger = try Self.ledger()
             let client = ReadwiseHighlightClient { [session] request in
@@ -79,6 +116,7 @@ final class ReadwiseHighlightSync: ObservableObject {
             }
             // stop() cancels the loop; this carries that into the detached pass so no further batch goes out.
             let report = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+            guard epoch == connectionEpoch else { return }
             rejectedTokenDigest = nil
             let now = Date().formatted(date: .omitted, time: .shortened)
             if let summary = report.summary { lastSummary = summary; lastSentAt = now }
