@@ -105,34 +105,27 @@ extension Gate1AppModel {
                 } else {
                     durationMs = 0
                 }
-                var generatedLandmarks: [EpisodeFingerprintLandmark] = []
-                var gridIndex = 0
-                var startMs = SparseFingerprintSchedule.initialMediaTimeMs
-                while gridIndex < job.nextUnitIndex,
-                      startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
-                    let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
-                    let existingURL = mapDirectory.appending(path: "\(assetID).shazamsignature")
-                    guard FileManager.default.fileExists(atPath: existingURL.path) else {
-                        job.nextUnitIndex = gridIndex
-                        break
+                let resumed = EpisodeMapAssembly.resumeFingerprints(
+                    safeItemComponent: self.safePodcastEvidenceComponent(item.id),
+                    nextUnitIndex: job.nextUnitIndex,
+                    durationMs: durationMs,
+                    minimumEvidenceDurationMs: PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs,
+                    signatureExists: { assetID in
+                        FileManager.default.fileExists(
+                            atPath: mapDirectory.appending(path: "\(assetID).shazamsignature").path
+                        )
                     }
-                    generatedLandmarks.append(EpisodeFingerprintLandmark(
-                        id: "downloaded-landmark-\(gridIndex)",
-                        order: gridIndex,
-                        sourceMediaStartMs: startMs,
-                        sourceMediaEndMs: startMs + SparseFingerprintSchedule.targetDurationMs,
-                        anchorMediaTimeMs: startMs,
-                        continuityEpoch: 0,
-                        trigger: .downloadedPreparation,
-                        provenance: .downloadedSourceReference,
-                        signatureAssetId: assetID
-                    ))
-                    gridIndex += 1
-                    startMs += SparseFingerprintSchedule.periodicIntervalMs
-                }
+                )
+                var generatedLandmarks = resumed.landmarks
+                var gridIndex = resumed.gridIndex
+                var startMs = resumed.startMs
+                job.nextUnitIndex = resumed.nextUnitIndex
                 while startMs + PodcastAnchorEvidenceGenerator.minimumEvidenceDurationMs <= durationMs {
                     try Task.checkCancellation()
-                    let assetID = "episode-signature-\(self.safePodcastEvidenceComponent(item.id))-downloaded-\(gridIndex)"
+                    let assetID = EpisodeMapAssembly.signatureAssetId(
+                        safeItemComponent: self.safePodcastEvidenceComponent(item.id),
+                        gridIndex: gridIndex
+                    )
                     let ledger = try self.requireOfflineLedger(store: store, rootDirectory: try self.applicationSupportDirectory())
                     let reservation = try await ledger.reserve(
                         ownerId: "episode-fingerprint-\(item.id)-\(gridIndex)",
@@ -150,16 +143,11 @@ extension Gate1AppModel {
                         try? await ledger.release(reservationId: reservation.id)
                         throw error
                     }
-                    generatedLandmarks.append(EpisodeFingerprintLandmark(
-                        id: "downloaded-landmark-\(gridIndex)",
-                        order: gridIndex,
-                        sourceMediaStartMs: startMs,
-                        sourceMediaEndMs: startMs + generated.durationMs,
-                        anchorMediaTimeMs: startMs,
-                        continuityEpoch: 0,
-                        trigger: .downloadedPreparation,
-                        provenance: .downloadedSourceReference,
-                        signatureAssetId: assetID
+                    generatedLandmarks.append(EpisodeMapAssembly.downloadedLandmark(
+                        safeItemComponent: self.safePodcastEvidenceComponent(item.id),
+                        gridIndex: gridIndex,
+                        startMs: startMs,
+                        durationMs: generated.durationMs
                     ))
                     try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
                         id: assetID,
@@ -240,29 +228,11 @@ extension Gate1AppModel {
                     timeline: timeline
                 )
 
-                let existingPlaybackLandmarks = try store.loadEditionFingerprintSpine(itemId: item.id)?.landmarks
-                    .filter { $0.provenance == .observedDecodedPlayback } ?? []
-                let allLandmarks = (existingPlaybackLandmarks + generatedLandmarks)
-                    .sorted { $0.sourceMediaStartMs < $1.sourceMediaStartMs }
-                    .enumerated().map { index, landmark in
-                        let sketchWindow = sketch.windows.first {
-                            landmark.anchorMediaTimeMs >= $0.sourceStartMs
-                                && landmark.anchorMediaTimeMs < $0.sourceEndMs
-                        }
-                        return EpisodeFingerprintLandmark(
-                            id: landmark.id,
-                            order: index,
-                            sourceMediaStartMs: landmark.sourceMediaStartMs,
-                            sourceMediaEndMs: landmark.sourceMediaEndMs,
-                            anchorMediaTimeMs: landmark.anchorMediaTimeMs,
-                            continuityEpoch: landmark.continuityEpoch,
-                            trigger: landmark.trigger,
-                            provenance: landmark.provenance,
-                            signatureAssetId: landmark.signatureAssetId,
-                            transcriptSketchWindowId: sketchWindow?.id,
-                            generatorVersion: landmark.generatorVersion
-                        )
-                    }
+                let allLandmarks = EpisodeMapAssembly.mergedLandmarks(
+                    existing: try store.loadEditionFingerprintSpine(itemId: item.id)?.landmarks ?? [],
+                    generated: generatedLandmarks,
+                    sketchWindows: sketch.windows
+                )
                 let spine = EditionFingerprintSpineArtifact(
                     id: "episode-spine-\(self.safePodcastEvidenceComponent(item.id))",
                     itemId: item.id,
@@ -280,10 +250,7 @@ extension Gate1AppModel {
                 try store.saveEpisodeMapPreparationJob(job)
                 for draft in drafts {
                     try Task.checkCancellation()
-                    let text = timeline.segments
-                        .filter { $0.endMs > draft.startMs && $0.startMs < draft.endMs }
-                        .map(\.text)
-                        .joined(separator: " ")
+                    let text = EpisodeMapAssembly.sceneText(for: draft, in: timeline)
                     var label: ListeningMapSummaryValidator.SceneLabel?
                     if self.localFoundationModelClient.availability().isAvailable, !text.isEmpty {
                         for _ in 0..<2 where label == nil {
@@ -295,42 +262,14 @@ extension Gate1AppModel {
                             }
                         }
                     }
-                    let nearestEvidence = allLandmarks.min {
-                        abs($0.anchorMediaTimeMs - draft.startMs) < abs($1.anchorMediaTimeMs - draft.startMs)
-                    }?.signatureAssetId
-                    let machineEvidence = nearestEvidence.map { [$0] } ?? []
-                    let eligibility = label?.eligibility ?? .unknown
-                    scenes.append(PortableListeningMapScene(
-                        id: draft.id,
-                        order: draft.order,
-                        title: label?.title ?? draft.publisherTitle,
-                        summaryText: ListeningMapSummaryValidator.storedSummary(for: label).text,
-                        summaryAssetId: nil,
-                        summaryProvenance: ListeningMapSummaryValidator.storedSummary(for: label).provenance,
-                        eligibility: eligibility,
-                        eligibilityReason: label?.eligibilityReason,
-                        startAnchor: PortableAnchorEvidence(
-                            anchorType: .transcript,
-                            mediaTimeMs: draft.startMs,
-                            transcriptSegmentId: draft.startTranscriptSegmentId,
-                            chapterTitle: label?.title ?? draft.publisherTitle,
-                            machineEvidenceAssetIds: machineEvidence
-                        ),
-                        endAnchor: PortableAnchorEvidence(
-                            anchorType: .transcript,
-                            mediaTimeMs: draft.endMs,
-                            transcriptSegmentId: draft.endTranscriptSegmentId,
-                            chapterTitle: label?.title ?? draft.publisherTitle,
-                            machineEvidenceAssetIds: machineEvidence
-                        )
-                    ))
+                    scenes.append(EpisodeMapAssembly.scene(draft: draft, label: label, landmarks: allLandmarks))
                 }
                 let proposal = PortableListeningMapProposalArtifact(
                     id: "episode-map-proposal-\(self.safePodcastEvidenceComponent(item.id))",
                     createdAt: Date(),
-                    generator: self.localFoundationModelClient.availability().isAvailable
-                        ? "on-device-scene-map.v1"
-                        : "deterministic-scene-boundaries.v1",
+                    generator: EpisodeMapAssembly.proposalGenerator(
+                        foundationModelAvailable: self.localFoundationModelClient.availability().isAvailable
+                    ),
                     scenes: scenes
                 )
 
@@ -351,23 +290,12 @@ extension Gate1AppModel {
                 try store.saveEditionFingerprintSpine(spine)
                 try store.saveTranscriptPhraseSketch(sketch)
                 try store.savePortableListeningMapProposal(proposal, itemId: item.id)
-                let identityMatches = allLandmarks.map { landmark in
-                    FingerprintLandmarkMatch(
-                        id: "exact-\(landmark.id)",
-                        landmarkId: landmark.id,
-                        sourceMediaTimeMs: landmark.anchorMediaTimeMs,
-                        recipientMediaTimeMs: landmark.anchorMediaTimeMs,
-                        acousticConfidence: 1,
-                        transcriptCorroborated: true,
-                        isUniqueWithinEpisode: true
-                    )
-                }
                 try store.saveResolvedListeningMapProjection(EpisodeFingerprintAlignment.makeProjection(
                     id: "episode-projection-\(self.safePodcastEvidenceComponent(item.id))",
                     itemId: item.id,
                     proposalId: proposal.id,
                     recipientEditionSHA256: digest,
-                    matches: identityMatches,
+                    matches: EpisodeMapAssembly.identityMatches(for: allLandmarks),
                     exactEdition: true
                 ))
                 for asset in try store.loadOwnedOfflineAssets() where
@@ -378,11 +306,11 @@ extension Gate1AppModel {
                 job.stage = .completed
                 try store.saveEpisodeMapPreparationJob(job)
                 try store.deleteEpisodeMapPreparationJob(id: job.id)
-                self.episodeMapPreparationStatus = scenes.contains(where: { $0.summaryText != nil })
-                    ? "Ready with scene summaries"
-                    : "Fingerprint map ready; scene summaries unavailable"
-                self.diagnostics["episodeMapPreparation:\(item.id)"] =
-                    "complete:landmarks=\(allLandmarks.count):scenes=\(scenes.count):transcript_deleted"
+                self.episodeMapPreparationStatus = EpisodeMapAssembly.completionStatus(scenes: scenes)
+                self.diagnostics["episodeMapPreparation:\(item.id)"] = EpisodeMapAssembly.completionDiagnostic(
+                    landmarkCount: allLandmarks.count,
+                    sceneCount: scenes.count
+                )
                 if item.id == self.activeItemId {
                     self.refreshSelectedItem()
                     self.updateSkimAvailability()
