@@ -214,6 +214,48 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
                       "a live upload record deliberately outlives its item, so a quarantined one does too")
     }
 
+    /// #1499: the audit of #1481 found three kinds whose live rows are saved under the item but whose set-aside
+    /// rows stayed behind after a permanent delete. `publisher_audio` is keyed by the item id; the watch
+    /// kinds name the item in their payload, and a sync event's payload also names a recording.
+    func testPublisherAudioAndWatchRowsOfTheItemGoButAnotherItemsAndALookalikeStay() throws {
+        try seed()
+        func publisherAudio(_ item: String) -> String {
+            #"{"itemId":"\#(item)","audioURL":"https://example.com/\#(item).mp3","detectedFrom":"feed_enclosure","from-a-future-build":true}"#
+        }
+        func syncEvent(_ id: String, item: String) -> String {
+            #"{"id":"\#(id)","itemId":"\#(item)","sessionId":"session-\#(item)","audioFileName":"\#(id).m4a","from-a-future-build":true}"#
+        }
+        func packageRequest(_ id: String, item: String) -> String {
+            #"{"id":"\#(id)","itemId":"\#(item)","requestType":"prerender_requested","from-a-future-build":true}"#
+        }
+        for item in ["item-1", "item-2", "item-10"] {
+            try quarantine("publisher_audio", item, publisherAudio(item))
+            try quarantine("watch_sync_event", "sync-\(item)", syncEvent("sync-\(item)", item: item))
+            try quarantine("watch_package_request", "request-\(item)", packageRequest("request-\(item)", item: item))
+        }
+        let keptBefore = try quarantined().filter { row in
+            let id = row[1] ?? ""
+            return !id.hasSuffix("item-1") && !deletedItemKeys.contains("\(row[0] ?? "")/\(id)")
+        }
+        XCTAssertEqual(keptBefore.count, 5 + 6, "the seeded rows of other items plus item-2's and item-10's new ones")
+        let store = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 12 + 9)
+
+        try store.deleteItem(id: "item-1")
+
+        let kept = try quarantinedKeys()
+        for key in ["publisher_audio/item-1", "watch_sync_event/sync-item-1", "watch_package_request/request-item-1"] {
+            XCTAssertFalse(kept.contains(key), "\(key) belongs to the deleted item")
+        }
+        XCTAssertEqual(try quarantined().filter { row in keptBefore.contains(row) }, keptBefore,
+                       "every other row stays, byte for byte")
+        for key in ["publisher_audio/item-10", "watch_sync_event/sync-item-10", "watch_package_request/request-item-10",
+                    "publisher_audio/item-2", "watch_sync_event/sync-item-2", "watch_package_request/request-item-2"] {
+            XCTAssertTrue(kept.contains(key), "\(key) is not item-1's")
+        }
+        XCTAssertEqual(try store.quarantinedRecordCount(), 21 - 3 - deletedItemKeys.count)
+    }
+
     func testTheLiveTurnsOfAQuarantinedSessionGoWithTheItem() throws {
         try seed()
         _ = try SQLiteSessionStore(path: path)
