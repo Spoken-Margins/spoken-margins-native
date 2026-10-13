@@ -351,6 +351,60 @@ class Rearm(unittest.TestCase):
         self.assertTrue(self.decide([self.LANE, {"created_at": "2026-09-30T15:40:00Z", "body": body}])[0])
 
 
+class InheritedFindings(unittest.TestCase):
+    """#712: the audit and the re-arm use the runner's inherited-finding rules (scripts/lane_inherited_holds.py)."""
+    HOLD = {"pr": 616, "sha": "8ddbd14" + "0" * 33, "id": 111, "url": "https://example.test/c#issuecomment-111",
+            "verdict": "[P1] wrong item"}
+    LANE = Rearm.LANE
+    CLEAN = Rearm.CLEAN  # a clean audit of HEAD (68fc333)
+
+    @staticmethod
+    def resolution(source, head=HEAD, evidence="fixed and tested"):
+        body = json.dumps({"source": source, "head": head, "evidence": evidence})
+        return {"created_at": "2026-09-30T15:30:00Z", "body": f"Resolved <!-- audit-resolution: {body} -->"}
+
+    def test_a_clean_audit_does_not_rearm_a_head_that_inherits_a_blocking_audit(self):
+        armed = pr(**Rearm.ARMED)
+        ok, why = A.rearm_decision(armed, [self.LANE, self.CLEAN], [], [self.HOLD])
+        self.assertFalse(ok)
+        self.assertIn("inherits a blocking audit finding", why)
+        self.assertTrue(A.rearm_decision(armed, [self.LANE, self.CLEAN], [], [])[0])
+        self.assertTrue(A.rearm_decision(armed, [self.LANE, self.CLEAN], [])[0])  # callers that don't look: as before
+
+    def test_a_resolution_then_a_clean_audit_rearms(self):
+        armed = pr(**Rearm.ARMED)
+        comments = [self.LANE, self.resolution(111), self.CLEAN]
+        self.assertTrue(A.rearm_decision(armed, comments, [], [self.HOLD])[0])
+        stale = [self.LANE, self.resolution(111, head="f" * 40), self.CLEAN]
+        self.assertFalse(A.rearm_decision(armed, stale, [], [self.HOLD])[0])
+
+    def test_a_resolution_posted_after_the_audit_asks_for_another_audit_of_the_head(self):
+        audited = [FIXTURE["comments_audited_old_head"][2], {"created_at": "2026-09-30T15:40:00Z", "body":
+                   "**Claude audit on `68fc333`**\n\n[P1] still wrong"}]
+        ok, why = A.evaluate_pr(pr(), audited, FIXTURE["files_risky"])
+        self.assertEqual((ok, why), (False, "already audited on head"))
+        ok, why = A.evaluate_pr(pr(), audited + [self.resolution(111)], FIXTURE["files_risky"])
+        self.assertTrue(ok, why)
+        ok, why = A.evaluate_pr(pr(), audited + [self.resolution(111, head="f" * 40)], FIXTURE["files_risky"])
+        self.assertEqual((ok, why), (False, "already audited on head"))
+
+    def test_the_prompt_lists_inherited_findings_and_what_a_clean_verdict_needs(self):
+        text = A.inherited_text([], [self.HOLD], None, HEAD)
+        self.assertIn("UNRESOLVED", text)
+        self.assertIn("8ddbd14", text)
+        self.assertIn("audit-resolution", text)
+        block = A.pr_context_block({**pr(), "number": 366, "issues": [], "lines": 1, "comments": []}, {}, "d.diff",
+                                   "b" * 40, "c" * 40, "", text)
+        self.assertIn("Inherited audit findings", block)
+        self.assertNotIn("Inherited audit findings", A.pr_context_block(
+            {**pr(), "number": 366, "issues": [], "lines": 1, "comments": []}, {}, "d.diff", "b" * 40, "c" * 40, "", ""))
+        self.assertIn("lookup failed", A.inherited_text([], [], "rate limited", HEAD))
+
+    def test_a_lookup_that_fails_is_unknown_and_never_none(self):
+        with patch.object(A, "run", side_effect=RuntimeError("offline")):
+            self.assertEqual(A.head_holds(366, HEAD), ([], "offline"))
+
+
 class RearmWhileLaneFinishes(unittest.TestCase):
     def api_response(self, cmd, **kwargs):
         path = cmd[-1]
@@ -364,6 +418,9 @@ class RearmWhileLaneFinishes(unittest.TestCase):
         self.fail(f'unexpected API request: {cmd}')
 
     def setUp(self):
+        no_holds = patch.object(A, 'head_holds', return_value=([], None))  # #712: no lookup of other PRs' audits here
+        no_holds.start()
+        self.addCleanup(no_holds.stop)
         self.armed = pr(**Rearm.ARMED)
         self.active_run = {'id': 100, 'status': 'in_progress',
                            'display_title': f'lane pr=366 head={HEAD} lane=false auto=true'}
