@@ -119,6 +119,37 @@ final class PendingHandoffRetryPolicyTests: XCTestCase {
         XCTAssertTrue(store.pending.isEmpty)
     }
 
+    /// The integration run's failure: a Spotify share (the resolver says "unsupported") reached the listener as an
+    /// error banner reading "persistence_failed:...". It goes to the inbox with the readable message and no banner.
+    @MainActor
+    func testUnplayableLinkIsQuarantinedWithItsMessageAndNoAnnouncement() async {
+        let message = "Spoken Margins could not find a public audio file for this Spotify episode."
+        let store = FakeHandoffStore(pending: ["spotify", "bad"])
+        let report = await store.drain { id in
+            if id == "spotify" { throw SourceLinkNotPlayableError(message) }
+            throw BadPDF()
+        }
+        XCTAssertEqual(report.outcomes.map(\.outcome), [
+            .notPlayable(reason: message), .quarantined(reason: "The shared link did not return a readable PDF.")
+        ])
+        XCTAssertEqual(report.quarantinedCount, 2)
+        XCTAssertEqual(report.announcedFailures, ["The shared link did not return a readable PDF."])
+        XCTAssertEqual(store.quarantined["spotify"], message)
+        XCTAssertEqual(report.outcomes.first?.outcome.diagnosticValue, "quarantined:\(message)")
+        XCTAssertTrue(store.pending.isEmpty)
+    }
+
+    func testQuarantineReasonDropsTheInternalErrorCode() {
+        let error = SessionKitError.persistenceFailed("This share does not contain a valid podcast, RSS, or audio URL.")
+        XCTAssertEqual(error.localizedDescription, "persistence_failed:This share does not contain a valid podcast, RSS, or audio URL.")
+        XCTAssertEqual(
+            PendingHandoffRetryPolicy.outcome(for: error),
+            .quarantined(reason: "This share does not contain a valid podcast, RSS, or audio URL.")
+        )
+        XCTAssertEqual(PendingHandoffRetryPolicy.readableReason(for: BadPDF()), "The shared link did not return a readable PDF.")
+        XCTAssertEqual(PendingHandoffRetryPolicy.readableReason(for: URLError(.badURL)), URLError(.badURL).localizedDescription)
+    }
+
     @MainActor
     func testStoreErrorsKeepTheirHandling() async {
         let store = FakeHandoffStore(pending: ["invalid", "missing"])

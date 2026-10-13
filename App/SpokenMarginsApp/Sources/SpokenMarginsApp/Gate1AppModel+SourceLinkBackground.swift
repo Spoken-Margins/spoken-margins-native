@@ -88,7 +88,7 @@ extension Gate1AppModel {
             let provider = result.originalLink.provider ?? result.candidates.first?.sourceLink.provider
             diagnostics["lastSourceLinkFailureCategory"] = result.failureReason
                 ?? result.status.rawValue
-            throw SessionKitError.persistenceFailed(SourceLinkFailureMessage.text(
+            throw SourceLinkNotPlayableError(SourceLinkFailureMessage.text(
                 status: result.status.rawValue,
                 reason: result.failureReason,
                 provider: provider
