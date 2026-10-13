@@ -3555,6 +3555,15 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
     }
 
+    public func recordingInProgressRef() -> String? {
+        #if canImport(AVFoundation)
+        guard isCaptureActive, let currentURL else { return nil }
+        return relativeRecordingPath(for: currentURL)
+        #else
+        return nil
+        #endif
+    }
+
     public func captureDiagnostics() -> [String: String] {
         #if canImport(AVFoundation)
         var fields: [String: String] = ["captureRestarts": String(captureRestarts), "inputPolicy": inputChoice.rawValue]

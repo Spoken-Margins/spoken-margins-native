@@ -28,6 +28,15 @@ enum RecordedFileDuration {
     }
 }
 
+/// Whether a recording an unfinished Margin left behind can be used (#951). A file that will not open is not
+/// valid, however many bytes it has: a recorder killed mid-write leaves an AAC file without its closing index.
+public enum RecordingDraftProbe {
+    public static func isDecodable(_ url: URL) -> Bool {
+        if case .milliseconds(let ms) = RecordedFileDuration.measure(url) { return ms > 0 }
+        return false
+    }
+}
+
 /// Whether a restart may delete the file of the recorder it replaces (#1041). Pure, so the refusal is testable
 /// without a microphone.
 enum CaptureRestartGuard {

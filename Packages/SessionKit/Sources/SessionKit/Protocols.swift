@@ -425,9 +425,13 @@ public protocol RecordingClient {
     func restartCapture() throws
     /// Privacy-safe fields about the capture in progress (route, restarts, level), for the diagnostics log.
     func captureDiagnostics() -> [String: String]
+    /// Where the file being recorded will be, named the way the saved Margin names it. Nil when nothing is recording
+    /// or the recorder can't say. The draft journal keeps it so a kill before Save still points at the file (#951).
+    func recordingInProgressRef() -> String?
 }
 
 extension RecordingClient {
+    public func recordingInProgressRef() -> String? { nil }
     public func captureReading() -> RecordingCaptureReading? { nil }
     public func restartCapture() throws {
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")

@@ -58,6 +58,44 @@ final class RecordedFileDurationTests: XCTestCase {
         XCTAssertEqual(RecordedFileDuration.measure(damaged), .unreadable)
     }
 
+    /// #951: files left by a writer that was SIGKILLed 0.7 s into recording (AVAudioFile, the container the recorder
+    /// makes, run in a child process on macOS 26). The AAC .m4a has bytes but no closing index, so it never opens;
+    /// the PCM .caf opens with the audio written so far. Cutting a finished file short is not the same damage,
+    /// which is why these are real kills. Whether the phone's AVAudioRecorder does the same is a phone check.
+    func testARecordingKilledMidWriteIsNotDecodableAsAAC() throws {
+        let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures")
+        let killedAAC = fixtures.appending(path: "killed-while-recording-aac.m4a")
+        XCTAssertGreaterThan((try killedAAC.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0, 10_000, "the file has bytes")
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(killedAAC))
+        XCTAssertEqual(RecordedFileDuration.measure(killedAAC), .unreadable, "unknown, so it is kept, never read as empty")
+
+        let killedPCM = fixtures.appending(path: "killed-while-recording-pcm.caf")
+        XCTAssertTrue(RecordingDraftProbe.isDecodable(killedPCM))
+        guard case .milliseconds(let ms) = RecordedFileDuration.measure(killedPCM) else { return XCTFail("the PCM file must measure") }
+        XCTAssertGreaterThan(ms, 300)
+    }
+
+    func testAFinishedRecordingIsDecodable() throws {
+        let finished = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: finished) }
+        try SeededNoiseAudio.write(to: finished, seconds: 3)
+        XCTAssertTrue(RecordingDraftProbe.isDecodable(finished))
+    }
+
+    func testAMissingEmptyOrDamagedFileIsNotDecodable() throws {
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(temporaryURL()))
+        let empty = temporaryURL()
+        let damaged = temporaryURL()
+        defer {
+            try? FileManager.default.removeItem(at: empty)
+            try? FileManager.default.removeItem(at: damaged)
+        }
+        try Data().write(to: empty)
+        try Data(repeating: 0x5A, count: 4_096).write(to: damaged)
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(empty))
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(damaged))
+    }
+
     func testTheMeasurementRunsOffTheMainThreadAndTheOutcomeAppearsWithoutWaiting() throws {
         let url = temporaryURL()
         defer { try? FileManager.default.removeItem(at: url) }
