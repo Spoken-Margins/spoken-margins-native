@@ -413,10 +413,3 @@ struct OfflineStorageSnapshot: Equatable, Sendable {
         )
     }
 }
-
-struct RecordingPresentationContext: Equatable, Sendable {
-    let itemTitle: String
-    let locationTitle: String
-    let progressPercent: Int
-    let startedAt: Date
-}
