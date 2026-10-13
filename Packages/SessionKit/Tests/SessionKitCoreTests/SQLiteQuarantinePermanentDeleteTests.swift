@@ -242,6 +242,7 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
         XCTAssertEqual(try store.quarantinedRecordCount(), 12 + 9)
 
         try store.deleteItem(id: "item-1")
+        let reopened = try SQLiteSessionStore(path: path)
 
         let kept = try quarantinedKeys()
         for key in ["publisher_audio/item-1", "watch_sync_event/sync-item-1", "watch_package_request/request-item-1"] {
@@ -253,7 +254,7 @@ final class SQLiteQuarantinePermanentDeleteTests: XCTestCase {
                     "publisher_audio/item-2", "watch_sync_event/sync-item-2", "watch_package_request/request-item-2"] {
             XCTAssertTrue(kept.contains(key), "\(key) is not item-1's")
         }
-        XCTAssertEqual(try store.quarantinedRecordCount(), 21 - 3 - deletedItemKeys.count)
+        XCTAssertEqual(try reopened.quarantinedRecordCount(), 21 - 3 - deletedItemKeys.count, "also after the file is opened again")
     }
 
     func testTheLiveTurnsOfAQuarantinedSessionGoWithTheItem() throws {
