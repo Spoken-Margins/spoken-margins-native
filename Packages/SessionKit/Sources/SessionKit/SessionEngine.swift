@@ -2296,10 +2296,20 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func aiProviderFailed(error: String) throws -> SessionSnapshot {
-        let session = try resolveSession(nil)
+    /// Settles a provider failure. Without ids it settles the active session's last open job.
+    /// A late failure names the `sessionId` and `turnId` it was started for, so it settles
+    /// that job and turn even after another session became active (#1469). A turn id that
+    /// matches no open job falls back to that session's last open job.
+    public func aiProviderFailed(error: String, sessionId: String? = nil, turnId: String? = nil) throws -> SessionSnapshot {
+        // A session that was named but is gone is an error, not "the active session".
+        if let sessionId, try repository.loadSession(id: sessionId) == nil {
+            throw SessionKitError.invalidCommandForState("aiProviderFailed")
+        }
+        let session = try resolveSession(sessionId)
         var jobs = try repository.loadAIJobs(sessionId: session.id)
-        guard var job = jobs.last(where: { $0.status == "pending" || $0.status == "deferred" }) else {
+        let open = jobs.filter { $0.status == "pending" || $0.status == "deferred" }
+        // The job for the named turn; if the caller's turn id is stale, the session's last open job.
+        guard var job = open.last(where: { turnId != nil && $0.turnId == turnId }) ?? open.last else {
             throw SessionKitError.invalidCommandForState("aiProviderFailed")
         }
         job.status = "retryable"
@@ -2313,6 +2323,8 @@ public final class SessionEngine {
             turn.status = hasPartialContent ? "failed_partial" : "failed"
             try repository.saveTurn(turn)
         }
+        // The snapshot describes the active session; another session's failure leaves it alone.
+        guard session.id == currentSession?.id else { return snapshot }
         snapshot.pendingAiJobKind = job.kind
         snapshot.pendingAiJobStatus = job.status
         snapshot.lastFailure = "ai_provider_unreachable"
