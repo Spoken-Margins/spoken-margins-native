@@ -60,7 +60,60 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
         XCTAssertEqual(audio.seeks, [], "no player to move")
     }
 
+    /// #1537: a Margin recorded while the article was read with on-device speech has only a text place. Once the
+    /// article is prepared, its Margins play from the narration, and "Play this moment" refused the Margin
+    /// (`invalid_command_for_state:playInterjectionAnchor`) because the anchor had no media time.
+    func testATextOnlyMarginOnPreparedNarrationOpensAtItsPassage() throws {
+        let (engine, audio) = try narrationEngine()
+        let margin = try textOnlyMargin(in: engine, startChar: 24)
+
+        let played = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(played.targetType, TargetType.transcriptBackedMedia.rawValue, "the prepared narration plays the Margin")
+        XCTAssertEqual(played.currentMediaTimeMs, 1_500, "at the Margin's sentence in the narration")
+        XCTAssertEqual(audio.mediaTimeMs, 1_500, "the player opens there")
+        XCTAssertEqual(played.currentTextStart, 24)
+    }
+
+    /// A partly rendered narration doesn't reach every Margin. That Margin is read with on-device speech from its
+    /// place, as a Margin a publisher recording doesn't reach is (#547), instead of refusing to play.
+    func testATextOnlyMarginPastAPartialRenderIsReadWithOnDeviceSpeech() throws {
+        let (engine, _) = try narrationEngine(renderedSegments: 2)
+        let margin = try textOnlyMargin(in: engine, startChar: 40)
+
+        let played = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(played.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(engine.currentSession?.position.charOffset, 40)
+    }
+
+    /// A Margin recorded while the narration played keeps its own media time; nothing changes for it.
+    func testAMarginWithAMediaTimeStillOpensAtThatTime() throws {
+        let (engine, audio) = try narrationEngine()
+        let margin = try textOnlyMargin(in: engine, startChar: 24, mediaTimeMs: 2_400)
+
+        let played = try engine.playInterjectionAnchor(margin)
+
+        XCTAssertEqual(played.currentMediaTimeMs, 2_400)
+        XCTAssertEqual(audio.mediaTimeMs, 2_400)
+    }
+
+    private func textOnlyMargin(in engine: SessionEngine, startChar: Int, mediaTimeMs: Int? = nil) throws -> Interjection {
+        var anchor = Anchor(anchorType: .text, startChar: startChar, endChar: startChar + 4, anchorBefore: "", anchorAfter: "")
+        anchor.mediaTimeMs = mediaTimeMs
+        let margin = Interjection(
+            id: "margin", itemId: "article", sessionId: try XCTUnwrap(engine.currentSession?.id), targetType: .item,
+            targetId: "article", createdAt: Date(timeIntervalSince1970: 2), roughPercent: 50, anchor: anchor,
+            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
+            displayText: "A note", status: "active")
+        try XCTUnwrap(store).saveInterjection(margin)
+        return margin
+    }
+
     // MARK: - Fixture
+
+    /// The repository behind the last `narrationEngine()`.
+    private var store: InMemorySessionRepository?
 
     private func narrationEngine(renderedSegments: Int = 3, playing: Bool = true, hasPlayer: Bool = true) throws -> (SessionEngine, NarrationAudioClient) {
         let file = FileManager.default.temporaryDirectory.appending(path: "narration-\(UUID().uuidString).m4a")
@@ -76,6 +129,7 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
             position: Position(charOffset: 33, mediaTimeMs: 2_000), completionPercent: 66, playbackRate: 1
         )
         let repository = InMemorySessionRepository(items: [item.id: item], sessions: [session.id: session])
+        store = repository
         try repository.saveTranscriptTimeline(SourceTranscriptTimeline(
             id: "timeline", itemId: item.id, createdAt: Date(timeIntervalSince1970: 1),
             timeline: TranscriptTimeline(segments: Array(timeline.segments.prefix(renderedSegments)), chapters: [], durationMs: 3_000)
