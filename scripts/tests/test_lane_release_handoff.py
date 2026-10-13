@@ -95,6 +95,23 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         self.assertEqual(subprocess.check_output(['git', '-C', str(self.tree), 'rev-list', '--parents', '-n', '1',
                                                  merged], text=True).split()[2], self.head)
 
+    def test_the_release_is_held_by_an_inherited_audit_finding_like_any_automerge_run(self):
+        # #712 x #1209: the hand-off moves the host tests, not the merge rules. A PR that brings in another PR's
+        # blocked commits stays held on the build runner, however clean its own T3 and host tests are.
+        github = self.handed_off()
+        before = self.rev(self.origin, 'next')
+        hold = f'{lane.INHERITED_HOLD} from PR #616 on `abc1234`'
+        with mock.patch.object(lane, 'run_automerge', return_value=PASSED) as checks, \
+                mock.patch.object(lane, 'inherited_check', return_value=lambda comments: [hold]) as inherited:
+            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r50-auto', self.evidence / 'release',
+                                           before, 'handed to the build runner', room=mock.Mock(return_value=(None, None)))
+        checks.assert_called_once()  # the host PASS still runs; only the merge waits
+        inherited.assert_called_once()
+        self.assertEqual(self.rev(self.origin, 'next'), before)
+        self.assertNotIn('merged into next as', released)
+        self.assertIn(f'not merged by the runner: {hold}.', released)
+        self.assertTrue(lane.AUDIT_HOLD.search(released))  # the audit script finds it by this line
+
     def test_no_room_on_the_build_runner_reports_a_runner_fault_and_merges_nothing(self):
         github = self.handed_off()
         before = self.rev(self.origin, 'next')
