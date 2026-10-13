@@ -654,6 +654,14 @@ struct PlaybackScreen: View {
             .accessibilityHint("Opens item details and listening-session history")
             .accessibilityIdentifier("playback.itemTitle.button")
 
+            PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
+                selectedItemId: model.selectedItem.id,
+                playingItemId: model.snapshot.itemId,
+                sessionId: model.snapshot.sessionId,
+                interjections: model.selectedItem.interjections,
+                isRetrying: model.isRetryingInterjectionTranscription
+            ))
+
             if let chapterTitle = model.playbackChapterHeaderTitle {
                 Button(action: model.openCurrentPlaybackItem) {
                     Text(chapterTitle)
