@@ -48,13 +48,15 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
-    @State private var isSourceTextPresented = false
+    @State private var sourceTextPresentation: PlaybackTextPeek?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write }
-    @State private var sourceTextOffsetAtPresentation = 0
+    private enum OptionsDestination {
+        case item, timeline, export, margins, write
+        case text(PlaybackTextPeek)
+    }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -150,13 +152,8 @@ struct PlaybackScreen: View {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
-            .sheet(isPresented: $isSourceTextPresented) {
-                NativeTextPeekView(
-                    title: model.selectedItem.title,
-                    text: model.selectedItem.text,
-                    chapters: model.selectedItem.chapters,
-                    currentOffset: sourceTextOffsetAtPresentation
-                )
+            .sheet(item: $sourceTextPresentation) { presentation in
+                NativeTextPeekView(presentation: presentation)
             }
             .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
@@ -439,6 +436,7 @@ struct PlaybackScreen: View {
         case .export: model.openExport()
         case .margins: model.openMargins()
         case .write: model.beginWrittenMargin()
+        case .text(let presentation): sourceTextPresentation = presentation
         }
     }
 
@@ -908,8 +906,13 @@ struct PlaybackScreen: View {
 
         if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
             Button {
-                sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
-                isSourceTextPresented = true
+                let presentation = PlaybackTextPeek(
+                    title: model.selectedItem.title,
+                    text: model.selectedItem.text,
+                    chapters: model.selectedItem.chapters,
+                    offset: model.snapshot.currentTextStart ?? 0
+                )
+                closeOptions(to: .text(presentation))
             } label: {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
@@ -1774,31 +1777,40 @@ private struct PastedAssistantResponseView: View {
 
 private struct NativeTextPeekView: View {
     @Environment(\.dismiss) private var dismiss
-    let title: String
-    let text: String
-    let chapters: [Chapter]
-    let currentOffset: Int
+    let presentation: PlaybackTextPeek
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+            ScrollViewReader { proxy in
+                ScrollView {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(chapterTitle)
-                            .font(.headline)
-                        Text(chapterText)
-                            .font(.body)
-                            .textSelection(.enabled)
+                        Text(presentation.chapterTitle).font(.headline)
+                        if presentation.passage.sentences.isEmpty {
+                            Text("No native text is available.")
+                        } else {
+                            ForEach(presentation.passage.sentences) { sentence in
+                                Text(sentence.text)
+                                    .font(.body)
+                                    .id(sentence.id)
+                            }
+                        }
                     }
+                    .textSelection(.enabled)
                     .padding(16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(AppColors.inputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
+                    .padding(20)
                 }
-                .padding(20)
+                .task(id: presentation.id) {
+                    // Wait for the sentence rows to lay out before scrolling.
+                    await Task.yield()
+                    if let sentenceID = presentation.initialSentenceID {
+                        proxy.scrollTo(sentenceID, anchor: .top)
+                    }
+                }
             }
-            .navigationTitle(title.isEmpty ? "Source Text" : title)
+            .navigationTitle(presentation.title.isEmpty ? "Source Text" : presentation.title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1807,27 +1819,6 @@ private struct NativeTextPeekView: View {
             }
             .accessibilityIdentifier("nativeText.peek.sheet")
         }
-    }
-
-    private var selectedChapter: Chapter? {
-        guard !chapters.isEmpty else { return nil }
-        let offset = max(0, min(currentOffset, text.count))
-        return chapters.first(where: { offset >= $0.startChar && offset < $0.endChar })
-            ?? chapters.last(where: { $0.startChar <= offset })
-            ?? chapters.first
-    }
-
-    private var chapterTitle: String {
-        selectedChapter?.title ?? "Full Text"
-    }
-
-    private var chapterText: String {
-        guard !text.isEmpty else { return "No native text is available." }
-        guard let chapter = selectedChapter else { return text }
-        let characters = Array(text)
-        let start = max(0, min(chapter.startChar, characters.count))
-        let end = max(start, min(chapter.endChar, characters.count))
-        return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
