@@ -170,7 +170,10 @@ final class MarginCaptureCoordinatorTests: XCTestCase {
     }
 
     private func context() -> RecordingPresentationContext {
-        RecordingPresentationContext(itemTitle: "Item", locationTitle: "Here", progressPercent: 0, startedAt: now)
+        var snapshot = SessionSnapshot()
+        snapshot.title = "Item"
+        snapshot.chapterTitle = "Here"
+        return RecordingPresentationContext(snapshot: snapshot, startedAt: now)
     }
 }
 
