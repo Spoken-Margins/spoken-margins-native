@@ -352,11 +352,74 @@ def merged_prs(base: str | None, target: str) -> dict[int, str]:
     """{PR number: merge subject} for PRs merged into next between base and target, newest first."""
     span = f'{base}..{target}' if base else target
     merged: dict[int, str] = {}
+    reverted = reverted_prs(target)  # merged and reverted since: not in this build (#1545)
     for subject in git('log', '--first-parent', '--format=%s', span, '-n', '400').splitlines():
         found = re.match(r'Merge pull request #(\d+)\b', subject)
-        if found:
+        if found and int(found.group(1)) not in reverted:
             merged.setdefault(int(found.group(1)), subject)
     return merged
+
+
+MERGE_SUBJECT = re.compile(r'Merge pull request #(\d+)\b')
+REVERT_SUBJECT = re.compile(r'Revert #(\d+)\b')                 # ours and the lane runner's: "Revert #1371: ..."
+REVERTS_BODY = re.compile(r'\bThis reverts (?:commit|merge) ([0-9a-f]{7,40})\b')
+# A re-land lands every #N its subject names: "Re-land #1407 and ... (#1413)", "re-land episode map pins (#1183)".
+RE_LAND = re.compile(r'\bre-?land(?:s|ed|ing)?\b', re.I)
+_reverted: dict[str, set[int]] = {}
+
+
+def reverted_prs(sha: str) -> set[int]:
+    """The PRs merged into the build and then reverted, and not landed again (#1545: #1371 and #1404 were
+    reverted inside #1482, so off the first-parent line, and the notes still asked for their checks).
+
+    Every commit the build holds counts, oldest first. A revert is "Revert #N: ...", git's own
+    'Revert "Merge pull request #N ..."', or a body "This reverts merge <sha>" naming a PR's merge. A
+    revert of that revert, a "Re-land #N", or a later merge of #N lands it again.
+    """
+    if sha in _reverted:
+        return _reverted[sha]
+    # NUL and \x01 as separators: str.strip() treats \x1c-\x1f as whitespace and would eat an empty last body.
+    log = git('log', '--topo-order', '--reverse', '--format=%H%x00%s%x00%b%x01', sha, check=False)
+    merge_of: dict[str, int] = {}   # a PR's merge commit -> its number
+    revert_of: dict[str, int] = {}  # a commit that reverted #N -> N
+    state: dict[int, bool] = {}     # N -> reverted now
+
+    def lookup(table: dict[str, int], short: str) -> int | None:
+        return next((number for full, number in table.items() if full.startswith(short)), None)
+
+    for record in log.split('\x01'):
+        fields = record.strip('\n').split('\x00')
+        if len(fields) < 3:
+            continue
+        commit, subject, body = fields[:3]
+        rest, depth = subject, 0
+        while rest.startswith('Revert "'):
+            rest, depth = rest[len('Revert "'):], depth + 1
+        merged, ours = MERGE_SUBJECT.match(rest), REVERT_SUBJECT.match(rest)
+        number = None
+        if ours:
+            number, depth = int(ours.group(1)), depth + 1
+        elif merged and depth:
+            number = int(merged.group(1))
+        elif REVERTS_BODY.search(body):
+            short = REVERTS_BODY.search(body).group(1)
+            if lookup(merge_of, short) is not None:
+                number, depth = lookup(merge_of, short), 1
+            elif lookup(revert_of, short) is not None:
+                number, depth = lookup(revert_of, short), 2
+        if number is not None:
+            state[number] = depth % 2 == 1
+            if state[number]:
+                revert_of[commit] = number
+            continue
+        if merged:
+            merge_of[commit] = int(merged.group(1))
+            state[int(merged.group(1))] = False  # merged, or merged again
+        if RE_LAND.search(subject):
+            for again in re.findall(r'#(\d+)', subject):
+                state[int(again)] = False
+    _reverted[sha] = {number for number, now in state.items() if now}
+    return _reverted[sha]
 
 
 COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
@@ -463,13 +526,13 @@ def fetch_waiting() -> list[dict] | None:
 
 
 def build_prs(sha: str) -> set[int]:
-    """The PRs merged into the build: its first-parent "Merge pull request #N" subjects."""
+    """The PRs merged into the build: its first-parent "Merge pull request #N" subjects, less those reverted."""
     subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
-    return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)}
+    return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)} - reverted_prs(sha)
 
 
-def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset()) \
-        -> list[dict]:
+def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset(),
+                  reverted: set[int] = frozenset()) -> list[dict]:
     """The issues still waiting on the owner's check whose fix is in this build, in plan order: the current
     build milestone first, then found on the phone, then oldest (#927). `shown` holds the issue and PR
     numbers the plan already lists. Each is {'issue', 'prs': its fixing PRs in the build, 'check': the
@@ -480,6 +543,10 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     comments name one ("Merged in #907", "PR #257"), or a merge names the issue ("Merge play-this-moment
     into next (#156, #158)"). The label alone isn't enough: the fix may have merged after this build
     (#927: the label had been read as "waiting on your phone").
+
+    An issue is left out when any of its fixing PRs is in `reverted`: merged, then reverted and not landed
+    again (#1545: #447's logic PR #1356 stayed but its screen PR #1371 was reverted, and the notes asked the
+    owner to check a screen that wasn't there).
     """
     def build_number(issue):
         milestone = issue.get('milestone') or {}
@@ -493,6 +560,9 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
         sources = [(node or {}).get('source') or {} for node in (issue.get('timelineItems') or {}).get('nodes') or []]
         prs = {pr['number']: pr for pr in sources if pr.get('number') in built and pr.get('merged')
                and (issue['number'] in linked_numbers(pr) or pr['number'] in named)}
+        if named & set(reverted) or any(pr.get('number') in reverted and pr.get('merged')
+                                        and issue['number'] in linked_numbers(pr) for pr in sources):
+            continue
         for number in sorted(named & built - set(prs)):
             prs[number] = {'number': number, 'title': '', 'body': '', 'url': f'https://github.com/{REPO}/pull/{number}'}
         if not (prs or issue['number'] in named_in_build) or issue['number'] in shown or shown & set(prs):
@@ -510,9 +580,16 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
 
 
 def built_numbers(sha: str) -> set[int]:
-    """Every #N in the build's merge subjects: the PRs merged into it and the issues their titles name."""
-    subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
-    return {int(n) for n in re.findall(r'#(\d+)', subjects)}
+    """Every #N in the build's merge subjects: the PRs merged into it and the issues their titles name.
+    A reverted PR's merge, and a revert, name nothing built (#1545)."""
+    reverted = reverted_prs(sha)
+    numbers: set[int] = set()
+    for subject in git('log', '--first-parent', '--format=%s', sha, check=False).splitlines():
+        merged = MERGE_SUBJECT.match(subject)
+        if merged and int(merged.group(1)) in reverted or re.match(r'(?:Merge pull request #\d+: )?Revert\b', subject):
+            continue
+        numbers |= {int(n) for n in re.findall(r'#(\d+)', subject)}
+    return numbers - reverted
 
 
 def references(check: str) -> list[int]:
@@ -1072,7 +1149,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     pending = fetch_waiting()
     shown = {number for entry in [*entries, *([pr] for screen in screens for pr in screen['prs'])] for pr in entry
              for number in [pr['number'], *pr.get('linked', ()), *(issue['number'] for issue in pr['issues'])]}
-    fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha)) if pending else []
+    fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha), reverted_prs(sha)) if pending else []
     unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']
                  and not fix['refused']]
     if unwritten:

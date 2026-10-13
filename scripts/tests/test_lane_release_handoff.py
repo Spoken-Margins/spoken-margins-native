@@ -7,9 +7,14 @@ commit on sm-lane-mac, the one runner that runs T3s: 7 re-tests and about 63 run
 dispatches lane.yml's release job to a build runner and moves on; a merge still needs a host PASS on the tree
 that merges.
 """
+from __future__ import annotations
+
+import datetime
+import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,6 +28,30 @@ from test_lane_t3_first import RealGitLaneTests  # noqa: E402
 
 PASSED = ('PASS', 'no simulator (compile only)', 'host tests (--plan fast): passed', [])
 WORKFLOW = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
+
+
+def job_steps(workflow: str, job: str) -> list[dict]:
+    """A job's steps from lane.yml, each as {key: value}, block scalars (`run: |`) with their indentation removed.
+
+    Enough YAML for this file's own layout (jobs at 2 spaces, steps at 6, step keys at 8), without PyYAML, which
+    neither the venv nor the runners' /usr/bin/python3 carries."""
+    body = workflow.split(f'\n  {job}:\n', 1)[1]
+    body = re.split(r'\n  (?:[a-z][\w-]*:|# )', body, maxsplit=1)[0]  # up to the next job or the comment before it
+    steps, step, key = [], None, None
+    for line in body.split('\n    steps:\n', 1)[1].splitlines():
+        if line.startswith('      - '):
+            step, key = {}, None
+            steps.append(step)
+            line = '        ' + line[8:]
+        if step is None or line.startswith('      #'):
+            continue
+        field = re.match(r'^        ([A-Za-z][\w-]*):(?: (.*))?$', line)
+        if field:
+            key, value = field.group(1), (field.group(2) or '').strip()
+            step[key] = '' if value in ('|', '>-', '>', '') else value
+        elif key is not None and (line.startswith('          ') or not line.strip()):
+            step[key] += line[10:] + '\n'
+    return steps
 
 
 class HandOffAfterTheT3PassTests(RealGitLaneTests):
@@ -285,6 +314,17 @@ class MainWiringTests(unittest.TestCase):
         self.assertTrue(github.posted[0].startswith('Lane: the automerge run stopped before reporting'))
         self.assertEqual(github.labeled, ['lane:done'])
 
+    def test_the_hand_off_note_says_when_the_release_run_counts_as_lost(self):
+        # #1542: a release run that never starts (cancelled or timed out in the queue) runs no step at all, so it
+        # can post nothing. The note itself tells the hourly dispatcher when to treat it as lost.
+        now = datetime.datetime(2026, 10, 13, 17, 31, tzinfo=datetime.timezone.utc)
+        note = lane.handed_off_note(HEAD, 'started by the T3 PASS', 'next moved', 'https://example.test/runs', now=now)
+        self.assertIn('2026-10-13 20:31Z', note)
+        self.assertIn('remove and re-add `automerge` once', note)
+        # Still no report, no stopped-job note and no answer to a /lane request.
+        self.assertIsNone(lane.lane_report_verdict(note))
+        self.assertTrue(lane.is_automerge_comment(note))
+
     def test_a_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
         release, _ = self.release_job(FakeGitHub(labels=('automerge',)), None, repo='someone/fork')
         release.assert_not_called()
@@ -336,6 +376,30 @@ class WorkflowTests(unittest.TestCase):
                 self.assertRegex(line.strip(), r'^(ref|group|[A-Z0-9_]+): ', line)
         self.assertIn('git show "origin/$BASE_REF:scripts/lane-runner.py"', self.release)  # the base's runner
 
+    def test_a_release_run_that_stops_before_its_runner_script_still_says_so(self):
+        # #1542: a failed checkout or LFS fetch leaves no lane-runner.py, so the tidy step can't post anything. The
+        # job's last step must work without anything the checkout or the runner fetch brought.
+        steps = job_steps(WORKFLOW, 'release')
+        names = [step.get('name', step.get('uses', '')) for step in steps]
+        self.assertIn('actions/checkout@v4', names[0])
+        last = steps[-1]
+        self.assertIn('failure() || cancelled()', last.get('if', ''), names)
+        self.assertNotIn('uses', last)
+        run = last.get('run', '')
+        self.assertIn('gh api', run)
+        for checkout_file in ('GITHUB_WORKSPACE', 'RUNNER_TEMP', 'lane-runner', 'scripts/', 'python', './', 'source ',
+                              '${{'):
+            self.assertNotIn(checkout_file, run)
+        self.assertNotRegex(run, r'\.(py|sh|rb|js)\b')  # no script of any kind (`.head.sha` is jq, not a file)
+        # A redirect creates its file even when git show fails; an empty lane-runner.py exits 0, so the tidy step
+        # would "succeed" without posting and this step would be skipped. The runner arrives whole or not at all.
+        fetch = next(step for step in steps if step.get('name', '').startswith('Take the lane runner'))
+        self.assertIn('> "$RUNNER_TEMP/lane-runner.py.part" &&', fetch['run'])
+        self.assertIn('mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"', fetch['run'])
+        tidy = next(step for step in steps if step.get('name', '').startswith('Tidy up'))
+        self.assertIn('steps.tidy.outcome', last['if'])  # one note: the tidy step's when it could post its own
+        self.assertEqual(tidy.get('id'), 'tidy')
+
     def test_the_lane_job_may_dispatch(self):
         lane_job = WORKFLOW.split('\n  lane:\n')[1].split('\n  automerge:\n')[0]
         self.assertIn('actions: write', lane_job)
@@ -350,6 +414,86 @@ class WorkflowTests(unittest.TestCase):
         # Dedupe and the audit's re-arm check list only pull_request runs, so a release run never counts as one.
         dedupe = (Path(__file__).resolve().parents[1] / 'lane_dedupe.py').read_text()
         self.assertIn('lane.yml/runs?event=pull_request&', dedupe)
+
+
+
+@unittest.skipUnless(shutil.which('jq') and shutil.which('bash'), 'needs jq and bash, as the build runners have')
+class ReleaseStoppedStepTests(unittest.TestCase):
+    """The release job's last step (#1542), run in bash against a stand-in for gh that answers with real jq."""
+
+    GH = """#!/bin/bash
+for arg in "$@"; do printf '%s\\0' "$arg"; done >> "$GH_LOG"
+printf '\\1' >> "$GH_LOG"
+expr=
+while [ $# -gt 0 ]; do
+  if [ "$1" = --jq ]; then expr=$2; fi
+  shift
+done
+if [ -n "$expr" ]; then printf '%s' "$STUB_PULL" | jq -r "$expr"; else echo '{}'; fi
+"""
+
+    def setUp(self):
+        self.step = job_steps(WORKFLOW, 'release')[-1]
+        self.folder = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.folder)
+        (self.folder / 'gh').write_text(self.GH)
+        (self.folder / 'gh').chmod(0o755)
+
+    def run_step(self, pull: dict | None = None, **env):
+        pull = pull if pull is not None else self.pull()
+        log = self.folder / 'gh.log'
+        log.write_bytes(b'')
+        jq = Path(shutil.which('jq')).parent
+        environment = {'PATH': f'{self.folder}:{jq}:/usr/bin:/bin', 'GH_LOG': str(log), 'STUB_PULL': json.dumps(pull),
+                       'GH_REPO': 'o/r', 'PR_NUMBER': '5', 'EVENT_HEAD': HEAD, 'BASE_REF': 'next',
+                       'RUN_URL': 'https://github.com/o/r/actions/runs/42'}
+        environment.update(env)
+        done = subprocess.run(['bash', '--noprofile', '--norc', '-eo', 'pipefail', '-c', self.step['run']],
+                              env=environment, capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        return [call.split('\0')[:-1] for call in log.read_text().split('\1') if call]
+
+    @staticmethod
+    def pull(**changes):
+        pull = {'state': 'open', 'head': {'sha': HEAD, 'repo': {'full_name': 'o/r'}}, 'base': {'ref': 'next'},
+                'labels': [{'name': 'automerge'}, {'name': 'lane:queued'}]}
+        pull.update(changes)
+        return pull
+
+    def test_it_posts_a_stopped_note_and_wakes_the_dispatcher(self):
+        calls = self.run_step()
+        self.assertEqual(calls[0][:2], ['api', 'repos/o/r/pulls/5'])
+        posted = [call for call in calls if call[1] == 'repos/o/r/issues/5/comments']
+        self.assertEqual(len(posted), 1, calls)
+        body = posted[0][posted[0].index('-f') + 1].removeprefix('body=')
+        self.assertTrue(body.startswith('Lane: the automerge run stopped before reporting '
+                                        '(https://github.com/o/r/actions/runs/42)'), body)
+        self.assertIn(f'`{HEAD[:7]}`', body)
+        self.assertIn('remove and re-add automerge', body)
+        # The dispatcher and the lane read it as the existing stopped-job note: a runner fault that answers no
+        # /lane request, and one that never counts toward an auto-revert, since it names no tested next.
+        self.assertTrue(body.endswith(lane.NOTE), body)
+        self.assertEqual(lane.lane_report_verdict(body), (True, 'the job stopped before it could report'))
+        self.assertTrue(lane.is_automerge_comment(body))
+        self.assertIsNone(lane.TESTED_ON.search(body))
+        relabel = calls[calls.index(posted[0]) + 1:]
+        self.assertEqual(relabel, [['api', '-X', 'DELETE', 'repos/o/r/issues/5/labels/lane%3Adone'],
+                                   ['api', 'repos/o/r/issues/5/labels', '-f', 'labels[]=lane:done']])
+
+    def test_a_pr_that_moved_on_closed_or_lost_automerge_gets_nothing(self):
+        for pull in (self.pull(head={'sha': MERGE, 'repo': {'full_name': 'o/r'}}), self.pull(state='closed'),
+                     self.pull(labels=[{'name': 'lane:done'}]), self.pull(base={'ref': 'main'}),
+                     self.pull(head={'sha': HEAD, 'repo': None})):
+            with self.subTest(pull=pull):
+                calls = self.run_step(pull)
+                self.assertEqual([call[1] for call in calls], ['repos/o/r/pulls/5'])
+
+    def test_dispatch_inputs_that_aren_t_a_pr_number_and_a_full_sha_reach_no_api_call(self):
+        for env in ({'PR_NUMBER': '5/../../../user'}, {'PR_NUMBER': ''}, {'EVENT_HEAD': 'abc1234'},
+                    {'EVENT_HEAD': '$(touch pwned)' + 'a' * 30}):
+            with self.subTest(env=env):
+                self.assertEqual(self.run_step(**env), [])
+        self.assertFalse((Path.cwd() / 'pwned').exists())
 
 
 if __name__ == '__main__':

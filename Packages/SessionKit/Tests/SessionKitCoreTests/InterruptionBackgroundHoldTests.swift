@@ -200,11 +200,77 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         for _ in 0..<200 { advance(rig, by: 0.5) }
 
         XCTAssertEqual(resumes, 0)
-        XCTAssertFalse(hold.isHolding)
+        XCTAssertTrue(hold.isHolding, "a real end can still arrive after the watch stops")
         XCTAssertEqual(hold.outcome, .otherAudioStillPlaying)
-        XCTAssertEqual(rig.ledger.ends, 1)
-        XCTAssertEqual(rig.ledger.events.map(\.fields), [["outcome": "other_audio_still_playing", "heldMs": "60000"]])
+        XCTAssertEqual(rig.ledger.ends, 0)
+        XCTAssertEqual(rig.ledger.events.map(\.fields), [["outcome": "other_audio_still_playing", "heldMs": "15000"]])
         XCTAssertTrue(rig.pending.isEmpty, "the watch stops polling")
+    }
+
+    func testPausingOtherMediaAfterTheAnnouncementWindowDoesNotResumeNarration() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        for _ in 0..<40 { advance(rig, by: 0.5) }
+
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+
+        XCTAssertEqual(resumes, 0, "pausing other media after 15 s must not reclaim its session")
+        XCTAssertEqual(rig.activations, 0)
+        XCTAssertEqual(hold.outcome, .otherAudioStillPlaying)
+        XCTAssertTrue(hold.isHolding, "a real end can still arrive")
+        XCTAssertTrue(rig.pending.isEmpty)
+        XCTAssertEqual(rig.ledger.events.first?.fields, [
+            "outcome": "other_audio_still_playing", "heldMs": "15000"
+        ])
+        hold.interruptionEnded()
+        XCTAssertEqual(rig.ledger.ends, 1)
+    }
+
+    func testClearAudioAtTheDeadlineCannotResumeEvenIfTheSettleFinished() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        advance(rig, by: 13.5)
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        advance(rig, by: 0.5)
+        // A delayed callback arrives at the deadline after a full second of clear audio.
+        advance(rig, by: 1)
+
+        XCTAssertEqual(resumes, 0)
+        XCTAssertEqual(rig.activations, 0, "the deadline takes precedence over settling")
+        XCTAssertEqual(hold.outcome, .otherAudioStillPlaying)
+        XCTAssertTrue(rig.pending.isEmpty)
+    }
+
+    func testFailedActivationKeepsBackgroundTimeUntilTheRealEnd() async {
+        let rig = OtherAudioRig()
+        let hold = rig.hold(now: { [unowned self] in self.now })
+        var resumes = 0
+        rig.activationFailure = "CannotInterruptOthers"
+        hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+        rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        for _ in 0..<40 { advance(rig, by: 0.5) }
+
+        XCTAssertTrue(hold.isHolding, "a call must not cause early suspension while waiting for its real end")
+        XCTAssertEqual(rig.ledger.ends, 0)
+        XCTAssertEqual(rig.activations, 1)
+        XCTAssertEqual(resumes, 0)
+        XCTAssertTrue(rig.pending.isEmpty, "activation is not retried during the call")
+        XCTAssertEqual(rig.ledger.events.first?.fields, [
+            "outcome": "activation_failed", "heldMs": "1500", "error": "CannotInterruptOthers"
+        ])
+
+        hold.interruptionEnded()
+        XCTAssertFalse(hold.isHolding)
+        XCTAssertEqual(rig.ledger.ends, 1)
+        XCTAssertEqual(hold.outcome, .ended)
+        XCTAssertEqual(rig.ledger.events.last?.fields, ["outcome": "ended", "heldMs": "20000"])
+        for _ in 0..<10 { advance(rig, by: 0.5) }
+        XCTAssertEqual(resumes, 0, "only the player's real-end handler decides whether to resume")
     }
 
     func testARealEndArrivingFirstMeansTheWatchNeverResumesToo() async {
@@ -225,6 +291,37 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
         XCTAssertEqual(rig.ledger.events.count, 1)
     }
 
+    func testFailedActivationStillReleasesOnListenerActionOrSystemExpiry() async {
+        for expires in [false, true] {
+            let rig = OtherAudioRig()
+            let hold = rig.hold(now: { [unowned self] in self.now })
+            var resumes = 0
+            rig.activationFailure = "CannotInterruptOthers"
+            rig.audio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+            hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+            for _ in 0..<3 { advance(rig, by: 0.5) }
+            XCTAssertTrue(hold.isHolding)
+
+            if expires { rig.ledger.expire(0) } else { hold.listenerActed() }
+            XCTAssertFalse(hold.isHolding)
+            XCTAssertEqual(hold.outcome, expires ? .expired : .listenerActed)
+            hold.interruptionEnded()
+            rig.ledger.expire(0)
+            XCTAssertEqual(rig.ledger.ends, 1, "give back the retained task exactly once")
+            XCTAssertEqual(rig.ledger.events.count, 2, "watch failure, then the hold's final outcome")
+            XCTAssertEqual(resumes, 0)
+
+            rig.activationFailure = nil
+            hold.interruptionBegan(resumeWhenOtherAudioStops: { resumes += 1 })
+            rig.ledger.expire(0)
+            for _ in 0..<3 { advance(rig, by: 0.5) }
+            XCTAssertEqual(resumes, 1, "the next interruption starts a fresh watch")
+            XCTAssertEqual(rig.activations, 2)
+            advance(rig, by: 3)
+            XCTAssertEqual(rig.ledger.ends, 2)
+        }
+    }
+
     func testASessionThatCannotBeActivatedLeavesPlaybackPausedAndSaysWhy() async throws {
         let rig = OtherAudioRig()
         let hold = rig.hold(now: { [unowned self] in self.now })
@@ -238,7 +335,8 @@ final class InterruptionBackgroundHoldTests: XCTestCase {
 
         XCTAssertEqual(resumes, 0)
         XCTAssertEqual(rig.activations, 1, "one try, then the real end from iOS decides")
-        XCTAssertFalse(hold.isHolding)
+        XCTAssertTrue(hold.isHolding, "keep the app awake for the call's real end")
+        XCTAssertEqual(rig.ledger.ends, 0)
         XCTAssertEqual(hold.outcome, .activationFailed)
         XCTAssertEqual(rig.ledger.events.last?.fields, [
             "outcome": "activation_failed",

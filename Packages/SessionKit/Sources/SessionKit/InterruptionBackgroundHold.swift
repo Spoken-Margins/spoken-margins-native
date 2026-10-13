@@ -9,13 +9,16 @@ import Foundation
 /// interruption ended at all: the app stayed awake for 12.7 s, heard nothing, and only resumed on Play
 /// (build 32, `437fbc9`). So while it holds, the hold also watches the audio session itself. Once no other audio
 /// plays and iOS no longer hints that secondary audio should be silenced, and that stays true for a short settle
-/// time, it activates the session and runs the same resume an "ended, should resume" would. A real end, the
+/// time within a short announcement window, it activates the session and runs the same resume an "ended, should
+/// resume" would. These signals can't distinguish an announcement from another app being paused; the window
+/// limits that ambiguity, but cannot eliminate it. A real end, the
 /// listener's own Play, Pause or Stop, or the system taking the time back all stop the watch, and a session that
-/// can't be activated (a phone call) leaves playback paused.
+/// can't be activated (a phone call) leaves playback paused. A failed activation or watch timeout stops the watch
+/// but keeps the background time, so the app can still receive a real interruption end.
 ///
-/// Each hold leaves one `speech.interruption_hold` event saying how the wait ended and how long it lasted, so a
+/// Each hold leaves a `speech.interruption_hold` event saying how the wait ended and how long it lasted, so a
 /// device export shows whether iOS sent the end (`ended`), the other audio stopped (`other_audio_stopped`), or the
-/// app gave up waiting.
+/// app gave up waiting. A failed activation or watch timeout records an additional event when the watch stops.
 @MainActor
 public final class InterruptionBackgroundHold {
     public typealias Begin = NarrationStartupProtection.Begin
@@ -23,7 +26,7 @@ public final class InterruptionBackgroundHold {
     /// Runs `work` on the main actor after `delay` seconds.
     public typealias Schedule = @MainActor (_ delay: TimeInterval, _ work: @escaping @MainActor () -> Void) -> Void
 
-    /// How the latest wait ended. `listener_acted`: Play, Pause or a new item before iOS reported the end.
+    /// The latest hold or watch outcome. `listener_acted`: Play, Pause or a new item before iOS reported the end.
     /// `other_audio_stopped`: the watch saw the other audio stop and resumed. `activation_failed`: it saw the other
     /// audio stop but the session couldn't be activated, so playback stayed paused. `other_audio_still_playing`:
     /// the watch window ran out with the other audio still playing.
@@ -54,7 +57,8 @@ public final class InterruptionBackgroundHold {
         /// How long the other audio must stay clear before resuming, so a gap between two sounds isn't taken
         /// for the end.
         public var settle: TimeInterval
-        /// How long to watch before giving up. The system usually takes background time back sooner.
+        /// How long from `.began` to allow a fallback resume, including settling. This is a bounded announcement
+        /// heuristic, not a signal of session ownership. After it runs out, only a real end can resume playback.
         public var window: TimeInterval
         /// How long to keep the background time after resuming, so the app isn't suspended before playback starts.
         public var releaseDelay: TimeInterval
@@ -64,7 +68,7 @@ public final class InterruptionBackgroundHold {
             activate: @escaping @MainActor () -> String?,
             pollInterval: TimeInterval = 0.5,
             settle: TimeInterval = 1.0,
-            window: TimeInterval = 60,
+            window: TimeInterval = 15,
             releaseDelay: TimeInterval = 3
         ) {
             self.probe = probe
@@ -153,14 +157,19 @@ public final class InterruptionBackgroundHold {
     }
 
     private func check(hold: Int) {
-        guard let watch, holdCount == hold, release != nil, let started = heldSince else { return }
+        guard let watch, holdCount == hold, release != nil, resume != nil, let started = heldSince else { return }
         let time = now()
+        // Check before probing or activating: even a delayed clear-audio callback must respect the deadline.
+        guard time.timeIntervalSince(started) < watch.window else {
+            stopWatching(as: .otherAudioStillPlaying)
+            return
+        }
         if watch.probe().isClear {
             let since = clearSince ?? time
             clearSince = since
             if time.timeIntervalSince(since) >= watch.settle {
                 if let failure = watch.activate() {
-                    finish(as: .activationFailed, extra: ["error": String(failure.prefix(160))])
+                    stopWatching(as: .activationFailed, extra: ["error": String(failure.prefix(160))])
                 } else {
                     let resume = self.resume
                     finish(as: .otherAudioStopped, releaseAfter: watch.releaseDelay)
@@ -171,11 +180,14 @@ public final class InterruptionBackgroundHold {
         } else {
             clearSince = nil
         }
-        guard time.timeIntervalSince(started) < watch.window else {
-            finish(as: .otherAudioStillPlaying)
-            return
-        }
         scheduleCheck(hold: hold, after: watch.pollInterval)
+    }
+
+    /// End the fallback without giving up the time #1532 needs to receive a real end (especially for calls).
+    private func stopWatching(as ending: Outcome, extra: [String: String] = [:]) {
+        resume = nil
+        clearSince = nil
+        recordOutcome(ending, extra: extra)
     }
 
     private func finish(as ending: Outcome, extra: [String: String] = [:], releaseAfter delay: TimeInterval? = nil) {
@@ -183,18 +195,22 @@ public final class InterruptionBackgroundHold {
         self.release = nil
         resume = nil
         clearSince = nil
-        outcome = ending
-        let heldSeconds = heldSince.map { now().timeIntervalSince($0) } ?? 0
+        recordOutcome(ending, extra: extra)
         heldSince = nil
-        var fields = extra
-        fields["outcome"] = ending.rawValue
-        fields["heldMs"] = String(max(0, Int((heldSeconds * 1_000).rounded())))
-        record(Self.eventKind, fields)
         if let delay, delay > 0 {
             // Keep the app awake while the resume it just asked for starts playing.
             schedule(delay) { release() }
         } else {
             release()
         }
+    }
+
+    private func recordOutcome(_ ending: Outcome, extra: [String: String]) {
+        outcome = ending
+        let heldSeconds = heldSince.map { now().timeIntervalSince($0) } ?? 0
+        var fields = extra
+        fields["outcome"] = ending.rawValue
+        fields["heldMs"] = String(max(0, Int((heldSeconds * 1_000).rounded())))
+        record(Self.eventKind, fields)
     }
 }

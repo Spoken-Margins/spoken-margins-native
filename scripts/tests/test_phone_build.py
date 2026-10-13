@@ -1903,6 +1903,94 @@ class PassedChecksTests(unittest.TestCase):
         self.assertRegex(self.module.ISSUE_FIELDS, r'\bstate\b')
 
 
+class RevertedPRTests(unittest.TestCase):
+    """#1545: the 437fbc9 notes asked the owner to check #447, #450 and #451, whose screen PRs had merged and
+    then been reverted inside #1482. A reverted PR isn't in the build until it lands again."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repo = Path(temporary.name)
+        self.git('init', '-q', '-b', 'next')
+        self.commit('Merge pull request #1356: Podcast Now view: logic for the nearest Margins (part of #447)')
+        self.commit('Merge pull request #1365: Now view live passage: the logic (part of #451)')
+        dock = self.commit('Merge pull request #1371: Keep the playback dock across Now, Timeline and Margins (#447)')
+        passage = self.commit('Merge pull request #1404: Show the live source passage in Now (#451)')
+        bar = self.commit('Merge pull request #1380 from a/bar-labels')
+        rail = self.commit('Merge pull request #1390: Draw chapters on the rail (#452)')
+        lane = self.commit('Merge pull request #1407: Wait for imports (#460)')
+        # The reverts arrive inside a merged PR, so they aren't first-parent commits of the build (#1482).
+        self.git('switch', '-q', '-c', 'restore')
+        self.commit(f'Revert #1371: playback dock across Now, Timeline and Margins\n\n'
+                    f'This reverts merge {dock[:8]}, reversing changes made to 2390c0df.')
+        self.commit(f'Revert #1404: live source passage in Now\n\nThis reverts merge {passage[:8]}.')
+        self.commit(f'Revert "Merge pull request #1380 from a/bar-labels"\n\nThis reverts commit {bar}.')
+        self.commit(f'Put the old rail back\n\nThis reverts merge {rail[:8]}.')
+        self.git('switch', '-q', 'next')
+        self.git('merge', '-q', '--no-ff', 'restore', '-m',
+                 'Merge pull request #1482: Restore the Build 30 screen (#1475)')
+        # The lane runner's revert, then a re-land; git's default revert, then a revert of that revert.
+        self.commit(f'Revert #1407: Tested as this exact commit and merged by the lane runner. (integration FAIL)\n\n'
+                    f'This reverts commit {lane}.')
+        self.commit('Merge pull request #1418: Re-land #1407 and give two import waits a budget (#1413)')
+        self.commit('Revert "Revert "Merge pull request #1380 from a/bar-labels""')
+        self.commit('Merge pull request #1183: test: pin episode map stored names')
+        self.commit('Revert #1183: test: pin episode map stored names')
+        self.commit('Merge pull request #1250: test: re-land episode map stored-name pins (#1183)')
+        self.tip = self.git('rev-parse', 'HEAD')
+        environment = unittest.mock.patch.dict(os.environ, {'SM_PHONE_REPO': str(self.repo)})
+        environment.start()
+        self.addCleanup(environment.stop)
+        self.module = load_phone_build()
+
+    def git(self, *args):
+        return subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=T', *args], cwd=self.repo,
+                              check=True, capture_output=True, text=True).stdout.strip()
+
+    def commit(self, message):
+        self.git('commit', '-q', '--allow-empty', '-m', message)
+        return self.git('rev-parse', 'HEAD')
+
+    @staticmethod
+    def issue(number, title, prs, comments=()):
+        return {'number': number, 'title': title, 'url': f'https://example/issue/{number}', 'state': 'OPEN',
+                'createdAt': f'2026-10-0{number % 9 + 1}T00:00:00Z', 'milestone': None,
+                'labels': {'nodes': [{'name': 'status: needs-human-validation'}]},
+                'body': f'**Owner check:** open the playback screen and look at {title}.\n',
+                'comments': {'nodes': [{'body': body} for body in comments]},
+                'timelineItems': {'nodes': [{'source': {'number': n, 'title': t, 'body': '', 'merged': True,
+                                                        'url': f'https://example/pr/{n}'}} for n, t in prs]}}
+
+    def test_reverted_prs_follow_commit_order(self):
+        # #1371 and #1404 by subject, #1390 by the merge its body names; #1380, #1407 and #1183 came back.
+        self.assertEqual(self.module.reverted_prs(self.tip), {1371, 1404, 1390})
+
+    def test_a_reverted_pr_is_not_in_the_build(self):
+        self.assertEqual(self.module.build_prs(self.tip), {1356, 1365, 1380, 1407, 1418, 1482, 1183, 1250})
+        named = self.module.built_numbers(self.tip)
+        self.assertTrue({1371, 1404, 1390, 452}.isdisjoint(named), named)
+        self.assertTrue({1356, 447, 451, 1380, 1407, 460}.issubset(named), named)
+
+    def test_an_issue_whose_screen_pr_was_reverted_is_not_waiting_on_the_phone(self):
+        # #447: logic PR #1356 kept, screen PR #1371 reverted. #451: #1365 kept, #1404 (named in a comment)
+        # reverted. #453 and #460 had theirs reverted and landed again.
+        dock = self.issue(447, 'the dock', [(1356, 'Podcast Now view: logic (part of #447)'),
+                                            (1371, 'Keep the playback dock (#447)')])
+        passage = self.issue(451, 'the live passage', [(1365, 'Now view live passage: the logic (part of #451)')],
+                             comments=['Merged in #1404.'])
+        labels = self.issue(453, 'the bar labels', [(1380, 'Bar labels (#453)')])
+        imports = self.issue(460, 'imports', [(1407, 'Wait for imports (#460)')])
+        module = self.module
+        fixes = module.waiting_fixes([dock, passage, labels, imports], module.build_prs(self.tip), set(),
+                                     module.built_numbers(self.tip), module.reverted_prs(self.tip))
+        self.assertEqual(sorted(fix['issue']['number'] for fix in fixes), [453, 460])
+
+    def test_the_new_changes_leave_out_a_pr_reverted_since(self):
+        merged = self.module.merged_prs(None, self.tip)
+        self.assertNotIn(1371, merged)
+        self.assertIn(1407, merged)
+
+
 class PlanBaseTests(unittest.TestCase):
     """#1100: installed.txt named a build made on the Mac before its changes reached next, so the commit was
     known but not behind next's tip; the plan fell back to Build 29 and listed 332 pull requests."""
