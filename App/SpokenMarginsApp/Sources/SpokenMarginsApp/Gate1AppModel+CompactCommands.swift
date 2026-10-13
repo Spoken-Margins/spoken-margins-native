@@ -28,11 +28,11 @@ extension Gate1AppModel {
     ) {
         if command == .beginInterjection {
             guard !recordingNavigationIsLocked else { return }
-            isRequestingRecordingPermission = true
+            marginCapture.beginCompactRequest()
             microphoneAccess.recordFromCompactControl(ask: { [weak self] in await self?.requestMicrophonePermission() ?? false }) { [weak self] granted in
                 guard let self else { return }
                 if granted { performGate2CompactCommand(command, chapterId: chapterId, mediaTimeMs: mediaTimeMs, playbackRate: playbackRate, origin: origin) }
-                isRequestingRecordingPermission = false
+                marginCapture.endCompactRequest()
                 if !granted { reportFailure("Microphone access is required to record Margins from compact controls.") }
             }
             return

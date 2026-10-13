@@ -137,6 +137,15 @@ extension Gate1AppModel {
         }
     }
 
+    // The capture state lives in `marginCapture` (#993); these are its old names, read-only. Writes go through it.
+    var recordingPresentationContext: RecordingPresentationContext? { marginCapture.presentationContext }
+    var isRequestingRecordingPermission: Bool { marginCapture.isRequestingPermission }
+    var recordingPermissionDenied: Bool { marginCapture.permissionDenied }
+    /// #783: the line shown before iOS's first microphone prompt.
+    var microphonePrimer: MicrophonePrimer { marginCapture.primer }
+    var isFinishingInterjection: Bool { marginCapture.isFinishing }
+    var writtenMarginDraft: WrittenMarginDraft? { marginCapture.writtenDraft }
+
     func beginInterjection() {
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
         guard snapshot.skimBridgeState == nil else {
@@ -144,27 +153,24 @@ extension Gate1AppModel {
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
-        let voiceCaptureRequestID = UUID()
-        pendingVoiceCaptureRequestID = voiceCaptureRequestID
-        recordingPermissionDenied = false
-        isRequestingRecordingPermission = true
+        let voiceCaptureRequestID = marginCapture.beginVoiceRequest()
         statusMessage = "Starting Margin..."
         lastError = nil
         diagnostics["lastInterjectionTap"] = "begin"
         let requestedAt = Date()
-        recordingPresentationContext = RecordingPresentationContext(
+        marginCapture.setPresentationContext(RecordingPresentationContext(
             itemTitle: selectedItem.title.isEmpty ? "Current item" : selectedItem.title,
             locationTitle: snapshot.chapterTitle ?? "Current listening position",
             progressPercent: snapshot.currentPlaybackProgressPercent,
             startedAt: requestedAt
-        )
+        ))
         let status = microphoneAccess.status()
         if status == .granted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
             microphoneAccess.record { [weak self] in self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID) }
             return
         }
-        if let status, microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
+        if let status, marginCapture.holdForPrimer(captureID: voiceCaptureRequestID, status: status) {
             diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
             return
         }
@@ -173,76 +179,67 @@ extension Gate1AppModel {
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
     func continueMicrophonePrimer() {
-        guard let captureID = microphonePrimer.continueTapped(),
-              pendingVoiceCaptureRequestID == captureID else { return }
+        guard let captureID = marginCapture.continuePrimer() else { return }
         requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
     }
 
     private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
         Task {
             let granted = await requestMicrophonePermission()
-            guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
-            guard granted else {
-                isRequestingRecordingPermission = false
-                recordingPresentationContext = nil
-                pendingVoiceCaptureRequestID = nil
-                recordingPermissionDenied = true
-                reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
+            switch marginCapture.resolvePermission(for: voiceCaptureRequestID, granted: granted) {
+            case .stale:
                 return
+            case .denied:
+                reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
+            case .granted:
+                startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
             }
-            startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
         }
     }
 
     private func startInterjectionRecording(requestedAt: Date, captureID: UUID) {
-        guard pendingVoiceCaptureRequestID == captureID else { return }
-        defer {
-            isRequestingRecordingPermission = false
-            pendingVoiceCaptureRequestID = nil
-        }
+        guard marginCapture.claimStart(for: captureID) else { return }
+        defer { marginCapture.releaseStart() }
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
         run { engine in
             snapshot = try engine.beginInterjection()
             if snapshot.isRecording {
-                recordingPresentationContext = RecordingPresentationContext(
+                marginCapture.setPresentationContext(RecordingPresentationContext(
                     itemTitle: selectedItem.title,
                     locationTitle: snapshot.chapterTitle ?? "Current listening position",
                     progressPercent: snapshot.currentPlaybackProgressPercent,
                     startedAt: Date()
-                )
+                ))
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
                 diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
             }
         }
         guard !snapshot.isRecording else { return }
-        recordingPresentationContext = nil
+        marginCapture.clearPresentationContext()
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
     }
 
     /// Add a Margin ignores taps while a save is under way and until the listening screen has been drawn and has
     /// stayed for `MarginRestartShield.window`, so the second tap of a double tap on Save can't start a new Margin (#148).
-    var isMarginCaptureCoolingDown: Bool { !marginRestartShield.acceptsBegin(at: Date()) }
+    var isMarginCaptureCoolingDown: Bool { marginCapture.isCoolingDown(at: Date()) }
 
     /// Publish acknowledgement before synchronous recorder/store finalization.
     /// The save and the draw of the listening screen that follows can outlast any timer started when the save
     /// returns, and the queued second tap arrives after the draw, so the shield waits for `listeningScreenAppeared`.
     func requestFinishInterjection() {
-        guard snapshot.isRecording, !isFinishingInterjection else { return }
-        isFinishingInterjection = true
-        marginRestartShield.saveRequested()
+        guard snapshot.isRecording, marginCapture.requestFinish() else { return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
             self.finishInterjection()
-            self.marginRestartShield.saveFinished(at: Date(), stillRecording: self.snapshot.isRecording)
-            self.isFinishingInterjection = false
+            self.marginCapture.finalizeFinish(at: Date(), stillRecording: self.snapshot.isRecording)
         }
     }
 
     /// The recording screen has gone and the screen behind it is on screen again: the shield's window starts now.
     func listeningScreenAppeared() {
-        marginRestartShield.screenAppeared(at: Date())
+        marginCapture.screenAppeared(at: Date())
     }
 
     func finishInterjection() {
@@ -256,7 +253,7 @@ extension Gate1AppModel {
             reportMarginSaved(verdict)
         }
         if !snapshot.isRecording {
-            recordingPresentationContext = nil
+            marginCapture.clearPresentationContext()
             refreshMarginRows()
         }
         streamingSpeechQueue.resumeAfterInterjection()
@@ -268,10 +265,7 @@ extension Gate1AppModel {
 
     func cancelInterjection() {
         if isRequestingRecordingPermission && !snapshot.isRecording {
-            microphonePrimer.cancel()
-            pendingVoiceCaptureRequestID = nil
-            isRequestingRecordingPermission = false
-            recordingPresentationContext = nil
+            marginCapture.abandonVoiceRequest()
             return
         }
         recordFinalCaptureDiagnostics("cancelled")
@@ -281,7 +275,7 @@ extension Gate1AppModel {
             reportSuccess("Cancelled Margin.")
         }
         if !snapshot.isRecording {
-            recordingPresentationContext = nil
+            marginCapture.clearPresentationContext()
         }
         streamingSpeechQueue.resumeAfterInterjection()
     }
@@ -300,16 +294,16 @@ extension Gate1AppModel {
             streamingSpeechQueue.pauseForInterjection()
             let capture = try engine.beginWrittenInterjection()
             lastError = nil
-            recordingPermissionDenied = false
+            marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
-            writtenMarginDraft = WrittenMarginDraft(
+            marginCapture.openDraft(WrittenMarginDraft(
                 capture: capture,
                 text: "",
                 itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
                 targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
                 progressPercent: capture.roughPercent
-            )
-            recordingPresentationContext = nil
+            ))
+            marginCapture.clearPresentationContext()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
             reportFailure(error, context: "Written Margin could not start")
@@ -318,15 +312,12 @@ extension Gate1AppModel {
 
     func updateWrittenMarginText(_ text: String) {
         guard writtenMarginDraft != nil else { return }
-        writtenMarginDraft?.text = text
+        marginCapture.setDraftText(text)
     }
 
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
-        microphonePrimer.cancel()
-        isRequestingRecordingPermission = false
-        pendingVoiceCaptureRequestID = nil
-        recordingPresentationContext = nil
+        marginCapture.abandonVoiceRequest()
         beginWrittenMargin()
     }
 
@@ -335,7 +326,7 @@ extension Gate1AppModel {
         do {
             snapshot = try engine.saveWrittenInterjection(captureId: draft.capture.id, text: text)
             listeningSignals.writtenMargin(itemId: draft.capture.itemId, text: text)
-            writtenMarginDraft = nil
+            marginCapture.closeDraft()
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
             refreshMarginRows()
@@ -345,7 +336,7 @@ extension Gate1AppModel {
                 reportConfirmation("Written Margin saved.")
             }
         } catch {
-            writtenMarginDraft?.text = text
+            marginCapture.setDraftText(text)
             reportFailure(error, context: "Written Margin could not be saved")
         }
     }
@@ -354,7 +345,7 @@ extension Gate1AppModel {
         guard let draft = writtenMarginDraft, let engine else { return }
         do {
             snapshot = try engine.cancelWrittenInterjection(captureId: draft.capture.id)
-            writtenMarginDraft = nil
+            marginCapture.closeDraft()
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
         } catch {
