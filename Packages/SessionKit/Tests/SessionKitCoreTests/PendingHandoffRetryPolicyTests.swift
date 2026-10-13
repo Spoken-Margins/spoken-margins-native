@@ -43,7 +43,7 @@ final class PendingHandoffRetryPolicyTests: XCTestCase {
         XCTAssertTrue(PendingHandoffRetryPolicy.isTransientNetworkFailure(twice))
         // Among several underlying errors.
         let several = NSError(domain: "Outer", code: 3, userInfo: [
-            NSMultipleUnderlyingErrorsKey: [NSError(domain: "x", code: 1), URLError(.networkConnectionLost) as NSError]
+            PendingHandoffRetryPolicy.multipleUnderlyingErrorsKey: [NSError(domain: "x", code: 1), URLError(.networkConnectionLost) as NSError]
         ])
         XCTAssertTrue(PendingHandoffRetryPolicy.isTransientNetworkFailure(several))
         // The article extractor's wrapper, which a shared article link throws.

@@ -17,6 +17,13 @@ public enum PendingHandoffRetryPolicy {
         .callIsActive
     ]
 
+    #if os(Linux)
+    // swift-corelibs-foundation doesn't define the constant; nothing there fills it, so only tests use this.
+    static let multipleUnderlyingErrorsKey = "NSMultipleUnderlyingErrorsKey"
+    #else
+    static let multipleUnderlyingErrorsKey = NSMultipleUnderlyingErrorsKey
+    #endif
+
     /// True when `error`, or an error it wraps, is a connection failure. Follows `NSUnderlyingErrorKey`
     /// chains and the article extractor's wrapped error, a few levels deep.
     public static func isTransientNetworkFailure(_ error: any Error) -> Bool {
@@ -33,13 +40,13 @@ public enum PendingHandoffRetryPolicy {
         }
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain {
-            return transientURLErrorCodes.contains(URLError.Code(rawValue: nsError.code))
+            return transientURLErrorCodes.contains { $0.rawValue == nsError.code }
         }
         if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? any Error,
            isTransient(underlying, depth: depth + 1) {
             return true
         }
-        if let many = nsError.userInfo[NSMultipleUnderlyingErrorsKey] as? [any Error] {
+        if let many = nsError.userInfo[multipleUnderlyingErrorsKey] as? [any Error] {
             return many.contains { isTransient($0, depth: depth + 1) }
         }
         return false
