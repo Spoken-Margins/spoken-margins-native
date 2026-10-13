@@ -384,9 +384,19 @@ enum PDFStructuredTextExtractor {
                 anchors[0, default: []].insert(contentsOf: carriedOutline, at: 0)
                 carriedOutline = []
             }
+            // A line read as a heading by its type alone, with no other role that comes first.
+            func isTypeOnlyHeading(_ index: Int) -> Bool {
+                let line = pageLines[index]
+                return outlineLines[index] == nil && furnitureRole(line, page: page) == nil
+                    && !tableOfContentsLines.contains(index) && titlePage[index] == nil && !footnotes.contains(index)
+                    && !tableLines.contains(index) && !figureLines.contains(index) && !layout.looksLikeDisplayMath(line)
+                    && outline.isEmpty && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
+                    && isVisualHeading(line, bodySize: bodySize)
+            }
+            var wrappedHeadingLines = Set<Int>()
             var resultIndex: [Int: Int] = [:]
             for (lineIndex, line) in pageLines.enumerated() {
-                if lineIndex > 0, outlineLines[lineIndex - 1]?.span == 2 {
+                if lineIndex > 0, outlineLines[lineIndex - 1]?.span == 2 || wrappedHeadingLines.contains(lineIndex) {
                     resultIndex[lineIndex] = result.count - 1
                     continue
                 }
@@ -416,7 +426,24 @@ enum PDFStructuredTextExtractor {
                 } else if outline.isEmpty
                     && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
                     && isVisualHeading(line, bodySize: bodySize) {
-                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: visualHeadingLevel(line, bodySize: bodySize)))
+                    // A heading printed over two or three lines is one heading (#1144). Not the
+                    // first level-1 heading: its first line is the item title v1 gave the PDF,
+                    // and so its item id (`itemTitle`).
+                    let level = visualHeadingLevel(line, bodySize: bodySize)
+                    let mayJoin = level != 1 || result.contains { ($0.role == .heading || $0.role == .title) && $0.level == 1 }
+                    var run = [lineIndex]
+                    while mayJoin, run.count < PDFWrappedHeading.maximumLines, let last = run.last, last + 1 < pageLines.count,
+                          isTypeOnlyHeading(last + 1),
+                          let upper = wrappedHeadingLine(pageLines[last], pageIndex: pageIndex),
+                          let lower = wrappedHeadingLine(pageLines[last + 1], pageIndex: pageIndex),
+                          PDFWrappedHeading.continues(upper, with: lower),
+                          PDFWrappedHeading.joined((run + [last + 1]).map { pageLines[$0].text }).count
+                            <= PDFWrappedHeading.maximumJoinedLength {
+                        run.append(last + 1)
+                    }
+                    wrappedHeadingLines.formUnion(run.dropFirst())
+                    let text = run.count == 1 ? line.text : PDFWrappedHeading.joined(run.map { pageLines[$0].text })
+                    result.append(StructuredDocumentLine(text: text, role: .heading, pageIndex: pageIndex, level: level))
                 } else {
                     result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex, superscripts: line.superscripts))
                 }
@@ -455,6 +482,14 @@ enum PDFStructuredTextExtractor {
         for candidate in candidates where words.contains(candidate.word) {
             lines[candidate.index].endsWithSoftHyphen = true
         }
+    }
+
+    private static func wrappedHeadingLine(_ line: TextLine, pageIndex: Int) -> PDFWrappedHeading.Line? {
+        guard let bounds = line.bounds, !bounds.isNull else { return nil }
+        return PDFWrappedHeading.Line(
+            text: line.text, pageIndex: pageIndex, pointSize: Double(line.pointSize), isBold: line.isBold,
+            minX: Double(bounds.minX), maxX: Double(bounds.maxX), minY: Double(bounds.minY), maxY: Double(bounds.maxY)
+        )
     }
 
     /// The system spell checker's English dictionary. UITextChecker is UIKit, so the

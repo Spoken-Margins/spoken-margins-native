@@ -50,13 +50,12 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
-    @State private var isSourceTextPresented = false
+    @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write, paste }
-    @State private var sourceTextOffsetAtPresentation = 0
+    private enum OptionsDestination { case item, timeline, export, margins, write, paste, sourceText }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -82,8 +81,12 @@ struct PlaybackScreen: View {
                                         PlaybackNowView()
                                     } else {
                                         PlaybackLivePassageView { offset in
-                                            sourceTextOffsetAtPresentation = offset
-                                            isSourceTextPresented = true
+                                            sourceTextTarget = PlaybackTextReaderTarget.resolve(
+                                                text: model.selectedItem.text,
+                                                chapters: model.selectedItem.chapters,
+                                                offset: offset,
+                                                fallbackChapterId: model.currentChapter?.id
+                                            )
                                         }
                                         recentMarginPreview
                                     }
@@ -180,13 +183,8 @@ struct PlaybackScreen: View {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
-            .sheet(isPresented: $isSourceTextPresented) {
-                NativeTextPeekView(
-                    title: model.selectedItem.title,
-                    text: model.selectedItem.text,
-                    chapters: model.selectedItem.chapters,
-                    currentOffset: sourceTextOffsetAtPresentation
-                )
+            .sheet(item: $sourceTextTarget) { target in
+                NativeTextPeekView(title: model.selectedItem.title, target: target)
             }
             .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
@@ -454,7 +452,23 @@ struct PlaybackScreen: View {
         case .margins: model.openMargins()
         case .write: model.beginWrittenMargin()
         case .paste: isPastingAssistantResponse = true
+        case .sourceText: openSourceText()
         }
+    }
+
+    /// #1547: the button sits in the More sheet, so close it first, then resolve the playhead when the
+    /// reader opens. The target is the sheet's item, so the reader can't open with a stale offset.
+    private func openSourceText() {
+        if isPlaybackOptionsPresented {
+            closeOptions(to: .sourceText)
+            return
+        }
+        sourceTextTarget = PlaybackTextReaderTarget.resolve(
+            text: model.selectedItem.text,
+            chapters: model.selectedItem.chapters,
+            offset: model.snapshot.currentTextStart,
+            fallbackChapterId: model.currentChapter?.id
+        )
     }
 
     @ViewBuilder
@@ -928,10 +942,7 @@ struct PlaybackScreen: View {
         if model.snapshot.targetType == TargetType.itemTextTTS.rawValue
             || (!model.selectedItem.isNativeAudio && model.snapshot.itemId == model.selectedItem.id
                 && model.snapshot.targetType == TargetType.transcriptBackedMedia.rawValue) {
-            Button {
-                sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
-                isSourceTextPresented = true
-            } label: {
+            Button(action: openSourceText) {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
                     .frame(minHeight: 32)

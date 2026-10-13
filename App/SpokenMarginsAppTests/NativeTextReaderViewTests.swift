@@ -65,7 +65,8 @@ final class NativeTextReaderViewTests: XCTestCase {
         let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
         let text = "First sentence. Current sentence. Last sentence."
         let host = UIHostingController(rootView: NativeTextPeekView(
-            title: "Article", text: text, chapters: [], currentOffset: "First sentence. ".count
+            title: "Article",
+            target: PlaybackTextReaderTarget.resolve(text: text, chapters: [], offset: "First sentence. ".count)
         ))
         let window = UIWindow(windowScene: scene)
         window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)

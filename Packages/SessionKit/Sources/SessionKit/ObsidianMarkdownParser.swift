@@ -47,9 +47,17 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     /// was used as given.
     public var titleIsFallback = false
 
+    /// `titlePageEnd`: for a canonical map, where the document's title page (title, authors,
+    /// imprint) ends. When nothing else comes before the first chapter, the title page starts
+    /// that chapter instead of being a "Front Matter" chapter of its own (#1144). The caller
+    /// knows the roles of its text; plain text can't say. `titlePageChapter` names a chapter
+    /// that starts where the title page ends (an abstract labelled "Abstract" in body type),
+    /// added after the chapter depth is chosen so it never changes that depth.
     public func deterministicListeningMap(
         itemId: String,
-        policy: DeterministicListeningMapPolicy = .authoredSections
+        policy: DeterministicListeningMapPolicy = .authoredSections,
+        titlePageEnd: Int? = nil,
+        titlePageChapter: String? = nil
     ) -> ListeningMap? {
         guard !headings.isEmpty, !text.isEmpty else { return nil }
         let ordered = normalizedContentHeadings()
@@ -62,7 +70,7 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
             ordered.contains { $0.startChar < start } && start < text.count ? start : nil
         } : nil
         let contentEnd = notesStart ?? text.count
-        let selected: [ParsedMarkdownHeading]
+        var selected: [ParsedMarkdownHeading]
         switch policy {
         case .authoredSections:
             selected = headingsAtOneLevel(from: ordered.filter { $0.startChar < contentEnd })
@@ -74,12 +82,25 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
             // The source text still retains every subheading; the Timeline no
             // longer turns each subsection into a near-duplicate chapter.
             selected = headingsAtUsefulDepth(from: ordered)
+            if let titlePageEnd, let titlePageChapter, let first = selected.first, first.startChar > titlePageEnd {
+                selected.insert(ParsedMarkdownHeading(
+                    level: selected.map(\.level).min() ?? first.level,
+                    title: titlePageChapter,
+                    startChar: titlePageEnd
+                ), at: 0)
+            }
         }
 
         let canonicalPrefix = selected.first.map {
             String(text.prefix($0.startChar)).trimmingCharacters(in: .whitespacesAndNewlines)
         } ?? ""
+        // A title page alone before the first chapter starts that chapter (#1144).
+        let leadIsTitlePage: Bool = {
+            guard let first = selected.first, let titlePageEnd else { return false }
+            return first.startChar <= titlePageEnd
+        }()
         let hasAuthoredFrontMatter = policy == .canonicalHeadings
+            && !leadIsTitlePage
             && !canonicalPrefix.isEmpty
             && Self.normalizedTitle(canonicalPrefix) != Self.normalizedTitle(title)
 

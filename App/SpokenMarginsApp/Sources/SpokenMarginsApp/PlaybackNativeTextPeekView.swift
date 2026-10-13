@@ -6,34 +6,25 @@ import UIKit
 struct NativeTextPeekView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
-    let text: String
-    let chapters: [Chapter]
-    let currentOffset: Int
-    @State private var reader: PlaybackLivePassage.Reader?
+    /// Chosen by `PlaybackTextReaderTarget.resolve`, the same rule as the More sheet's Text button (#1547).
+    let target: PlaybackTextReaderTarget
 
     static let sheetIdentifier = "nativeText.peek.sheet"
     static let textIdentifier = "nativeText.peek.text"
 
-    private struct Input: Equatable {
-        let text: String
-        let chapters: [Chapter]
-        let offset: Int
-    }
+    private var reader: PlaybackLivePassage.Reader { target.reader }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 8) {
-                Text(reader?.chapterTitle ?? "Full Text").font(.headline)
-                if let reader, !reader.text.isEmpty {
+                Text(reader.chapterTitle ?? "Full Text").font(.headline)
+                if !reader.text.isEmpty {
                     NativeTextReader(reader: reader)
                         // Set at the SwiftUI layer too: an identifier on an ancestor replaces the
                         // UITextView's own, so the child must state its identifier explicitly.
                         .accessibilityIdentifier(NativeTextPeekView.textIdentifier)
-                } else if reader != nil || text.isEmpty {
-                    Text("No native text is available.")
-                    Spacer()
                 } else {
-                    ProgressView()
+                    Text("No native text is available.")
                     Spacer()
                 }
             }
@@ -53,11 +44,6 @@ struct NativeTextPeekView: View {
             // instead of being pushed down onto the text view.
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(NativeTextPeekView.sheetIdentifier)
-            .task(id: Input(text: text, chapters: chapters, offset: currentOffset)) {
-                var index = PlaybackLivePassage.Index(text: text, chapters: chapters)
-                index.update(offset: currentOffset)
-                reader = index.chapter?.reader(at: currentOffset)
-            }
         }
     }
 }

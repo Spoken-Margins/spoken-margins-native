@@ -333,6 +333,7 @@ final class Gate1AppModel: ObservableObject {
     let quickAccess = QuickAccessFolderState() // the Quick Folder; its changes are relayed in init (#981)
     @Published var sourceImportProgressMessage: String?
     @Published var importInbox: [ImportInboxEntry] = []
+    @Published var sourceLinksWaitingForNetwork = 0 // shared links left pending while offline (#1546)
     @Published var selectedProfileId = "phone-tablet-online"
     @Published var importTitle = ""
     @Published var importText = ""
@@ -485,8 +486,8 @@ final class Gate1AppModel: ObservableObject {
     }
     var renderedSpeechDiskCache: RenderedSpeechDiskCache?
     let sourceLinkResolver: LinkResolutionClient?
-    private let sourceLinkHandoffStore: SourceLinkHandoffStore?
-    private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
+    let sourceLinkHandoffStore: SourceLinkHandoffStore?
+    let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     let audioPlaybackClientOverride: AudioPlaybackClient?
     var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     var podcastDownloadCoordinator: PodcastDownloadCoordinator?
@@ -552,6 +553,7 @@ final class Gate1AppModel: ObservableObject {
     var pendingStartupAudioPreparationItemIds: Set<String> = []
     var failedStartupAudioPreparationItemIds: Set<String> = []
     var isImportingPendingSourceLinkHandoffs = false
+    let pendingHandoffNetworkRetry = PendingHandoffNetworkRetry()
     private var pendingAutoPlayQueue = Gate1PlaybackAutoplayQueue()
     var completedStreamingTurnIds: Set<String> = []
     @Published var pendingSourceContextInterjectionIds: Set<String> = []
@@ -3343,20 +3345,6 @@ final class Gate1AppModel: ObservableObject {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
-    }
-
-    func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
-        if let sourceLinkHandoffStore {
-            return sourceLinkHandoffStore
-        }
-        return try SourceLinkHandoffStore.appGroup()
-    }
-
-    func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
-        if let browserTextHandoffStore {
-            return browserTextHandoffStore
-        }
-        return try Gate5BrowserTextHandoffStore.appGroup()
     }
 
     static func firstURL(in text: String) -> URL? {
