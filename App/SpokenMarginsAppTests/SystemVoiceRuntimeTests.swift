@@ -36,11 +36,27 @@ final class SystemVoiceRuntimeTests: XCTestCase {
     }
 
     func testABrokenAnswerFailsAndAnAnswerPasses() throws {
+        // Not nil: on a wedged simulator the rate test, which runs first, has already recorded a stall.
+        let before = SystemVoiceRuntime.stalledEarlier
         XCTAssertNoThrow(try SystemVoiceRuntime.requireAnswered(.answered))
         XCTAssertThrowsError(try SystemVoiceRuntime.requireAnswered(.broken("no end"))) { error in
             XCTAssertTrue(error is SystemVoiceRuntime.VoiceFailure, "a broken voice fails, it does not skip: \(error)")
         }
-        XCTAssertNil(SystemVoiceRuntime.stalledEarlier, "a broken answer is not recorded as a stall")
+        XCTAssertEqual(SystemVoiceRuntime.stalledEarlier, before, "a broken answer is not recorded as a stall")
+    }
+
+    /// A cold start that outlasts the wait answers late (#1230 saw over 3 minutes). Once that write
+    /// delivers, the stall is cleared, so the next test runs instead of skipping. A stall that was
+    /// already recorded by a test earlier in the process stays.
+    func testAStalledWriteThatAnswersLaterIsNoLongerAStall() throws {
+        let before = SystemVoiceRuntime.stalledEarlier
+        let late = SystemVoiceRuntime.Listening()
+        XCTAssertThrowsError(try SystemVoiceRuntime.requireAnswered(.stalled("a test write delivered nothing in 1 s"), from: late)) { error in
+            XCTAssertTrue(error is XCTSkip, "\(error)")
+        }
+        XCTAssertEqual(SystemVoiceRuntime.stalledEarlier, before ?? "a test write delivered nothing in 1 s")
+        late.receive(try buffer(frames: 400))
+        XCTAssertEqual(SystemVoiceRuntime.stalledEarlier, before, "the late answer clears the stall it recorded")
     }
 
     func testListeningCountsFramesUpToTheFirstEmptyBufferAndEndsOnce() throws {

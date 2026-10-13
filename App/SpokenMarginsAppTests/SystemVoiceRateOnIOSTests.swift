@@ -44,7 +44,8 @@ final class SystemVoiceRateOnIOSTests: XCTestCase {
         let heard = listening.heard
         if finished, heard.frames == 0 { throw XCTSkip("The system voice rendered no audio in this runtime") }
         try SystemVoiceRuntime.requireAnswered(
-            SystemVoiceRuntime.classify(heard, finished: finished, waited: waiting, what: "rendering at rate \(rate)"))
+            SystemVoiceRuntime.classify(heard, finished: finished, waited: waiting, what: "rendering at rate \(rate)"),
+            from: listening)
         return heard.frames / heard.sampleRate
     }
 }

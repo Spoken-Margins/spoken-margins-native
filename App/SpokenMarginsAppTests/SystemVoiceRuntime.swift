@@ -33,9 +33,26 @@ enum SystemVoiceRuntime {
     private final class State: @unchecked Sendable {
         private let lock = NSLock()
         private var reason: String?
+        private var stalledWrite: Listening?
         private var kept: [AVSpeechSynthesizer] = []
-        var stall: String? { lock.withLock { reason } }
-        func recordStall(_ why: String) { lock.withLock { if reason == nil { reason = why } } }
+        /// A stalled write that delivered audio later was a slow start, not a wedge, so it no longer counts.
+        var stall: String? {
+            lock.withLock {
+                if let write = stalledWrite, write.heard.buffers > 0 {
+                    reason = nil
+                    stalledWrite = nil
+                }
+                return reason
+            }
+        }
+        func recordStall(_ why: String, write: Listening?) {
+            lock.withLock {
+                if reason == nil {
+                    reason = why
+                    stalledWrite = write
+                }
+            }
+        }
         func keep(_ synthesizer: AVSpeechSynthesizer) { lock.withLock { kept.append(synthesizer) } }
     }
 
@@ -117,13 +134,13 @@ enum SystemVoiceRuntime {
     }
 
     /// Returns on an answer. A stall is recorded, so later system-voice tests in the process skip at
-    /// once, and the caller skips; a broken answer throws a failure.
-    static func requireAnswered(_ answer: Answer) throws {
+    /// once unless `write` answers in the meantime, and the caller skips; a broken answer throws a failure.
+    static func requireAnswered(_ answer: Answer, from write: Listening? = nil) throws {
         switch answer {
         case .answered:
             return
         case .stalled(let why):
-            state.recordStall(why)
+            state.recordStall(why, write: write)
             try skipIfStalledEarlier()
         case .broken(let why):
             throw VoiceFailure(description: "The system voice answered but did not finish: \(why)")
@@ -139,6 +156,6 @@ enum SystemVoiceRuntime {
         try skipIfStalledEarlier()
         let listening = startWrite(AVSpeechUtterance(string: "Ready."), offTheAppsSession: true)
         let finished = await XCTWaiter().fulfillment(of: [listening.finished], timeout: timeout) == .completed
-        try requireAnswered(classify(listening.heard, finished: finished, waited: timeout, what: "a one-word write"))
+        try requireAnswered(classify(listening.heard, finished: finished, waited: timeout, what: "a one-word write"), from: listening)
     }
 }
