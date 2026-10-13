@@ -220,20 +220,29 @@ extension Gate1AppModel {
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
     }
 
+    /// Add a Margin ignores taps while a save is under way and until the listening screen has been drawn and has
+    /// stayed for `MarginRestartShield.window`, so the second tap of a double tap on Save can't start a new Margin (#148).
+    var isMarginCaptureCoolingDown: Bool { !marginRestartShield.acceptsBegin(at: Date()) }
+
     /// Publish acknowledgement before synchronous recorder/store finalization.
-    /// Keep capture gated briefly after dismissal so a second tap cannot start a new Margin.
+    /// The save and the draw of the listening screen that follows can outlast any timer started when the save
+    /// returns, and the queued second tap arrives after the draw, so the shield waits for `listeningScreenAppeared`.
     func requestFinishInterjection() {
         guard snapshot.isRecording, !isFinishingInterjection else { return }
         isFinishingInterjection = true
-        isMarginCaptureCoolingDown = true
+        marginRestartShield.saveRequested()
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
             self.finishInterjection()
+            self.marginRestartShield.saveFinished(at: Date(), stillRecording: self.snapshot.isRecording)
             self.isFinishingInterjection = false
-            try? await Task.sleep(nanoseconds: 700_000_000)
-            self.isMarginCaptureCoolingDown = false
         }
+    }
+
+    /// The recording screen has gone and the screen behind it is on screen again: the shield's window starts now.
+    func listeningScreenAppeared() {
+        marginRestartShield.screenAppeared(at: Date())
     }
 
     func finishInterjection() {
@@ -278,7 +287,7 @@ extension Gate1AppModel {
     }
 
     func beginWrittenMargin() {
-        guard !recordingNavigationIsLocked else { return }
+        guard !recordingNavigationIsLocked, !isMarginCaptureCoolingDown else { return } // the pencil sits beside Add a Margin (#148)
         guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
             reportFailure("Return to the source before writing a Margin.")
             return
