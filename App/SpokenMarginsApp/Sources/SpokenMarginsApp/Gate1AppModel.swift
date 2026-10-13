@@ -486,8 +486,8 @@ final class Gate1AppModel: ObservableObject {
     }
     var renderedSpeechDiskCache: RenderedSpeechDiskCache?
     let sourceLinkResolver: LinkResolutionClient?
-    private let sourceLinkHandoffStore: SourceLinkHandoffStore?
-    private let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
+    let sourceLinkHandoffStore: SourceLinkHandoffStore?
+    let browserTextHandoffStore: Gate5BrowserTextHandoffStore?
     let audioPlaybackClientOverride: AudioPlaybackClient?
     var mediaPlaybackClient: AVPlayerStreamPlaybackClient?
     var podcastDownloadCoordinator: PodcastDownloadCoordinator?
@@ -3345,20 +3345,6 @@ final class Gate1AppModel: ObservableObject {
         libraryItems = try loadLibraryRows(store: store)
         recentlyDeletedItems = try loadDeletedLibraryRows(store: store)
         try refreshAudioPreparationPresentation(store: store)
-    }
-
-    func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
-        if let sourceLinkHandoffStore {
-            return sourceLinkHandoffStore
-        }
-        return try SourceLinkHandoffStore.appGroup()
-    }
-
-    func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
-        if let browserTextHandoffStore {
-            return browserTextHandoffStore
-        }
-        return try Gate5BrowserTextHandoffStore.appGroup()
     }
 
     static func firstURL(in text: String) -> URL? {

@@ -3,6 +3,21 @@ import SessionKit
 
 /// Import inbox presentation and ordered handoff drain. Moved out of `Gate1AppModel.swift` unchanged (#956).
 extension Gate1AppModel {
+    /// The handoff stores the extensions write to; tests inject their own (moved out of `Gate1AppModel.swift` for #1546).
+    func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
+        if let sourceLinkHandoffStore {
+            return sourceLinkHandoffStore
+        }
+        return try SourceLinkHandoffStore.appGroup()
+    }
+
+    func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
+        if let browserTextHandoffStore {
+            return browserTextHandoffStore
+        }
+        return try Gate5BrowserTextHandoffStore.appGroup()
+    }
+
     func refreshImportInbox() {
         var entries: [ImportInboxEntry] = []
         do {
