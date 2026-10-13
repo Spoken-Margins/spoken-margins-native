@@ -77,7 +77,7 @@ extension Gate1AppModel {
         importedCommentaryIsPaused = false
         importedCommentaryHealth = nil
         importedCommentaryPhase = .loading
-        sourceShouldResumeAfterImportedCommentary = false
+        sharedMarginReturn.voiceStopped()
         if hadImportedMargin {
             importedMarginRemoteControls.end()
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(!mixesWithOtherAudio)
@@ -105,8 +105,7 @@ extension Gate1AppModel {
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
         pendingImportedCommentary = nil
-        let shouldResume = sourcePausedForImportedCommentaryPrompt
-        sourcePausedForImportedCommentaryPrompt = false
+        let shouldResume = sharedMarginReturn.promptDismissed()
         if shouldResume, snapshot.status == .paused {
             resumePlayback()
         }
@@ -139,13 +138,13 @@ extension Gate1AppModel {
         }
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
-        let shouldResumeSource = sourcePausedForImportedCommentaryPrompt
-            || snapshot.status.isPlaybackActive
-            || (playingImportedCommentary != nil && sourceShouldResumeAfterImportedCommentary)
-        sourcePausedForImportedCommentaryPrompt = false
+        let shouldResumeSource = sharedMarginReturn.listenRequested(
+            sourceIsPlaying: snapshot.status.isPlaybackActive,
+            voiceIsPlaying: playingImportedCommentary != nil
+        )
         if snapshot.status.isPlaybackActive { pause() }
         stopInterjectionAudioPlayback()
-        sourceShouldResumeAfterImportedCommentary = shouldResumeSource
+        sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
         do {
             #if os(iOS)
             let options: AVAudioSession.CategoryOptions = mixesWithOtherAudio
@@ -215,10 +214,10 @@ extension Gate1AppModel {
     }
 
     func stopImportedCommentaryPlayback(resumeSource: Bool) {
-        let shouldResume = resumeSource && sourceShouldResumeAfterImportedCommentary
+        let shouldResume = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: resumeSource)
         stopInterjectionAudioPlayback()
         playingImportedCommentary = nil
-        sourceShouldResumeAfterImportedCommentary = false
+        sharedMarginReturn.voiceStopped()
         if shouldResume, snapshot.status == .paused { resumePlayback() }
     }
 
@@ -236,7 +235,7 @@ extension Gate1AppModel {
         _ prompt: ImportedCommentaryPrompt,
         sourceWasPlaying: Bool
     ) {
-        sourcePausedForImportedCommentaryPrompt = sourceWasPlaying
+        sharedMarginReturn.promptShown(sourceWasPlaying: sourceWasPlaying)
         if sourceWasPlaying, snapshot.status.isPlaybackActive { pause() }
         if !prompt.layer.isMuted { playImportedCommentaryCue() }
         pendingImportedCommentary = prompt

@@ -549,8 +549,7 @@ final class Gate1AppModel: ObservableObject {
     var commentaryCuePlayer: AVAudioPlayer?
     #endif
     var sharedMarginOffers = SharedMarginOfferQueue()
-    var sourceShouldResumeAfterImportedCommentary = false
-    var sourcePausedForImportedCommentaryPrompt = false
+    var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
     var importedCommentaryAutoPlayTask: Task<Void, Never>?
     private var bulkSharePreparationTask: Task<Void, Never>?
     private var bulkSharePreparationGeneration = 0

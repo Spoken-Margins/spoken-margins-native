@@ -180,6 +180,16 @@ final class SharedMarginReturnClaimTests: XCTestCase {
         XCTAssertTrue(claim.returnsSourceWhenVoiceEnds(resumeSource: true))
     }
 
+    // R18 (the same window from the other side: a prompt shown while Listen is between capture and restore)
+    func testR18BAPromptShownBetweenCaptureAndRestoreSurvivesTheVoiceStarting() {
+        var claim = SharedMarginReturnClaim.none
+        let owed = claim.listenRequested(sourceIsPlaying: true, voiceIsPlaying: false)
+        claim.promptShown(sourceWasPlaying: true) // a drained jump re-enters during the source's pause
+        claim.voiceStopped()
+        claim.voiceStarted(returnToSource: owed)
+        XCTAssertEqual(claim, .promptAndVoice, "starting the voice sets only the voice's part")
+    }
+
     // R19 (a prompt left behind by a card that was cleared without being answered)
     func testR19AStalePromptPartIsInheritedByALaterDirectListen() {
         var claim = SharedMarginReturnClaim.none
