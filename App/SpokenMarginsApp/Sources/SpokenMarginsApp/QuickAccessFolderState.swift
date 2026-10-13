@@ -199,7 +199,7 @@ final class QuickAccessFolderState: ObservableObject {
             if didAccess {
                 stopAccess(folderURL)
             }
-            guard let self else { return }
+            guard let self, self.refreshID == id else { return }
             self.refreshTask = nil
             self.isRefreshing = false
             if let errorDescription = scan.errorDescription {
