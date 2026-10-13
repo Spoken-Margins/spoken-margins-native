@@ -187,20 +187,28 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         try client.play(targetId: "held-interruption-audio", fromMediaTimeMs: 0)
 
         post(.began, to: notificationCenter)
+        await settle { probe.begins == 1 }
         XCTAssertEqual(probe.begins, 1, "the app stays awake to hear the interruption end")
         XCTAssertEqual(probe.ends, 0)
 
         post(.ended, options: .shouldResume, to: notificationCenter)
+        await settle { probe.ends == 1 }
         XCTAssertEqual(probe.ends, 1, "the time is given back once iOS reports the end")
         XCTAssertEqual(probe.hold.outcome, .ended)
 
         try client.play(targetId: "held-interruption-audio", fromMediaTimeMs: 0)
         post(.began, to: notificationCenter)
+        await settle { probe.begins == 2 }
         XCTAssertEqual(probe.begins, 2)
         try client.play(targetId: "held-interruption-audio", fromMediaTimeMs: 500)
         XCTAssertEqual(probe.ends, 2, "the listener's own Play takes over before an end arrives")
         XCTAssertEqual(probe.hold.outcome, .listenerActed)
         try client.stop()
+    }
+
+    /// The observers deliver on the main queue, after the post returns.
+    private func settle(_ condition: () -> Bool) async {
+        for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
     }
 
     private func post(

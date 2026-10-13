@@ -1911,6 +1911,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         removeCompletionObserver()
         removeTimeObserver()
         removeRemoteCommandHandlers()
+        withInterruptionHold { $0.listenerActed() }
         for observer in audioSessionObservers {
             audioSessionNotificationCenter.removeObserver(observer)
         }
@@ -2812,7 +2813,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
                   let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
             switch type {
             case .began:
-                self?.pauseForSystemInterruption()
+                self?.pauseForSystemInterruption(awaitsEnd: true)
             case .ended:
                 let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 self?.finishSystemInterruption(
@@ -2829,15 +2830,16 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         ) { [weak self] notification in
             guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
                   AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
-            self?.pauseForSystemInterruption()
+            self?.pauseForSystemInterruption(awaitsEnd: false)
         })
         #endif
     }
 
-    private func pauseForSystemInterruption() {
+    /// `awaitsEnd` is false for a lost route, which never reports an end: nothing to wait for.
+    private func pauseForSystemInterruption(awaitsEnd: Bool) {
         let wasPlaying = activeTargetId != nil && !paused
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
-        withInterruptionHold { $0.interruptionBegan() }
+        if awaitsEnd { withInterruptionHold { $0.interruptionBegan() } }
         paused = true
         player?.pause()
         #if os(iOS)

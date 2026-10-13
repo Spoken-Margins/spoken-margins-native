@@ -3358,6 +3358,11 @@ final class SupertonicSpeechTests: XCTestCase {
         }
         XCTAssertEqual(client.playbackStartStatus(targetId: "held-interruption"), .confirmed)
 
+        // The observers deliver on the main queue, after the post returns.
+        func settle(_ condition: () -> Bool) async {
+            for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        }
+
         func post(_ type: AVAudioSession.InterruptionType, shouldResume: Bool = false) {
             var info: [AnyHashable: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
             if type == .ended {
@@ -3368,16 +3373,19 @@ final class SupertonicSpeechTests: XCTestCase {
         }
 
         post(.began)
+        await settle { probe.begins == 1 }
         XCTAssertEqual(client.playbackTransportState(targetId: "held-interruption"), .paused)
         XCTAssertEqual(probe.begins, 1, "the app stays awake to hear the interruption end")
         XCTAssertEqual(probe.ends, 0)
 
         post(.ended, shouldResume: true)
+        await settle { probe.ends == 1 }
         XCTAssertEqual(probe.ends, 1, "the time is given back once iOS reports the end")
         XCTAssertEqual(probe.hold.outcome, .ended)
 
         try client.play(targetId: "held-interruption")
         post(.began)
+        await settle { probe.begins == 2 }
         XCTAssertEqual(probe.begins, 2)
         try client.pause()
         XCTAssertEqual(probe.ends, 2, "the listener's own Pause takes over before an end arrives")

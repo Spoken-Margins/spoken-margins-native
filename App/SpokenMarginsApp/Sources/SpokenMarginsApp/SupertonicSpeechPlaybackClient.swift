@@ -622,6 +622,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if handOverHoldRequested, let hold = handOverHold {
             Task { @MainActor in hold.nextChunkMoving() }
         }
+        if let hold = interruptionHold {
+            Task { @MainActor in hold.listenerActed() }
+        }
         for observer in audioSessionObservers {
             audioSessionNotificationCenter.removeObserver(observer)
         }
