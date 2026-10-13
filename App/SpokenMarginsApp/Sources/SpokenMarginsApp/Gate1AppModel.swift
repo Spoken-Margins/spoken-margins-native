@@ -2812,7 +2812,7 @@ final class Gate1AppModel: ObservableObject {
             if enabled {
                 try? audio?.setMixesWithOtherAudio(false)
                 try? audio?.setPlaybackVolume(1)
-                // MUTATION CHECK (#1022): restore dropped: audio?.setRemoteCommandHandlingEnabled(true)
+                audio?.setRemoteCommandHandlingEnabled(true)
                 gate2CompactControls.setNowPlayingEnabled(true)
             } else {
                 gate2CompactControls.setNowPlayingEnabled(false)
@@ -3313,7 +3313,7 @@ final class Gate1AppModel: ObservableObject {
             dismissPendingImportedCommentary()
             return true
         case Gate2CompactApplicationCommand.jumpToSharedMargin:
-            guard let targetID, !targetID.isEmpty else { return true } // MUTATION CHECK (#1022)
+            guard let targetID, !targetID.isEmpty else { return false }
             return jumpToImportedCommentary(interjectionID: targetID)
         default:
             reportFailure("Unsupported compact application command.")
