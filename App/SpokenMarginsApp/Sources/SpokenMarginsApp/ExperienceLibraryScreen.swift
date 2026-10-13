@@ -25,6 +25,11 @@ struct ExperienceLibraryScreen: View {
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
 
+                if model.sourceLinksWaitingForNetwork > 0 {
+                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+
                 items
 
                 if !model.audioPreparationQueue.isEmpty || !model.recentlyPreparedAudio.isEmpty {
