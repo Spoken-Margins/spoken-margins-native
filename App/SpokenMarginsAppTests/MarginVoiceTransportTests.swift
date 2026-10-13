@@ -103,7 +103,7 @@ final class MarginVoiceTransportTests: XCTestCase {
         XCTAssertNil(model.lastError, "reaching the end is not a failure")
     }
 
-    /// Your own Margin lowers other audio and does not mix, whatever the listener's mixing settings are.
+    /// Your own Margin lowers other audio, whatever the listener's mixing settings are.
     func testAnOwnMarginPlaysWithTheDuckingSessionOptions() throws {
         let fixture = try VoiceFixture()
         defer { fixture.cleanUp() }
@@ -118,8 +118,8 @@ final class MarginVoiceTransportTests: XCTestCase {
         let session = AVAudioSession.sharedInstance()
         XCTAssertEqual(session.category, .playback)
         XCTAssertEqual(session.mode, .spokenAudio)
+        // Not asserted: .mixWithOthers. iOS reports it alongside .duckOthers, so it says nothing about the route.
         XCTAssertTrue(session.categoryOptions.contains(.duckOthers))
-        XCTAssertFalse(session.categoryOptions.contains(.mixWithOthers))
     }
 
     /// A shared Margin's session follows the listener's mixing settings, in all four combinations.
