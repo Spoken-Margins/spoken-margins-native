@@ -2084,9 +2084,10 @@ class MainFlowTests(unittest.TestCase):
 
     def test_the_workflow_fails_its_verdict_step_and_tidies_only_when_nothing_was_reported(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/lane.yml').read_text()
-        # Both jobs check out the Git LFS models: --plan fast's contracts check reads them (#301).
-        self.assertEqual(workflow.count('lfs: true'), 2)
-        self.assertEqual(workflow.count('persist-credentials: false'), 3)  # hosted routing plus both Mac jobs
+        # Every Mac job checks out the Git LFS models: --plan fast's contracts check reads them (#301). The third is
+        # the release job a T3 PASS hands to a build runner (#1209).
+        self.assertEqual(workflow.count('lfs: true'), 3)
+        self.assertEqual(workflow.count('persist-credentials: false'), 4)  # hosted routing plus the three Mac jobs
         self.assertIn("if: steps.run.outputs.reported == 'true'", workflow)
         self.assertIn("if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'", workflow)
 
@@ -2110,10 +2111,12 @@ class MainFlowTests(unittest.TestCase):
         # stays green with a warning, and the report and the lane:done relabel carry it to the dispatcher.
         # In 13 hours on 2026-09-30, 29 of the lane's 46 red checks were INCONCLUSIVE, 20 of them held for T3.
         scripts = self.verdict_steps()
-        self.assertEqual(len(scripts), 2)  # the lane job's and the automerge job's
-        for job, script in zip(('lane', 'automerge'), scripts):
+        self.assertEqual(len(scripts), 3)  # the lane job's, the automerge job's and the release job's (#1209)
+        for job, script in zip(('lane', 'automerge', 'release'), scripts):
+            # The release job's check sits on next's tip, not on the PR (#1209): a FAIL there stays a warning.
+            fail = ('FAIL', 0, '::warning title=Lane FAIL') if job == 'release' else ('FAIL', 1, '::error title=Lane FAIL')
             for verdict, code, annotation in (('PASS', 0, None), ('INCONCLUSIVE', 0, '::warning title=Lane INCONCLUSIVE'),
-                                              ('FAIL', 1, '::error title=Lane FAIL')):
+                                              fail):
                 with self.subTest(job=job, verdict=verdict):
                     # GitHub runs a step's script with bash -e when the step names no shell.
                     done = subprocess.run(['bash', '-e', '-c', script], env=dict(os.environ, VERDICT=verdict),
