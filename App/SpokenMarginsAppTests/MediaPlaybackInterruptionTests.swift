@@ -167,6 +167,52 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         try client.stop()
     }
 
+    // #1434: a backgrounded app with nothing playing can be suspended before iOS says the interruption is over,
+    // so the owner's phone stayed paused after a message announcement. The client holds background time from the
+    // interruption's start until the end arrives, or until the listener presses Play or Pause themselves.
+    func testInterruptionHoldsBackgroundTimeUntilItEndsOrTheListenerActs() async throws {
+        let audioURL = try makeTestWAV(duration: 4)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let notificationCenter = NotificationCenter()
+        let probe = InterruptionHoldProbe()
+        let client = AVPlayerStreamPlaybackClient(
+            audioSessionNotificationCenter: notificationCenter,
+            interruptionHold: probe.hold
+        )
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "held-interruption", targetType: .transcriptBackedMedia,
+            targetId: "held-interruption-audio", title: "Held interruption",
+            playbackURL: audioURL.absoluteString, durationMs: 4_000
+        ))
+        try client.play(targetId: "held-interruption-audio", fromMediaTimeMs: 0)
+
+        post(.began, to: notificationCenter)
+        XCTAssertEqual(probe.begins, 1, "the app stays awake to hear the interruption end")
+        XCTAssertEqual(probe.ends, 0)
+
+        post(.ended, options: .shouldResume, to: notificationCenter)
+        XCTAssertEqual(probe.ends, 1, "the time is given back once iOS reports the end")
+        XCTAssertEqual(probe.hold.outcome, .ended)
+
+        try client.play(targetId: "held-interruption-audio", fromMediaTimeMs: 0)
+        post(.began, to: notificationCenter)
+        XCTAssertEqual(probe.begins, 2)
+        try client.play(targetId: "held-interruption-audio", fromMediaTimeMs: 500)
+        XCTAssertEqual(probe.ends, 2, "the listener's own Play takes over before an end arrives")
+        XCTAssertEqual(probe.hold.outcome, .listenerActed)
+        try client.stop()
+    }
+
+    private func post(
+        _ type: AVAudioSession.InterruptionType,
+        options: AVAudioSession.InterruptionOptions = [],
+        to center: NotificationCenter
+    ) {
+        var info: [AnyHashable: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
+        if type == .ended { info[AVAudioSessionInterruptionOptionKey] = options.rawValue }
+        center.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: info)
+    }
+
     func testImportedMarginTransportFreezesAndResumesRealSourceAndMarginPlayers() async throws {
         try await verifyImportedMarginTransport(nativeMedia: true, guided: false)
     }
@@ -797,5 +843,28 @@ private struct SharedMarginHearingFixture {
     func cleanUp() {
         model.stopInterjectionAudioPlayback()
         for url in files + [root] { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+/// Stands in for UIApplication's background tasks around an `InterruptionBackgroundHold`.
+@MainActor
+final class InterruptionHoldProbe {
+    private(set) var begins = 0
+    private(set) var ends = 0
+    private(set) var hold: InterruptionBackgroundHold!
+
+    init() {
+        hold = InterruptionBackgroundHold(
+            begin: { [unowned self] _, _ in
+                self.begins += 1
+                var ended = false
+                return { [unowned self] in
+                    guard !ended else { return }
+                    ended = true
+                    self.ends += 1
+                }
+            },
+            record: { _, _ in }
+        )
     }
 }

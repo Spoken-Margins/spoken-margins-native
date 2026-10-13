@@ -1831,6 +1831,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var paused = true
     private var remoteCommandHandlingEnabled = true
     private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
+    /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS says
+    /// it is over (#1434).
+    private let interruptionHold: InterruptionBackgroundHold?
     private var preferredSkipBackSeconds: Int
     private var preferredSkipForwardSeconds: Int
 
@@ -1843,12 +1846,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         preferredSkipForwardSeconds: Int = 15,
         audioSessionNotificationCenter: NotificationCenter = .default,
         interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)? = nil,
+        interruptionHold: InterruptionBackgroundHold? = nil,
         remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil
     ) {
         self.preferredSkipBackSeconds = Self.validatedSkipSeconds(preferredSkipBackSeconds)
         self.preferredSkipForwardSeconds = Self.validatedSkipSeconds(preferredSkipForwardSeconds)
         self.audioSessionNotificationCenter = audioSessionNotificationCenter
         self.interruptionHandler = interruptionHandler
+        self.interruptionHold = interruptionHold
         self.remoteCommandHandler = remoteCommandHandler
         installAudioSessionObservers()
         installRemoteCommandHandlers()
@@ -1913,7 +1918,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         if context?.targetId != mediaContext?.targetId {
-            interruptionResumePolicy.cancelAutomaticResume()
+            cancelAutomaticInterruptionResume()
         }
         mediaContext = context
         if let context, let durationMs = context.durationMs {
@@ -1936,7 +1941,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         #if canImport(AVFoundation)
-        interruptionResumePolicy.cancelAutomaticResume()
+        cancelAutomaticInterruptionResume()
         let requestedURL = mediaContext?.targetId == targetId ? mediaContext?.playbackURL : nil
         guard let url = URL(string: requestedURL ?? targetId) else {
             throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
@@ -2286,7 +2291,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func pause() throws {
         #if canImport(AVFoundation)
-        interruptionResumePolicy.cancelAutomaticResume()
+        cancelAutomaticInterruptionResume()
         paused = true
         player?.pause()
         stopStallWatchdog()
@@ -2300,7 +2305,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func stop() throws {
         #if canImport(AVFoundation)
         cancelPostResumeEvidenceCapture(reason: "playback_stopped_during_capture")
-        interruptionResumePolicy.cancelAutomaticResume()
+        cancelAutomaticInterruptionResume()
         invalidatePendingMediaSeek()
         player?.pause()
         stopStallWatchdog()
@@ -2832,6 +2837,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func pauseForSystemInterruption() {
         let wasPlaying = activeTargetId != nil && !paused
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
+        withInterruptionHold { $0.interruptionBegan() }
         paused = true
         player?.pause()
         #if os(iOS)
@@ -2842,8 +2848,25 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func finishSystemInterruption(shouldResume: Bool) {
+        withInterruptionHold { $0.interruptionEnded() }
         guard interruptionResumePolicy.ended(shouldResume: shouldResume) else { return }
         interruptionHandler?(.endedShouldResume)
+    }
+
+    /// The listener's Play, Pause, Stop or a new item replaces an interruption's automatic resume.
+    private func cancelAutomaticInterruptionResume() {
+        interruptionResumePolicy.cancelAutomaticResume()
+        withInterruptionHold { $0.listenerActed() }
+    }
+
+    /// The audio-session observers run on the main thread; the hold is main-actor state.
+    private func withInterruptionHold(_ work: @escaping @MainActor (InterruptionBackgroundHold) -> Void) {
+        guard let hold = interruptionHold else { return }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { work(hold) }
+        } else {
+            Task { @MainActor in work(hold) }
+        }
     }
     #else
     private func removePlayerStateObserver() {}

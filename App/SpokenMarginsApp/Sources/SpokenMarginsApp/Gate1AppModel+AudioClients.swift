@@ -170,7 +170,8 @@ extension Gate1AppModel {
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
                 onRenderPace: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["onDeviceRenderPace"] = summary } },
-                handOverHold: handOverBackgroundHold
+                handOverHold: handOverBackgroundHold,
+                interruptionHold: makeInterruptionBackgroundHold()
             )
         }
         diagnostics["sessionTTS"] = "System speech"
@@ -211,6 +212,14 @@ extension Gate1AppModel {
         }
     }
 
+    /// Background time while an audio interruption waits to end, one per player (#1434).
+    private func makeInterruptionBackgroundHold() -> InterruptionBackgroundHold {
+        InterruptionBackgroundHold(
+            begin: NarrationStartupBackgroundTime.begin,
+            record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+        )
+    }
+
     private func makeMediaPlaybackClient() -> AudioPlaybackClient {
         let client = AVPlayerStreamPlaybackClient(
             preferredSkipBackSeconds: mediaSkipBackSeconds,
@@ -219,7 +228,8 @@ extension Gate1AppModel {
                 Task { @MainActor [weak self] in
                     self?.handleMediaPlaybackInterruption(event)
                 }
-            }
+            },
+            interruptionHold: makeInterruptionBackgroundHold()
         ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
                 self?.syncPlaybackProgressForLifecycle()
