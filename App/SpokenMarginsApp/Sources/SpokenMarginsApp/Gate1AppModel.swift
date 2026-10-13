@@ -253,7 +253,7 @@ final class Gate1AppModel: ObservableObject {
             if selectedItem.id == snapshot.itemId { activePlaybackDetail = selectedItem }
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
-            skimResourceContext = nil
+            skimBridge.invalidateResources()
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -546,8 +546,6 @@ final class Gate1AppModel: ObservableObject {
     #if canImport(AVFoundation)
     var interjectionAudioPlayer: AVPlayer?
     var interjectionAudioCompletionTask: Task<Void, Never>?
-    var skimBridgePlayer: AVPlayer?
-    var skimBridgeTask: Task<Void, Never>?
     var preparingLocalAudioMapItems = Set<String>()
     var commentaryCuePlayer: AVAudioPlayer?
     #endif
@@ -563,7 +561,6 @@ final class Gate1AppModel: ObservableObject {
     var libraryAudioPreparingItemId: String? { get { libraryAudioLoop.turns.preparingItemId } set { libraryAudioLoop.turns.preparingItemId = newValue } }
     var episodeMapPreparationTask: Task<Void, Never>?
     var episodeMapPreparationItemId: String?
-    var isUpdatingSkimAvailability = false
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
     var quickAccessRefreshTask: Task<Void, Never>?
@@ -1965,12 +1962,7 @@ final class Gate1AppModel: ObservableObject {
             || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
     }
 
-    @Published var skimForwardDestinationMs: Int?
-    @Published var skimBackwardDestinationMs: Int?
-    var skimResourceContext: SkimResourceContext?
-    #if DEBUG
-    var skimResourceLoadCount = 0
-    #endif
+    lazy var skimBridge = SkimBridgeController(host: self) // the Skim bridge's player, poll, resources and destinations (#954)
 
     func applyListeningMapJSON() {
         do {
