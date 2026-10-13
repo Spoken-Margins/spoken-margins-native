@@ -22,7 +22,7 @@ extension Gate1AppModel {
                 repository: store,
                 applicationSupport: support,
                 isDecodable: RecordingDraftProbe.isDecodable
-            ).reconcile(savedAudioPaths: Set(try store.allMarginAudioPaths()))
+            ).reconcile(savedAudioPaths: { try store.allMarginAudioPaths() })
             var recovered = 0
             var unreadable = 0
             for report in reports {

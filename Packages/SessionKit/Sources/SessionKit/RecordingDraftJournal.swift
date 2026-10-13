@@ -169,12 +169,18 @@ public struct RecordingDraftReconciler {
     }
 
     /// - Parameter savedAudioPaths: every recording any stored Margin names, quarantined ones included, so a
-    ///   Margin the listener deleted is not brought back.
+    ///   Margin the listener deleted is not brought back. It is read only when there are notes to settle, so a
+    ///   launch with none never scans the Library, and if it throws nothing is settled (a note is never guessed at).
     @discardableResult
-    public func reconcile(savedAudioPaths: Set<String>) throws -> [RecordingDraftReport] {
+    public func reconcile(savedAudioPaths: () throws -> [String]) throws -> [RecordingDraftReport] {
+        let drafts = try journal.load().drafts
+        guard !drafts.isEmpty else { return [] }
+        var saved = Set(try savedAudioPaths())
         var reports: [RecordingDraftReport] = []
-        for draft in try journal.load().drafts {
-            reports.append(RecordingDraftReport(draftId: draft.id, outcome: try settle(draft, savedAudioPaths: savedAudioPaths)))
+        for draft in drafts {
+            let outcome = try settle(draft, savedAudioPaths: saved)
+            if case .recovered = outcome, let ref = draft.audioRef { saved.insert(ref) }
+            reports.append(RecordingDraftReport(draftId: draft.id, outcome: outcome))
         }
         return reports
     }

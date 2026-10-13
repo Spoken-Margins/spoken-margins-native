@@ -112,8 +112,7 @@ final class RecordingDraftTests: XCTestCase {
     }
 
     private func reconcile(decodable: @escaping (URL) -> Bool = { _ in true }) throws -> [RecordingDraftReport.Outcome] {
-        let saved = Set(try store.allMarginAudioPaths())
-        return try reconciler(decodable: decodable).reconcile(savedAudioPaths: saved).map(\.outcome)
+        try reconciler(decodable: decodable).reconcile(savedAudioPaths: { try store.allMarginAudioPaths() }).map(\.outcome)
     }
 
     private func margins(_ sessionId: String) throws -> [Interjection] {
@@ -254,7 +253,7 @@ final class RecordingDraftTests: XCTestCase {
 
         // The Margin's row is gone from the live table but still names the recording in quarantine or elsewhere.
         let ref = try XCTUnwrap(recorder.recordings.first)
-        let outcomes = try reconciler().reconcile(savedAudioPaths: [ref]).map(\.outcome)
+        let outcomes = try reconciler().reconcile(savedAudioPaths: { [ref] }).map(\.outcome)
         XCTAssertEqual(outcomes, [.alreadySaved])
         XCTAssertEqual(try margins(sessionId).count, 1)
     }
@@ -308,6 +307,22 @@ final class RecordingDraftTests: XCTestCase {
         _ = try reconcile()
 
         XCTAssertEqual(try margins(sessionId).map(\.id).sorted(), ["ij-001", "ij-002"])
+    }
+
+    func testALaunchWithNoNotesNeverScansTheLibrary() throws {
+        var scans = 0
+        let reports = try reconciler().reconcile(savedAudioPaths: { scans += 1; return [] })
+        XCTAssertEqual(reports, [])
+        XCTAssertEqual(scans, 0)
+    }
+
+    func testIfTheLibraryScanFailsNothingIsSettled() throws {
+        let (engine, _) = try recordingEngine()
+        _ = try engine.beginInterjection()
+        struct ScanFailed: Error {}
+        XCTAssertThrowsError(try reconciler().reconcile(savedAudioPaths: { throw ScanFailed() }))
+        XCTAssertEqual(try journal.load().drafts.count, 1, "the note waits for a launch that can check")
+        XCTAssertEqual(try margins(try XCTUnwrap(engine.currentSession?.id)).count, 0)
     }
 
     // MARK: - What stays put
