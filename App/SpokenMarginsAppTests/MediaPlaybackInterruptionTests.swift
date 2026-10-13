@@ -206,6 +206,59 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         try client.stop()
     }
 
+    // #1434, owner's phone on 437fbc9: iOS sent no end after a message announcement. The player resumes once
+    // the other audio stops, once, and not after the listener paused.
+    func testInterruptionResumesWhenTheOtherAudioStopsWithoutAnEnd() async throws {
+        let audioURL = try makeTestWAV(duration: 4)
+        defer { try? FileManager.default.removeItem(at: audioURL) }
+        let notificationCenter = NotificationCenter()
+        let events = InterruptionEventRecorder()
+        var otherAudio = InterruptionBackgroundHold.OtherAudio(isPlaying: true, secondaryShouldBeSilenced: true)
+        let probe = InterruptionHoldProbe(watch: .init(
+            probe: { otherAudio },
+            activate: { nil },
+            pollInterval: 0.02,
+            settle: 0.05,
+            window: 5,
+            releaseDelay: 0
+        ))
+        let client = AVPlayerStreamPlaybackClient(
+            audioSessionNotificationCenter: notificationCenter,
+            interruptionHandler: { events.append($0) },
+            interruptionHold: probe.hold
+        )
+        try client.configureMediaContext(PlaybackMediaContext(
+            itemId: "watched-interruption", targetType: .transcriptBackedMedia,
+            targetId: "watched-interruption-audio", title: "Watched interruption",
+            playbackURL: audioURL.absoluteString, durationMs: 4_000
+        ))
+        try client.play(targetId: "watched-interruption-audio", fromMediaTimeMs: 0)
+
+        post(.began, to: notificationCenter)
+        await settle { probe.begins == 1 }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(events.values, [.began], "the announcement is still playing")
+
+        otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        await settle { events.values.count == 2 }
+        XCTAssertEqual(events.values, [.began, .endedShouldResume])
+        XCTAssertEqual(probe.hold.outcome, .otherAudioStopped)
+        post(.ended, options: .shouldResume, to: notificationCenter)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(events.values, [.began, .endedShouldResume], "a late end doesn't resume a second time")
+
+        try client.play(targetId: "watched-interruption-audio", fromMediaTimeMs: 0)
+        otherAudio = .init(isPlaying: true, secondaryShouldBeSilenced: true)
+        post(.began, to: notificationCenter)
+        await settle { probe.begins == 2 }
+        try client.pause()
+        otherAudio = .init(isPlaying: false, secondaryShouldBeSilenced: false)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(events.values, [.began, .endedShouldResume, .began], "the listener's pause keeps it paused")
+        XCTAssertEqual(probe.hold.outcome, .listenerActed)
+        try client.stop()
+    }
+
     /// The observers deliver on the main queue, after the post returns.
     private func settle(_ condition: () -> Bool) async {
         for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
@@ -861,7 +914,7 @@ final class InterruptionHoldProbe {
     private(set) var ends = 0
     private(set) var hold: InterruptionBackgroundHold!
 
-    init() {
+    init(watch: InterruptionBackgroundHold.OtherAudioWatch? = nil) {
         hold = InterruptionBackgroundHold(
             begin: { [unowned self] _, _ in
                 self.begins += 1
@@ -872,7 +925,8 @@ final class InterruptionHoldProbe {
                     self.ends += 1
                 }
             },
-            record: { _, _ in }
+            record: { _, _ in },
+            otherAudioWatch: watch
         )
     }
 }
