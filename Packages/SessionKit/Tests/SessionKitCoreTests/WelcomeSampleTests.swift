@@ -85,17 +85,18 @@ final class WelcomeSampleTests: XCTestCase {
             map.overview,
             "Take a guided tour of the Listening Map, playback navigation, spoken Margins, and the three ways to add your own sources."
         )
+        // The welcome text's `#` title heads its opening paragraph, so it is the first chapter (#1435).
         XCTAssertEqual(map.chapters.map(\.title), [
-            "Start with the Listening Map", "Move forward and backward", "Interject while you listen",
+            "Welcome to Spoken Margins", "Start with the Listening Map", "Move forward and backward", "Interject while you listen",
             "Load your own sources", "Keep what matters"
         ])
         XCTAssertEqual(map.chapters.map(\.id), [
-            "ch-markdown-01-start-with-the-listening-map", "ch-markdown-02-move-forward-and-backward",
-            "ch-markdown-03-interject-while-you-listen", "ch-markdown-04-load-your-own-sources",
-            "ch-markdown-05-keep-what-matters"
+            "ch-markdown-01-welcome-to-spoken-margins", "ch-markdown-02-start-with-the-listening-map",
+            "ch-markdown-03-move-forward-and-backward", "ch-markdown-04-interject-while-you-listen",
+            "ch-markdown-05-load-your-own-sources", "ch-markdown-06-keep-what-matters"
         ])
-        XCTAssertEqual(map.chapters.map(\.percent), [0, 20, 30, 49, 76])
-        XCTAssertEqual(map.chapters.map(\.startChar), [0, 443, 652, 1054, 1654])
+        XCTAssertEqual(map.chapters.map(\.percent), [0, 10, 20, 30, 49, 76])
+        XCTAssertEqual(map.chapters.map(\.startChar), [0, 228, 443, 652, 1054, 1654])
         XCTAssertEqual(map.chapters.last?.endChar, 2150)
     }
 
