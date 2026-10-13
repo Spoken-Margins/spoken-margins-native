@@ -45,11 +45,11 @@ final class Gate1AppModel: ObservableObject {
     static let guidedOnboardingItemId = "guided-onboarding"
     static let welcomeSampleSeedVersion = 2
     static let welcomeSampleSeedVersionKey = "welcomeSampleSeedVersion"
-    private static let onboardingStepsKey = "onboardingCompletedStepsV1"
-    private static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
+    static let onboardingStepsKey = "onboardingCompletedStepsV1"
+    static let guidedOnboardingStageKey = "guidedOnboardingStageV1"
     static let guidedOnboardingSeedVersionKey = "guidedOnboardingSeedVersion"
     static let guidedOnboardingTombstoneKey = "guidedOnboardingTombstone"
-    private static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
+    static let onboardingCardDismissedKey = "onboardingCardDismissedV1"
     private static let dismissedQuickAccessFilesKey = "dismissedQuickAccessFilesV1"
     private static let supertonicTTSMigrationKey = "supertonicTTSMigrationV1"
     static let supertonicVoicePendingTermsKey = "supertonicVoicePendingTermsV1"
@@ -479,7 +479,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var isTermsOfUsePresented = false
     @Published var isHelpPresented = false
     /// Read from UserDefaults here, in the declaration, so a model built after a test writes the keys sees them.
-    @Published private(set) var onboardingProgress = OnboardingProgress(
+    @Published var onboardingProgress = OnboardingProgress(
         storedSteps: UserDefaults.standard.stringArray(forKey: Gate1AppModel.onboardingStepsKey),
         storedStage: UserDefaults.standard.string(forKey: Gate1AppModel.guidedOnboardingStageKey),
         isCardDismissed: UserDefaults.standard.bool(forKey: Gate1AppModel.onboardingCardDismissedKey)
@@ -663,108 +663,6 @@ final class Gate1AppModel: ObservableObject {
         #endif
     }
 
-    var guidedOnboardingStage: GuidedOnboardingStage { onboardingProgress.stage }
-
-    var isOnboardingCardDismissed: Bool { onboardingProgress.isCardDismissed }
-
-    var onboardingCoreCompletedCount: Int { onboardingProgress.coreCompletedCount }
-
-    var hasCompletedCoreOnboarding: Bool { onboardingProgress.hasCompletedCore }
-
-    var shouldShowOnboardingCard: Bool {
-        onboardingProgress.shouldShowCard(
-            suppressed: Self.isRunningUnitTests || UITestingHooks.isActive
-        )
-    }
-
-    var shouldShowGuidedOnboardingCoach: Bool {
-        onboardingProgress.shouldShowCoach(guidedItemIsSelected: selectedItem.id == Self.guidedOnboardingItemId)
-    }
-
-    func isOnboardingStepComplete(_ step: OnboardingStep) -> Bool {
-        onboardingProgress.isComplete(step)
-    }
-
-    func markOnboardingSteps(_ steps: Set<OnboardingStep>) {
-        changeOnboardingProgress { $0.mark(steps) }
-    }
-
-    private func setGuidedOnboardingStage(_ stage: GuidedOnboardingStage) {
-        changeOnboardingProgress { $0.setStage(stage) }
-    }
-
-    /// Applies one transition to a copy, then stores it and writes only the UserDefaults keys it names.
-    /// A transition that changes nothing leaves the published value alone, so views are not redrawn for it.
-    func changeOnboardingProgress(_ transition: (inout OnboardingProgress) -> OnboardingProgress.Change) {
-        var updated = onboardingProgress
-        let change = transition(&updated)
-        guard !change.isEmpty else { return }
-        onboardingProgress = updated
-        if change.contains(.steps) {
-            UserDefaults.standard.set(updated.storedSteps, forKey: Self.onboardingStepsKey)
-        }
-        if change.contains(.stage) {
-            UserDefaults.standard.set(updated.storedStage, forKey: Self.guidedOnboardingStageKey)
-        }
-        if change.contains(.card) {
-            UserDefaults.standard.set(updated.isCardDismissed, forKey: Self.onboardingCardDismissedKey)
-        }
-    }
-
-    func reconcileOnboardingEvidence(store: SQLiteSessionStore) throws {
-        let items = try store.listItems()
-        var evidence = OnboardingEvidenceClassifier.sourceSteps(items: items)
-        let hasSavedInterjection = try store.loadSessions().contains { session in
-            ((try? store.loadInterjections(sessionId: session.id)) ?? [])
-                .contains(where: { $0.status == "active" })
-        }
-        if hasSavedInterjection {
-            evidence.insert(.firstInterjection)
-        }
-        markOnboardingSteps(evidence)
-    }
-
-    func dismissOnboardingCard() {
-        changeOnboardingProgress { $0.dismissCard() }
-    }
-
-    func restoreOnboardingCard() {
-        changeOnboardingProgress { $0.restoreCard() }
-    }
-
-    func pauseGuidedOnboarding() {
-        setGuidedOnboardingStage(.inactive)
-    }
-
-    func continueGuidedOnboardingPastAI() {
-        changeOnboardingProgress { $0.continuePastAI() }
-    }
-
-    func openAISettingsFromOnboarding() {
-        guard !rejectNavigationOrSessionMutationWhileRecording("open_ai_settings_from_onboarding") else { return }
-        continueGuidedOnboardingPastAI()
-        isHelpPresented = false
-        screen = .settings
-    }
-
-    func finishGuidedOnboarding() {
-        setGuidedOnboardingStage(.inactive)
-    }
-
-    func recordTimelineInterjectionViewed(interjectionId: String) {
-        guard selectedItem.interjections.contains(where: { $0.id == interjectionId }) else { return }
-        recordTimelineReviewCompleted()
-    }
-
-    func recordTimelineReviewCompleted() {
-        changeOnboardingProgress { $0.timelineReviewed() }
-    }
-
-    func recordSessionExported() {
-        guard exportSessionId != nil else { return }
-        changeOnboardingProgress { $0.sessionExported() }
-    }
-
     #if DEBUG
     /// Tests that model a write through the app must share its serialized connection.
     /// Opening another connection also races unrelated offline-ledger startup work.
@@ -773,14 +671,6 @@ final class Gate1AppModel: ObservableObject {
         return try requireStore()
     }
     #endif
-
-    func resetOnboardingProgressForTesting() {
-        guard Self.isRunningUnitTests else { return }
-        onboardingProgress = OnboardingProgress(storedSteps: nil, storedStage: nil, isCardDismissed: false)
-        UserDefaults.standard.removeObject(forKey: Self.onboardingStepsKey)
-        UserDefaults.standard.removeObject(forKey: Self.guidedOnboardingStageKey)
-        UserDefaults.standard.removeObject(forKey: Self.onboardingCardDismissedKey)
-    }
 
     init(
         sourceLinkResolver: LinkResolutionClient? = nil,
