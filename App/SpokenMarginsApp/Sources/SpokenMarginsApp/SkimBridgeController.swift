@@ -99,7 +99,7 @@ final class SkimBridgeController {
 
     func updateAvailability(refreshResources: Bool = true) {
         if refreshResources { resourceContext = nil }
-        guard let host else { return }
+        guard !isUpdatingAvailability, let host else { return }
         let bridge = host.skimBridgeState
         let effectiveTime = bridge?.destinationMediaTimeMs ?? host.skimCurrentMediaTimeMs
         let forward = effectiveTime.flatMap { resolvedPlan(direction: .forward, at: $0) }
@@ -115,6 +115,7 @@ final class SkimBridgeController {
         let available = host.skimAvailability
         // A map can move where Skim lands with no availability flip (paused, say); the Lock Screen still needs it (#115).
         guard available.forward != canForward || available.backward != canBackward else {
+            if destinationsChanged { host.skimDestinationsChangedWithoutAvailabilityChange() }
             return
         }
         isUpdatingAvailability = true
@@ -251,7 +252,7 @@ final class SkimBridgeController {
                 try host.skimPauseEngine()
                 host.skimConfirmed("Finished the final scene summary.")
             } else if bridge.wasSourcePlaying {
-                try host.skimPauseEngine()
+                try host.skimResumeEngine()
             } else {
                 try host.skimPauseEngine()
             }
@@ -290,6 +291,7 @@ final class SkimBridgeController {
         protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
         host.skimBridgeState = nil
         guard restoringOrigin, host.skimHasEngine else { return }
+        do { try host.skimSeekOrStage(toMediaTimeMs: bridge.originMediaTimeMs) } catch { host.skimEngineCallFailedWhileCancelling() }
         do {
             if resumeSource && bridge.wasSourcePlaying {
                 try host.skimResumeEngine()
