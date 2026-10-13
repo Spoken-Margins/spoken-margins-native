@@ -1,0 +1,96 @@
+import XCTest
+import SessionKit
+@testable import SpokenMarginsApp
+
+/// The status lines a chapter jump, play-from-start and local map generation report (#1003).
+/// D6 folds the copied bodies into shared helpers; these pin what the listener is told.
+@MainActor
+final class Gate1ChapterNavigationMessagesTests: XCTestCase {
+    private var savedPreferences: VoicePreferencesSnapshot!
+
+    override func setUp() async throws {
+        savedPreferences = VoicePreferencesSnapshot.capture()
+        SpokenMarginsTerms.recordAcceptance()
+    }
+
+    override func tearDown() async throws {
+        savedPreferences.restore()
+    }
+
+    func testJumpToChapterReportsTheChapterTitleAndOpensPlayback() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+        let chapter = try XCTUnwrap(model.selectedItem.chapters.dropFirst().first ?? model.selectedItem.chapters.first)
+
+        model.jumpToChapter(chapter)
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.statusMessage, "Jumped to \(chapter.title).")
+        XCTAssertEqual(model.diagnostics["lastStatus"], "Jumped to \(chapter.title).")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    func testJumpToMediaChapterReportsTheChapterTitleAndOpensPlayback() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+        let textChapter = try XCTUnwrap(model.selectedItem.chapters.first)
+        let chapter = MediaTimelineChapter(id: textChapter.id, title: "Media \(textChapter.title)", startMs: 0, transcriptSegmentId: "segment")
+
+        model.jumpToMediaChapter(chapter)
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.statusMessage, "Jumped to Media \(textChapter.title).")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    func testPlaySourceFromBeginningReportsItAndOpensPlayback() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient())
+        model.resetAndSeed()
+
+        model.playSourceFromBeginning()
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.statusMessage, "Playing source from the beginning.")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    func testOnDeviceMapGenerationSaysGeneratedListeningMap() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false)
+        )
+        model.resetAndSeed()
+        importPlainText(into: model)
+
+        model.generateListeningMap()
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.statusMessage, "Generated Listening Map.")
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        XCTAssertFalse(model.isGeneratingListeningMap)
+    }
+
+    func testMapGenerationWithoutProviderKeySaysGeneratedLocalListeningMap() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: true)
+        )
+        model.resetAndSeed()
+        model.providerAPIKey = ""
+        importPlainText(into: model)
+
+        model.generateListeningMap()
+
+        XCTAssertNil(model.lastError)
+        XCTAssertEqual(model.statusMessage, "Generated local Listening Map.")
+        XCTAssertEqual(model.diagnostics["lastListeningMapMode"], "local_deterministic")
+        XCTAssertFalse(model.isGeneratingListeningMap)
+    }
+
+    private func importPlainText(into model: Gate1AppModel) {
+        model.importTitle = "Plain Notes"
+        model.importText = "A paragraph without structural headings. Another sentence follows. A third one closes it."
+        model.importTextItem()
+        XCTAssertTrue(model.selectedItem.chapters.isEmpty, "The map paths start from an item without chapters")
+    }
+}
