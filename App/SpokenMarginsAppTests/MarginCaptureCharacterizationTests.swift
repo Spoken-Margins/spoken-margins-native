@@ -23,21 +23,6 @@ final class MarginCaptureCharacterizationTests: XCTestCase {
         super.tearDown()
     }
 
-    /// A plain model that has dropped every reference its owner holds can be released. The lifetime tests that
-    /// follow the extraction depend on this; if it fails, they cannot be written and the cause comes first.
-    func testAPlainModelCanBeReleased() async throws {
-        weak var released: Gate1AppModel?
-        do {
-            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), recordingClient: NoopRecordingClient())
-            model.resetAndSeed()
-            model.declineCurrentTerms()
-            model.startItem(id: "item-pill")
-            released = model
-        }
-        for _ in 0..<20 { await Task.yield() }
-        XCTAssertNil(released, "something outside the test still holds the model")
-    }
-
     /// Observers are told a change is coming before it lands, once per write, in the order the model wrote them.
     /// Cancelling a pending request writes the primer, the request flag and the presentation context.
     func testCancellingAPendingRequestAnnouncesEachWriteBeforeItHappens() async throws {

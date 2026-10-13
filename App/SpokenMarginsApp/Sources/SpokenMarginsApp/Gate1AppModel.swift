@@ -62,11 +62,8 @@ final class Gate1AppModel: ObservableObject {
 
     @Published private var presentedScreen: Gate1Screen = .home
     @Published var requestedExperienceRoot: AppRoot?
-    @Published var writtenMarginDraft: WrittenMarginDraft?
-    @Published var recordingPermissionDenied = false
     @Published var marginCollectionQuery = MarginCollectionQuery()
     @Published var sharedMarginRows: [SharedMarginRow] = []
-    var pendingVoiceCaptureRequestID: UUID?
     var screen: Gate1Screen {
         get { presentedScreen }
         set {
@@ -264,14 +261,15 @@ final class Gate1AppModel: ObservableObject {
     }
     @Published private(set) var marginRows: [MarginRow] = []
     @Published private(set) var offlineStorageSnapshot = OfflineStorageSnapshot()
-    @Published var recordingPresentationContext: RecordingPresentationContext?
-    @Published var isRequestingRecordingPermission = false
     @Published var recordingCaptureHealth: MarginCaptureSupervisor.Health = .capturing // written by Gate1AppModel+MarginCapture only
     var captureWatcher = MarginCaptureWatcher()
-    /// #783: the line shown before iOS's first microphone prompt.
-    @Published var microphonePrimer = MicrophonePrimer()
-    @Published var isFinishingInterjection = false
-    @Published var marginRestartShield = MarginRestartShield() // #148; read through isMarginCaptureCoolingDown
+    /// The capture state (#993): its values reach views under their old names (`Gate1AppModel+MarginCapture.swift`), and its changes are forwarded here before they happen.
+    private var marginCaptureObservation: AnyCancellable?
+    private(set) lazy var marginCapture: MarginCaptureCoordinator = {
+        let capture = MarginCaptureCoordinator()
+        self.marginCaptureObservation = capture.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        return capture
+    }()
     @Published var isDismissingMiniPlayer = false
     @Published var requestedTimelineFocusMarginID: String?
     @Published var pastedAssistantResponse = ""
@@ -2680,12 +2678,12 @@ final class Gate1AppModel: ObservableObject {
                 updateGate2CompactState()
             }
             if command == .beginInterjection, snapshot.isRecording {
-                recordingPresentationContext = RecordingPresentationContext(
+                marginCapture.setPresentationContext(RecordingPresentationContext(
                     itemTitle: selectedItem.title,
                     locationTitle: snapshot.chapterTitle ?? "Current listening position",
                     progressPercent: snapshot.currentPlaybackProgressPercent,
                     startedAt: Date()
-                )
+                ))
             }
             if command == .setPlaybackRate,
                let playbackRate = normalizedPlaybackRate {
@@ -2706,7 +2704,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
                 if !snapshot.isRecording {
-                    recordingPresentationContext = nil
+                    marginCapture.clearPresentationContext()
                     refreshMarginRows()
                 }
             }
