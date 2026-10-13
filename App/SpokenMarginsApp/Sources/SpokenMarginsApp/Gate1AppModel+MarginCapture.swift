@@ -287,7 +287,7 @@ extension Gate1AppModel {
     }
 
     func beginWrittenMargin() {
-        guard !recordingNavigationIsLocked else { return }
+        guard !recordingNavigationIsLocked, !isMarginCaptureCoolingDown else { return } // the pencil sits beside Add a Margin (#148)
         guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
             reportFailure("Return to the source before writing a Margin.")
             return
