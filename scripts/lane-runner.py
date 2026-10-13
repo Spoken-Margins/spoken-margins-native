@@ -1261,10 +1261,19 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
                                   'so this job tests it')
         if handed:
             note = handed_off_note(head, why, reason, handed)
-            github.comment(note)
             print(note)
+            try:
+                github.comment(note)
+            except Exception as error:  # noqa: BLE001 - the release run is on its way; a lane-error report would
+                print(f'[lane] could not post the hand-off note: {error!r}')  # read as the newest, un-held run
             return note
         no_room, beside = room() if reason and room else (None, None)
+        if reason and room and not no_room:  # up to 90 minutes passed: a push or a re-arm since starts its own run
+            now = github.pull()
+            if now.get('state', 'open') != 'open' or now['head']['sha'] != head \
+                    or AUTOMERGE not in {label['name'] for label in now.get('labels', [])}:
+                print(f'PR #{pr} moved on, closed or lost automerge while this waited for room; nothing to release.')
+                return None
         if beside:  # the host-only trial beside a simulator job, logged as the automerge job logs it
             started_by.append(beside)
             note_beside_simulator(request_id, pr, beside)
@@ -1314,7 +1323,7 @@ def run_release(github, pr: int, base: str, head: str, request_id: str, evidence
     if verdict:
         record_outcome(verdict.group(1))
     merged = any(line.startswith(f'merged into {base} as ') for line in (released or '').splitlines())
-    if not merged and github.pull().get('state', 'open') == 'open':
+    if released and not merged:
         github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's `labeled` event
     flush_ledger(pr, head, lambda body: Repo(os.environ['GH_REPO']).comment(OPS_ISSUE, body))
     drop_workspace_builds(ROOT)
@@ -2324,6 +2333,8 @@ def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     if mode in ('auto', 'release'):  # lane:queued and lane:running belong to /lane requests
         github.comment(f'Lane: the automerge run stopped before reporting ({run_url}){tested}. Push again, or '
                        f'remove and re-add automerge, to run it again.\n{NOTE}')
+        if mode == 'release':  # the lane job left lane:done to this run (#1209): wake the dispatcher
+            github.relabel(DONE, DONE)
         return 0
     _, desk_waiting = pending_requests(github.comments())
     github.comment(f'Lane: the runner stopped before reporting ({run_url}){tested}. If it is still needed, '

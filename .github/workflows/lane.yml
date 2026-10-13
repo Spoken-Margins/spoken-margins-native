@@ -315,16 +315,15 @@ jobs:
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release --t3-report "$T3_REPORT"
+      # A dispatched run's check sits on next's tip, not on the PR, so a red one would read as "next is broken"
+      # and wake nobody: every verdict stays green here. The report and the lane:done relabel carry a FAIL.
       - name: Verdict
         if: steps.run.outputs.reported == 'true'
         env:
           VERDICT: ${{ steps.run.outputs.verdict }}
         run: |
           echo "Lane verdict: $VERDICT (the report is on the PR)"
-          if [ "$VERDICT" = FAIL ]; then
-            echo "::error title=Lane FAIL::The lane reported FAIL. The report on the PR says why."
-            exit 1
-          elif [ "$VERDICT" != PASS ]; then
+          if [ "$VERDICT" != PASS ]; then
             echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
           fi
       - name: Tidy up after a cancelled or failed run

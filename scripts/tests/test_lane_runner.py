@@ -2090,8 +2090,10 @@ class MainFlowTests(unittest.TestCase):
         scripts = self.verdict_steps()
         self.assertEqual(len(scripts), 3)  # the lane job's, the automerge job's and the release job's (#1209)
         for job, script in zip(('lane', 'automerge', 'release'), scripts):
+            # The release job's check sits on next's tip, not on the PR (#1209): a FAIL there stays a warning.
+            fail = ('FAIL', 0, '::warning title=Lane FAIL') if job == 'release' else ('FAIL', 1, '::error title=Lane FAIL')
             for verdict, code, annotation in (('PASS', 0, None), ('INCONCLUSIVE', 0, '::warning title=Lane INCONCLUSIVE'),
-                                              ('FAIL', 1, '::error title=Lane FAIL')):
+                                              fail):
                 with self.subTest(job=job, verdict=verdict):
                     # GitHub runs a step's script with bash -e when the step names no shell.
                     done = subprocess.run(['bash', '-e', '-c', script], env=dict(os.environ, VERDICT=verdict),

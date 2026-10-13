@@ -108,6 +108,38 @@ class HandOffAfterTheT3PassTests(RealGitLaneTests):
         self.assertIn('Remove and re-add automerge', released)
         self.assertTrue(lane.lane_report_verdict(released)[0])  # a runner fault, as in the automerge job
 
+    def test_a_push_during_the_room_wait_releases_nothing(self):
+        # The old head's report would become the newest automerge report and hide the new head's hold.
+        github = self.handed_off()
+        posted = len(github.posted)
+
+        def room():
+            github.head = 'c' * 40  # the owner merged next into the branch meanwhile
+            return None, None
+        with mock.patch.object(lane, 'run_automerge') as checks:
+            released = lane.merge_after_t3(github, 5, 'next', self.head, 'pr5-r50-auto', self.evidence / 'release',
+                                           self.rev(self.tree, 'origin/next'), 'handed to the build runner', room=room)
+        self.assertIsNone(released)
+        checks.assert_not_called()
+        self.assertEqual(len(github.posted), posted)
+
+    def test_a_note_that_cannot_be_posted_still_leaves_the_pr_held_for_the_release(self):
+        github = self.github()
+        self.held_run(github)
+        self.move_next_by_a_build_input()
+        self.t3_passes(github)
+        real = github.comment
+
+        def comment(body):
+            if body.startswith(lane.HANDED_OFF):
+                raise RuntimeError('GitHub API unavailable')
+            return real(body)
+        github.comment = comment
+        checks, released = self.lane_job_release(github, mock.Mock(return_value='https://example.test/runs'))
+        checks.assert_not_called()
+        self.assertTrue(released.startswith(lane.HANDED_OFF))
+        self.assertTrue(lane.held_for_t3(github.comments(), self.head))  # no lane-error report on top
+
     def test_checks_that_still_stand_merge_here_in_seconds_with_no_hand_off(self):
         github = self.github()
         self.held_run(github)
@@ -210,7 +242,7 @@ class MainWiringTests(unittest.TestCase):
         self.assertIs(kwargs['room'], lane.wait_for_room_to_test_on_host)
         self.assertNotIn('hand_off', kwargs)  # it never hands off again
         self.assertIn('https://example.test/t3', args[7])
-        self.assertEqual(outcome, {'reported': 'true', 'verdict': 'FAIL'})  # its check is red on FAIL
+        self.assertEqual(outcome, {'reported': 'true', 'verdict': 'FAIL'})  # for the Verdict step's warning
         self.assertEqual(github.labeled, ['lane:done'])
 
     def test_a_merged_release_leaves_the_labels_alone(self):
@@ -225,6 +257,16 @@ class MainWiringTests(unittest.TestCase):
         _, outcome = self.release_job(github, None)
         self.assertEqual(outcome, {})
         self.assertEqual(github.posted, [])
+        self.assertEqual(github.label_changes, [])  # a stray dispatch wakes nobody
+
+    def test_a_release_run_that_dies_still_wakes_the_dispatcher(self):
+        # The lane job left lane:done to the release run; a run that times out or is cancelled must not leave the
+        # armed, T3-passed PR sitting unmerged with nobody woken.
+        github = FakeGitHub(labels=('automerge',))
+        with mock.patch.object(lane, 'sweep_runner_simulators'), mock.patch('builtins.print'):
+            lane.cleanup(github, 'https://example.test/run', 'release')
+        self.assertTrue(github.posted[0].startswith('Lane: the automerge run stopped before reporting'))
+        self.assertEqual(github.labeled, ['lane:done'])
 
     def test_a_dispatch_for_a_fork_s_pr_or_another_base_runs_nothing(self):
         release, _ = self.release_job(FakeGitHub(labels=('automerge',)), None, repo='someone/fork')
@@ -285,8 +327,12 @@ class WorkflowTests(unittest.TestCase):
 
     def test_dispatched_runs_keep_a_name_dedupe_ignores(self):
         name = WORKFLOW.split('run-name: >-\n')[1].split('\non:')[0]
-        self.assertIn('|| inputs.pr }}', name)
-        self.assertIn('|| inputs.head }}', name)
+        # A pull_request run's number and head come first, so its name, which lane_dedupe.py parses, is unchanged.
+        self.assertIn('pr=${{ github.event.pull_request.number || inputs.pr }}', name)
+        self.assertIn('head=${{ github.event.pull_request.head.sha || inputs.head }}', name)
+        # Dedupe and the audit's re-arm check list only pull_request runs, so a release run never counts as one.
+        dedupe = (Path(__file__).resolve().parents[1] / 'lane_dedupe.py').read_text()
+        self.assertIn('lane.yml/runs?event=pull_request&', dedupe)
 
 
 if __name__ == '__main__':
