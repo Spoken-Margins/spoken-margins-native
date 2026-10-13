@@ -1854,7 +1854,7 @@ final class Gate1AppModel: ObservableObject {
                 reportFailure("Publisher chapters appear when available. AI-generated podcast maps are reserved for a future server-hosted option.")
                 return
             }
-            generateLocalListeningMap()
+            generateLocalListeningMap(confirmation: "Generated Listening Map.")
             isGeneratingListeningMap = false
             return
         }
@@ -1874,17 +1874,7 @@ final class Gate1AppModel: ObservableObject {
             return
         }
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            run { engine in
-                snapshot = try engine.generateListeningMap(itemId: activeItemId)
-                if let store {
-                    libraryItems = try loadLibraryRows(store: store)
-                }
-                refreshSelectedItem()
-                diagnostics["lastGeneratedMapItem"] = activeItemId
-                diagnostics["lastListeningMapMode"] = "local_deterministic"
-                scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-                reportConfirmation("Generated local Listening Map.")
-            }
+            generateLocalListeningMap(confirmation: "Generated local Listening Map.")
             isGeneratingListeningMap = false
             return
         }
@@ -1949,7 +1939,7 @@ final class Gate1AppModel: ObservableObject {
         scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
     }
 
-    private func generateLocalListeningMap() {
+    private func generateLocalListeningMap(confirmation: String) {
         run { engine in
             snapshot = try engine.generateListeningMap(itemId: activeItemId)
             if let store {
@@ -1959,7 +1949,7 @@ final class Gate1AppModel: ObservableObject {
             diagnostics["lastGeneratedMapItem"] = activeItemId
             diagnostics["lastListeningMapMode"] = "local_deterministic"
             scheduleTextAudioPrewarmIfNeeded(itemId: activeItemId)
-            reportConfirmation("Generated Listening Map.")
+            reportConfirmation(confirmation)
         }
     }
 

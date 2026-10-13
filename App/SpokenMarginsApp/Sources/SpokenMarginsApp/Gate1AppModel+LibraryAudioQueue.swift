@@ -110,11 +110,7 @@ extension Gate1AppModel {
             }.value
             try Task.checkCancellation()
             let support = try applicationSupportDirectory()
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
+            let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             currentSupertonicRenderSignature = signature
             let manifest = try await coordinator.begin(
                 itemId: item.id,
@@ -359,11 +355,7 @@ extension Gate1AppModel {
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
+            let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             currentSupertonicRenderSignature = signature
             let plan = await Task.detached(priority: .utility) {
                 Self.preparedChunkPlan(for: sourceText)
@@ -415,11 +407,7 @@ extension Gate1AppModel {
             let signature = try await Task.detached(priority: .utility) {
                 try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }.value
-            let coordinator = preparedAudioCoordinator ?? PreparedAudioCoordinator(
-                repository: store,
-                rootDirectory: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-            )
-            preparedAudioCoordinator = coordinator
+            let coordinator = requirePreparedAudioCoordinator(store: store, supportDirectory: support)
             currentSupertonicRenderSignature = signature
             let sessionsByItemId = Dictionary(grouping: try store.loadSessions(), by: \.itemId)
             for row in libraryItems {

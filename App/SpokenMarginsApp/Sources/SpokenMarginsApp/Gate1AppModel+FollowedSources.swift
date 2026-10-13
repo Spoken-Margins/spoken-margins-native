@@ -32,8 +32,7 @@ extension Gate1AppModel {
             guard let self else { return }
             do {
                 let store = try self.requireStore()
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
+                let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let candidates = try await coordinator.discover(urlString: value)
                 self.diagnostics["followedSourceNetworkHosts"] = await coordinator.contactedHosts.sorted().joined(separator: ",")
                 guard candidates.count == 1, let candidate = candidates.first, !candidate.needsConfirmation else {
@@ -66,8 +65,7 @@ extension Gate1AppModel {
     /// the feed can settle on another URL. An import refreshes once at the end, not per feed.
     func followCatalogFeed(_ feedURL: String, refreshAfter: Bool = true) async throws -> String {
         let store = try requireStore()
-        let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-        followedSourceCoordinator = coordinator
+        let coordinator = requireFollowedSourceCoordinator(store: store)
         let sourceId = try await coordinator.followFeed(urlString: feedURL).source.id
         diagnostics["followSourceFailure"] = nil
         if refreshAfter { await performFollowedSourceRefresh(force: false) }
@@ -82,8 +80,7 @@ extension Gate1AppModel {
             guard let self else { return }
             do {
                 let store = try self.requireStore()
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
+                let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 _ = try await coordinator.follow(candidate: candidate)
                 self.followedSourceCandidates = []
                 self.followedSourceURL = ""
@@ -141,8 +138,7 @@ extension Gate1AppModel {
               !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: feedSubscriptions) else { return }
         Task { [weak self] in
             guard let self else { return }
-            let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-            self.followedSourceCoordinator = coordinator
+            let coordinator = self.requireFollowedSourceCoordinator(store: store)
             var candidates: [SourceCandidateEvidence]?, failure = "none:empty"
             do { candidates = try await self.sharedFollowDiscovery(item: item, preferredURL: url, coordinator: coordinator) } catch { failure = "none:" + FollowedSourceCoordinator.diagnosticCode(for: error) }
             self.diagnostics["followOffer"] = FollowedSourceMatching.discoveryDiagnostic(
@@ -188,8 +184,7 @@ extension Gate1AppModel {
             do {
                 let item = try store.loadItem(id: itemId)
                 guard let preferredURL = ManualFollowPolicy.discoveryURL(for: item) else { throw FollowedSourceError.invalidURL }
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
+                let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let candidates = try await self.sharedFollowDiscovery(
                     item: item,
                     preferredURL: preferredURL,
@@ -248,8 +243,7 @@ extension Gate1AppModel {
             guard let self else { return }
             defer { self.sourceSuggestionChecks.remove(itemId) }
             do {
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
+                let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 guard !FollowedSourceMatching.isItemAlreadyFollowed(item, subscriptions: try store.loadFeedSubscriptions()) else { return }
                 let candidates = try await self.sharedFollowDiscovery(
                     item: item,
@@ -318,8 +312,7 @@ extension Gate1AppModel {
             guard let self else { return }
             do {
                 let store = try self.requireStore()
-                let coordinator = self.followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-                self.followedSourceCoordinator = coordinator
+                let coordinator = self.requireFollowedSourceCoordinator(store: store)
                 let subscription = try await coordinator.follow(candidate: candidate)
                 if let itemId, var item = try? store.loadItem(id: itemId) {
                     item.sourceURL = subscription.source.canonicalURL
@@ -368,8 +361,7 @@ extension Gate1AppModel {
         defer { isRefreshingFollowedSources = false }
         do {
             let store = try requireStore()
-            let coordinator = followedSourceCoordinator ?? FollowedSourceCoordinator(repository: store)
-            followedSourceCoordinator = coordinator
+            let coordinator = requireFollowedSourceCoordinator(store: store)
             for entry in await coordinator.refreshStale(force: force) { importFollowedSourceEntry(entry) } // "Add every new item" (#466)
             feedSubscriptions = try store.loadFeedSubscriptions()
             followedSourceEntries = try await coordinator.entries()
