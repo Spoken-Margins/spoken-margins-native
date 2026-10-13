@@ -1517,6 +1517,32 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('1. **Waiting 103**', plan)
         self.assertIn('- Take the rendered speech cache', plan.split('## Also changed (no phone check written)')[1])
 
+    def test_447_kept_logic_does_not_put_the_reverted_screen_on_either_waiting_list(self):
+        # #1545: #1356's Now-view logic stayed, but #1371's screen was reverted in #1482.
+        # A stale validation label and the original merge title must not resurrect the check.
+        waiting = [self.waiting(447, 'Open the Now pane and check the countdown.', prs=[1356, 1371]),
+                   self.waiting(450, 'Open the Timeline pane.', prs=[1376],
+                                comments=['Merged in #1376.']),
+                   self.waiting(451, 'Open the Margins pane.', comments=['Merged in #1399.']),
+                   self.waiting(103, 'Play the retained fix.', prs=[503])]
+        history = '\n'.join([
+            'a' * 40 + '\0Revert #1371: playback dock across Now, Timeline and Margins\0\0',
+            'b' * 40 + '\0Revert "Merge pull request #1376 from ws/timeline"\0\0',
+            'c' * 40 + '\0Restore the previous Margins screen\0This reverts merge d93121e6.\0',
+            'd93121e6' + '0' * 32 + '\0Merge pull request #1399: Margins pane (#451)\0\0',
+        ])
+        with unittest.mock.patch.object(self.module, 'git', return_value=history):
+            for budget in (1, 8):  # the bad checks previously reached both waiting sections
+                with self.subTest(budget=budget):
+                    self.module.PLAN_CHECKS = budget
+                    new = {280: self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows.')])}
+                    plan = self.write(new, waiting=waiting, built_prs={1356, 1371, 1376, 1399, 503},
+                                      built={447, 450, 451})
+                    self.assertIn('Waiting 103', plan)
+                    for number in (447, 450, 451):
+                        self.assertNotIn(f'Waiting {number}', plan)
+                        self.assertNotIn(f'issue/{number}', plan)
+
     def test_without_github_the_waiting_fixes_say_so(self):
         plan = self.write({280: self.pr(280, 'Library wording', [self.issue(81, 'Read the Library rows.')])},
                           waiting=None)
@@ -1903,6 +1929,50 @@ class PassedChecksTests(unittest.TestCase):
         self.assertRegex(self.module.ISSUE_FIELDS, r'\bstate\b')
 
 
+class RevertEvidenceTests(unittest.TestCase):
+    def test_revert_message_shapes_and_neighbouring_inputs(self):
+        module = load_phone_build()
+        merge = 'c83cd9d9' + 'a' * 32
+        rows = [  # subject, body, expected reverted PRs
+            ('Revert #1371: playback dock', '', {1371}),
+            ('  revert   #1371: playback dock', '', {1371}),
+            ('Revert #1371: cafe\u0301 \u2014 ' + 'x' * 10000, '', {1371}),
+            ('Revert "Merge pull request #1371 from ws/dock"', '', {1371}),
+            ('Revert “Merge pull request #1371: café”', '', {1371}),
+            ('Restore the old screen', 'This reverts merge c83cd9d9, reversing changes made to 2390c0df.', {1371}),
+            ('Restore the old screen', f'This reverts commit {merge}.', {1371}),
+            ('Restore the old screen', '\n  THIS REVERTS MERGE C83CD9D9.\n', {1371}),
+            ('', '', set()),
+            ('Discuss Revert #1371: playback dock', '', set()),
+            ('Reverted #1371: playback dock', '', set()),
+            ('Revert helper for #1371', '', set()),
+            ('Keep the screen', 'Related: #1371; a revert is being considered.', set()),
+            ('Restore another screen', 'This reverts merge c83cd9d8.', set()),
+            ('Restore another commit', 'This reverts merge d93121e6.', set()),  # not a PR merge
+        ]
+        for subject, body, expected in rows:
+            with self.subTest(subject=subject[:80], body=body):
+                history = '\n'.join([f'{"f" * 40}\0{subject}\0{body}\0',
+                                     f'{merge}\0Merge pull request #1371: playback dock (#447)\0\0',
+                                     f'{"d93121e6" + "0" * 32}\0Internal refactor\0\0'])
+                with unittest.mock.patch.object(module, 'git', return_value=history) as log:
+                    self.assertEqual(module.reverted_prs('build-sha'), expected)
+                    log.assert_called_once_with('log', '--format=%H%x00%s%x00%b%x00', 'build-sha', check=False)
+
+    def test_reverted_new_merge_is_not_offered_as_a_new_phone_check(self):
+        module = load_phone_build()
+        module.plan_base = lambda sha: (None, 'the start')
+        module.merged_prs = lambda base, sha: {1371: 'Merge pull request #1371: playback dock (#447)'}
+        module.report_comments = lambda: []
+        module.fetch_waiting = lambda: []
+        with unittest.mock.patch.object(module, 'git', return_value=f'{"a" * 40}\0Revert #1371: dock\0\0'), \
+                unittest.mock.patch.object(module, 'fetch_prs') as fetch, tempfile.TemporaryDirectory() as folder:
+            plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
+        fetch.assert_not_called()
+        self.assertNotIn('#1371', plan)
+        self.assertNotIn('#447', plan)
+
+
 class PlanBaseTests(unittest.TestCase):
     """#1100: installed.txt named a build made on the Mac before its changes reached next, so the commit was
     known but not behind next's tip; the plan fell back to Build 29 and listed 332 pull requests."""
@@ -1975,6 +2045,19 @@ class PlanBaseTests(unittest.TestCase):
         base, why = self.module.plan_base(self.tip)
         self.assertEqual(base, self.first)
         self.assertIn('nothing recorded in installed.txt yet', why)
+
+    def test_only_reverts_reachable_from_the_build_count(self):
+        reverted = self.commit('Revert #3: remove the screen')
+        self.assertEqual(self.module.reverted_prs(self.tip), set())
+        self.assertEqual(self.module.reverted_prs(reverted), {3})
+
+    def test_body_only_reverts_inside_a_merged_branch_are_found(self):
+        self.git('switch', '-q', '-c', 'restore-screen')
+        self.commit(f'Restore the old screen\n\nThis reverts merge {self.tip[:8]}.')
+        self.git('switch', '-q', 'next')
+        self.git('merge', '-q', '--no-ff', 'restore-screen', '-m', 'Merge pull request #1482: restore screen')
+        build = self.git('rev-parse', 'HEAD')
+        self.assertEqual(self.module.reverted_prs(build), {3})
 
 
 if __name__ == '__main__':

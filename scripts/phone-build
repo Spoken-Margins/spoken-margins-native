@@ -35,7 +35,8 @@ What it does:
   one item at the top of the ten minutes ("The playback screen changed"), each PR listed under its own title;
   PRs that share an issue keep their own titles in every list.
   After those, "Still waiting on your check" lists open issues labelled `status: needs-human-validation` whose
-  fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
+  fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927).
+  A reverted fixing PR keeps the issue out, even if a separate logic PR stayed (#1545). A check
   is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
   one in the issue's comments wins; a comment saying "Owner check: none" or "leave this off the owner's plans"
   keeps the issue out. They share the ten minutes with the new changes; the rest are listed with links.
@@ -463,12 +464,33 @@ def fetch_waiting() -> list[dict] | None:
 
 
 def build_prs(sha: str) -> set[int]:
-    """The PRs merged into the build: its first-parent "Merge pull request #N" subjects."""
+    """Historical merges; write_plan subtracts reverted PRs before using these as built fixes."""
     subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
     return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)}
 
 
-def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset()) \
+def reverted_prs(sha: str) -> set[int]:
+    """PRs removed by revert commits reachable from this build, including commits inside a merged PR.
+
+    One full-history log supplies both revert messages and the merge SHAs needed for body-only reverts.
+    First-parent history alone misses the individual reverts merged together in #1482.
+    """
+    fields = git('log', '--format=%H%x00%s%x00%b%x00', sha, check=False).split('\0')
+    commits = [(fields[i].strip(), fields[i + 1], fields[i + 2]) for i in range(0, len(fields) - 2, 3)]
+    merges = {commit: int(found.group(1)) for commit, subject, _ in commits
+              if (found := re.match(r'Merge pull request #(\d+)\b', subject))}
+    reverted = set()
+    for _, subject, body in commits:
+        found = re.match(r'\s*Revert\s+(?:#(\d+)\b|["“]Merge pull request #(\d+)\b)', subject, re.I)
+        if found:
+            reverted.add(int(found.group(1) or found.group(2)))
+        for prefix in re.findall(r'^\s*This reverts (?:merge|commit) ([0-9a-f]{7,40})\b', body, re.I | re.M):
+            reverted.update(number for commit, number in merges.items() if commit.startswith(prefix.lower()))
+    return reverted
+
+
+def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset(),
+                  reverted: set[int] = frozenset()) \
         -> list[dict]:
     """The issues still waiting on the owner's check whose fix is in this build, in plan order: the current
     build milestone first, then found on the phone, then oldest (#927). `shown` holds the issue and PR
@@ -480,6 +502,8 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     comments name one ("Merged in #907", "PR #257"), or a merge names the issue ("Merge play-this-moment
     into next (#156, #158)"). The label alone isn't enough: the fix may have merged after this build
     (#927: the label had been read as "waiting on your phone").
+    A reverted fixing PR excludes the issue even when another linked logic PR remains or an old merge
+    title still names the issue (#1545). The label is not evidence that the listener-facing fix survived.
     """
     def build_number(issue):
         milestone = issue.get('milestone') or {}
@@ -491,6 +515,10 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
         comments = [(comment or {}).get('body') or '' for comment in (issue.get('comments') or {}).get('nodes') or []]
         named = {int(a or b) for body in comments for a, b in FIXED_IN.findall(body)}
         sources = [(node or {}).get('source') or {} for node in (issue.get('timelineItems') or {}).get('nodes') or []]
+        fixing = named | {pr['number'] for pr in sources if pr.get('merged')
+                          and issue['number'] in linked_numbers(pr)}
+        if fixing & reverted:
+            continue
         prs = {pr['number']: pr for pr in sources if pr.get('number') in built and pr.get('merged')
                and (issue['number'] in linked_numbers(pr) or pr['number'] in named)}
         for number in sorted(named & built - set(prs)):
@@ -1012,7 +1040,8 @@ def share_files(folder: Path, sha: str) -> None:
 
 def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) -> Path:
     base, base_why = plan_base(sha)
-    merged = merged_prs(base, sha)
+    reverted = reverted_prs(sha)
+    merged = {number: subject for number, subject in merged_prs(base, sha).items() if number not in reverted}
     prs = fetch_prs(list(merged)) if merged else {}
     where = (f'Settings > Version ends with `{sha[:7]}`' if commit_in_app else
              'Settings > Version shows only the build number: this commit predates the key that names the commit')
@@ -1072,7 +1101,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     pending = fetch_waiting()
     shown = {number for entry in [*entries, *([pr] for screen in screens for pr in screen['prs'])] for pr in entry
              for number in [pr['number'], *pr.get('linked', ()), *(issue['number'] for issue in pr['issues'])]}
-    fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha)) if pending else []
+    fixes = waiting_fixes(pending, build_prs(sha) - reverted, shown, built_numbers(sha), reverted) if pending else []
     unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']
                  and not fix['refused']]
     if unwritten:
