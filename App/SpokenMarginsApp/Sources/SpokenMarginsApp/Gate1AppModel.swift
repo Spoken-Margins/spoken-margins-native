@@ -433,7 +433,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var automaticEpisodeMapPreparationPolicy = AutomaticEpisodeMapPreparationPolicy(
         rawValue: UserDefaults.standard.string(forKey: "automaticEpisodeMapPreparationPolicy") ?? ""
     ) ?? .off
-    @Published var episodeMapPreparationStatus = "Not started"
     @Published var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
@@ -559,8 +558,7 @@ final class Gate1AppModel: ObservableObject {
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
     let libraryAudioLoop = LibraryAudioPreparationLoop() // the foreground loop, its render gate and turns (#281, #534, #995)
     var libraryAudioPreparingItemId: String? { get { libraryAudioLoop.turns.preparingItemId } set { libraryAudioLoop.turns.preparingItemId = newValue } }
-    var episodeMapPreparationTask: Task<Void, Never>?
-    var episodeMapPreparationItemId: String?
+    lazy var episodeMapPreparer = EpisodeMapPreparer(host: self) // private episode map preparation: task, status, pending request (#957)
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
     var quickAccessRefreshTask: Task<Void, Never>?
@@ -586,7 +584,6 @@ final class Gate1AppModel: ObservableObject {
         if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
     var importedTranscriptRetryDates: [String: Date] = [:]
     var importedPodcastRecipientLocalURLs: [String: URL] = [:]
-    var pendingMapGenerationItemId: String?
     var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
     var pendingTermsVoiceSelection: AppTTSVoiceSelection?
@@ -3315,9 +3312,7 @@ final class Gate1AppModel: ObservableObject {
         if snapshot.itemId == itemId, snapshot.skimBridgeState != nil {
             cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         }
-        if episodeMapPreparationItemId == itemId {
-            episodeMapPreparationTask?.cancel()
-        }
+        episodeMapPreparer.cancel(itemId: itemId)
         if let directory = try? episodeMapDirectory(itemId: itemId),
            FileManager.default.fileExists(atPath: directory.path) {
             try? FileManager.default.removeItem(at: directory)
