@@ -1,7 +1,23 @@
 import Foundation
+import SessionKit
 
 /// Import inbox presentation and ordered handoff drain. Moved out of `Gate1AppModel.swift` unchanged (#956).
 extension Gate1AppModel {
+    /// The handoff stores the extensions write to; tests inject their own (moved out of `Gate1AppModel.swift` for #1546).
+    func resolvedSourceLinkHandoffStore() throws -> SourceLinkHandoffStore {
+        if let sourceLinkHandoffStore {
+            return sourceLinkHandoffStore
+        }
+        return try SourceLinkHandoffStore.appGroup()
+    }
+
+    func resolvedBrowserTextHandoffStore() throws -> Gate5BrowserTextHandoffStore {
+        if let browserTextHandoffStore {
+            return browserTextHandoffStore
+        }
+        return try Gate5BrowserTextHandoffStore.appGroup()
+    }
+
     func refreshImportInbox() {
         var entries: [ImportInboxEntry] = []
         do {
@@ -93,22 +109,20 @@ extension Gate1AppModel {
             let handoffStore = try resolvedSourceLinkHandoffStore()
             let payloadIDs = try handoffStore.pendingPayloadIDs()
             diagnostics["pendingSourceLinkPayloads"] = "\(payloadIDs.count)"
-            for payloadID in payloadIDs {
-                do {
+            // A connection failure leaves the link pending for the next activation or the network's
+            // return; anything else is quarantined and the listener is told (#1546).
+            let report = await PendingHandoffDrain.run(
+                payloadIDs: payloadIDs,
+                importPayload: { payloadID in
                     let handoff = try handoffStore.handoff(payloadID: payloadID)
-                    if let itemId = try await importSourceLinkInBackground(handoff) { addedItemIds.append(itemId) }
-                    try handoffStore.deletePayload(payloadID: payloadID)
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "imported"
-                } catch SourceLinkHandoffStoreError.invalidPayload {
-                    try? handoffStore.deletePayload(payloadID: payloadID)
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "deleted_invalid_payload"
-                } catch SourceLinkHandoffStoreError.missingPayload {
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "missing"
-                } catch {
-                    try? handoffStore.quarantine(payloadID: payloadID, reason: error.localizedDescription)
-                    diagnostics["pendingSourceLinkPayload:\(payloadID)"] = "quarantined:\(error.localizedDescription)"
-                }
-            }
+                    if let itemId = try await self.importSourceLinkInBackground(handoff) { addedItemIds.append(itemId) }
+                },
+                deletePayload: { try handoffStore.deletePayload(payloadID: $0) },
+                quarantine: { try handoffStore.quarantine(payloadID: $0, reason: $1) },
+                storeOutcome: Self.sourceLinkStoreOutcome,
+                record: { self.diagnostics["pendingSourceLinkPayload:\($0)"] = $1.diagnosticValue }
+            )
+            noteSourceLinkDrain(report)
         } catch {
             diagnostics["pendingSourceLinkImport"] = "unavailable:\(error.localizedDescription)"
         }
@@ -136,5 +150,27 @@ extension Gate1AppModel {
         } catch {
             diagnostics["pendingBrowserTextImport"] = "unavailable:\(error.localizedDescription)"
         }
+    }
+
+    private nonisolated static func sourceLinkStoreOutcome(_ error: any Error) -> PendingHandoffOutcome? {
+        switch error as? SourceLinkHandoffStoreError {
+        case .invalidPayload: return .deletedInvalidPayload
+        case .missingPayload: return .missing
+        case .appGroupUnavailable, nil: return nil
+        }
+    }
+
+    /// Shows the waiting count, retries when the network returns, and says when a link failed for good.
+    private func noteSourceLinkDrain(_ report: PendingHandoffDrain.Report) {
+        sourceLinksWaitingForNetwork = report.waitingCount
+        diagnostics["pendingSourceLinkPayloadsWaitingForNetwork"] = "\(report.waitingCount)"
+        pendingHandoffNetworkRetry.update(waitingCount: report.waitingCount, connectivity: connectivity) { [weak self] in
+            self?.importPendingSourceLinkHandoffs()
+        }
+        let failures = report.announcedFailures
+        guard let first = failures.first else { return }
+        let lead = failures.count == 1 ? "A shared link couldn't be imported" : "\(failures.count) shared links couldn't be imported"
+        let reason = first.hasSuffix(".") ? first : first + "."
+        reportFailure("\(lead): \(reason) Retry or remove it in Settings, Import Inbox.")
     }
 }

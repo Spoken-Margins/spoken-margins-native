@@ -1880,6 +1880,7 @@ final class SourceLinkImportTests: XCTestCase {
             failed.reason.contains("could not find a public audio file"),
             "Unexpected quarantine reason: \(failed.reason)"
         )
+        XCTAssertFalse(failed.reason.contains("persistence_failed"), "Unexpected quarantine reason: \(failed.reason)")
         XCTAssertFalse(failed.reason.contains("open.spotify.com"))
         XCTAssertEqual(model.importInbox.first?.payloadID, handoff.id)
     }
