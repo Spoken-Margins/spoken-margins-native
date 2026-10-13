@@ -2905,13 +2905,28 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Holds background time from an interruption that asked to resume until iOS reports its end or the listener
     /// takes over (#1434). The audio-session observers run on the main thread.
+    /// iOS doesn't report the end of a message announcement, so the hold also resumes once the other audio stops.
     private func interruptionWaitBegan() {
         guard let hold = interruptionHold else { return }
-        if Thread.isMainThread {
-            MainActor.assumeIsolated { hold.interruptionBegan() }
-        } else {
-            Task { @MainActor in hold.interruptionBegan() }
+        let begin: @MainActor () -> Void = { [weak self] in
+            hold.interruptionBegan(resumeWhenOtherAudioStops: { self?.resumeBecauseOtherAudioStopped() })
         }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { begin() }
+        } else {
+            Task { @MainActor in begin() }
+        }
+    }
+
+    /// The interruption's other audio stopped without iOS reporting an end (#1434): resume as an end with
+    /// "should resume" would, unless the listener's own Play, Pause or Stop cleared the request since.
+    private func resumeBecauseOtherAudioStopped() {
+        let requestsResume = lock.withLock { () -> Bool in
+            defer { shouldResumeAfterInterruption = false }
+            return shouldResumeAfterInterruption && transportIntent == .paused
+        }
+        guard requestsResume else { return }
+        interruptionHandler?(.endedShouldResume)
     }
 
     private func interruptionWaitEnded(_ reason: InterruptionBackgroundHold.Outcome) {

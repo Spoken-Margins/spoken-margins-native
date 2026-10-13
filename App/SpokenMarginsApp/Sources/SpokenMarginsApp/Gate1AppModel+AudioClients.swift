@@ -212,11 +212,18 @@ extension Gate1AppModel {
         }
     }
 
-    /// Background time while an audio interruption waits to end, one per player (#1434).
+    /// Background time while an audio interruption waits to end, one per player, watching for the other audio to
+    /// stop because iOS doesn't report the end of a message announcement (#1434).
     private func makeInterruptionBackgroundHold() -> InterruptionBackgroundHold {
-        InterruptionBackgroundHold(
+        #if canImport(AVFoundation) && os(iOS)
+        let otherAudioWatch: InterruptionBackgroundHold.OtherAudioWatch? = .audioSession
+        #else
+        let otherAudioWatch: InterruptionBackgroundHold.OtherAudioWatch? = nil
+        #endif
+        return InterruptionBackgroundHold(
             begin: NarrationStartupBackgroundTime.begin,
-            record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) }
+            record: { [weak self] kind, fields in self?.recordDeveloperDiagnostic(kind, fields) },
+            otherAudioWatch: otherAudioWatch
         )
     }
 

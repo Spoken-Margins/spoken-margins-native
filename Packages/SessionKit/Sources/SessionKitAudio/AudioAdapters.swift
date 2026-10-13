@@ -2839,7 +2839,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func pauseForSystemInterruption(awaitsEnd: Bool) {
         let wasPlaying = activeTargetId != nil && !paused
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
-        if awaitsEnd { withInterruptionHold { $0.interruptionBegan() } }
+        if awaitsEnd {
+            // iOS doesn't report the end of a message announcement, so the hold also resumes once the other
+            // audio stops (#1434).
+            withInterruptionHold { [weak self] hold in
+                hold.interruptionBegan(resumeWhenOtherAudioStops: { self?.resumeBecauseOtherAudioStopped() })
+            }
+        }
         paused = true
         player?.pause()
         #if os(iOS)
@@ -2852,6 +2858,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private func finishSystemInterruption(shouldResume: Bool) {
         withInterruptionHold { $0.interruptionEnded() }
         guard interruptionResumePolicy.ended(shouldResume: shouldResume) else { return }
+        interruptionHandler?(.endedShouldResume)
+    }
+
+    /// The interruption's other audio stopped without iOS reporting an end: resume as an end with "should resume"
+    /// would, unless the listener has taken over since (#1434).
+    private func resumeBecauseOtherAudioStopped() {
+        guard interruptionResumePolicy.ended(shouldResume: true) else { return }
         interruptionHandler?(.endedShouldResume)
     }
 
