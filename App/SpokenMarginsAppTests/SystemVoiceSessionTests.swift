@@ -127,6 +127,10 @@ final class SystemVoiceSessionTests: XCTestCase {
     /// does; `SystemVoiceChunkRendererDefaultTests` pins that default on the host, because this probe may not
     /// tell the two settings apart on the simulator. The shared-session setting (#288's) is checked on a phone.
     func testWritingIOSVoiceChunksLeavesTheAppsPlayingAudioUndisturbed() async throws {
+        // #768: on a wedged simulator the engine start in `probe` aborts the app; check the voice answers
+        // first. That check may wait on the speech service's cold start (#1230), so allow the plan's maximum.
+        executionTimeAllowance = 180
+        try await SystemVoiceRuntime.requireAnsweringVoice()
         let result = try await probe(SystemVoiceChunkRenderer())
         print("#288 probe, renderer as the output guard builds it: \(result)")
         XCTAssertEqual(result.written.count, 3, "every chunk was written")
