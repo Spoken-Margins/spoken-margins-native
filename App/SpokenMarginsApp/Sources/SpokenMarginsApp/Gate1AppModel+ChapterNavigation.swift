@@ -22,71 +22,58 @@ extension Gate1AppModel {
     }
 
     func jumpToChapter(_ chapter: Chapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(chapter.title).")
-        }
+        jumpToEngineChapter(id: chapter.id, title: chapter.title, fromTimeline: fromTimeline)
     }
 
     func jumpToMediaChapter(_ chapter: MediaTimelineChapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(chapter.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
-            _ = try ensureSessionForSelectedItem(engine)
-            snapshot = try engine.jumpToChapter(chapterId: chapter.id)
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(chapter.title).")
-        }
+        jumpToEngineChapter(id: chapter.id, title: chapter.title, fromTimeline: fromTimeline)
     }
 
     func jumpToListeningMapScene(_ scene: MediaTimelineChapter, fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.jumpToChapter(scene.id, fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
+        navigateFromChapterControl(.jumpToChapter(scene.id, fromTimeline: fromTimeline), fromTimeline: fromTimeline, message: "Jumped to \(scene.title).") { engine in
             _ = try ensureSessionForSelectedItem(engine)
             snapshot = try seekOrStageMedia(engine, toMediaTimeMs: scene.startMs)
             if !snapshot.status.isPlaybackActive {
                 snapshot = try engine.resumePlayback()
             }
-            refreshSelectedItem()
-            screen = .playback
-            if fromTimeline {
-                recordTimelineReviewCompleted()
-            }
-            reportSuccess("Jumped to \(scene.title).")
         }
     }
 
     func playSourceFromBeginning(fromTimeline: Bool = false) {
-        guard !requireTermsDecisionBeforePlayback(.playSourceFromBeginning(fromTimeline: fromTimeline)) else { return }
-        stopSpeechPreviews()
-        clearPendingAutoPlayTurns()
-        run { engine in
+        navigateFromChapterControl(.playSourceFromBeginning(fromTimeline: fromTimeline), fromTimeline: fromTimeline, message: "Playing source from the beginning.") { engine in
             let startedSelectedItem = try ensureSessionForSelectedItem(engine)
             if !startedSelectedItem {
                 snapshot = try engine.playSourceFromBeginning()
             }
+        }
+    }
+
+    private func jumpToEngineChapter(id: String, title: String, fromTimeline: Bool) {
+        navigateFromChapterControl(.jumpToChapter(id, fromTimeline: fromTimeline), fromTimeline: fromTimeline, message: "Jumped to \(title).") { engine in
+            _ = try ensureSessionForSelectedItem(engine)
+            snapshot = try engine.jumpToChapter(chapterId: id)
+        }
+    }
+
+    /// The steps every chapter control shares (#1003): the Terms gate first, then stop previews and
+    /// pending auto-play turns, then `move` inside `run`, then open Now Playing and report.
+    private func navigateFromChapterControl(
+        _ action: PendingPlaybackAfterTerms,
+        fromTimeline: Bool,
+        message: String,
+        move: (SessionEngine) throws -> Void
+    ) {
+        guard !requireTermsDecisionBeforePlayback(action) else { return }
+        stopSpeechPreviews()
+        clearPendingAutoPlayTurns()
+        run { engine in
+            try move(engine)
             refreshSelectedItem()
             screen = .playback
             if fromTimeline {
                 recordTimelineReviewCompleted()
             }
-            reportSuccess("Playing source from the beginning.")
+            reportSuccess(message)
         }
     }
 
