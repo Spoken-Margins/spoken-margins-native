@@ -69,6 +69,7 @@ extension Gate1AppModel {
             if engine == nil {
                 installEngine(try makeEngine(store: store))
             }
+            let recordingDraftNotice = reconcileRecordingDrafts(store: store)
             // Installing the Supertonic client establishes the current render
             // signature. Re-project rows so startup readiness never reuses a
             // manifest from an obsolete voice or model identity.
@@ -97,6 +98,7 @@ extension Gate1AppModel {
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
+            if let recordingDraftNotice { reportWarning(recordingDraftNotice) }
             try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
             scheduleAutomaticAudioPreparationIfNeeded()
             // Recover missing opening windows as well as durable jobs. Yield

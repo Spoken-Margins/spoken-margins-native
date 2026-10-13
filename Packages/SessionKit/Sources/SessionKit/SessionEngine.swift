@@ -62,6 +62,11 @@ public final class SessionEngine {
     /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
     /// Save passes no path, so a Save that failed once could never be tried again (#911).
     private var closedRecordingRef: String?
+    /// Where unsaved recordings are noted so a launch after a kill can find them (#951). Nil keeps no notes.
+    public var recordingDraftJournal: RecordingDraftJournal?
+    /// Why the last note could not be written or removed. A failed note never stops a recording.
+    public private(set) var recordingDraftFailure: String?
+    private var activeRecordingDraft: RecordingDraft?
     /// A Margin that is stored but whose finishing steps (evidence capture, transcription, rejoining the source) did
     /// not all run. The next Save picks up from here instead of asking the recorder for a recording it already
     /// gave up, so the recording screen can't get stuck behind a Margin that is saved (#1121).
@@ -1453,6 +1458,7 @@ public final class SessionEngine {
             try recorder.beginRecording()
             marginCaptureTiming?.recorderStarted(at: ProcessInfo.processInfo.systemUptime,
                                                 inputRoute: recorder.captureDiagnostics()["inputs"])
+            noteRecordingDraft(session: session, targetType: target.type, targetId: target.id)
         } catch {
             try? recorder.cancelRecording() // let go of whatever the failed start grabbed, such as the audio session
             abandonInterjectionStart(session, wasPlaying: wasPlaying)
@@ -1507,6 +1513,40 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("restartRecordingCapture")
         }
         try recorder.restartCapture()
+        updateRecordingDraft { $0.audioRef = recorder.recordingInProgressRef() }
+    }
+
+    /// Writes the note for the recording that just started: its source, place and file, before the app shows
+    /// "Recording". A failure is remembered and the recording goes on (#951).
+    private func noteRecordingDraft(session: Session, targetType: InterjectionTargetType, targetId: String) {
+        guard let journal = recordingDraftJournal, let anchor = recordingAnchor else { return }
+        let draft = RecordingDraft(
+            sessionId: session.id,
+            itemId: session.itemId,
+            targetType: targetType,
+            targetId: targetId,
+            createdAt: now(),
+            roughPercent: interjectionPercent(for: session, targetType: targetType, targetId: targetId, anchor: anchor),
+            anchor: anchor,
+            audioRef: recorder.recordingInProgressRef()
+        )
+        activeRecordingDraft = draft
+        recordingDraftFailure = nil
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+    }
+
+    private func updateRecordingDraft(_ change: (inout RecordingDraft) -> Void) {
+        guard let journal = recordingDraftJournal, var draft = activeRecordingDraft else { return }
+        change(&draft)
+        activeRecordingDraft = draft
+        do { try journal.write(draft) } catch { recordingDraftFailure = "write:\(error.localizedDescription)" }
+    }
+
+    /// The Margin is stored, or the listener cancelled: the note has done its job.
+    private func removeRecordingDraft() {
+        guard let draft = activeRecordingDraft else { return }
+        activeRecordingDraft = nil
+        do { try recordingDraftJournal?.remove(id: draft.id) } catch { recordingDraftFailure = "remove:\(error.localizedDescription)" }
     }
 
     public func recordingCaptureDiagnostics() -> [String: String] {
@@ -1825,9 +1865,11 @@ public final class SessionEngine {
         storedMarginFinish = nil // left over from another session
         let savedAudioRef = try recorder.finishRecording(audioRef: audioRef ?? closedRecordingRef)
         closedRecordingRef = savedAudioRef
+        updateRecordingDraft { $0.audioRef = savedAudioRef; $0.state = .closed }
         if profile.has("sync", "queue_offline_events"), let package = currentWatchPackage {
             let event = try queueWatchInterjectionEvent(audioRef: savedAudioRef, session: session, package: package)
             closedRecordingRef = nil
+            removeRecordingDraft()
             lastQueuedWatchSyncEvent = event
             snapshot.lastInterjectionAnchorType = anchor.anchorType
             snapshot.lastInterjectionTargetType = targetType
@@ -1845,7 +1887,7 @@ public final class SessionEngine {
             && anchor.mediaTimeMs != nil
             && item.map(isNativeAudioSource) == true
         let interjection = Interjection(
-            id: targetType == .assistantTurn ? "ij-ai-\(String(format: "%03d", count))" : "ij-\(String(format: "%03d", count))",
+            id: Interjection.makeId(number: count, targetType: targetType),
             itemId: session.itemId,
             sessionId: session.id,
             targetType: targetType,
@@ -1865,12 +1907,13 @@ public final class SessionEngine {
             cleanedTranscript: nil,
             displayText: nil,
             status: "active",
-            anchorContextStatus: anchor.mediaTimeMs == nil || !anchor.anchorBefore.isEmpty || !anchor.anchorAfter.isEmpty ? .ready : .pending,
+            anchorContextStatus: Interjection.contextStatus(for: anchor),
             podcastAnchorEvidenceCaptureStatus: shouldCapturePostResumePodcastEvidence
                 ? .pendingPostResumeSample
                 : nil
         )
         try repository.saveInterjection(interjection)
+        removeRecordingDraft()
         closedRecordingRef = nil // owned by a Margin now; a later failure must not store it again
         lastMediaPercentageRepair = nil
         storedMarginFinish = StoredMarginFinish(
@@ -1966,6 +2009,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
+        removeRecordingDraft() // first: a kill between the two leaves a file nobody recovers, so a Cancel stays cancelled
         try recorder.cancelRecording()
         let returnsToFinished = returnsToFinishedSource(targetType: recordingTargetType ?? .item)
         session.phase = priorPhase ?? priorPhaseForResume(targetType: recordingTargetType ?? .item)
