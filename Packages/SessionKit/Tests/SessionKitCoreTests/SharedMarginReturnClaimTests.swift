@@ -199,6 +199,10 @@ final class SharedMarginReturnClaimTests: XCTestCase {
         XCTAssertTrue(owed, "this is today's behaviour, kept until a test says it may change")
     }
 
+    func testANewClaimOwesNothing() {
+        XCTAssertEqual(SharedMarginReturnClaim(), .none)
+    }
+
     // The four values, as the two parts the model used to keep, so a reader can check the mapping.
     func testTheFourValuesAreTheFourCombinationsOfThePromptsAndTheVoicesPart() {
         XCTAssertEqual([SharedMarginReturnClaim.none, .prompt, .voice, .promptAndVoice].map(\.heldByPrompt),

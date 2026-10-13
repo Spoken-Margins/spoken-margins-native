@@ -26,6 +26,9 @@ public enum SharedMarginReturnClaim: Equatable, Sendable {
     case voice
     case promptAndVoice
 
+    /// Nothing is owed.
+    public init() { self = .none }
+
     public var heldByPrompt: Bool {
         self == .prompt || self == .promptAndVoice
     }
