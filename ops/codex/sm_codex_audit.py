@@ -33,6 +33,12 @@ a slot, without consuming the re-arm; a later pass retries when it completes.
 The label event starts the lane's
 automerge job, which tests and merges. Each audit re-arms at most once.
 
+Inherited findings (#712): a PR that brings in another PR's commits inherits that PR's blocking audit of them
+(scripts/lane_inherited_holds.py), and the runner holds it. The audit prompt lists them. A resolution comment on
+the head (a machine-readable `audit-resolution` naming the source audit comment and the full head, with evidence)
+posted after the head's newest audit counts as a new reason to audit that head again, and the re-arm waits for
+a clean audit posted after the resolution.
+
 Usage:
   /usr/bin/python3 ops/codex/sm_codex_audit.py [--dry-run] [--pr N]
 
@@ -61,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from lane_dedupe import GitHubApi, automerge_holds_a_slot
+import lane_inherited_holds as inherited
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -178,7 +185,8 @@ _REQUEST_RE = re.compile(
 _NEGATION_RE = re.compile(r"(?i)(\bno\b|\bnot\b|n't\b|\bwithout\b|\bnever\b)[^.\n]{0,20}$")
 # The runner's hold line: 'not merged by the runner: it touches the audio session and has no
 # "Codex audit (Astra)" comment yet' (legacy), or the current "Codex or Claude audit" wording.
-_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*\bhas no \"?(?:Codex(?: or Claude)?|Claude) audit\b")
+_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*(?:\bhas no \"?(?:Codex(?: or Claude)?|Claude) audit\b"
+                              r"|\binherits a blocking audit finding\b)")  # #712: an unresolved inherited finding needs one too
 # The runner's clean-audit rule (#441, lane-runner.py CLEAN_AUDIT): the verdict line opens so.
 _CLEAN_AUDIT_RE = re.compile(r"no (blocking )?findings\b", re.I)
 
@@ -289,11 +297,13 @@ def head_audit(comments: list[dict], head_sha: str) -> tuple[str, str] | None:
 
 
 def rearm_decision(pr: dict, comments: list[dict],
-                   label_events: list[dict] | None) -> tuple[bool, str]:
+                   label_events: list[dict] | None, holds: list[dict] | None = None) -> tuple[bool, str]:
     """Whether to remove and re-add automerge so the runner merges after a clean audit.
 
     `label_events` (the PR's issue events) may be None until every other check
-    passes; the result is then (False, "need events").
+    passes; the result is then (False, "need events"). `holds` are the blocking audits
+    the head inherits from other PRs (#712): a clean audit alone doesn't clear them, so
+    the runner would hold the re-armed run; re-arming then would only waste a run.
     """
     head = pr["headRefOid"]
     if pr.get("isDraft"):
@@ -313,6 +323,8 @@ def rearm_decision(pr: dict, comments: list[dict],
         return False, "the lane ran after the audit"
     if label_events is None:
         return False, "need events"
+    if holds and inherited.unresolved(holds, comments, head):
+        return False, "the head inherits a blocking audit finding that isn't resolved"
     for e in label_events:
         if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == AUTOMERGE \
                 and (e.get("created_at") or "") > audited_at:
@@ -396,7 +408,7 @@ def evaluate_pr(pr: dict, comments: list[dict], files: list[dict] | None,
         return False, "draft"
     if pr.get("baseRefName", BASE_BRANCH) != BASE_BRANCH:
         return False, f"base is {pr.get('baseRefName')}"
-    if audited_on(comments, head):
+    if audited_on(comments, head) and not inherited.needs_reaudit(comments, head):
         return False, "already audited on head"
     ok, why = lane_pass_for_head(comments, head)
     if not ok:
@@ -555,6 +567,28 @@ def fetch_label_events(number: int) -> list[dict]:
     return gh_json_lines(f"repos/{REPO}/issues/{number}/events?per_page=100")
 
 
+def head_holds(number: int, head: str) -> tuple[list[dict], str | None]:
+    """(the blocking audits the head inherits from other PRs, None), or ([], why) when the lookup couldn't finish.
+
+    Fetches the head so its commits are here. Callers treat a failed lookup as "unknown", never as "none".
+    """
+    try:
+        run(["git", "fetch", "--quiet", "origin", BASE_BRANCH], cwd=REPO_ROOT, timeout=600)
+        run(["git", "fetch", "--quiet", "origin", f"pull/{number}/head"], cwd=REPO_ROOT, timeout=600)
+        if run(["git", "rev-parse", "FETCH_HEAD"], cwd=REPO_ROOT).stdout.strip() != head:
+            return [], "the head moved since listing"
+        return inherited.find_holds(REPO_ROOT, REPO, f"origin/{BASE_BRANCH}", head, number), None
+    except Exception as exc:  # noqa: BLE001 - reported by the caller; never a reason to wave a PR through
+        return [], str(exc)[:160]
+
+
+def inherited_text(comments: list[dict], holds: list[dict], lookup_error: str | None, head: str) -> str:
+    if lookup_error:
+        return ("Inherited audit findings: the lookup failed (" + lookup_error + "). The runner checks them again at "
+                "merge time; do not read this as 'none'.")
+    return inherited.context(holds, comments, head)
+
+
 REARMED: set[int] = set()  # PRs this process re-armed, so the end-of-run pass skips them
 
 
@@ -577,7 +611,9 @@ def rearm_pass(prs: list[dict], dry_run: bool) -> None:
             comments = fetch_comments(n)
             ok, why = rearm_decision(pr, comments, None)
             if why == "need events":
-                ok, why = rearm_decision(pr, comments, fetch_label_events(n))
+                holds, lookup_error = head_holds(n, pr["headRefOid"])
+                ok, why = (False, f"inherited findings not checked ({lookup_error})") if lookup_error else \
+                    rearm_decision(pr, comments, fetch_label_events(n), holds)
             if not ok:
                 if dry_run:
                     print(f"  re-arm #{n}: no ({why})")
@@ -805,7 +841,7 @@ def incremental_diffs(worktree: Path, number: int, head: str, comments: list[dic
 
 
 def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: str,
-                     base_sha: str, merge_base: str, delta_context: str = '') -> str:
+                     base_sha: str, merge_base: str, delta_context: str = '', inherited_context: str = '') -> str:
     head_rel = f".sm-audit/pr-{c['number']}-head"
     parts = [
         f"## PR #{c['number']}: {c['title']}",
@@ -827,6 +863,8 @@ def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: 
                 parts.append(f"{key}:\n{secs[key]}")
     parts.extend(['', review_history(c.get('comments') or []), '', delta_context or
                   'Incremental diff unavailable; use the full diff and verify prior code before any waiver.'])
+    if inherited_context:
+        parts.extend(['', inherited_context])
     return "\n".join(parts)
 
 
@@ -1010,7 +1048,9 @@ def audit_batch(batch: list[dict]) -> None:
                     issue_texts[inum] = issue_sections(issue.get("body") or "")
             delta = incremental_diffs(worktree, c['number'], head, c.get('comments') or [])
             export_head_files(worktree, c["number"], head, c.get("files") or [])
-            blocks.append(pr_context_block(c, issue_texts, rel, base_sha, mb, delta))
+            holds, lookup_error = head_holds(c['number'], head)
+            blocks.append(pr_context_block(c, issue_texts, rel, base_sha, mb, delta,
+                                           inherited_text(c.get('comments') or [], holds, lookup_error, head)))
             blocks.append("")
         prompt = build_prompt(live, blocks, base_sha)
         OUTPUT_KEEP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1051,7 +1091,8 @@ def audit_batch(batch: list[dict]) -> None:
                 results.append(f"#{n} no section in Claude's answer, nothing posted")
                 continue
             target['outcome'] = usage.audit_outcome(sections[n])
-            if audited_on(fetch_comments(n), head):
+            fresh_comments = fetch_comments(n)
+            if audited_on(fresh_comments, head) and not inherited.needs_reaudit(fresh_comments, head):
                 target['post_missing_reason'] = 'audited by someone else meanwhile'
                 results.append(f"#{n} audited by someone else meanwhile, nothing posted")
                 continue

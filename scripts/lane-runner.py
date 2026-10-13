@@ -94,6 +94,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   merge conflict, a T3 hold or a FAIL), it reverts that merge with `git revert -m 1`, pushes like a
   merge, files a `ready` + `regression` issue to re-land it, and posts "Lane auto-revert:" on #337.
   Once per lane change; a revert that doesn't apply cleanly is reported on #337 and left for a person.
+- Inherited audit findings (#712, scripts/lane_inherited_holds.py, loaded from next). A PR that brings in another
+  PR's commits is held by that PR's blocking audit of them, even with a clean audit of its own head: the finding
+  clears only with a machine-readable resolution on the PR (the source audit comment, the full head, evidence) and a
+  clean audit of the head posted after it. A lookup that can't finish holds the merge too. The hold line reads
+  "not merged by the runner: it inherits a blocking audit finding ..." and says what clears it.
 
 Environment: GH_TOKEN and GH_REPO (the workflow's), SM_LANE_EVIDENCE_DIR (where evidence goes,
 default ~/Library/Caches/SpokenMarginsLane/evidence), SM_LANE_TOOLS (a checkout whose .venv and
@@ -734,10 +739,36 @@ def owner_tap_note(paths: list[str]) -> str:
             '#1203), whatever an audit says. It needs the owner\'s tap.')
 
 
-def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
+INHERITED_HOLD = 'it inherits a blocking audit finding'  # lane_inherited_holds.INHERITED: a test keeps them equal
+INHERITED_FAILED = 'the check for inherited audit findings could not finish'
+INHERITED_POLICY = 'scripts/lane_inherited_holds.py'
+# Other PRs' comments, kept by PR number and updated_at so an unchanged PR costs no call on the next run.
+INHERITED_CACHE = Path(os.environ.get('SM_LANE_INHERITED_CACHE') or
+                       Path.home() / 'Library/Caches/SpokenMarginsLane/inherited-holds.json')
+
+
+def inherited_check(github, tree: Path, base: str, head: str):
+    """#712: a function from the PR's comments to the reasons its inherited audit findings hold it (see
+    scripts/lane_inherited_holds.py). The lookup reads other PRs' audits for the commits this PR brings in beyond
+    next; the rules come from next's copy, like the other policies. A lookup that can't finish holds the merge."""
+    try:
+        policy = base_policy(tree, base, INHERITED_POLICY)
+        if policy is None:
+            raise RuntimeError(f'{base} has no {INHERITED_POLICY} yet')
+        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr, cache=INHERITED_CACHE)
+    except Exception as error:  # noqa: BLE001 - any failure to look holds the merge instead of waving it through
+        why = f'{INHERITED_FAILED}: {str(error)[:200]}. Remove and re-add automerge to check again'
+        return lambda comments: [why]
+    return lambda comments: policy.reasons(policy.unresolved(holds, comments, head), head)
+
+
+def merge_blockers(scope: dict, comments: list[dict], head: str, inherited=None) -> list[str]:
     """Why the runner won't merge this PR yet even on PASS: an audited kind of change without a clean Codex or Claude
     audit of its head. Lane changes are one of those kinds; they no longer wait for a person (owner rule
-    2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges."""
+    2026-10-01). The audit script re-arms automerge after a clean audit, and that run merges.
+
+    inherited (inherited_check's answer) adds a hold per blocking audit on another PR's commits this PR brings in
+    (#712): a clean audit of this head doesn't clear it, a resolution of that finding plus a clean audit after does."""
     reasons = []
     risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
     if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
@@ -746,7 +777,7 @@ def merge_blockers(scope: dict, comments: list[dict], head: str) -> list[str]:
     if audit:
         reasons.append(f'it touches {" and ".join(risky)}, and {audit}' if audit.startswith('the ')
                        else f'it touches {" and ".join(risky)} and {audit}')
-    return reasons
+    return reasons + (inherited(comments) if inherited else [])
 
 
 def t3_gate(comments: list[dict]) -> tuple[str, str] | None:
@@ -1138,11 +1169,12 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
         if held:  # what passed, for the lane job that reports the T3 PASS (#834)
             return held[0], where, ran, details + [checks_note(head, tested_base, ran, where),
                                                    f'not merged: {held[1]}.']
-        blockers = merge_blockers(scope, latest, head)
+        blockers = merge_blockers(scope, latest, head, inherited_check(github, ROOT, base, head))
         tap = owner_tap_paths(scope)
         if blockers or tap:  # the audit hold line goes first: the Mac's audit script finds lane PRs to audit by it
             # What passed, for the automerge run the audit re-arms (#1461); the owner's tap is checked again then.
             return verdict, where, ran, details + [checks_note(head, tested_base, ran, where)] + [
+                f'not merged by the runner: {b}.' if b.startswith((INHERITED_HOLD, INHERITED_FAILED)) else
                 f'not merged by the runner: {b}. It merges once a Codex or Claude audit '
                 'of its head says "No blocking findings".' for b in blockers] + (
                 [owner_tap_note(tap)] if tap else [])
