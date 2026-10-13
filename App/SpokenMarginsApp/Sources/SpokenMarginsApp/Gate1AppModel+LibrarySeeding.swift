@@ -139,4 +139,83 @@ extension Gate1AppModel {
     ) -> Bool {
         libraryIsEmpty && storedVersion < welcomeSampleSeedVersion && !isUITesting
     }
+
+    func resetAndSeed() {
+        do {
+            if Self.isRunningUnitTests, databaseURLOverride == nil {
+                databaseURLOverride = FileManager.default.temporaryDirectory
+                    .appending(path: "spoken-margins-tests-\(UUID().uuidString).sqlite")
+            }
+            let databaseURL = try databaseURL()
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            try store.reset()
+            let item = try loadFixtureItem(name: "text-with-listening-map")
+            let map = try loadFixtureMap(name: "valid-listening-map")
+            try store.seed(item: item)
+            try store.seed(map: map)
+            self.store = store
+            try configurePodcastDownloads(store: store)
+            installEngine(try makeEngine(store: store))
+            activeItemId = item.id
+            snapshot = SessionSnapshot()
+            libraryItems = try loadLibraryRows(store: store)
+            recentlyDeletedItems = []
+            dismissTrashUndo()
+            selectedItem = try loadItemDetail(id: item.id, store: store)
+            diagnostics = [
+                "runtimeProfile": selectedProfileId,
+                "seededItems": "1",
+                "database": databaseURL.lastPathComponent
+            ]
+            exportPreview = ""
+            refreshMarginRows()
+            tryRefreshOfflineStorageUsage()
+            reportSuccess("Listening queue ready.")
+        } catch {
+            reportFailure(error, context: "Reset and seed failed")
+        }
+    }
+
+    func addSampleItem() {
+        do {
+            let store = try requireStore()
+            let (item, map) = try makeAppOverviewSample()
+            try store.saveItem(item)
+            try store.saveListeningMap(map)
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            activeItemId = item.id
+            try refreshLibraryRows(store: store)
+            selectedItem = try loadItemDetail(id: item.id, store: store)
+            screen = .item
+            reportSuccess("Sample added.")
+        } catch {
+            reportFailure(error, context: "Add sample failed")
+        }
+    }
+
+    func startGuidedOnboarding() {
+        do {
+            let store = try requireStore()
+            if !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
+                try store.saveItem(Self.makeBundledGuidedOnboardingItem())
+                try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
+                UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
+                UserDefaults.standard.removeObject(forKey: Self.guidedOnboardingTombstoneKey)
+                try refreshLibraryRows(store: store)
+            } else if try store.loadListeningMap(itemId: Self.guidedOnboardingItemId) == nil {
+                try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
+            }
+            if engine == nil {
+                installEngine(try makeEngine(store: store))
+            }
+            restoreOnboardingCard()
+            isHelpPresented = false
+            setGuidedOnboardingStage(onboardingProgress.tourResumeStage)
+            startItem(id: Self.guidedOnboardingItemId)
+        } catch {
+            reportFailure(error, context: "Guided tour setup failed")
+        }
+    }
 }
