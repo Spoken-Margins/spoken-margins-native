@@ -115,6 +115,10 @@ extension Gate1AppModel: SkimBridgeHost {
         refreshSelectedItem()
     }
 
+    func skimEngineCallFailedWhileCancelling() {
+        snapshot = snapshot
+    }
+
     func skimDestinationsWillChange() {
         objectWillChange.send()
     }

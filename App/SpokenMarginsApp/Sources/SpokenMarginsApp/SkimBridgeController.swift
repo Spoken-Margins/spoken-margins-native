@@ -41,6 +41,9 @@ protocol SkimBridgeHost: AnyObject {
     func skimSeekOrStage(toMediaTimeMs mediaTimeMs: Int) throws
     /// A bridge ended at its destination: refresh what the selected item shows.
     func skimBridgeDidFinish()
+    /// Cancelling asks the engine to seek and then settle, and keeps going when it refuses. The model reassigns its
+    /// unchanged snapshot, so the snapshot observer runs once more, as it did when the model made those calls itself.
+    func skimEngineCallFailedWhileCancelling()
 
     /// The destinations are about to change. The model publishes them to its observers, as its `@Published` copies did.
     func skimDestinationsWillChange()
@@ -288,11 +291,15 @@ final class SkimBridgeController {
         protectSummaryBridgeAsset(bridge.summaryAssetId, protected: false)
         host.skimBridgeState = nil
         guard restoringOrigin, host.skimHasEngine else { return }
-        _ = try? host.skimSeekOrStage(toMediaTimeMs: bridge.originMediaTimeMs)
-        if resumeSource && bridge.wasSourcePlaying {
-            _ = try? host.skimResumeEngine()
-        } else {
-            _ = try? host.skimPauseEngine()
+        do { try host.skimSeekOrStage(toMediaTimeMs: bridge.originMediaTimeMs) } catch { host.skimEngineCallFailedWhileCancelling() }
+        do {
+            if resumeSource && bridge.wasSourcePlaying {
+                try host.skimResumeEngine()
+            } else {
+                try host.skimPauseEngine()
+            }
+        } catch {
+            host.skimEngineCallFailedWhileCancelling()
         }
     }
 

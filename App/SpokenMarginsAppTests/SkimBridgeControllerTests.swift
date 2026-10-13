@@ -155,7 +155,7 @@ final class SkimBridgeControllerTests: XCTestCase {
         host.bridge = makeBridge(wasSourcePlaying: false)
         host.failSeek = true
         makeController(host).cancel(restoringOrigin: true, resumeSource: true)
-        XCTAssertEqual(host.log, ["state:nil", "seek:1000", "pause"], "a source that was paused stays paused")
+        XCTAssertEqual(host.log, ["state:nil", "seek:1000", "kept snapshot", "pause"], "a source that was paused stays paused, and the refused seek leaves the snapshot as it was")
         XCTAssertTrue(host.failures.isEmpty)
     }
 
@@ -211,11 +211,11 @@ private final class ScriptedSkimHost: SkimBridgeHost {
             available.forward = newValue.forward
             flagWrites.append("forward=\(newValue.forward)")
             reentrantPasses += 1
-            controller?.updateAvailability(refreshResources: false)
+            if reentrantPasses < 20 { controller?.updateAvailability(refreshResources: false) } // a cap, so a missing guard fails the assertions instead of overflowing the stack
             available.backward = newValue.backward
             flagWrites.append("backward=\(newValue.backward)")
             reentrantPasses += 1
-            controller?.updateAvailability(refreshResources: false)
+            if reentrantPasses < 20 { controller?.updateAvailability(refreshResources: false) }
         }
     }
 
@@ -236,6 +236,7 @@ private final class ScriptedSkimHost: SkimBridgeHost {
         if failSeek { throw ScriptedFailure() }
     }
     func skimBridgeDidFinish() { log.append("finished") }
+    func skimEngineCallFailedWhileCancelling() { log.append("kept snapshot") }
     func skimDestinationsWillChange() { destinationsWillChange += 1 }
     func skimDestinationsChangedWithoutAvailabilityChange() { compactRefreshes += 1 }
     func skimWarn(_ message: String) { warnings.append(message) }
