@@ -51,6 +51,7 @@ It compares your branch (uncommitted files included) with `origin/next`, prints 
    - `watch for:` names the specific risk.
    - `not needed:` lists what you already ran on this commit.
 3. For T4/T5 on the Mac, you may also message the `test-desk` session as a doorbell ("lane request on PR #N"). The PR comment is always the real request.
+   `scripts/desk-batch.py` collects the unanswered T4 requests into work lists for a desk ([test-lane.md](../../../docs/workstreams/test-lane.md), Batching T4 requests), so a T4 request needs a numbered `scenario:` (its steps size the batch).
 
 **Who takes it.**
 - **T2 and T3** go to the self-hosted runner. It starts within a minute or so of the label, or later if other PRs are queued. It tests your PR merged into `next`, on a temporary iOS 26.5 simulator for T3.
