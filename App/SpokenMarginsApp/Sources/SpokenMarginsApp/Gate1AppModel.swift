@@ -1308,17 +1308,19 @@ final class Gate1AppModel: ObservableObject {
                 diagnostics["welcomeSample"] = "seeded:v\(Self.welcomeSampleSeedVersion)"
             }
             if !UITestingHooks.isActive,
-               true { // MUTATION CHECK (#1020): tombstone, version and existing-item guards removed
+               !UserDefaults.standard.bool(forKey: Self.guidedOnboardingTombstoneKey),
+               UserDefaults.standard.integer(forKey: Self.guidedOnboardingSeedVersionKey) < 1,
+               !(try store.listItems()).contains(where: { $0.id == Self.guidedOnboardingItemId }) {
                 try store.saveItem(Self.makeBundledGuidedOnboardingItem())
                 try store.saveListeningMap(Self.makeBundledGuidedOnboardingMap())
-                UserDefaults.standard.set(2, forKey: Self.guidedOnboardingSeedVersionKey) // MUTATION CHECK (#1020)
+                UserDefaults.standard.set(1, forKey: Self.guidedOnboardingSeedVersionKey)
                 rows = try loadLibraryRows(store: store)
                 diagnostics["guidedOnboardingItem"] = "bundled_fallback_seeded"
             }
             if !UITestingHooks.isActive,
                storedWelcomeSampleVersion < Self.welcomeSampleSeedVersion {
                 UserDefaults.standard.set(
-                    Self.welcomeSampleSeedVersion + 1, // MUTATION CHECK (#1020)
+                    Self.welcomeSampleSeedVersion,
                     forKey: Self.welcomeSampleSeedVersionKey
                 )
             }
@@ -1368,7 +1370,7 @@ final class Gate1AppModel: ObservableObject {
             startForegroundAudioPreparationIfNeeded()
         } catch {
             libraryAccessError = "This build could not open your existing library. This attempt did not reset it. Do not use Reset Library or delete the app; install a compatible build and try again. Details: \(error.localizedDescription)"
-            diagnostics["libraryBootstrap"] = "failed_mutated:\(error.localizedDescription)"
+            diagnostics["libraryBootstrap"] = "failed_without_reset:\(error.localizedDescription)"
             reportFailure(error, context: "Library bootstrap failed")
         }
     }
@@ -1393,7 +1395,7 @@ final class Gate1AppModel: ObservableObject {
         storedVersion: Int,
         isUITesting: Bool
     ) -> Bool {
-        !isUITesting // MUTATION CHECK (#1020)
+        libraryIsEmpty && storedVersion < welcomeSampleSeedVersion && !isUITesting
     }
 
     func handleAppBecameActive() {
