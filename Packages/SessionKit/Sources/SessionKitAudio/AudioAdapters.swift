@@ -3496,9 +3496,10 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 durationKnown = false
             }
         }
-        var inputRoute: String?
         #if os(iOS) || os(watchOS)
-        inputRoute = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        let inputRoute: String? = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        #else
+        let inputRoute: String? = nil
         #endif
         return RecordingCaptureReading(
             recorderRunning: recorder.isRecording,
