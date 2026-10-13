@@ -165,6 +165,7 @@ class RealGitLaneTests(unittest.TestCase):
         self.t3_request = comment(f'/lane T3\ncommit: {self.head[:7]}\ntests: SupertonicSpeechTests')
         for patch in (mock.patch.object(lane, 'ROOT', self.tree), mock.patch.dict(os.environ, {'GH_TOKEN': ''}),
                       mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T2', 'why': ['app'], 'files': []}),
+                      mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []),
                       mock.patch.object(lane, 'warm_build_folders', return_value='build folders: cold'),
                       mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace'),
                       mock.patch.object(lane, 'TESTED_RECORD', None), mock.patch('builtins.print')):

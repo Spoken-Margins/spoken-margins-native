@@ -302,6 +302,7 @@ class RunAutoAfterNextMovedTests(RealGit):
                 mock.patch.object(lane, 'sweep_merge_audit'), \
                 mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
                 mock.patch.object(lane, 'diff_scope', return_value=self.SCOPE), \
+                mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                 mock.patch.object(lane, 'run_automerge',
                                   return_value=('PASS', 'no simulator (compile only)', 'host tests; builds', [])) as tests:
             result = lane.run_auto(github, {'title': 'Feature'}, 5, 'next', head, base_sha, Path(evidence), [])

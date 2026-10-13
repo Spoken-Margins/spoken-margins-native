@@ -1077,7 +1077,7 @@ class MergeTests_Runner(unittest.TestCase):
     SCOPE = {'tier': 'T2', 'why': ['app UI'], 'files': [{'path': 'App/X.swift', 'category': 'app-ui'}]}
 
     def run_auto(self, github, verdicts=('PASS',), pushes=(True,), scope=None, comments=(), moved=False,
-                 automerge=None):
+                 automerge=None, inherited=lambda comments: []):
         events = []
         pushes = list(pushes)
 
@@ -1107,6 +1107,7 @@ class MergeTests_Runner(unittest.TestCase):
                 mock.patch.object(lane, 'fetch_base', side_effect=lambda tree, base: NEWER), \
                 mock.patch.object(lane, 'sweep_merge_audit', side_effect=lambda tree, base: events.append('sweep')), \
                 mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
+                mock.patch.object(lane, 'inherited_check', return_value=inherited), \
                 mock.patch.object(lane, 'diff_scope', return_value=scope or self.SCOPE), \
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'run_automerge', side_effect=automerge or (
@@ -1225,6 +1226,26 @@ class MergeTests_Runner(unittest.TestCase):
 
     def audited(self, *audits):
         return self.run_auto(FakeGitHub(labels=('automerge',), comments=[comment(a) for a in audits]), scope=self.RISKY)
+
+    def test_an_inherited_blocking_audit_holds_a_clean_audited_pr_until_resolved(self):
+        # #712: PR #636 merged #616's blocked commit on its own clean audit. The hold is reported, nothing is pushed.
+        clean = comment(f'**Claude audit on `{HEAD[:7]}`**\n\nNo blocking findings.')
+        reason = f'{lane.INHERITED_HOLD}: #616\'s audit of `8ddbd14` (https://example.test/616) is not resolved'
+        (verdict, _, _, details), events = self.run_auto(
+            FakeGitHub(labels=('automerge',), comments=[clean]), scope=self.RISKY, inherited=lambda comments: [reason])
+        self.assertEqual(events, ['build'])  # no merge-check comment, no push
+        self.assertEqual(verdict, 'PASS')  # the checks passed; the hold is separate, as for an unaudited PR
+        self.assertEqual(details[-1], f'not merged by the runner: {reason}.')
+        self.assertFalse(any('says "No blocking findings"' in line for line in details))
+        (_, _, _, details), events = self.run_auto(
+            FakeGitHub(labels=('automerge',), comments=[clean]), scope=self.RISKY, inherited=lambda comments: [])
+        self.assertEqual(events, ['build', 'comment', 'push m1', 'sweep'])
+
+    def test_a_lookup_that_cannot_finish_holds_the_merge_with_the_way_to_retry(self):
+        why = f'{lane.INHERITED_FAILED}: rate limited. Remove and re-add automerge to check again'
+        (_, _, _, details), events = self.run_auto(FakeGitHub(labels=('automerge',)), inherited=lambda comments: [why])
+        self.assertEqual(events, ['build'])
+        self.assertEqual(details[-1], f'not merged by the runner: {why}.')
 
     def test_an_audit_of_an_older_commit_does_not_clear_the_head(self):
         # #441: a clean audit on commit A cleared a later push of commit B that nobody audited.
@@ -1627,6 +1648,7 @@ class AutomergeKeepsNoCacheTests(unittest.TestCase):
                 mock.patch.object(lane, 'build_merge_commit', return_value=(MERGE, [])), \
                 mock.patch.object(lane, 'push_merge', return_value=(True, '')), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
+                mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                 mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T1', 'why': ['x'], 'files': []}), \
                 mock.patch.object(lane, 'hot_file_violations', return_value=[]), \
                 mock.patch.object(lane, 'changed_paths_for_tests', return_value=None), \
@@ -1868,6 +1890,7 @@ class MainFlowTests(unittest.TestCase):
             if exhausted:
                 second = ('PASS', 'host only', 'passed', [])
             with mock.patch.object(lane, 'build_merge_commit', return_value=('m' * 40, [])), \
+                    mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []), \
                     mock.patch.object(lane, 'diff_scope', return_value={'tier': 'T1', 'why': [], 'files': []}), \
                     mock.patch.object(lane, 'run_automerge', side_effect=[('PASS', 'host only', 'passed', []), second]), \
                     mock.patch.object(lane, 'push_merge', return_value=(False, '! [rejected] (fetch first)')), \
@@ -2546,7 +2569,8 @@ class MergeTests(unittest.TestCase):
                 mock.patch.object(lane, 'push_merge', side_effect=lambda tree, sha, base: pushed.append(sha) or (True, '')), \
                 mock.patch.object(lane, 'sweep_merge_audit'), \
                 mock.patch.object(lane, 'host_build_folders', return_value='build folders: in the workspace (test)'), \
-                mock.patch.object(lane, 'diff_scope', return_value=docs_only):
+                mock.patch.object(lane, 'diff_scope', return_value=docs_only), \
+                mock.patch.object(lane, 'inherited_check', return_value=lambda comments: []):
             result = lane.run_auto(github, {'title': 'T'}, 5, 'next', head, base_sha, Path(folder), [],
                                    labels=labels)
         return result, github, pushed

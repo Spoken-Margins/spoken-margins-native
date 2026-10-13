@@ -247,9 +247,7 @@ struct ExperienceRecordingView: View {
 
     private var context: RecordingPresentationContext {
         model.recordingPresentationContext ?? RecordingPresentationContext(
-            itemTitle: model.selectedItem.title.isEmpty ? "Current item" : model.selectedItem.title,
-            locationTitle: model.snapshot.chapterTitle ?? "Current listening position",
-            progressPercent: model.snapshot.currentPlaybackProgressPercent,
+            snapshot: model.snapshot,
             startedAt: Date()
         )
     }

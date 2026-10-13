@@ -2679,9 +2679,7 @@ final class Gate1AppModel: ObservableObject {
             }
             if command == .beginInterjection, snapshot.isRecording {
                 marginCapture.setPresentationContext(RecordingPresentationContext(
-                    itemTitle: selectedItem.title,
-                    locationTitle: snapshot.chapterTitle ?? "Current listening position",
-                    progressPercent: snapshot.currentPlaybackProgressPercent,
+                    snapshot: snapshot,
                     startedAt: Date()
                 ))
             }

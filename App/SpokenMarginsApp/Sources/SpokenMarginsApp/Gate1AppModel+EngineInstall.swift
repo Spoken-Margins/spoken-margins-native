@@ -21,6 +21,7 @@ import PDFKit
 extension Gate1AppModel {
     func installEngine(_ engine: SessionEngine) {
         self.engine = engine
+        engine.recordingDraftJournal = makeRecordingDraftJournal()
         for record in podcastDownloadRecords.values where record.state == .availableOffline {
             guard let path = record.localRelativePath,
                   let url = try? applicationSupportDirectory()
