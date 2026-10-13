@@ -87,9 +87,7 @@ final class SpokenMarginsPackageImportCoordinator {
     /// and without the cleanup `cancel()` does: a bare write of nil has never removed the extraction folder.
     func adoptReviewFromViews(_ value: SpokenMarginsPackageImportReview?) {
         guard value?.id != review?.id else { return }
-        isAdoptingFromViews = true
-        review = value
-        isAdoptingFromViews = false
+        review = value // MUTATION 2
     }
 
     func adoptIsImportingFromViews(_ value: Bool) {
@@ -150,7 +148,7 @@ final class SpokenMarginsPackageImportCoordinator {
                     environment.reportSuccess("These shared Margins are already in your library.")
                 }
                 environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
-                try? FileManager.default.removeItem(at: root)
+                // MUTATION 3: the duplicate's folder is left behind
                 return .staged
             }
             let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
@@ -305,6 +303,7 @@ final class SpokenMarginsPackageImportCoordinator {
                     environment.resolvePodcastCommentary(itemId, localURL)
                 }
             }
+            try? FileManager.default.removeItem(at: review.extractionDirectory) // MUTATION 1
             self.review = nil
             isImporting = false
             environment.reportConfirmation("Imported shared Margins. Playback has not started.")
