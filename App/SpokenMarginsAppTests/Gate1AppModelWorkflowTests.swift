@@ -1603,6 +1603,86 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertTrue(model.statusMessage.contains("Finish or cancel"))
     }
 
+    func testAddingMarginWhileAnotherDetailIsOpenUsesPlayingItem() async throws {
+        try await checkMarginWhileAnotherDetailIsOpen(compact: false)
+    }
+
+    func testCompactMarginWhileAnotherDetailIsOpenUsesPlayingItem() async throws {
+        try await checkMarginWhileAnotherDetailIsOpen(compact: true)
+    }
+
+    /// #1527: real navigation and SQLite ownership, with transport/recording injected because
+    /// this test checks item identity rather than audio encoding or microphone health.
+    private func checkMarginWhileAnotherDetailIsOpen(compact: Bool) async throws {
+        let preferences = VoicePreferencesSnapshot.capture()
+        defer { preferences.restore() }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let model = Gate1AppModel(
+            audioPlaybackClient: WorkflowRecordingAudioClient(), recordingClient: NoopRecordingClient(),
+            microphonePermissionStatus: { .granted },
+            databaseURLOverride: directory.appendingPathComponent("library.sqlite")
+        )
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        let store = try model.libraryStoreForTesting()
+        let b = Item(id: "item-b", title: "X post", mediaType: "text", text: "A different item.",
+                     externalReference: nil, status: "ready")
+        try store.saveItem(b)
+        let bSession = Session(id: "session-b", itemId: b.id, status: "in_progress", phase: .itemPlayback,
+                               currentTargetType: .itemTextTTS, currentTargetId: b.id,
+                               position: Position(), completionPercent: 0, playbackRate: 1)
+        try store.saveSession(bSession)
+        model.startItem(id: "item-pill")
+        let aTitle = model.selectedItem.title
+        let aSessionID = try XCTUnwrap(model.snapshot.sessionId)
+        model.openHome()
+        model.openItem(id: b.id)
+        XCTAssertEqual(model.selectedItem.id, b.id)
+        XCTAssertEqual(model.snapshot.itemId, "item-pill")
+        XCTAssertTrue(model.shouldShowMiniPlayer)
+        let bLibraryRow = try XCTUnwrap(model.loadLibraryRows(store: store).first { $0.id == b.id })
+
+        if compact {
+            model.dispatchGate2CompactCommand(.beginInterjection, origin: "compact_url")
+        } else {
+            model.beginInterjection()
+            XCTAssertEqual(model.recordingPresentationContext?.itemTitle, aTitle,
+                           "the acknowledgement before the microphone starts also names A")
+        }
+        try await waitFor("Margin to start on the playing item") { model.snapshot.isRecording }
+        let context = try XCTUnwrap(model.recordingPresentationContext)
+        XCTAssertEqual(context.itemTitle, aTitle)
+        XCTAssertEqual(context.locationTitle, model.snapshot.chapterTitle)
+        XCTAssertEqual(context.progressPercent, model.snapshot.currentPlaybackProgressPercent)
+        let fallback = RecordingPresentationContext(snapshot: model.snapshot, startedAt: context.startedAt)
+        XCTAssertEqual(fallback, context, "the recording screen's fallback uses the same playing session")
+        if compact {
+            model.dispatchGate2CompactCommand(.finishInterjection, origin: "compact_url")
+        } else {
+            model.finishInterjection()
+        }
+        XCTAssertFalse(model.snapshot.isRecording)
+        let saved = try XCTUnwrap(store.loadInterjections(sessionId: aSessionID).first)
+        XCTAssertEqual(saved.itemId, "item-pill")
+        XCTAssertEqual(saved.sessionId, aSessionID)
+        XCTAssertTrue(try store.loadInterjections(sessionId: bSession.id).isEmpty)
+        XCTAssertEqual(model.selectedItem.id, b.id)
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "B's open detail never receives A's Margin")
+        XCTAssertEqual(model.selectedItem.sessionRows.map(\.interjectionCount), [0])
+        model.marginCollectionQuery = MarginCollectionQuery(itemID: b.id)
+        XCTAssertTrue(model.visiblePrivateMarginRows.isEmpty, "B's Margins list is empty")
+        XCTAssertEqual(try model.loadLibraryRows(store: store).first { $0.id == b.id }, bLibraryRow,
+                       "B's Library status and progress badges do not change")
+        model.openItem(id: "item-pill")
+        XCTAssertEqual(model.selectedItem.interjections.map(\.id), [saved.id])
+        model.marginCollectionQuery = MarginCollectionQuery(itemID: "item-pill")
+        XCTAssertEqual(model.visiblePrivateMarginRows.map(\.interjection.id), [saved.id])
+        model.openItem(id: b.id)
+        XCTAssertTrue(model.selectedItem.interjections.isEmpty, "reopening B still shows no Margins")
+    }
+
     func testFinishAcknowledgesImmediatelyAndRejectsAccidentalRestart() async throws {
         let model = Gate1AppModel(
             audioPlaybackClient: NoopAudioPlaybackClient(),

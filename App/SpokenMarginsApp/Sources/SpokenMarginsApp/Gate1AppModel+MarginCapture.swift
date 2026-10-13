@@ -159,9 +159,7 @@ extension Gate1AppModel {
         diagnostics["lastInterjectionTap"] = "begin"
         let requestedAt = Date()
         marginCapture.setPresentationContext(RecordingPresentationContext(
-            itemTitle: selectedItem.title.isEmpty ? "Current item" : selectedItem.title,
-            locationTitle: snapshot.chapterTitle ?? "Current listening position",
-            progressPercent: snapshot.currentPlaybackProgressPercent,
+            snapshot: snapshot,
             startedAt: requestedAt
         ))
         let status = microphoneAccess.status()
@@ -206,9 +204,7 @@ extension Gate1AppModel {
             snapshot = try engine.beginInterjection(request: .tapped(at: requestedAt))
             if snapshot.isRecording {
                 marginCapture.setPresentationContext(RecordingPresentationContext(
-                    itemTitle: selectedItem.title,
-                    locationTitle: snapshot.chapterTitle ?? "Current listening position",
-                    progressPercent: snapshot.currentPlaybackProgressPercent,
+                    snapshot: snapshot,
                     startedAt: Date()
                 ))
                 let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
