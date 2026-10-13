@@ -19,6 +19,8 @@ final class MarginCaptureWatcher {
     private var pollTask: Task<Void, Never>?
     private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
+    /// Kept across the permission primer, so Continue doesn't replace the original tap time (#1506).
+    var pendingRequest: MarginCaptureRequest?
     private var startedAtMs = 0
     /// Milliseconds on a clock that only moves forward. Tests replace it.
     var nowMs: () -> Int

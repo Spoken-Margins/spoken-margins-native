@@ -138,20 +138,23 @@ extension Gate1AppModel {
     }
 
     func beginInterjection() {
+        let request = MarginCaptureRequest()
         guard !isFinishingInterjection, !isMarginCaptureCoolingDown else { return }
         guard snapshot.skimBridgeState == nil else {
             reportWarning("Margins are unavailable while a scene summary is playing. Pause or cancel Skim first.")
             return
         }
         guard !recordingNavigationIsLocked, handOffPlayingMarginToRecording() else { return }
-        let voiceCaptureRequestID = UUID()
+        let voiceCaptureRequestID = request.id
+        captureWatcher.pendingRequest = request
+        recordDeveloperDiagnostic("margin.capture.tap", MarginCaptureTiming(request: request).fields)
         pendingVoiceCaptureRequestID = voiceCaptureRequestID
         recordingPermissionDenied = false
         isRequestingRecordingPermission = true
         statusMessage = "Starting Margin..."
         lastError = nil
         diagnostics["lastInterjectionTap"] = "begin"
-        let requestedAt = Date()
+        let requestedAt = request.tappedAt
         recordingPresentationContext = RecordingPresentationContext(
             itemTitle: selectedItem.title.isEmpty ? "Current item" : selectedItem.title,
             locationTitle: snapshot.chapterTitle ?? "Current listening position",
@@ -161,24 +164,26 @@ extension Gate1AppModel {
         let status = microphoneAccess.status()
         if status == .granted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
-            microphoneAccess.record { [weak self] in self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID) }
+            microphoneAccess.record { [weak self] in self?.startInterjectionRecording(request: request) }
             return
         }
         if let status, microphonePrimer.holds(captureID: voiceCaptureRequestID, status: status) {
             diagnostics["lastMicrophonePermissionResult"] = "primer_shown"
             return
         }
-        requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+        requestMicrophoneThenRecord(request: request)
     }
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
     func continueMicrophonePrimer() {
         guard let captureID = microphonePrimer.continueTapped(),
-              pendingVoiceCaptureRequestID == captureID else { return }
-        requestMicrophoneThenRecord(requestedAt: Date(), captureID: captureID)
+              pendingVoiceCaptureRequestID == captureID,
+              let request = captureWatcher.pendingRequest, request.id == captureID else { return }
+        requestMicrophoneThenRecord(request: request)
     }
 
-    private func requestMicrophoneThenRecord(requestedAt: Date, captureID voiceCaptureRequestID: UUID) {
+    private func requestMicrophoneThenRecord(request: MarginCaptureRequest) {
+        let voiceCaptureRequestID = request.id
         Task {
             let granted = await requestMicrophonePermission()
             guard pendingVoiceCaptureRequestID == voiceCaptureRequestID else { return }
@@ -186,24 +191,33 @@ extension Gate1AppModel {
                 isRequestingRecordingPermission = false
                 recordingPresentationContext = nil
                 pendingVoiceCaptureRequestID = nil
+                captureWatcher.pendingRequest = nil
                 recordingPermissionDenied = true
                 reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
                 return
             }
-            startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+            startInterjectionRecording(request: request)
         }
     }
 
-    private func startInterjectionRecording(requestedAt: Date, captureID: UUID) {
-        guard pendingVoiceCaptureRequestID == captureID else { return }
+    private func startInterjectionRecording(request: MarginCaptureRequest) {
+        guard pendingVoiceCaptureRequestID == request.id else { return }
         defer {
             isRequestingRecordingPermission = false
             pendingVoiceCaptureRequestID = nil
+            captureWatcher.pendingRequest = nil
         }
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
         run { engine in
-            snapshot = try engine.beginInterjection()
+            do {
+                snapshot = try engine.beginInterjection(request: request)
+            } catch {
+                recordDeveloperDiagnostic("margin.capture.start_failed", engine.recordingCaptureDiagnostics())
+                throw error
+            }
+            let captureFields = engine.recordingCaptureDiagnostics()
+            recordDeveloperDiagnostic("margin.capture.started", captureFields)
             if snapshot.isRecording {
                 recordingPresentationContext = RecordingPresentationContext(
                     itemTitle: selectedItem.title,
@@ -211,8 +225,7 @@ extension Gate1AppModel {
                     progressPercent: snapshot.currentPlaybackProgressPercent,
                     startedAt: Date()
                 )
-                let latencyMs = max(0, Int(Date().timeIntervalSince(requestedAt) * 1000))
-                diagnostics["lastInterjectionRecordingStartLatencyMs"] = "\(latencyMs)"
+                diagnostics["lastInterjectionRecordingStartLatencyMs"] = captureFields["tapToRecorderStartedMs"]
             }
         }
         guard !snapshot.isRecording else { return }
@@ -270,6 +283,7 @@ extension Gate1AppModel {
         if isRequestingRecordingPermission && !snapshot.isRecording {
             microphonePrimer.cancel()
             pendingVoiceCaptureRequestID = nil
+            captureWatcher.pendingRequest = nil
             isRequestingRecordingPermission = false
             recordingPresentationContext = nil
             return
@@ -326,6 +340,7 @@ extension Gate1AppModel {
         microphonePrimer.cancel()
         isRequestingRecordingPermission = false
         pendingVoiceCaptureRequestID = nil
+        captureWatcher.pendingRequest = nil
         recordingPresentationContext = nil
         beginWrittenMargin()
     }
