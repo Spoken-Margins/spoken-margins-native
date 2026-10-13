@@ -46,6 +46,20 @@ struct PlaybackPositionSlider: UIViewRepresentable {
         view.setNeedsLayout()
     }
 
+    /// The bar is exactly as tall as the slider, whatever height it is offered: the dock sits in a
+    /// bottom safe-area inset, so any extra height here is taken from the Now pane (#1475).
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: PlaybackBarAccessibilityView, context: Context) -> CGSize? {
+        Self.fittedSize(proposedWidth: proposal.width, slider: uiView.slider.intrinsicContentSize)
+    }
+
+    static func fittedSize(proposedWidth: CGFloat?, slider: CGSize) -> CGSize {
+        let height = slider.height > 0 ? slider.height : 31
+        guard let width = proposedWidth, width.isFinite else {
+            return CGSize(width: slider.width > 0 ? slider.width : 120, height: height)
+        }
+        return CGSize(width: max(0, width), height: height)
+    }
+
     static func dismantleUIView(_ view: PlaybackBarAccessibilityView, coordinator: ()) {
         view.slider.onValue = nil
         view.slider.onEditing = nil

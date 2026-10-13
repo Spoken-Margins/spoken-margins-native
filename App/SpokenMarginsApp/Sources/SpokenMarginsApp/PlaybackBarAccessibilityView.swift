@@ -23,6 +23,10 @@ final class PlaybackBarAccessibilityView: UIView {
         accessibilityElements = [slider]
         setContentHuggingPriority(.defaultLow, for: .horizontal)
         slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // A plain UIView hugs weakly on both axes, so SwiftUI let this container take every
+        // point it was offered and the dock filled the screen (#1475). Only the width may stretch.
+        setContentHuggingPriority(.required, for: .vertical)
+        setContentCompressionResistancePriority(.required, for: .vertical)
         slider.onBarLayout = { [weak self] stacks in self?.updateAccessibility(stacks) }
     }
 
