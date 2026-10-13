@@ -2938,6 +2938,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// #1035: "Permanently deleted" has to take the item's spoken Margin recordings off the phone, not
     /// only their database rows. The recordings are real files in the app's own Application Support folder.
     func testPermanentDeleteRemovesTheItemsMarginRecordingsAndKeepsALiveItemsOwn() throws {
+        // Start playback needs the Terms on a fresh simulator: with no stored answer the voice defaults to
+        // James, and the Terms gate holds the start. Earlier tests in a full run happen to clear it.
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let root = FileManager.default.temporaryDirectory
             .appending(path: "permanent-delete-recordings-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -2974,6 +2978,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     }
 
     func testEmptyRecentlyDeletedRemovesEveryTrashedItemsMarginRecordings() throws {
+        // Start playback needs the Terms on a fresh simulator: with no stored answer the voice defaults to
+        // James, and the Terms gate holds the start. Earlier tests in a full run happen to clear it.
+        let restoreTerms = acceptTerms()
+        defer { restoreTerms() }
         let root = FileManager.default.temporaryDirectory
             .appending(path: "empty-trash-recordings-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -3057,7 +3065,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     private func startAndEndSession(_ model: Gate1AppModel, itemId: String) throws -> String {
         model.startItem(id: itemId)
-        let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        let sessionId = try XCTUnwrap(
+            model.snapshot.sessionId,
+            "no session started for \(itemId): \(model.diagnostics["termsGate"] ?? "no Terms gate"), \(model.statusMessage)"
+        )
         model.endSession()
         return sessionId
     }
