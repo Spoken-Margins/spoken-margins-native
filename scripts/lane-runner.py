@@ -1237,14 +1237,28 @@ def retest_reason(checked: dict | None, base_sha: str, head: str) -> str | None:
     return f'its checks passed with {checked["next"][:7]}, and next at {base_sha[:7]} differs: {why}'
 
 
-def handed_off_note(head: str, why: str, reason: str, where: str) -> str:
+# How long after a hand-off a release run with nothing on the PR counts as lost (#1542): the release job's
+# 150-minute timeout, plus half an hour for it to start. A run that never starts (cancelled or timed out in the
+# queue) runs no step, so it can post nothing; the hand-off note names this time for the Hourly dispatch instead.
+RELEASE_LOST_AFTER = 3 * 60 * 60
+
+
+def handed_off_note(head: str, why: str, reason: str, where: str, now=None) -> str:
     """The lane job's note when it hands a released automerge run to the build runner (#1209). It starts like the
-    automerge run's own notes, so it answers no /lane request (is_automerge_comment), and it is not a report."""
+    automerge run's own notes, so it answers no /lane request (is_automerge_comment), and it is not a report.
+    It names when the release run counts as lost (#1542), in words that lane_report_verdict doesn't read as a
+    stopped job's note."""
+    import datetime
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    lost = (now + datetime.timedelta(seconds=RELEASE_LOST_AFTER)).astimezone(datetime.timezone.utc)
     return (f'{HANDED_OFF} on `{head[:7]}` goes to the build runner (#1209).\n'
             f'- {why}; that run has to test the merge commit again, because {reason}.\n'
             '- So this simulator runner moves on to the next T3, and a `lane` release run on the build runner tests '
             f'the merge commit and merges on PASS: {where}.\n'
-            f'- Its report follows here. Nobody needs to push or re-label.\n{NOTE}')
+            '- Its report follows here. Nobody needs to push or re-label.\n'
+            f'- If neither its report nor a note that it stopped is here by {lost:%Y-%m-%d %H:%M}Z, and no `lane` '
+            f'run named `pr=<this PR> head={head[:7]}…` is still queued or running, the release run was lost: '
+            f'remove and re-add `automerge` once (#1542).\n{NOTE}')
 
 
 def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evidence: Path, base_sha: str,

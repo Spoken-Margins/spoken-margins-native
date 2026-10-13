@@ -92,7 +92,7 @@ While a `/lane T3` request whose `commit:` names the PR's head is still waiting 
 
 - On the build runner (`SM_LANE_RUNNER_ROLE=build`), it runs its host tests under the build runner's room rules, so the T3 needn't wait for them. If they pass, it reports INCONCLUSIVE, held for T3, and the report carries a hidden `<!-- lane-checks: … -->` line naming the `next` they passed with. When the T3 then passes, the lane job on the simulator runner merges without running them again if `next`'s commits since touch none of the PR's files and no build inputs its checks read (the same rule as a refused push), and its merge check says it wasn't re-tested. Otherwise it tests the merge commit again first. It trusts only the newest automerge report on the head, posted by the runner itself.
 - On any other runner it skips them and reports held straight away, as before: the T3 PASS then has them run on the merge commit before it merges. When the build runner's checks don't finish (no room, a timeout, a lane error), its report is held the same way, and still counts as a runner fault for the auto-revert.
-- **When the checks have to run after a T3 PASS** (none passed, or `next` moved in ways that matter), the lane job on the simulator runner doesn't run them itself (#1209). It dispatches `lane.yml` on the base branch (`workflow_dispatch`, which, unlike a label change, starts a run from the workflow's token), posts a note starting "Lane: the automerge run held for T3 on `<sha7>` goes to the build runner", and moves on to the next T3. The `release` job then runs on a build runner under the build runner's room rules, tests the merge commit and merges on PASS; its report follows on the PR, and like any job that reports without merging, it re-adds `lane:done`. It re-reads the PR first, and again after its room wait, so a dispatch for a PR that moved on, closed, lost `automerge` or is no longer held does nothing. Its check sits on `next`'s tip rather than on the PR, so it stays green with a warning even on FAIL: the report and `lane:done` carry the verdict, and a release run that stops before reporting still re-adds `lane:done`. With no room, it reports INCONCLUSIVE (a runner fault): remove and re-add `automerge`. If the dispatch itself fails (a PR whose merge ref predates the release job, or GitHub refuses), the lane job runs the checks as before. Nobody needs to push or re-label.
+- **When the checks have to run after a T3 PASS** (none passed, or `next` moved in ways that matter), the lane job on the simulator runner doesn't run them itself (#1209). It dispatches `lane.yml` on the base branch (`workflow_dispatch`, which, unlike a label change, starts a run from the workflow's token), posts a note starting "Lane: the automerge run held for T3 on `<sha7>` goes to the build runner", and moves on to the next T3. The `release` job then runs on a build runner under the build runner's room rules, tests the merge commit and merges on PASS; its report follows on the PR, and like any job that reports without merging, it re-adds `lane:done`. It re-reads the PR first, and again after its room wait, so a dispatch for a PR that moved on, closed, lost `automerge` or is no longer held does nothing. Its check sits on `next`'s tip rather than on the PR, so it stays green with a warning even on FAIL: the report and `lane:done` carry the verdict. A release run that starts but stops before reporting (a failed checkout or LFS fetch, a cancel, a timeout) posts "the automerge run stopped before reporting" and re-adds `lane:done` from a last step that needs only `gh`, not the checkout (#1542). A release run that never starts (cancelled or timed out in the queue) can post nothing, so the hand-off note names a time three hours on: if neither a report nor a stopped note is on the PR by then, and no `lane` run named `pr=<N> head=<sha>` is still queued or running, the hourly dispatcher removes and re-adds `automerge` once. With no room, it reports INCONCLUSIVE (a runner fault): remove and re-add `automerge`. If the dispatch itself fails (a PR whose merge ref predates the release job, or GitHub refuses), the lane job runs the checks as before. Nobody needs to push or re-label.
 
 A T3 request for an older head, or one with no `commit:` line, doesn't count, so a push after the request still gets the automerge checks.
 
@@ -227,7 +227,8 @@ or packet-format changes, or lane changes: report those on #184 for the owner.
 Per-PR /lane requests are not your queue: the runner answers T2 and T3, and journeys run
 on next's tip. Run a one-off scenario for a PR only when the owner or the coordinator asks
 this session for it directly, on a pool device between jobs, and post its report on
-that PR.
+that PR. A work list from scripts/desk-batch.py (Batching T4 requests) is that ask: take its
+checks in order, on one build and one pool device.
 
 Simulators:
 - The desk uses a pool of up to three devices named "SM Lane Desk pool 1" to "pool 3" (iOS 26.5).
@@ -289,6 +290,33 @@ what's half-done, and lessons for this section.
 Decisions: for reversible lane choices, post them on #184 under "Default taken" and keep
 going. Stop only for owner data, the phone, money, anything public, main or releases.
 ```
+
+## Batching T4 requests
+
+`scripts/desk-batch.py` (#1557) turns the unanswered `/lane T4` requests into work lists sized for one desk session. Each desk of 2026-10-13 got through one to three checks before the 250k-token line, mostly because a screenshot costs about 2.5k tokens and the simulator lags enough to need two a step. A desk that starts from a sized list on one build spends its context on checks, not on choosing them.
+
+```bash
+scripts/desk-batch.py            # prints GO or STOP; on GO writes the first batch to ~/SpokenMarginsOps/desk-batches/
+scripts/desk-batch.py --print    # also prints the list
+scripts/desk-batch.py --json     # the whole plan, writes nothing
+```
+
+- **What counts as waiting.** A `/lane T4` comment on a PR with no later desk report on that PR. A desk report is a comment whose first line starts "Lane report" and says PASS, FAIL or INCONCLUSIVE; the runner's `pr<N>-r<run>` reports don't count, and neither do hand-offs, so a check a desk left half done stays on the list. A newer request on the same PR replaces an older one. Requests older than ten days are not read (`--window-days`).
+- **Batches.** A merged PR's check runs on `next`'s tip and an open PR's on its head, and checks that share a build share a batch, so the desk builds and installs once. A batch holds about 24 steps (the numbered lines of `scenario:`, plus the steps of each journey named in `run:`) and at most 4 checks. `priority` PRs go first, then the oldest request. A check bigger than a batch gets a batch of its own.
+- **When to start a desk.** GO when any batch has 3 checks or 12 steps, or its oldest request has waited 6 hours (that batch is the one written); STOP otherwise, with what the first batch is waiting for. These are defaults (`--min-checks`, `--min-steps`, `--max-wait-hours`); the Mac tick runs the script (owner's choice, 2026-10-13; text below). The script reads GitHub and starts nothing. Exit code 0 is GO, 1 STOP, 2 an error (never GO).
+- **Text for the Mac tick (#1559).** In `~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`, after the usage-breaker step and before the advice line, add:
+
+  ```text
+  TEST DESK BATCH. Run `/usr/bin/python3 ~/SpokenMarginsOps/repo/scripts/desk-batch.py`. It only reads GitHub and takes about 15 seconds.
+  - Exit 0 (GO): add one line to this tick: `- Test Desk: GO, <its first output line after "GO:">, work list <the path on its "work list:" line>`.
+  - Exit 1 (STOP): add nothing.
+  - Exit 2 (error): add `- Test Desk batch check failed: <its ERROR line>`.
+  - During a HALT (usage breaker: Claude) the GO line is information only: start nothing until RESUMED.
+  ```
+
+  The tick reports; it doesn't start a desk. The desk drives the simulator with computer use from the desktop app, which a scheduled task can't open. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.
+- **After the batch.** The desk posts one report per check on its PR, which takes it off the list. When its context runs short it stops between checks and posts a hand-off on #184; the next run of the script lists what is left, so nothing is passed along by hand.
+- **Cost.** No model tokens, and no state. About 60 `gh api` reads for the ten-day window. If a batch keeps going with one check, or desks still run out before finishing a batch, change the step budget.
 
 ## The Mac's runners
 

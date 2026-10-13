@@ -219,6 +219,55 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         ])
     }
 
+    func testV2ReadsAnOutlineTitleStartingWithLLMOnceAtItsNumberedHeading() throws {
+        // #355 on arXiv 2608.09666: the outline entry "LLM as a Judge" didn't match the
+        // printed "2.2 LLM as a Judge" (the label stripper took "LLM" for a roman numeral),
+        // so the title was inserted at the top of page 2 and read before "2 Related Work",
+        // then read again at 2.2 as body text. Same outline shape as the paper.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let bold: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("1 Introduction" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: bold)
+            ("Evaluating generative models usually means sampling hundreds of outputs." as NSString).draw(at: CGPoint(x: 60, y: 140), withAttributes: body)
+            ("We ask whether an agent can choose what to probe next instead." as NSString).draw(at: CGPoint(x: 60, y: 154), withAttributes: body)
+            context.beginPage()
+            ("2 Related Work" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: bold)
+            ("2.1 Visual Generation and Evaluation" as NSString).draw(at: CGPoint(x: 60, y: 140), withAttributes: bold)
+            ("Benchmarks use fixed test sets and scoring pipelines." as NSString).draw(at: CGPoint(x: 60, y: 160), withAttributes: body)
+            ("2.2 LLM as a Judge" as NSString).draw(at: CGPoint(x: 60, y: 200), withAttributes: bold)
+            ("Language models now grade the answers of other models." as NSString).draw(at: CGPoint(x: 60, y: 220), withAttributes: body)
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let root = PDFOutline()
+        func entry(_ title: String, _ pageIndex: Int, under parent: PDFOutline) throws -> PDFOutline {
+            let entry = PDFOutline()
+            entry.label = title
+            entry.destination = PDFDestination(page: try XCTUnwrap(pdf.page(at: pageIndex)), at: CGPoint(x: 60, y: 700))
+            parent.insertChild(entry, at: parent.numberOfChildren)
+            return entry
+        }
+        _ = try entry("Introduction", 0, under: root)
+        let related = try entry("Related Work", 1, under: root)
+        _ = try entry("Visual Generation and Evaluation", 1, under: related)
+        _ = try entry("LLM as a Judge", 1, under: related)
+        pdf.outlineRoot = root
+
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertEqual(spoken.components(separatedBy: "LLM as a Judge").count - 1, 1, "read once")
+        let judge = try XCTUnwrap(spoken.range(of: "2.2 LLM as a Judge"), "read with its number, where it is printed")
+        let pageOneBody = try XCTUnwrap(spoken.range(of: "probe next instead."))
+        let sectionTwoOneBody = try XCTUnwrap(spoken.range(of: "scoring pipelines."))
+        XCTAssertGreaterThan(judge.lowerBound, pageOneBody.upperBound, "not before page 1's body")
+        XCTAssertGreaterThan(judge.lowerBound, sectionTwoOneBody.upperBound, "after section 2.1")
+        let characters = Array(document.text)
+        let headings = document.segments.filter { $0.role == .heading }.map { String(characters[$0.range.start..<$0.range.end]) }
+        XCTAssertEqual(headings, ["1 Introduction", "2 Related Work", "2.1 Visual Generation and Evaluation", "2.2 LLM as a Judge"])
+        XCTAssertNil(document.outline, "every outline entry matched a printed heading")
+    }
+
     func testV2SkipsTheAuthorNotesAtTheBottomOfPageOne() throws {
         // #250 on arXiv 2608.09666: page 1's bulleted author notes ("• Corresponding
         // author.", "• Email: ...") were read in the middle of an Introduction sentence.

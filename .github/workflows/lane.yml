@@ -308,8 +308,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           lfs: true
+      # Written under another name first: a redirect creates the file even when git show fails, and an empty
+      # lane-runner.py would let the tidy step "succeed" without posting anything (#1542).
       - name: Take the lane runner from the base branch
-        run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
+        run: >-
+          git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py.part" &&
+          mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
       - name: Run the released automerge run
         id: run
         run: >-
@@ -327,10 +331,40 @@ jobs:
             echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
           fi
       - name: Tidy up after a cancelled or failed run
+        id: tidy
         if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release
+      # #1542: the lane job left lane:done to this run, so a run that stops before it can report must still say so.
+      # When the checkout, its LFS fetch or the runner fetch failed, the tidy step above has no lane-runner.py to
+      # run. This step needs nothing they bring: only gh, the job's token and the quoted variables above. It posts
+      # the tidy step's "stopped before reporting" note (without a tested next, so it never counts toward an
+      # auto-revert) and removes and re-adds lane:done, which the Hourly dispatch wakes on. Like the release itself,
+      # it does nothing for a PR that moved on, closed, lost automerge or isn't from this repository.
+      # A run that never starts (cancelled or timed out in the queue) runs no step: the hand-off note on the PR says
+      # when the dispatcher treats it as lost.
+      - name: Say so on the PR when the tidy step could not
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true' && steps.tidy.outcome != 'success'
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ && "$EVENT_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::warning::The dispatch named no PR number and full head; nothing to report on.'
+            exit 0
+          fi
+          pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '[.state, .head.sha, (.head.repo.full_name // "-"),
+            .base.ref, (any(.labels[]; .name == "automerge") | tostring)] | join(" ")')
+          if [ "$pull" != "open $EVENT_HEAD $GH_REPO $BASE_REF true" ]; then
+            echo "PR #$PR_NUMBER moved on, closed or lost automerge ($pull); nothing to report."
+            exit 0
+          fi
+          body="Lane: the automerge run stopped before reporting ($RUN_URL). It was the build runner's release run for \`${EVENT_HEAD:0:7}\` after its T3 PASS (#1209), and it ended (a failed checkout, a cancel or a timeout) before it could post a report. The T3 PASS stands: remove and re-add automerge to run the host tests and merge.
+          <!-- lane-note -->"
+          gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+          gh api -X DELETE "repos/$GH_REPO/issues/$PR_NUMBER/labels/lane%3Adone" > /dev/null 2>&1 || true
+          gh api "repos/$GH_REPO/issues/$PR_NUMBER/labels" -f 'labels[]=lane:done' > /dev/null
 
   # Tell the coordinator when a Mac lane runner is left idle (#1215). One job per Mac job, so the
   # notice comes when either frees its runner, not when both are done (a PR with both labels runs
