@@ -25,6 +25,10 @@ access fixes, and `check` proves the result is moves only, so neither the agent 
       line must reappear, in order, in runs that start and end on member boundaries; the only other
       changes allowed are access modifiers, blank lines, imports, `#if`/`#endif`, the extension wrapper
       and comments, which are listed. Exit status 0 means moves only.
+  scripts/split_move.py summary [--base REF] [--head REF]
+      The same comparison, printed as PR text: lines moved, members per destination file, and the
+      names whose access changed. For the working tree it adds a `/lane` draft from test-scope.py.
+      Exit status 1, with check's report, when the diff is not moves only.
 
 The compiler stays the backstop: build both targets after a move (AGENTS.md, Verification layer 2).
 Stdlib only, Python 3.9-compatible.
@@ -32,6 +36,7 @@ Stdlib only, Python 3.9-compatible.
 from __future__ import annotations
 
 import argparse
+import json
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -775,10 +780,11 @@ class Side:
     text: str
 
 
-def check_texts(source_path: str, base: dict, head: dict) -> tuple:
+def check_texts(source_path: str, base: dict, head: dict, details: dict | None = None) -> tuple:
     """Compare base and head texts of the model file and its extension files.
 
-    Returns (ok, report lines)."""
+    Returns (ok, report lines). `details`, when given, receives the moved line counts per file and
+    the access changes, for `summary`."""
     import difflib
     report: list = []
     removed_runs: list = []      # [(path, [(line_no, text), ...])]
@@ -874,6 +880,8 @@ def check_texts(source_path: str, base: dict, head: dict) -> tuple:
     removed_comments = [(p, i + 1, t.strip()) for p, (i, t) in unmatched_removed if t.strip().startswith('//')]
     ok = not real_unmatched and not extra_added and not bad_boundaries
     total = sum(moved.values())
+    if details is not None:
+        details.update(moved=dict(moved), access_changes=list(access_changes))
     report.append(f'{"Moves only" if ok else "NOT moves only"}: {total} lines moved out of '
                   f'{Path(source_path).name}' + (':' if moved else '.'))
     for p, n in sorted(moved.items()):
@@ -978,6 +986,80 @@ def cmd_check(args) -> int:
     return 0 if ok else 1
 
 
+DECL_NAME = re.compile(r'\b(?:func|var|let|case)\s+([A-Za-z_]\w*)|\b(init|subscript)\b')
+
+
+def declared_name(line: str) -> str | None:
+    m = DECL_NAME.search(strip_access(line.strip()))
+    return (m.group(1) or m.group(2)) if m else None
+
+
+def summary_texts(source_path: str, base: dict, head: dict) -> tuple:
+    """Return (ok, PR-ready markdown) for a split: what moved where, by member, and the access changes."""
+    details: dict = {}
+    ok, report = check_texts(source_path, base, head, details)
+    if not ok:
+        return ok, report
+    name = Path(source_path).name
+    base_model, head_model = base.get(source_path, ''), head.get(source_path, '')
+    _, base_members, _, _ = model_members(base_model)
+    _, head_members, _, _ = model_members(head_model) if head_model else (None, [], 0, 0)
+    left = {m.name for m in head_members}
+    moved_names = list(dict.fromkeys(m.name for m in base_members if m.name not in left))
+    total = sum(details['moved'].values())
+    out = [f'**What moved.** {total:,} non-blank lines out of `{name}` '
+           f'({base_model.count(chr(10)):,} to {head_model.count(chr(10)):,} lines):']
+    for path, count in sorted(details['moved'].items()):
+        added = Counter(head.get(path, '').split('\n')) - Counter((base.get(path) or '').split('\n'))
+        declared = {declared_name(line) for line in added if re.match(r'    \S', line)}
+        here = [n for n in moved_names if n in declared]
+        new = ' (new file)' if path not in base else ''
+        short = Path(path).name.replace(f'{TYPE_NAME}+', '+').removesuffix('.swift')
+        out.append(f'- {count:,} lines into `{short}`{new}: ' + ', '.join(f'`{n}`' for n in here) + '.')
+    changes = details['access_changes']
+    if changes:
+        names = list(dict.fromkeys(n for _, _, _, new in changes if (n := declared_name(new))))
+        out.append('')
+        out.append(f'**Access changes ({len(changes)}), declaration lines only:** '
+                   + ', '.join(f'`{n}`' for n in names) + '.')
+    return ok, out
+
+
+def cmd_summary(args) -> int:
+    head_ref = args.head
+    base = _git('merge-base', args.base, head_ref or 'HEAD').strip()
+    paths = sorted(set(model_paths(args.source, base)) | set(model_paths(args.source, head_ref)))
+    base_texts = {p: t for p in paths if (t := read_at(base, p)) is not None}
+    head_texts = {p: t for p in paths if (t := read_at(head_ref, p)) is not None}
+    changed = {p for p in paths if base_texts.get(p) != head_texts.get(p)}
+    if not changed:
+        print('The model file and its extension files are unchanged.')
+        return 0
+    # The model file is always compared, so its line counts are known even when only extensions moved.
+    keep = changed | {args.source}
+    ok, out = summary_texts(args.source, {p: t for p, t in base_texts.items() if p in keep},
+                            {p: t for p, t in head_texts.items() if p in keep})
+    print('\n'.join(out))
+    if not ok:
+        print('\nNot moves only: fix the diff before writing the PR (`check` lists why).')
+        return 1
+    print(f'\n**Verification.** `scripts/split_move.py check --base {args.base}` reports moves only.')
+    if head_ref:
+        return 0  # test-scope reads the working tree, so a draft for another commit would be wrong.
+    scope = subprocess.run([sys.executable, str(ROOT / 'scripts' / 'test-scope.py'), '--base', base, '--json'],
+                           capture_output=True, text=True, cwd=ROOT)
+    try:
+        lane = json.loads(scope.stdout)['lane_request']
+    except (ValueError, KeyError):
+        lane = None
+    if lane:
+        first, _, rest = lane.partition('\n')
+        head_sha = _git('rev-parse', '--short', 'HEAD').strip()
+        print(f'\nLane request draft from test-scope (commit is HEAD; commit and push first):\n\n{first}\n'
+              f'commit: {head_sha}\nchanged: members moved unchanged out of {Path(args.source).name}\n{rest}'.rstrip())
+    return 0
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     parser.add_argument('--source', default=SOURCE, help='the model file, relative to the repo root')
@@ -996,9 +1078,12 @@ def main(argv: list | None = None) -> int:
     check = sub.add_parser('check', help='prove the diff is moves only')
     check.add_argument('--base', default='origin/next')
     check.add_argument('--head', help='a commit to check instead of the working tree')
+    summary = sub.add_parser('summary', help='PR text for a moves-only diff, and a lane request draft')
+    summary.add_argument('--base', default='origin/next')
+    summary.add_argument('--head', help='a commit to summarize instead of the working tree')
     args = parser.parse_args(argv)
     try:
-        return {'list': cmd_list, 'move': cmd_move, 'check': cmd_check}[args.command](args)
+        return {'list': cmd_list, 'move': cmd_move, 'check': cmd_check, 'summary': cmd_summary}[args.command](args)
     except SplitError as error:
         print(f'split_move: {error}', file=sys.stderr)
         return 2
