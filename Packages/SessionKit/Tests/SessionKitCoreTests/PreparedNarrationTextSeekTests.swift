@@ -78,13 +78,15 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
     /// A partly rendered narration doesn't reach every Margin. That Margin is read with on-device speech from its
     /// place, as a Margin a publisher recording doesn't reach is (#547), instead of refusing to play.
     func testATextOnlyMarginPastAPartialRenderIsReadWithOnDeviceSpeech() throws {
-        let (engine, _) = try narrationEngine(renderedSegments: 2)
+        let (engine, audio) = try narrationEngine(renderedSegments: 2)
         let margin = try textOnlyMargin(in: engine, startChar: 40)
 
         let played = try engine.playInterjectionAnchor(margin)
 
         XCTAssertEqual(played.targetType, TargetType.itemTextTTS.rawValue)
         XCTAssertEqual(engine.currentSession?.position.charOffset, 40)
+        XCTAssertEqual(audio.activeTargetId, "article", "on-device speech of the article starts")
+        XCTAssertEqual(audio.spokenFromCharOffset, 40, "from the Margin's place")
     }
 
     /// A Margin recorded while the narration played keeps its own media time; nothing changes for it.
@@ -168,7 +170,14 @@ private final class NarrationAudioClient: AudioPlaybackClient {
     }
 
     func prepareSpeechText(_ text: String) throws -> String { text }
+    /// Where on-device speech of the text was started, for a place the narration doesn't reach.
+    var spokenFromCharOffset: Int?
+
     func play(targetId: String) throws { activeTargetId = targetId }
+    func play(targetId: String, from charOffset: Int) throws {
+        activeTargetId = targetId
+        spokenFromCharOffset = charOffset
+    }
     func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         activeTargetId = targetId
         self.mediaTimeMs = mediaTimeMs
