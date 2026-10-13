@@ -57,6 +57,11 @@ by commenting a request and adding the lane:queued label. Formats: docs/workstre
   then merges without repeating them unless next has since moved in ways that matter (untested_moves).
   Anywhere else, or with no room to build, the automerge run skips its checks and reports itself held
   straight away, and the T3 PASS's lane job runs them before it merges.
+  When those checks have to run (none passed, or next has since moved in ways that matter), the lane job on the
+  simulator runner doesn't run them itself (#1209): it dispatches lane.yml's release job (workflow_dispatch, which
+  unlike a label starts a run from the workflow's token), posts a note, and moves on to the next T3. The release
+  job (--mode release, run_release) runs them on a build runner under its room rules and merges on PASS. If the
+  dispatch fails, the lane job runs them as before.
 - PR code (builds and tests) runs without the GitHub token in its environment, and the checkout
   keeps no credentials, so only this script's own fetch and push can use the token.
 - Build folders stay warm between T2 and T3 jobs. The checkout wipes the workspace, so the tree's .build (the
@@ -163,6 +168,10 @@ REPORT = re.compile(r'^Lane report \S+ — (PASS|FAIL|INCONCLUSIVE)', re.M)
 IDENTICAL = re.compile(r'^Lane: identical (T\d) request for (\w+) already reported \((PASS|FAIL)\)', re.M)
 CHECKS = re.compile(r'^<!-- lane-checks: (\{.*\}) -->$', re.M)  # a held automerge report's passed checks (#834)
 AUDIT_HOLD = re.compile(r'^not merged by the runner: ', re.M)  # the line merge_blockers' hold puts in a report (#1461)
+# How the lane job's note starts when it hands a released automerge run to the build runner (#1209). It starts like
+# the automerge run's own notes ('Lane: the automerge run'), so it answers no /lane request.
+HANDED_OFF = 'Lane: the automerge run held for T3'
+LANE_WORKFLOW = 'lane.yml'
 
 
 # ---- Requests -----------------------------------------------------------------------------------
@@ -970,7 +979,7 @@ HOST_UNREAD_SCRIPTS = frozenset({
     *(f'scripts/tests/{name}.py' for name in (
         'test_host_audio', 'test_integration_precheck', 'test_lane_beside_simulator', 'test_lane_dedupe',
         'test_lane_guard', 'test_lane_ledger', 'test_lane_next_moved', 'test_lane_next_rerun', 'test_lane_sim_pool',
-        'test_lane_slots', 'test_lane_t3_first', 'test_merge_audit', 'test_phone_build', 'test_posterboard_repair',
+        'test_lane_slots', 'test_lane_t3_first', 'test_lane_release_handoff', 'test_merge_audit', 'test_phone_build', 'test_posterboard_repair',
         'test_sessionkit_steps', 'test_test_scope', 'test_ui_test_hooks_debug_only', 'test_xcresult_attachments')),
 })
 # A PR touching any of these runs every runner test or the ops tests, which between them read the lane's own
@@ -1183,12 +1192,42 @@ def clean_tree(tree: Path) -> None:
     subprocess.run(['git', '-C', str(tree), 'reset', '--hard', '--quiet'], check=True, capture_output=True)
 
 
+def retest_reason(checked: dict | None, base_sha: str, head: str) -> str | None:
+    """Why the held automerge run's checks don't stand on <base_sha> (run_auto would test again), or None if they do."""
+    if not checked:
+        return 'the automerge run held for T3 has no passed checks to reuse'
+    try:
+        skipped, why = untested_moves(ROOT, checked['next'], base_sha, head)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f'the runner could not compare the commits ({error!r})'
+    if skipped is not None:
+        return None
+    return f'its checks passed with {checked["next"][:7]}, and next at {base_sha[:7]} differs: {why}'
+
+
+def handed_off_note(head: str, why: str, reason: str, where: str) -> str:
+    """The lane job's note when it hands a released automerge run to the build runner (#1209). It starts like the
+    automerge run's own notes, so it answers no /lane request (is_automerge_comment), and it is not a report."""
+    return (f'{HANDED_OFF} on `{head[:7]}` goes to the build runner (#1209).\n'
+            f'- {why}; that run has to test the merge commit again, because {reason}.\n'
+            '- So this simulator runner moves on to the next T3, and a `lane` release run on the build runner tests '
+            f'the merge commit and merges on PASS: {where}.\n'
+            f'- Its report follows here. Nobody needs to push or re-label.\n{NOTE}')
+
+
 def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evidence: Path, base_sha: str,
-                   why: str) -> str | None:
+                   why: str, hand_off=None, room=None) -> str | None:
     """After a T3 PASS on <head>: the automerge run the T3 gate held, run here in the lane job (#421).
 
     When that held run passed its host tests (held_checks), they aren't run again here unless next
     has since moved in ways that matter (#834): the merge takes seconds instead of minutes on sm-lane-mac.
+
+    hand_off (#1209): the lane job on the simulator runner passes it. When the held run's checks don't stand, it
+    calls hand_off() (a workflow_dispatch of lane.yml, GitHub.hand_off_release) instead of testing here, posts
+    handed_off_note and returns that note: the build runner's release run (--mode release) tests and merges. If the
+    hand-off fails, this job tests as before.
+    room: the release run passes the build runner's room wait (wait_for_room_to_test_on_host); it is called only
+    when the checks have to run.
 
     Only for a PR that is still open on <head> with the automerge label, whose newest automerge report
     was held by the T3 gate, and that the gate no longer holds. It runs here rather than by re-adding the
@@ -1212,8 +1251,29 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
         clean_tree(ROOT)  # the T3 ran in this tree; the merge commit checks out next over it
         base_sha = fetch_base(ROOT, base)
         remember_tested(base, base_sha)
-        verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments, labels,
-                                               context=context, checked=checked)
+        reason = retest_reason(checked, base_sha, head) if hand_off or room else None
+        handed = None
+        if reason and hand_off:
+            try:
+                handed = hand_off()
+            except Exception as error:  # noqa: BLE001 - no hand-off: test here, as before #1209
+                started_by.append(f'the hand-off to the build runner failed ({str(error).strip()[:200] or error!r}), '
+                                  'so this job tests it')
+        if handed:
+            note = handed_off_note(head, why, reason, handed)
+            github.comment(note)
+            print(note)
+            return note
+        no_room, beside = room() if reason and room else (None, None)
+        if beside:  # the host-only trial beside a simulator job, logged as the automerge job logs it
+            started_by.append(beside)
+            note_beside_simulator(request_id, pr, beside)
+        if no_room:
+            verdict, where, ran = 'INCONCLUSIVE', 'no build', 'nothing'
+            details = [f'{no_room}. Remove and re-add automerge to run it again.']
+        else:
+            verdict, where, ran, details = run_auto(github, pull, pr, base, head, base_sha, evidence, comments,
+                                                   labels, context=context, checked=checked)
     except Exception as error:  # noqa: BLE001 - any lane fault is reported, never silent
         verdict, where, ran = 'INCONCLUSIVE', 'lane error', 'nothing'
         details = [f'The lane itself failed: {error!r}. evidence: {evidence}. Remove and re-add automerge to '
@@ -1226,6 +1286,35 @@ def merge_after_t3(github, pr: int, base: str, head: str, request_id: str, evide
     print(body)
     github.comment(body)
     return body
+
+
+def run_release(github, pr: int, base: str, head: str, request_id: str, evidence: Path, t3_report: str) -> int:
+    """--mode release (#1209): the held automerge run a T3 PASS released, handed over by the lane job on the
+    simulator runner through a workflow_dispatch of lane.yml, run here on a build runner under its room rules.
+
+    It re-reads everything (merge_after_t3 checks the PR is open on <head>, armed, held for T3 and no longer held),
+    so a dispatch for a PR that moved on, or one anyone else sent, does nothing. Like any lane job that reports and
+    doesn't merge, it ends by removing and re-adding lane:done, which the lane job skipped when it handed off.
+    """
+    pull = github.pull()
+    if (pull.get('base') or {}).get('ref', base) != base:
+        print(f'PR #{pr} targets {pull["base"]["ref"]}, not {base}; nothing to release.')
+        return 0
+    link_tools(tools_source())
+    why = f'started by the T3 PASS ({t3_report or "the lane job"}), handed to the build runner by its lane job'
+    released = merge_after_t3(github, pr, base, head, request_id, evidence, fetch_base(ROOT, base), why,
+                              room=wait_for_room_to_test_on_host)
+    if released is None:
+        print('Nothing to release: the PR moved on, closed, lost automerge, or is no longer held for T3.')
+    verdict = REPORT.search(released or '')
+    if verdict:
+        record_outcome(verdict.group(1))
+    merged = any(line.startswith(f'merged into {base} as ') for line in (released or '').splitlines())
+    if not merged and github.pull().get('state', 'open') == 'open':
+        github.relabel(DONE, DONE)  # the Hourly dispatch wakes on lane:done's `labeled` event
+    flush_ledger(pr, head, lambda body: Repo(os.environ['GH_REPO']).comment(OPS_ISSUE, body))
+    drop_workspace_builds(ROOT)
+    return 0
 
 
 # ---- Warm build folders -------------------------------------------------------------------------
@@ -1859,6 +1948,18 @@ class GitHub:
         if add:
             self.api('-X', 'POST', f'repos/{self.repo}/issues/{self.pr}/labels', '-f', f'labels[]={add}')
 
+    def hand_off_release(self, base: str, head: str, t3_report: str) -> str:
+        """Start lane.yml's release job on a build runner for this PR's head (#1209), and return where to watch it.
+
+        A workflow_dispatch, unlike a label change, does start a run when the workflow's own token sends it. The run
+        uses <base>'s lane.yml and lane-runner.py, never the PR's. Raises when GitHub refuses: no actions: write on
+        this job's token (a PR whose merge ref predates #1209), or a base whose lane.yml has no workflow_dispatch.
+        """
+        self.api('-X', 'POST', f'repos/{self.repo}/actions/workflows/{LANE_WORKFLOW}/dispatches', '-f', f'ref={base}',
+                 '-f', f'inputs[pr]={self.pr}', '-f', f'inputs[head]={head}', '-f', f'inputs[t3]={t3_report}')
+        server = os.environ.get('GITHUB_SERVER_URL', 'https://github.com')
+        return f'{server}/{self.repo}/actions/workflows/{LANE_WORKFLOW}?query=event%3Aworkflow_dispatch'
+
 
 # ---- Auto-revert of a lane change that broke the lane (owner rule 2026-10-01) ---------------------
 
@@ -2216,7 +2317,7 @@ def cleanup(github: GitHub, run_url: str, mode: str = 'any') -> int:
     """After a failed or cancelled job: remove leftovers, say so on the PR, and free the labels."""
     sweep_runner_simulators()
     tested = tested_note()
-    if mode == 'auto':  # lane:queued and lane:running belong to /lane requests
+    if mode in ('auto', 'release'):  # lane:queued and lane:running belong to /lane requests
         github.comment(f'Lane: the automerge run stopped before reporting ({run_url}){tested}. Push again, or '
                        f'remove and re-add automerge, to run it again.\n{NOTE}')
         return 0
@@ -2285,8 +2386,10 @@ def main(argv=None) -> int:
     parser.add_argument('--tree', type=Path, default=ROOT, help='checkout of the PR head to test')
     parser.add_argument('--base', default='next', help='branch the PR merges into')
     parser.add_argument('--cleanup', action='store_true', help='tidy up after a cancelled or failed job')
-    parser.add_argument('--mode', choices=['explicit', 'auto', 'any'], default='any',
-                        help='explicit: answer /lane requests only; auto: the automerge label only')
+    parser.add_argument('--mode', choices=['explicit', 'auto', 'release', 'any'], default='any',
+                        help='explicit: answer /lane requests only; auto: the automerge label only; release: the '
+                             'automerge run a T3 PASS released, handed to the build runner (#1209)')
+    parser.add_argument('--t3-report', default='', help='release: the T3 PASS report that released the run')
     args = parser.parse_args(argv)
     ROOT = args.tree.resolve()
     sys.path.insert(0, str(ROOT / 'scripts'))
@@ -2312,6 +2415,15 @@ def main(argv=None) -> int:
         except Exception as error:  # noqa: BLE001 - the check must never stop the job it runs in
             print(f'Lane auto-revert check skipped: {error!r}')
     sweep_runner_simulators()
+    if args.mode == 'release':
+        if not re.fullmatch(r'[0-9a-f]{40}', args.event_head):
+            print(f'--event-head must be a full commit SHA, not {args.event_head!r}; nothing to release.')
+            return 0
+        request_id = request_name(args.pr, args.run_id, os.environ.get('GITHUB_RUN_ATTEMPT')) + '-auto'
+        return run_release(github, args.pr, args.base, args.event_head, request_id,
+                           Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
+                                Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id,
+                           args.t3_report)
     pull = github.pull()
     head = pull['head']['sha']
     labels = {label['name'] for label in pull.get('labels', [])}
@@ -2350,13 +2462,18 @@ def main(argv=None) -> int:
     evidence = Path(os.environ.get('SM_LANE_EVIDENCE_DIR') or
                     Path.home() / 'Library/Caches/SpokenMarginsLane/evidence') / request_id
 
-    def after_t3_pass(why: str) -> str | None:
+    def after_t3_pass(why: str, t3_report: str = '') -> str | None:
         """Release a held automerge run (#421), and return its report if it posted one. Never changes this
-        job's result, which is already reported."""
+        job's result, which is already reported. The lane job off the build runner hands the run's checks to a
+        build runner when they have to run (#1209), and returns the hand-off note."""
+        hand_off = None
+        if explicit and os.environ.get('SM_LANE_RUNNER_ROLE') != 'build':  # a /lane job, not an automerge run
+            def hand_off():
+                return github.hand_off_release(args.base, head, t3_report)
         try:
             link_tools(tools_source())  # the identical-request path returns before the job links them
             return merge_after_t3(github, args.pr, args.base, head, f'{request_id}-auto',
-                                  evidence.parent / f'{request_id}-auto', base_sha, why)
+                                  evidence.parent / f'{request_id}-auto', base_sha, why, hand_off=hand_off)
         except Exception as error:  # noqa: BLE001 - reported on the PR when GitHub can be reached
             print(f'The automerge run after the T3 PASS stopped: {error!r}')
             try:
@@ -2373,7 +2490,7 @@ def main(argv=None) -> int:
             github.relabel(QUEUED, DONE)
         record_outcome(earlier_verdict)  # a repeated FAIL stays red
         if request['tier'] == 'T3' and earlier_verdict == 'PASS':
-            after_t3_pass(f'started by the T3 PASS ({url}) in the same lane job')
+            after_t3_pass(f'started by the T3 PASS ({url}) in the same lane job', url)
         flush_ledger(args.pr, head, lambda body: Repo(repo).comment(OPS_ISSUE, body))
         return 0
     evidence.mkdir(parents=True, exist_ok=True)
@@ -2462,13 +2579,14 @@ def main(argv=None) -> int:
         github.relabel(RUNNING, QUEUED if desk_waiting else None)
     released = None
     if explicit and request['tier'] == 'T3' and verdict == 'PASS':
-        released = after_t3_pass(f'started by the T3 PASS ({t3_url}) in the same lane job')
+        released = after_t3_pass(f'started by the T3 PASS ({t3_url}) in the same lane job', t3_url)
     elif request['tier'] == 'auto' and verdict != 'PASS':  # a T3 PASS may have landed before this held report
         released = after_t3_pass('started again in the same automerge job, because a T3 PASS landed while it '
                                  'was held')
     last = details + (released or '').splitlines()  # the job's last report: a released automerge run's, if any
     if not any(line.startswith(f'merged into {args.base} as ') for line in last) \
-            and not (explicit and desk_waiting):  # a merged PR closes: nothing to pick up
+            and not (released or '').startswith(HANDED_OFF) \
+            and not (explicit and desk_waiting):  # a merged PR closes: nothing to pick up; a hand-off's run relabels
         # Remove, then add: adding a label the PR already has is no `labeled` event, and the Hourly dispatch
         # wakes on lane:done's. The lane and automerge jobs run side by side, so the other may have added it.
         github.relabel(DONE, DONE)
