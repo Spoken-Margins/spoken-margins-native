@@ -20,6 +20,19 @@ public enum MarginRecordingCleanup {
         within root: URL,
         resolve: (String) -> URL?
     ) -> [URL] {
+        filesToRemove(
+            deletedAudioPaths: deleted.compactMap(\.audioPath),
+            survivingAudioPaths: survivingAudioPaths, within: root, resolve: resolve)
+    }
+
+    /// The same, for audio paths read off rows that were not decoded into Margins: the item's quarantined
+    /// Margins (#1466).
+    public static func filesToRemove(
+        deletedAudioPaths: [String],
+        survivingAudioPaths: [String],
+        within root: URL,
+        resolve: (String) -> URL?
+    ) -> [URL] {
         let rootPath = canonical(root).path
         let rootPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         let keptPaths = Set(survivingAudioPaths)
@@ -27,7 +40,7 @@ public enum MarginRecordingCleanup {
 
         var seen = Set<String>()
         var files: [URL] = []
-        for path in deleted.compactMap(\.audioPath) where !keptPaths.contains(path) {
+        for path in deletedAudioPaths where !keptPaths.contains(path) {
             guard let url = resolve(path) else { continue }
             let file = canonical(url)
             guard file.path.hasPrefix(rootPrefix),
@@ -48,7 +61,20 @@ public enum MarginRecordingCleanup {
         fileManager: FileManager = .default,
         resolve: (String) -> URL?
     ) -> [URL] {
-        filesToRemove(deleted: deleted, survivingAudioPaths: survivingAudioPaths, within: root, resolve: resolve).filter { file in
+        removeFiles(
+            deletedAudioPaths: deleted.compactMap(\.audioPath),
+            survivingAudioPaths: survivingAudioPaths, within: root, fileManager: fileManager, resolve: resolve)
+    }
+
+    @discardableResult
+    public static func removeFiles(
+        deletedAudioPaths: [String],
+        survivingAudioPaths: [String],
+        within root: URL,
+        fileManager: FileManager = .default,
+        resolve: (String) -> URL?
+    ) -> [URL] {
+        filesToRemove(deletedAudioPaths: deletedAudioPaths, survivingAudioPaths: survivingAudioPaths, within: root, resolve: resolve).filter { file in
             (try? fileManager.removeItem(at: file)) != nil
         }
     }
