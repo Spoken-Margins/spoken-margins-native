@@ -131,6 +131,9 @@ extension Gate1AppModel {
     func submitLocalSummary(itemId: String, turnId: String, contexts: [String]) {
         statusMessage = "Summarizing Margins on device."
         lastError = nil
+        // The session this summary belongs to: a failure that arrives after another session
+        // became active settles this one's job and turn, not that session's (#1469).
+        let originSessionId = snapshot.sessionId
         Task {
             do {
                 let client = localFoundationModelClient
@@ -162,7 +165,8 @@ extension Gate1AppModel {
                     userMessage: presentation.detailMessage,
                     itemId: itemId,
                     retry: .init(key: "summary") { [weak self] in self?.summarize() },
-                    feedbackMessage: presentation.feedbackMessage
+                    feedbackMessage: presentation.feedbackMessage,
+                    settling: originSessionId.map { ProviderFailureOrigin(sessionId: $0, turnId: turnId) }
                 )
             }
         }
@@ -304,10 +308,17 @@ extension Gate1AppModel {
         diagnostics["last\(kind.replacingOccurrences(of: "_", with: " ").capitalized.replacingOccurrences(of: " ", with: ""))Model"] = model
     }
 
-    func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil) {
+    /// The session and turn a provider call was started for. Without one, a failure settles
+    /// the active session's last open job.
+    struct ProviderFailureOrigin {
+        var sessionId: String
+        var turnId: String
+    }
+
+    func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, settling origin: ProviderFailureOrigin? = nil) {
         do {
             if let engine {
-                snapshot = try engine.aiProviderFailed(error: error)
+                snapshot = try engine.aiProviderFailed(error: error, sessionId: origin?.sessionId, turnId: origin?.turnId)
                 refreshSelectedItem()
             }
         } catch {
