@@ -97,7 +97,7 @@ final class Gate1AppModel: ObservableObject {
             }
             if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
                 if !canPrepareLibraryAudio {
-                    foregroundAudioPreparationTask?.cancel()
+                    libraryAudioLoop.cancelOnly()
                 } else {
                     startForegroundAudioPreparationIfNeeded()
                 }
@@ -185,7 +185,7 @@ final class Gate1AppModel: ObservableObject {
             "openingState": String(describing: row?.startupAudioState),
             "openingChunks": String(row?.startupAudioCompletedChunkCount ?? 0),
             "openingTarget": String(row?.startupAudioTargetChunkCount ?? 0),
-            "workerActive": String(foregroundAudioPreparationTask != nil),
+            "workerActive": String(libraryAudioLoop.isRunning),
             "canPrepare": String(canPrepareLibraryAudio),
             "queueCount": String(audioPreparationQueue.count),
             "lowPower": String(ProcessInfo.processInfo.isLowPowerModeEnabled),
@@ -252,7 +252,7 @@ final class Gate1AppModel: ObservableObject {
             if selectedItem.id == snapshot.itemId { activePlaybackDetail = selectedItem }
             else if oldValue.id == snapshot.itemId { activePlaybackDetail = oldValue }
             if oldValue.id != selectedItem.id { selectedListeningEdition = try? ListeningEditionStore.application().load(itemID: selectedItem.id) }
-            skimResourceContext = nil
+            skimBridge.invalidateResources()
             prepareLeveledMargins(from: oldValue)
             if oldValue.id != selectedItem.id || oldValue.externalReference != selectedItem.externalReference {
                 storedSourceFollowSuggestionCandidates = []
@@ -281,9 +281,11 @@ final class Gate1AppModel: ObservableObject {
     @Published var isSharingInterjectionsPresented = false
     @Published var sharedSpokenMarginsPackageURL: URL?
     @Published var isSharedSpokenMarginsPackagePresented = false
-    @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview?
-    @Published var isImportingSpokenMarginsPackage = false
-    @Published var spokenMarginsPackageImportError: String?
+    /// The views' copy of the import state, which `packageImport` owns (T5, #963). A write here reaches it through `didSet`.
+    @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview? { didSet { packageImport.adoptReviewFromViews(spokenMarginsPackageImportReview) } }
+    @Published var isImportingSpokenMarginsPackage = false { didSet { packageImport.adoptIsImportingFromViews(isImportingSpokenMarginsPackage) } }
+    @Published var spokenMarginsPackageImportError: String? { didSet { packageImport.adoptErrorFromViews(spokenMarginsPackageImportError) } }
+    private(set) lazy var packageImport = SpokenMarginsPackageImportCoordinator(environment: .live(model: self))
     @Published var pendingImportedCommentary: ImportedCommentaryPrompt? {
         didSet {
             if oldValue?.id != pendingImportedCommentary?.id {
@@ -420,7 +422,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var automaticEpisodeMapPreparationPolicy = AutomaticEpisodeMapPreparationPolicy(
         rawValue: UserDefaults.standard.string(forKey: "automaticEpisodeMapPreparationPolicy") ?? ""
     ) ?? .off
-    @Published var episodeMapPreparationStatus = "Not started"
     @Published var podcastDownloadRecords: [String: PodcastDownloadRecord] = [:]
     @Published var preparedTextAudioStatus = "Not started"
     @Published var onDeviceSpeechGenerationStatus = RenderedSpeechGenerationState.inactive.rawValue
@@ -533,8 +534,6 @@ final class Gate1AppModel: ObservableObject {
     #if canImport(AVFoundation)
     var interjectionAudioPlayer: AVPlayer?
     var interjectionAudioCompletionTask: Task<Void, Never>?
-    var skimBridgePlayer: AVPlayer?
-    var skimBridgeTask: Task<Void, Never>?
     var preparingLocalAudioMapItems = Set<String>()
     var commentaryCuePlayer: AVAudioPlayer?
     #endif
@@ -546,14 +545,9 @@ final class Gate1AppModel: ObservableObject {
     private var bulkSharePreparationGeneration = 0
     var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
-    var foregroundAudioPreparationTask: Task<Void, Never>?
-    let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
-    var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
-    var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
-    var foregroundAudioPreparationGeneration = 0
-    var episodeMapPreparationTask: Task<Void, Never>?
-    var episodeMapPreparationItemId: String?
-    var isUpdatingSkimAvailability = false
+    let libraryAudioLoop = LibraryAudioPreparationLoop() // the foreground loop, its render gate and turns (#281, #534, #995)
+    var libraryAudioPreparingItemId: String? { get { libraryAudioLoop.turns.preparingItemId } set { libraryAudioLoop.turns.preparingItemId = newValue } }
+    lazy var episodeMapPreparer = EpisodeMapPreparer(host: self) // private episode map preparation: task, status, pending request (#957)
     var backgroundPreparationPlanner = BackgroundPreparationPlanner()
     var sourceImportTask: Task<Void, Never>?
     var liveSpeechFallbackItemIds: Set<String> = []
@@ -567,17 +561,9 @@ final class Gate1AppModel: ObservableObject {
     var completedStreamingTurnIds: Set<String> = []
     @Published var pendingSourceContextInterjectionIds: Set<String> = []
     let sourceWindowJobQueue = SourceWindowJobQueue()
-    var pendingFullSourceTranscriptionItemIds: Set<String> = []
-    let podcastPlacementPassCoordinator = PodcastPlacementPassCoordinator()
-    var importedPodcastResolutionURLs: [String: URL] = [:]
+    lazy var importedPodcastPlacement = makeImportedPodcastPlacementCoordinator() // placing shared podcast Margins and the transcript slot (#1015)
     var deferredPodcastPlacementURLs: [String: URL] = [:] // see Gate1AppModel+PodcastPlacementDeferral (#914)
-    /// Placement work in flight, so its shared Margins read "placing", not "unresolved" (#872).
-    var sharedMarginPlacementPasses = SharedMarginPlacementPasses() { didSet {
-        if oldValue.pass(itemId: activeItemId) != sharedMarginPlacementPasses.pass(itemId: activeItemId) { refreshSelectedItem() }
-        if oldValue != sharedMarginPlacementPasses { refreshMarginRows() } } }
-    var importedTranscriptRetryDates: [String: Date] = [:]
     var importedPodcastRecipientLocalURLs: [String: URL] = [:]
-    var pendingMapGenerationItemId: String?
     var pendingProviderJobForConsent: PendingProviderJob?
     private var pendingMapGenerationAfterConsent = false
     var pendingTermsVoiceSelection: AppTTSVoiceSelection?
@@ -1009,7 +995,7 @@ final class Gate1AppModel: ObservableObject {
         onDeviceSpeechGenerationDelayTask?.cancel()
         trashUndoDismissTask?.cancel()
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
-        foregroundAudioPreparationTask?.cancel()
+        libraryAudioLoop.cancelOnly()
         sourceImportTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
         importedCommentaryAutoPlayTask?.cancel()
@@ -1484,7 +1470,7 @@ final class Gate1AppModel: ObservableObject {
         SupertonicResourcePolicy.memoryBackoff.recordWarning()
         // Cancel demand before unloading: otherwise the next chunk can reload
         // the same sessions immediately after the warning.
-        foregroundAudioPreparationTask?.cancel()
+        libraryAudioLoop.cancelOnly()
         if let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient {
             do {
                 if try stopOnDeviceRenderingRecordingFallback(client, returnsAutomatically: true, code: "memory_warning_stop", reason: .memoryWarning) {
@@ -1929,12 +1915,7 @@ final class Gate1AppModel: ObservableObject {
             || store.loadTranscriptTimeline(itemId: itemId)?.timeline.chapters.isEmpty == false
     }
 
-    @Published var skimForwardDestinationMs: Int?
-    @Published var skimBackwardDestinationMs: Int?
-    var skimResourceContext: SkimResourceContext?
-    #if DEBUG
-    var skimResourceLoadCount = 0
-    #endif
+    lazy var skimBridge = SkimBridgeController(host: self) // the Skim bridge's player, poll, resources and destinations (#954)
 
     func applyListeningMapJSON() {
         do {
@@ -2415,10 +2396,7 @@ final class Gate1AppModel: ObservableObject {
             } catch { reportFailure(error, context: "Listening edition handoff failed") }
             return
         }
-        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension {
-            stageSpokenMarginsPackageImport(from: url)
-            return
-        }
+        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension { stageSpokenMarginsPackageImport(from: url); return }
         if url.scheme == Gate5BrowserTextHandoffURL.scheme, url.host == "open" {
             screen = hasActiveSession ? .playback : .home
             return
@@ -3105,9 +3083,7 @@ final class Gate1AppModel: ObservableObject {
     func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
-            foregroundAudioPreparationTask?.cancel()
-            foregroundAudioPreparationGeneration += 1
-            foregroundAudioPreparationTask = nil
+            libraryAudioLoop.stopAndInvalidate()
             pendingStartupAudioPreparationItemIds.removeAll()
             let replacement = try makeEngine(store: store)
             let sessionId = engine?.currentSession?.id ?? snapshot.sessionId
@@ -3292,9 +3268,7 @@ final class Gate1AppModel: ObservableObject {
         if snapshot.itemId == itemId, snapshot.skimBridgeState != nil {
             cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         }
-        if episodeMapPreparationItemId == itemId {
-            episodeMapPreparationTask?.cancel()
-        }
+        episodeMapPreparer.cancel(itemId: itemId)
         if let directory = try? episodeMapDirectory(itemId: itemId),
            FileManager.default.fileExists(atPath: directory.path) {
             try? FileManager.default.removeItem(at: directory)
@@ -3471,12 +3445,12 @@ final class Gate1AppModel: ObservableObject {
               let canonicalURL = URL(string: sourceURLString) else {
             return
         }
-        guard pendingFullSourceTranscriptionItemIds.insert(item.id).inserted else { return }
+        guard importedPodcastPlacement.beginFullSourceTranscription(itemId: item.id) else { return }
         let sourceURL = localSourceURL
             ?? podcastDownloadCoordinator?.validatedLocalURL(for: item.id)
             ?? canonicalURL
         guard sourceURL.isFileURL else {
-            pendingFullSourceTranscriptionItemIds.remove(item.id)
+            importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
             diagnostics["sourceTranscriptionStatus"] = "waiting_for_local_audio"
             return
         }
@@ -3495,12 +3469,12 @@ final class Gate1AppModel: ObservableObject {
                     durationMs: item.media?.durationMs
                 )
                 await MainActor.run {
-                    self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
                     self.attachSourceTranscriptTimeline(timeline, itemId: item.id)
                 }
             } catch {
                 await MainActor.run {
-                    self.pendingFullSourceTranscriptionItemIds.remove(item.id)
+                    self.importedPodcastPlacement.releaseFullSourceTranscription(itemId: item.id)
                     self.diagnostics["sourceTranscriptionStatus"] = "unavailable"
                     self.diagnostics["sourceTranscriptionError"] = String(describing: error)
                     if self.activeItemId == item.id {

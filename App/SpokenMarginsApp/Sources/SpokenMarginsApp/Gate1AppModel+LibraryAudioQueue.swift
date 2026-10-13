@@ -267,9 +267,7 @@ extension Gate1AppModel {
             let store = try requireStore()
             let jobs = try store.loadAudioPreparationJobs().filter { !$0.isCancelled }
             let itemIds = Set(jobs.map(\.itemId))
-            foregroundAudioPreparationTask?.cancel()
-            foregroundAudioPreparationGeneration += 1
-            foregroundAudioPreparationTask = nil
+            libraryAudioLoop.stopAndInvalidate()
             suppressAudioPreparation(itemIds: itemIds)
             try store.deleteAudioPreparationJobs(ids: jobs.map(\.id))
             pendingStartupAudioPreparationItemIds.subtract(itemIds)

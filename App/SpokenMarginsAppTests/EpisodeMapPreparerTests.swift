@@ -1,0 +1,264 @@
+import Combine
+import CryptoKit
+import SessionKit
+import SessionKitAudio
+import SessionKitPersistence
+import XCTest
+@testable import SpokenMarginsApp
+
+/// #957: private episode map preparation, run for real. The library is a temporary SQLite file, the audio is a
+/// real file on disk, and only the services that are expensive or need the device (the transcriber, the
+/// on-device model) are replaced. The fixture is 30 s long, shorter than the first fingerprint window, so no
+/// ShazamKit work happens; the other stages run as they do on a phone.
+@MainActor
+final class EpisodeMapPreparerTests: XCTestCase {
+    private struct Fixture {
+        let model: Gate1AppModel
+        let store: SQLiteSessionStore
+        let itemId: String
+        let audioURL: URL
+        let transcriber: ScriptedEpisodeTranscriber
+    }
+
+    private func makeFixture(hangFirstTranscription: Bool = false) throws -> Fixture {
+        let root = FileManager.default.temporaryDirectory.appending(path: "p957-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let itemId = "p957-\(UUID().uuidString)"
+        let audioURL = root.appending(path: "episode.mp3")
+        try Data((0..<2_048).map { UInt8($0 % 251) }).write(to: audioURL)
+        let transcriber = ScriptedEpisodeTranscriber(hangFirstCall: hangFirstTranscription)
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            sourceTranscriptionClient: transcriber,
+            localFoundationModelClient: UnavailableFoundationModel(),
+            databaseURLOverride: root.appending(path: "library.sqlite")
+        )
+        model.resetAndSeed()
+        let store = try model.libraryStoreForTesting()
+        try store.saveItem(Item(
+            id: itemId, title: "P957 episode", mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+            externalReference: nil, status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: audioURL.absoluteString, durationMs: 30_000)
+        ))
+        addTeardownBlock { @MainActor in
+            // The map folder is under the app's real Application Support, so every item id is unique to one run.
+            model.removeEpisodeMapArtifacts(itemId: itemId)
+            try? FileManager.default.removeItem(at: root)
+        }
+        return Fixture(model: model, store: store, itemId: itemId, audioURL: audioURL, transcriber: transcriber)
+    }
+
+    private func waitUntil(_ description: String, _ condition: () -> Bool) async throws {
+        for _ in 0..<2_000 where !condition() {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(condition(), description)
+    }
+
+    // MARK: a run that completes
+
+    func testAFullRunSavesTheMapInStageOrderAndLeavesNothingBehind() async throws {
+        let fixture = try makeFixture()
+        let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+        let stageAtTranscription = StageBox()
+        fixture.transcriber.onCall = {
+            stageAtTranscription.stage = (try? store.loadEpisodeMapPreparationJobs())?.first { $0.itemId == itemId }?.stage
+        }
+
+        model.prepareEpisodeMap(itemId: itemId)
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Preparing")
+        XCTAssertEqual(model.episodeMapPreparationItemId, itemId)
+        XCTAssertEqual(model.diagnostics["episodeMapPreparation:\(itemId)"], "started")
+        let task = try XCTUnwrap(model.episodeMapPreparationTask)
+        await task.value
+
+        XCTAssertEqual(stageAtTranscription.stage, .transcribe, "the job was saved at the transcribe stage before the transcriber ran")
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Fingerprint map ready; scene summaries unavailable")
+        XCTAssertNil(model.episodeMapPreparationTask)
+        XCTAssertNil(model.episodeMapPreparationItemId)
+        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(), [], "a finished job is deleted")
+
+        let timeline = fixture.transcriber.timeline
+        let drafts = EpisodeSceneSegmenter.makeDrafts(timeline: timeline)
+        XCTAssertFalse(drafts.isEmpty)
+        XCTAssertEqual(
+            model.diagnostics["episodeMapPreparation:\(itemId)"],
+            "complete:landmarks=0:scenes=\(drafts.count):transcript_deleted"
+        )
+
+        let digest = SHA256.hash(data: try Data(contentsOf: fixture.audioURL)).map { String(format: "%02x", $0) }.joined()
+        let spine = try XCTUnwrap(store.loadEditionFingerprintSpine(itemId: itemId))
+        XCTAssertEqual(spine.id, "episode-spine-\(itemId)")
+        XCTAssertEqual(spine.producingEditionDurationMs, 30_000)
+        XCTAssertEqual(spine.producingEditionSHA256, digest)
+        XCTAssertEqual(spine.landmarks, [])
+
+        let sketch = try XCTUnwrap(store.loadTranscriptPhraseSketch(itemId: itemId))
+        XCTAssertEqual(sketch.id, "episode-sketch-\(itemId)")
+
+        let proposal = try XCTUnwrap(store.loadPortableListeningMapProposals(itemId: itemId).first)
+        XCTAssertEqual(proposal.id, "episode-map-proposal-\(itemId)")
+        XCTAssertEqual(proposal.generator, "deterministic-scene-boundaries.v1")
+        XCTAssertEqual(proposal.scenes.map(\.id), drafts.map(\.id))
+        XCTAssertTrue(proposal.scenes.allSatisfy { $0.summaryText == nil && $0.eligibility == .unknown })
+
+        let projection = try XCTUnwrap(store.loadResolvedListeningMapProjection(itemId: itemId))
+        XCTAssertEqual(projection.id, "episode-projection-\(itemId)")
+        XCTAssertEqual(projection.proposalId, proposal.id)
+        XCTAssertEqual(projection.recipientEditionSHA256, digest)
+        XCTAssertEqual(projection.algorithmVersion, "episode-projection.exact-edition.v1")
+
+        let transient = try model.episodeMapDirectory(itemId: itemId).appending(path: "Transient")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transient.path), "the transcript is deleted once the map is saved")
+        XCTAssertTrue(try store.loadOwnedOfflineAssets().filter { $0.itemId == itemId }.isEmpty, "no asset rows are left for the item")
+    }
+
+    // MARK: cancellation and restart
+
+    func testCancellingAnotherItemLeavesTheRunAloneAndCancellingTheItemRecordsACancelledJob() async throws {
+        let fixture = try makeFixture(hangFirstTranscription: true)
+        let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+
+        model.prepareEpisodeMap(itemId: itemId)
+        let task = try XCTUnwrap(model.episodeMapPreparationTask)
+        try await waitUntil("the run reaches the transcriber") { model.episodeMapPreparationStatus == "Transcribing on device" }
+
+        // One run at a time: a second request for any item is turned away and starts nothing.
+        model.prepareEpisodeMap(itemId: "another-item")
+        XCTAssertEqual(model.statusMessage, "An episode map is already being prepared.")
+
+        model.episodeMapPreparer.cancel(itemId: "another-item")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(task.isCancelled, "cancelling a different item must not cancel this run")
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Transcribing on device")
+
+        model.episodeMapPreparer.cancel(itemId: itemId)
+        await task.value
+
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Cancelled")
+        XCTAssertNil(model.episodeMapPreparationTask)
+        XCTAssertNil(model.episodeMapPreparationItemId)
+        let job = try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first { $0.itemId == itemId })
+        XCTAssertTrue(job.isCancelled)
+        XCTAssertEqual(job.lastFailureCode, "cancelled")
+        XCTAssertEqual(job.stage, .transcribe)
+        let calls = await fixture.transcriber.callCount()
+        XCTAssertEqual(calls, 1, "the refused second request never reached the transcriber")
+        XCTAssertNil(try store.loadEditionFingerprintSpine(itemId: itemId), "a cancelled run publishes nothing")
+    }
+
+    func testTheNextRequestAfterACancelIgnoresTheCancelledJobAndRunsFromTheStart() async throws {
+        let fixture = try makeFixture(hangFirstTranscription: true)
+        let model = fixture.model, store = fixture.store, itemId = fixture.itemId
+
+        model.prepareEpisodeMap(itemId: itemId)
+        let first = try XCTUnwrap(model.episodeMapPreparationTask)
+        try await waitUntil("the run reaches the transcriber") { model.episodeMapPreparationStatus == "Transcribing on device" }
+        model.episodeMapPreparer.cancel(itemId: itemId)
+        await first.value
+        XCTAssertTrue(try XCTUnwrap(store.loadEpisodeMapPreparationJobs().first).isCancelled)
+
+        model.prepareEpisodeMap(itemId: itemId)
+        let second = try XCTUnwrap(model.episodeMapPreparationTask)
+        await second.value
+
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Fingerprint map ready; scene summaries unavailable")
+        XCTAssertEqual(try store.loadEpisodeMapPreparationJobs(), [], "the new job finished and was deleted")
+        XCTAssertNotNil(try store.loadEditionFingerprintSpine(itemId: itemId))
+        let calls = await fixture.transcriber.callCount()
+        XCTAssertEqual(calls, 2, "the cancelled run left no transcript to reuse, so the second run transcribed again")
+    }
+
+    // MARK: waiting for a download, and the one pending request
+
+    func testWaitingForADownloadHoldsOnePendingRequestAndTellsObserversBeforeTheStatusChanges() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "p957-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appending(path: "library.sqlite")
+        )
+        let store = try model.libraryStoreForTesting()
+        for id in ["p957-first", "p957-second"] {
+            try store.saveItem(Item(
+                id: id, title: id, mediaType: TargetType.transcriptBackedMedia.rawValue, text: nil,
+                externalReference: nil, status: "ready",
+                media: ItemMedia(sourceType: .remoteStream, durationMs: 10_000)
+            ))
+        }
+        var statusSeenByObservers: [String] = []
+        let observation = model.objectWillChange.sink { statusSeenByObservers.append(model.episodeMapPreparationStatus) }
+        defer { observation.cancel() }
+
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Not started")
+        XCTAssertNil(model.pendingMapGenerationItemId)
+        model.prepareEpisodeMap(itemId: "p957-first")
+        XCTAssertEqual(model.episodeMapPreparationStatus, "Waiting for download")
+        XCTAssertEqual(model.pendingMapGenerationItemId, "p957-first")
+        XCTAssertEqual(statusSeenByObservers.first, "Not started", "observers are told before the value changes, as @Published did")
+        XCTAssertNil(model.episodeMapPreparationTask, "waiting for a download starts no run")
+
+        model.prepareEpisodeMap(itemId: "p957-second")
+        XCTAssertEqual(model.pendingMapGenerationItemId, "p957-second", "there is one pending slot, and the newest request takes it")
+
+        model.pendingMapGenerationItemId = nil
+        XCTAssertNil(model.pendingMapGenerationItemId)
+    }
+}
+
+private final class StageBox {
+    var stage: EpisodeMapPreparationStage?
+}
+
+private actor CallCounter {
+    private var count = 0
+    func next() -> Int {
+        count += 1
+        return count
+    }
+    var value: Int { count }
+}
+
+private final class ScriptedEpisodeTranscriber: SourceTranscriptionClient, @unchecked Sendable {
+    let timeline = TranscriptTimeline(
+        segments: [
+            .init(id: "seg-1", startMs: 0, endMs: 12_000, text: "Distributed episode maps keep spoken margins aligned across dynamic editions"),
+            .init(id: "seg-2", startMs: 12_000, endMs: 30_000, text: "Listeners hear a private summary bridge between the scenes of a long conversation")
+        ],
+        chapters: [],
+        durationMs: 30_000
+    )
+    var onCall: (@MainActor () -> Void)?
+    private let hangFirstCall: Bool
+    private let counter = CallCounter()
+
+    init(hangFirstCall: Bool) {
+        self.hangFirstCall = hangFirstCall
+    }
+
+    func callCount() async -> Int {
+        await counter.value
+    }
+
+    func transcribeSourceAudio(url: URL, itemId: String, durationMs: Int?) async throws -> TranscriptTimeline {
+        let call = await counter.next()
+        if let onCall { await onCall() }
+        if hangFirstCall, call == 1 {
+            // Stands in for a long transcription: it ends only when the run is cancelled.
+            try await Task.sleep(for: .seconds(600))
+        }
+        return timeline
+    }
+}
+
+private struct UnavailableFoundationModel: LocalFoundationModelClient {
+    func availability() -> LocalFoundationModelAvailability { .unavailable("test") }
+    func summarizeInterjections(context: String) async throws -> String { throw LocalFoundationModelError.unavailable("test") }
+    func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
+        throw LocalFoundationModelError.unavailable("test")
+    }
+    func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
+        throw LocalFoundationModelError.unavailable("test")
+    }
+}
