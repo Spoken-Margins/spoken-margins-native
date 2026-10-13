@@ -203,7 +203,7 @@ extension Gate1AppModel {
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
         run { engine in
-            snapshot = try engine.beginInterjection()
+            snapshot = try engine.beginInterjection(request: .tapped(at: requestedAt))
             if snapshot.isRecording {
                 recordingPresentationContext = RecordingPresentationContext(
                     itemTitle: selectedItem.title,

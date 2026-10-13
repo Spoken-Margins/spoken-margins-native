@@ -3250,6 +3250,8 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
     /// The length of a stopped recorder's finalized file, measured once off the main thread. Nil while the
     /// recorder runs. Until it lands, or if the file can't be read, the length is unknown and kept (#937).
     private var stoppedMeasurement: StoppedFileMeasurement?
+    /// Chosen at the start of a Margin from the route playback was on, and kept for its restarts (#1506).
+    private var inputChoice: RecordingInputChoice = .headsetMicrophoneAllowed
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
@@ -3345,7 +3347,14 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if os(watchOS)
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
         #else
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        switch inputChoice {
+        case .phoneMicrophoneKeepingA2DP:
+            // No hands-free profile in the options: the Bluetooth microphone isn't an input, so iOS leaves
+            // the headphones on A2DP and records from the phone (#1506).
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        case .headsetMicrophoneAllowed:
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        }
         #endif
         try session.setActive(true)
         #endif
@@ -3445,6 +3454,11 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
         #endif
+        #if os(iOS)
+        inputChoice = RecordingInputPolicy.choice(outputPortTypes: session.currentRoute.outputs.map(\.portType.rawValue))
+        #else
+        inputChoice = .headsetMicrophoneAllowed
+        #endif
         let (recorder, url) = try startRecorder(cycleSession: false)
         isCaptureActive = true
         self.recorder = recorder
@@ -3482,10 +3496,16 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
                 durationKnown = false
             }
         }
+        var inputRoute: String?
+        #if os(iOS) || os(watchOS)
+        inputRoute = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        #endif
         return RecordingCaptureReading(
             recorderRunning: recorder.isRecording,
             capturedMs: capturedHighWaterMs,
-            durationKnown: durationKnown
+            durationKnown: durationKnown,
+            peakPowerDb: peak,
+            inputRoute: inputRoute
         )
         #else
         return nil
@@ -3536,7 +3556,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func captureDiagnostics() -> [String: String] {
         #if canImport(AVFoundation)
-        var fields: [String: String] = ["captureRestarts": String(captureRestarts)]
+        var fields: [String: String] = ["captureRestarts": String(captureRestarts), "inputPolicy": inputChoice.rawValue]
         if let recorder {
             fields["recorderRunning"] = String(recorder.isRecording)
             fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
