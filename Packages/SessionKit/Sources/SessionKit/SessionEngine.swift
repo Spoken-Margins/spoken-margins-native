@@ -4073,9 +4073,7 @@ public final class SessionEngine {
                 return .records(existing, try repository.loadListeningMap(itemId: itemId), document)
             }
         }
-        let mapPolicy: DeterministicListeningMapPolicy = isPDF
-            ? .canonicalHeadings
-            : handoff.captureMode == .markdownFile ? .authoredSections : .adaptiveListeningSections
+        let mapPolicy: DeterministicListeningMapPolicy = isPDF ? .canonicalHeadings : .authoredSections
         let deterministicMap = document.map { StructuredDocumentImport.listeningMap(for: $0, title: title, itemId: itemId) }
             ?? parsedMarkdown?.deterministicListeningMap(
                 itemId: itemId,

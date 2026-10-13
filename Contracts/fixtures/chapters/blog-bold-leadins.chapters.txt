@@ -1,0 +1,4 @@
+The old pipeline
+Small changes, shipped often
+Rollbacks as a normal tool
+What we would change
