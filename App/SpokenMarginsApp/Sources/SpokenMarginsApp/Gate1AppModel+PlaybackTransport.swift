@@ -82,7 +82,7 @@ extension Gate1AppModel {
         UserDefaults.standard.set(clamped, forKey: "mediaPlaybackRate")
         if var bridge = snapshot.skimBridgeState {
             if bridge.status == .playing {
-                skimBridgePlayer?.rate = SummaryBridgeRatePolicy.transportRate(clamped)
+                skimBridge.setTransportRate(forPlaybackRate: clamped)
             }
             snapshot.playbackRate = clamped
             bridge.status = snapshot.skimBridgeState?.status ?? bridge.status
