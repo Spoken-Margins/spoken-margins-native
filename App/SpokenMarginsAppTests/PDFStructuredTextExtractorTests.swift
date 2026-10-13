@@ -390,6 +390,85 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         XCTAssertEqual(reimported.id, v1.id)
     }
 
+    /// A title-only cover, then a page that repeats the title over the authors and the
+    /// abstract (#1144: Cambridge CASP working paper "What if automating AI R&D
+    /// triggers an intelligence explosion?"; the real PDF is not committed).
+    private func coverThenTitlePagePDF(coverBody: [String] = []) -> Data {
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let coverTitle: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 32)]
+        let pageTitle: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 26)]
+        let series: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+        let authors: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle as String: "What if automating AI R&D triggers an intelligence explosion?"]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842), format: format)
+        return renderer.pdfData { context in
+            context.beginPage()
+            for (offset, line) in ["What if automating AI R&D", "triggers an intelligence", "explosion?"].enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 58, y: 300 + CGFloat(offset) * 46), withAttributes: coverTitle)
+            }
+            ("Frontier AI Working Paper Series No. 2/2026" as NSString).draw(at: CGPoint(x: 58, y: 700), withAttributes: series)
+            ("September 2026" as NSString).draw(at: CGPoint(x: 58, y: 724), withAttributes: series)
+            for (offset, line) in coverBody.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 58, y: 600 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("What if automating AI R&D triggers an" as NSString).draw(at: CGPoint(x: 66, y: 64), withAttributes: pageTitle)
+            ("intelligence explosion?" as NSString).draw(at: CGPoint(x: 160, y: 94), withAttributes: pageTitle)
+            ("Alan Chan" as NSString).draw(at: CGPoint(x: 109, y: 142), withAttributes: authors)
+            ("Sören Mindermann" as NSString).draw(at: CGPoint(x: 109, y: 158), withAttributes: authors)
+            ("Abstract" as NSString).draw(at: CGPoint(x: 260, y: 236), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: body)
+            }
+        }
+    }
+
+    func testV2MakesNoChaptersFromATitleOnlyCoverAndItsRepeatedTitle() throws {
+        // #1144 (Build 30): the cover's three title lines and the next page's two lines
+        // each became a chapter, because the title-page rule only ran on a first page
+        // that held the abstract.
+        let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF()))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let characters = Array(document.text)
+        func text(_ segment: StructuredDocument.Segment) -> String {
+            String(characters[segment.range.start..<segment.range.end]).split(whereSeparator: \.isNewline).joined(separator: " ")
+        }
+
+        XCTAssertEqual(document.segments.filter { $0.role == .heading }.map(text), ["Abstract", "Introduction"])
+        XCTAssertEqual(titleSegments(document), ["What if automating AI R&D triggers an intelligence explosion?"],
+                       "the cover's three lines are one title, and the repeat is not another")
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertEqual(spoken.components(separatedBy: "intelligence explosion").count, 2, "the title is read once")
+        XCTAssertTrue(spoken.contains("Alan Chan"), "author names are read (owner, #191)")
+        XCTAssertTrue(spoken.contains("take in papers during time"), "the abstract is still read")
+        XCTAssertFalse(spoken.contains("Working Paper Series"))
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document),
+                       "What if automating AI R&D triggers an intelligence explosion?")
+    }
+
+    func testV2DoesNotTakeAFirstPageWithBodyTextForATitleOnlyCover() throws {
+        // A first page that holds prose isn't a cover, so nothing on it is dropped.
+        // Long lines, and short ones (under eight words, which the prose test passes over).
+        for line in ["A first page that carries sentences of its own, set in ordinary body type for listening.",
+                     "Short lines of body type on page one."] {
+            let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF(coverBody: [line])))
+            let spoken = StructuredDocumentSpeech.spokenLines(try PDFStructuredTextExtractor.structuredDocument(from: pdf)).joined(separator: " ")
+            XCTAssertTrue(spoken.contains(String(line.dropLast())), spoken)
+        }
+    }
+
     func testV2KeepsBadgesInTheTitleTypeOutOfTheTitle() throws {
         // #692's fix joins short lines above the title only when they sit right above
         // it in the same type, and never an article-type label.
