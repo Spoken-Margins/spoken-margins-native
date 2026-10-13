@@ -282,9 +282,11 @@ final class Gate1AppModel: ObservableObject {
     @Published var isSharingInterjectionsPresented = false
     @Published var sharedSpokenMarginsPackageURL: URL?
     @Published var isSharedSpokenMarginsPackagePresented = false
-    @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview?
-    @Published var isImportingSpokenMarginsPackage = false
-    @Published var spokenMarginsPackageImportError: String?
+    /// The views' copy of the import state, which `packageImport` owns (T5, #963). A write here reaches it through `didSet`.
+    @Published var spokenMarginsPackageImportReview: SpokenMarginsPackageImportReview? { didSet { packageImport.adoptReviewFromViews(spokenMarginsPackageImportReview) } }
+    @Published var isImportingSpokenMarginsPackage = false { didSet { packageImport.adoptIsImportingFromViews(isImportingSpokenMarginsPackage) } }
+    @Published var spokenMarginsPackageImportError: String? { didSet { packageImport.adoptErrorFromViews(spokenMarginsPackageImportError) } }
+    private(set) lazy var packageImport = SpokenMarginsPackageImportCoordinator(environment: .live(model: self))
     @Published var pendingImportedCommentary: ImportedCommentaryPrompt? {
         didSet {
             if oldValue?.id != pendingImportedCommentary?.id {
@@ -2441,10 +2443,7 @@ final class Gate1AppModel: ObservableObject {
             } catch { reportFailure(error, context: "Listening edition handoff failed") }
             return
         }
-        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension {
-            stageSpokenMarginsPackageImport(from: url)
-            return
-        }
+        if url.isFileURL, url.pathExtension.lowercased() == SpokenMarginsPackageArchive.fileExtension { stageSpokenMarginsPackageImport(from: url); return }
         if url.scheme == Gate5BrowserTextHandoffURL.scheme, url.host == "open" {
             screen = hasActiveSession ? .playback : .home
             return

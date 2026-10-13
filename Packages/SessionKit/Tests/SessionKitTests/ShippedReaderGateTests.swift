@@ -105,9 +105,11 @@ final class ShippedReaderGateTests: XCTestCase {
     }
 
     func testTheAppTestsThatWritePacketsDirectlyAreTheOnesWeKnowAbout() throws {
-        // App tests cannot call exportPacket (the frozen reader is not linked into the app test target), so six
+        // App tests cannot call exportPacket (the frozen reader is not linked into the app test target), so seven
         // writes there are not read by Build 29. EpisodeMapStoredNamesTests writes one only to drive an import and
-        // check the names the app saves; it asserts nothing about what Build 29 can read. SourceLinkImportTests
+        // check the names the app saves; it asserts nothing about what Build 29 can read. SpokenMarginsPackageImportCoordinatorTests
+        // writes embedded-text packets only to drive the import coordinator's stage and confirm paths; the same
+        // packet shape is exported through exportPacket in SharingTests. SourceLinkImportTests
         // writes a private-feed packet only to drive the #454 recovery; PrivateFeedRecoveryTests exports the same
         // kind of linkless packet through exportPacket. This pins that list: a new
         // direct write fails here until someone either routes it through a packet the Mac package tests also read
@@ -126,6 +128,7 @@ final class ShippedReaderGateTests: XCTestCase {
             if matches > 0 { counts[file.lastPathComponent] = matches }
         }
         XCTAssertEqual(counts, ["EpisodeMapStoredNamesTests.swift": 1, "LocalAudioListeningPackageTests.swift": 3,
-                                "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1])
+                                "SourceLinkImportTests.swift": 1, "SpokenMarginsPackageHandoffTests.swift": 1,
+                                "SpokenMarginsPackageImportCoordinatorTests.swift": 1])
     }
 }
