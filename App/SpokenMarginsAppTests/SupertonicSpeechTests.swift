@@ -3330,6 +3330,69 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    // #1434: the owner's AirPods announced a message in the background, narration paused, and no "ended" ever
+    // reached the app, which iOS can suspend once its audio stops. The client holds background time for that wait.
+    func testInterruptionHoldsBackgroundTimeUntilItEndsOrTheListenerActs() async throws {
+        let template = try makeTestWAV(duration: 5)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let notificationCenter = NotificationCenter()
+        let probe = InterruptionHoldProbe()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer,
+            voice: .m2,
+            speed: 1,
+            fallbackVoiceIdentifier: nil,
+            fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            fallbackClient: RecordingFallbackAudioClient(),
+            interruptionHold: probe.hold
+        )
+        _ = try client.prepareSpeechText("A message announced through the headphones must not leave this paused.")
+        try client.play(targetId: "held-interruption")
+        for _ in 0..<50 where client.playbackStartStatus(targetId: "held-interruption") != .confirmed {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(client.playbackStartStatus(targetId: "held-interruption"), .confirmed)
+
+        // The observers deliver on the main queue, after the post returns.
+        func settle(_ condition: () -> Bool) async {
+            for _ in 0..<100 where !condition() { try? await Task.sleep(for: .milliseconds(10)) }
+        }
+
+        func post(_ type: AVAudioSession.InterruptionType, shouldResume: Bool = false) {
+            var info: [AnyHashable: Any] = [AVAudioSessionInterruptionTypeKey: type.rawValue]
+            if type == .ended {
+                info[AVAudioSessionInterruptionOptionKey] = shouldResume
+                    ? AVAudioSession.InterruptionOptions.shouldResume.rawValue : UInt(0)
+            }
+            notificationCenter.post(name: AVAudioSession.interruptionNotification, object: AVAudioSession.sharedInstance(), userInfo: info)
+        }
+
+        post(.began)
+        await settle { probe.begins == 1 }
+        XCTAssertEqual(client.playbackTransportState(targetId: "held-interruption"), .paused)
+        XCTAssertEqual(probe.begins, 1, "the app stays awake to hear the interruption end")
+        XCTAssertEqual(probe.ends, 0)
+
+        post(.ended, shouldResume: true)
+        await settle { probe.ends == 1 }
+        XCTAssertEqual(probe.ends, 1, "the time is given back once iOS reports the end")
+        XCTAssertEqual(probe.hold.outcome, .ended)
+
+        try client.play(targetId: "held-interruption")
+        post(.began)
+        await settle { probe.begins == 2 }
+        XCTAssertEqual(probe.begins, 2)
+        try client.pause()
+        XCTAssertEqual(probe.ends, 2, "the listener's own Pause takes over before an end arrives")
+        XCTAssertEqual(probe.hold.outcome, .listenerActed)
+        try client.stop()
+    }
+
     func testMediaServicesResetCheckpointsIntraChunkProgressBeforeCanonicalPause() async throws {
         let template = try makeTestWAV(duration: 5)
         defer { try? FileManager.default.removeItem(at: template) }

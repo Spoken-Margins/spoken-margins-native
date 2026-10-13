@@ -443,6 +443,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onRenderPace: RenderPaceHandler?
     /// Background time over the moment between one chunk ending and the next playing (#540).
     private let handOverHold: HandOverBackgroundHold?
+    /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS
+    /// says it is over (#1434).
+    private let interruptionHold: InterruptionBackgroundHold?
     /// Guarded by `lock`.
     private var renderPace = RenderPaceLog()
     private var handOverHoldRequested = false
@@ -553,7 +556,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onResumeDecision: ResumeDecisionHandler? = nil,
         renderWaitLimit: Duration = .seconds(15),
         onRenderPace: RenderPaceHandler? = nil,
-        handOverHold: HandOverBackgroundHold? = nil
+        handOverHold: HandOverBackgroundHold? = nil,
+        interruptionHold: InterruptionBackgroundHold? = nil
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -602,6 +606,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.renderWaitLimit = renderWaitLimit
         self.onRenderPace = onRenderPace
         self.handOverHold = handOverHold
+        self.interruptionHold = interruptionHold
         super.init()
         installAudioSessionObservers()
     }
@@ -616,6 +621,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if handOverHoldRequested, let hold = handOverHold {
             Task { @MainActor in hold.nextChunkMoving() }
+        }
+        if let hold = interruptionHold {
+            Task { @MainActor in hold.listenerActed() }
         }
         for observer in audioSessionObservers {
             audioSessionNotificationCenter.removeObserver(observer)
@@ -652,6 +660,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
         settleHandOverBeforePlay()
+        interruptionWaitEnded(.listenerActed)
         try activateAudioSession(forPlayback: false)
         restoreOnDeviceRenderingIfConditionCleared(targetId: targetId)
         let usesStoppedGeneration = lock.withLock {
@@ -908,6 +917,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func pause() throws {
+        interruptionWaitEnded(.listenerActed)
         let snapshot = lock.withLock { () -> (Bool, AVPlayer?) in
             transportIntent = .paused
             shouldResumeAfterInterruption = false
@@ -948,6 +958,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func stop() throws {
+        interruptionWaitEnded(.listenerActed)
         removePlaybackEndObserver()
         defer { releaseHandOverBackgroundTimeIfHeld() }
         let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?) in
@@ -2888,10 +2899,35 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             state.activePlayer?.pause()
             try? releaseBackgroundAudio()
         }
+        if allowsAutomaticResume { interruptionWaitBegan() }
         interruptionHandler?(.began)
     }
 
+    /// Holds background time from an interruption that asked to resume until iOS reports its end or the listener
+    /// takes over (#1434). The audio-session observers run on the main thread.
+    private func interruptionWaitBegan() {
+        guard let hold = interruptionHold else { return }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { hold.interruptionBegan() }
+        } else {
+            Task { @MainActor in hold.interruptionBegan() }
+        }
+    }
+
+    private func interruptionWaitEnded(_ reason: InterruptionBackgroundHold.Outcome) {
+        guard let hold = interruptionHold else { return }
+        let finish: @MainActor () -> Void = {
+            if reason == .ended { hold.interruptionEnded() } else { hold.listenerActed() }
+        }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { finish() }
+        } else {
+            Task { @MainActor in finish() }
+        }
+    }
+
     private func finishSystemInterruption(shouldResume: Bool) {
+        interruptionWaitEnded(.ended)
         let requestsResume = lock.withLock { () -> Bool in
             defer { shouldResumeAfterInterruption = false }
             return shouldResumeAfterInterruption && shouldResume
