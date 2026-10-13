@@ -742,6 +742,9 @@ def owner_tap_note(paths: list[str]) -> str:
 INHERITED_HOLD = 'it inherits a blocking audit finding'  # lane_inherited_holds.INHERITED: a test keeps them equal
 INHERITED_FAILED = 'the check for inherited audit findings could not finish'
 INHERITED_POLICY = 'scripts/lane_inherited_holds.py'
+# Other PRs' comments, kept by PR number and updated_at so an unchanged PR costs no call on the next run.
+INHERITED_CACHE = Path(os.environ.get('SM_LANE_INHERITED_CACHE') or
+                       Path.home() / 'Library/Caches/SpokenMarginsLane/inherited-holds.json')
 
 
 def inherited_check(github, tree: Path, base: str, head: str):
@@ -752,7 +755,7 @@ def inherited_check(github, tree: Path, base: str, head: str):
         policy = base_policy(tree, base, INHERITED_POLICY)
         if policy is None:
             raise RuntimeError(f'{base} has no {INHERITED_POLICY} yet')
-        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr)
+        holds = policy.find_holds(tree, github.repo, f'origin/{base}', head, github.pr, cache=INHERITED_CACHE)
     except Exception as error:  # noqa: BLE001 - any failure to look holds the merge instead of waving it through
         why = f'{INHERITED_FAILED}: {str(error)[:200]}. Remove and re-add automerge to check again'
         return lambda comments: [why]

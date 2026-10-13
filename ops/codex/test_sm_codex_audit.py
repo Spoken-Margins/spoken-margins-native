@@ -400,6 +400,15 @@ class InheritedFindings(unittest.TestCase):
             {**pr(), "number": 366, "issues": [], "lines": 1, "comments": []}, {}, "d.diff", "b" * 40, "c" * 40, "", ""))
         self.assertIn("lookup failed", A.inherited_text([], [], "rate limited", HEAD))
 
+    def test_the_runner_s_inherited_hold_line_makes_a_non_risky_pr_a_candidate(self):
+        held = {"created_at": "2026-09-30T15:18:47Z", "body":
+                "Lane report pr366-r1 — PASS | commit 68fc333 (tested merged with next at 867c69c)\n"
+                "not merged by the runner: it inherits a blocking audit finding: #616's audit of `8ddbd14` is not "
+                "resolved on `68fc333`."}
+        self.assertTrue(A.runner_waits_on_audit([held]))
+        ok, why = A.evaluate_pr(pr(), [held], FIXTURE["files_tests_only"])
+        self.assertEqual((ok, why), (True, "runner waits on an audit"))
+
     def test_a_lookup_that_fails_is_unknown_and_never_none(self):
         with patch.object(A, "run", side_effect=RuntimeError("offline")):
             self.assertEqual(A.head_holds(366, HEAD), ([], "offline"))

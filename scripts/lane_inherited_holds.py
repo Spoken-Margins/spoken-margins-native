@@ -34,8 +34,10 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import re
 import subprocess
+import tempfile
 import urllib.parse
 from pathlib import Path
 
@@ -48,6 +50,10 @@ RESOLUTION = re.compile(r'<!-- audit-resolution: (\{.*?\}) -->')
 FULL_SHA = re.compile(r'[0-9a-f]{40}')
 COMMENT_ID = re.compile(r'issuecomment-(\d+)')
 
+LANE_BOT = 'github-actions[bot]'  # its reports quote the hold text, template included: never a resolution
+MIN_EVIDENCE = 10  # characters; "..." and other placeholders are not evidence
+CACHE_ENTRIES = 600
+CACHE_BODY = 1500  # characters of a comment kept: the heading and the verdict line are at the top
 MAX_NEW_COMMITS = 300  # one commit-to-PR lookup each; more than this is not a PR to trust a partial answer for
 SEARCH_PAGES = 10
 INHERITED = 'it inherits a blocking audit finding'  # how every reason here begins; the runner words its hold by it
@@ -114,7 +120,10 @@ def resolutions(comments: list[dict], head: str) -> list[dict]:
     """The valid resolutions for <head> (its full sha) among the candidate's comments: {index, source}."""
     found = []
     for index, comment in enumerate(comments):
-        for match in RESOLUTION.finditer(comment.get('body') or ''):
+        body = comment.get('body') or ''
+        if (comment.get('user') or {}).get('login') == LANE_BOT or body.lstrip().startswith('Lane report'):
+            continue  # the runner's hold line quotes the template; a report is not a person's resolution
+        for match in RESOLUTION.finditer(body):
             try:
                 data = json.loads(match.group(1))
             except ValueError:
@@ -126,8 +135,10 @@ def resolutions(comments: list[dict], head: str) -> list[dict]:
             source_id = source if isinstance(source, int) and not isinstance(source, bool) else None
             if isinstance(source, str):
                 tail = COMMENT_ID.search(source)
-                source_id = int(tail.group(1)) if tail else int(source) if source.strip().isdigit() else None
-            if source_id is not None and isinstance(evidence, str) and evidence.strip():
+                bare = re.fullmatch(r'[0-9]+', source.strip())  # ASCII digits only: "\u00b2".isdigit() is True
+                source_id = int(tail.group(1)) if tail else int(bare.group(0)) if bare else None
+            if source_id is not None and isinstance(evidence, str) and len(evidence.strip()) >= MIN_EVIDENCE \
+                    and set(evidence.strip()) - set('.\u2026 -_?'):
                 found.append({'index': index, 'source': source_id})
     return found
 
@@ -160,7 +171,8 @@ def unresolved(holds: list[dict], comments: list[dict], head: str) -> list[dict]
 
 
 def resolution_template(hold: dict, head: str) -> str:
-    return f'<!-- audit-resolution: {{"source": {hold["id"]}, "head": "{head}", "evidence": "..."}} -->'
+    # Not valid JSON until the evidence is written in, so a copy of the hold line can never count as a resolution.
+    return f'<!-- audit-resolution: {{"source": {hold["id"]}, "head": "{head}", "evidence": <what you checked, in quotes>}} -->'
 
 
 def reasons(holds: list[dict], head: str) -> list[str]:
@@ -219,37 +231,91 @@ def oldest_commit_day(tree: Path, introduced: list[str]) -> datetime.date:
     return oldest.astimezone(datetime.timezone.utc).date() - datetime.timedelta(days=1)
 
 
-def source_numbers(api, repo: str, tree: Path, introduced: list[str], pr: int) -> set[int]:
-    """The other PRs that might hold an audit of a commit this PR brings in."""
+def search_numbers(api, repo: str, since: str, state: str) -> dict[int, str]:
+    """PR number -> updated_at for the PRs matching <state> that have comments and changed since <since>."""
+    query = urllib.parse.quote(f'repo:{repo} is:pr {state} comments:>0 updated:>={since}', safe='')
+    found: dict[int, str] = {}
+    for page in range(1, SEARCH_PAGES + 1):
+        result = api(f'search/issues?q={query}&sort=updated&order=desc&per_page=100&page={page}')
+        if result.get('incomplete_results'):
+            raise LookupFailed('GitHub search answered incompletely')
+        found.update({item['number']: item.get('updated_at') or '' for item in result.get('items', [])})
+        if page * 100 >= result.get('total_count', 0):
+            return found
+    raise LookupFailed(f'more than {SEARCH_PAGES * 100} PRs to look through ({state})')
+
+
+def source_numbers(api, repo: str, tree: Path, introduced: list[str], pr: int) -> dict[int, str]:
+    """The other PRs that might hold an audit of a commit this PR brings in: number -> updated_at ('' if unknown).
+
+    GitHub's commit-to-PR lookup finds a PR only while the commit is in its current head and, off the default branch,
+    only open PRs. So the search adds the closed-unmerged PRs and the open ones (a source whose branch was rewritten
+    since its audit no longer lists the commit) that changed since the oldest new commit.
+    """
     if len(introduced) > MAX_NEW_COMMITS:
         raise LookupFailed(f'the PR brings in {len(introduced)} new commits (over {MAX_NEW_COMMITS}); too many to trace')
-    numbers: set[int] = set()
-    for sha in introduced:  # open PRs (and merged ones, which can't hold a commit not on the base)
+    numbers: dict[int, str] = {}
+    for sha in introduced:
         for found in api(f'repos/{repo}/commits/{sha}/pulls?per_page=100'):
-            numbers.add(found['number'])
+            numbers[found['number']] = ''
     since = oldest_commit_day(tree, introduced).isoformat()
-    query = urllib.parse.quote(f'repo:{repo} is:pr is:closed is:unmerged comments:>0 updated:>={since}', safe='')
-    for page in range(1, SEARCH_PAGES + 1):  # closed-unmerged PRs: the commit lookup doesn't promise those
-        result = api(f'search/issues?q={query}&sort=updated&order=desc&per_page=100&page={page}')
-        numbers.update(item['number'] for item in result.get('items', []))
-        if page * 100 >= result.get('total_count', 0):
-            break
-    else:
-        raise LookupFailed(f'more than {SEARCH_PAGES * 100} closed PRs to look through')
-    if result.get('incomplete_results'):
-        raise LookupFailed('GitHub search answered incompletely')
-    numbers.discard(pr)
+    for state in ('is:closed is:unmerged', 'is:open'):
+        numbers.update(search_numbers(api, repo, since, state))
+    numbers.pop(pr, None)
     return numbers
 
 
-def find_holds(tree: Path, repo: str, base_ref: str, head: str, pr: int, api=gh_api) -> list[dict]:
+def load_cache(path: Path | None) -> dict:
+    try:
+        data = json.loads(path.read_text()) if path else {}
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_cache(path: Path | None, everything: dict, repo: str) -> None:
+    """Best effort: keeps the newest CACHE_ENTRIES comment lists of <repo>; a cache that can't be written costs calls."""
+    if not path:
+        return
+    try:
+        newest = sorted(everything[repo].items(), key=lambda item: item[1].get('updated', ''), reverse=True)
+        everything[repo] = dict(newest[:CACHE_ENTRIES])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile('w', dir=path.parent, delete=False, suffix='.tmp') as handle:
+            json.dump(everything, handle)
+        os.replace(handle.name, path)
+    except OSError:
+        pass
+
+
+def compact(comments: list[dict]) -> list[dict]:
+    return [{'id': c.get('id'), 'html_url': c.get('html_url') or '', 'body': (c.get('body') or '')[:CACHE_BODY],
+             'user': {'login': (c.get('user') or {}).get('login')}} for c in comments]
+
+
+def find_holds(tree: Path, repo: str, base_ref: str, head: str, pr: int, api=gh_api, cache: Path | None = None) -> list[dict]:
     """The blocking audits on other PRs that cover commits <head> brings in beyond <base_ref>. Raises LookupFailed.
 
-    api(path, paginate=False) is `gh api` as parsed JSON (injected in tests).
+    api(path, paginate=False) is `gh api` as parsed JSON (injected in tests). cache is a JSON file keeping the
+    comments of the PRs the search found, keyed by PR number and its updated_at, so a PR that hasn't changed
+    costs no call on the next run.
     """
     introduced = introduced_commits(tree, base_ref, head)
     if not introduced:
         return []
-    sources = {number: api(f'repos/{repo}/issues/{number}/comments?per_page=100', True)
-               for number in sorted(source_numbers(api, repo, tree, introduced, pr))}
+    kept = load_cache(cache).get(repo, {})
+    sources, fresh = {}, {}
+    for number, updated in sorted(source_numbers(api, repo, tree, introduced, pr).items()):
+        entry = kept.get(str(number))
+        if updated and entry and entry.get('updated') == updated:
+            comments = entry['comments']
+        else:
+            comments = compact(api(f'repos/{repo}/issues/{number}/comments?per_page=100', True))
+        if updated:
+            fresh[str(number)] = {'updated': updated, 'comments': comments}
+        sources[number] = comments
+    if cache and fresh:
+        everything = load_cache(cache)
+        everything[repo] = {**kept, **fresh}
+        save_cache(cache, everything, repo)
     return holds_from_sources(tree, introduced, sources)

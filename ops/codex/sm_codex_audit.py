@@ -185,7 +185,8 @@ _REQUEST_RE = re.compile(
 _NEGATION_RE = re.compile(r"(?i)(\bno\b|\bnot\b|n't\b|\bwithout\b|\bnever\b)[^.\n]{0,20}$")
 # The runner's hold line: 'not merged by the runner: it touches the audio session and has no
 # "Codex audit (Astra)" comment yet' (legacy), or the current "Codex or Claude audit" wording.
-_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*\bhas no \"?(?:Codex(?: or Claude)?|Claude) audit\b")
+_RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*(?:\bhas no \"?(?:Codex(?: or Claude)?|Claude) audit\b"
+                              r"|\binherits a blocking audit finding\b)")  # #712: an unresolved inherited finding needs one too
 # The runner's clean-audit rule (#441, lane-runner.py CLEAN_AUDIT): the verdict line opens so.
 _CLEAN_AUDIT_RE = re.compile(r"no (blocking )?findings\b", re.I)
 

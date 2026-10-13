@@ -74,8 +74,9 @@ class Repo:
 class FakeGitHub:
     """The three GitHub reads the lookup makes, answered from dictionaries."""
 
-    def __init__(self, comments, associated=None, closed=()):
-        self.comments, self.associated, self.closed = comments, associated or {}, list(closed)
+    def __init__(self, comments, associated=None, closed=(), open_prs=()):
+        self.comments, self.associated = comments, associated or {}
+        self.closed, self.open_prs = list(closed), list(open_prs)
         self.paths = []
 
     def __call__(self, path, paginate=False):
@@ -84,7 +85,9 @@ class FakeGitHub:
             sha = re.search(r'/commits/([0-9a-f]{40})/pulls', path).group(1)
             return [{'number': n} for n in self.associated.get(sha, [])]
         if path.startswith('search/issues'):
-            return {'total_count': len(self.closed), 'incomplete_results': False, 'items': [{'number': n} for n in self.closed]}
+            numbers = self.open_prs if 'is%3Aopen' in path else self.closed
+            return {'total_count': len(numbers), 'incomplete_results': False,
+                    'items': [{'number': n, 'updated_at': f'2026-10-13T00:00:0{n % 10}Z'} for n in numbers]}
         number = int(re.search(r'issues/(\d+)/comments', path).group(1))
         return self.comments.get(number, [])
 
@@ -103,9 +106,9 @@ class Incident(unittest.TestCase):
         self.head = self.repo.commit('y')
         self.blocked = audit(self.x, BLOCKED, 111)
 
-    def find(self, comments, associated=None, closed=(), pr=2, head=None):
-        github = FakeGitHub(comments, {self.x: [1]} if associated is None else associated, closed)
-        return holds.find_holds(self.repo.path, REPO, 'origin/next', head or self.head, pr, api=github), github
+    def find(self, comments, associated=None, closed=(), pr=2, head=None, open_prs=(), cache=None):
+        github = FakeGitHub(comments, {self.x: [1]} if associated is None else associated, closed, open_prs)
+        return holds.find_holds(self.repo.path, REPO, 'origin/next', head or self.head, pr, api=github, cache=cache), github
 
     def test_blocked_a_inside_clean_b_is_held(self):
         found, _ = self.find({1: [self.blocked]})
@@ -221,6 +224,50 @@ class Incident(unittest.TestCase):
         self.assertTrue(any(p.startswith('search/issues') for p in github.paths))
         self.assertIn('is%3Aunmerged', next(p for p in github.paths if p.startswith('search/issues')))
 
+    def test_a_source_whose_branch_was_rewritten_is_found_through_the_open_search(self):
+        # A was audited blocked at x, then force-pushed: GitHub no longer lists x under A, and A is open.
+        found, github = self.find({1: [self.blocked]}, associated={}, open_prs=[1])
+        self.assertEqual([h['id'] for h in found], [111])
+        self.assertEqual(self.find({1: [self.blocked]}, associated={})[0], [])  # no search hit, no association: unknown
+
+    def test_a_copy_of_the_hold_line_is_never_a_resolution(self):
+        # The runner's report quotes the template; neither it nor a placeholder may clear the finding.
+        found, _ = self.find({1: [self.blocked]})
+        template = holds.reasons(found, self.head)[0]
+        clean = audit(self.head, CLEAN, 222)
+        bot = {'id': 5, 'user': {'login': 'github-actions[bot]'}, 'body': f'Lane report pr2-r1 — PASS\nnot merged by the runner: {template}.'}
+        person = {'id': 6, 'user': {'login': 'uncomposed'}, 'body': template}
+        filled = resolution(111, self.head)
+        filled['user'] = {'login': 'github-actions[bot]'}
+        for name, note in {'the lane report': bot, 'a pasted template': person, 'a bot-posted resolution': filled,
+                           'placeholder evidence': resolution(111, self.head, evidence='...'),
+                           'short evidence': resolution(111, self.head, evidence='done')}.items():
+            with self.subTest(name):
+                self.assertEqual(holds.resolutions([note], self.head), [])
+                self.assertEqual(holds.unresolved(found, [clean, note, clean], self.head), found)
+                self.assertFalse(holds.needs_reaudit([clean, note], self.head))
+
+    def test_a_source_that_is_not_plain_digits_is_ignored_not_a_crash(self):
+        for source in ('\u00b2', '\u0661\u0662', '1.5', '', None, True, [1], {'a': 1}):
+            note = {'body': '<!-- audit-resolution: ' + json.dumps({'source': source, 'head': self.head,
+                                                                      'evidence': 'a real explanation'}) + ' -->'}
+            with self.subTest(source=source):
+                self.assertEqual(holds.resolutions([note], self.head), [])
+
+    def test_unchanged_prs_are_read_from_the_cache_and_changed_ones_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder) / 'holds.json'
+            found, github = self.find({1: [self.blocked]}, associated={}, closed=[1], cache=cache)
+            self.assertEqual([h['id'] for h in found], [111])
+            self.assertEqual(sum('issues/1/comments' in p for p in github.paths), 1)
+            again, github = self.find({1: []}, associated={}, closed=[1], cache=cache)  # same updated_at: not fetched
+            self.assertEqual([h['id'] for h in again], [111])
+            self.assertEqual(sum('issues/1/comments' in p for p in github.paths), 0)
+            cache.write_text('not json')  # a broken cache costs a call, not a verdict
+            broken, github = self.find({1: [self.blocked]}, associated={}, closed=[1], cache=cache)
+            self.assertEqual([h['id'] for h in broken], [111])
+            self.assertEqual(sum('issues/1/comments' in p for p in github.paths), 1)
+
     def test_the_candidate_s_own_audits_are_not_inherited(self):
         found, _ = self.find({2: [audit(self.head, BLOCKED, 7), audit(self.x, BLOCKED, 8)]},
                              associated={self.x: [2]})
@@ -293,7 +340,7 @@ class RunnerWiring(unittest.TestCase):
                 mock.patch.object(holds, 'find_holds', return_value=[]) as find:
             check = lane.inherited_check(github, Path('/tree'), 'next', 'a' * 40)
         policy.assert_called_once_with(Path('/tree'), 'next', 'scripts/lane_inherited_holds.py')
-        find.assert_called_once_with(Path('/tree'), REPO, 'origin/next', 'a' * 40, 2)
+        find.assert_called_once_with(Path('/tree'), REPO, 'origin/next', 'a' * 40, 2, cache=lane.INHERITED_CACHE)
         self.assertEqual(check([]), [])
 
     def test_the_new_policy_file_is_a_lane_path_and_loads_as_a_next_copy(self):
