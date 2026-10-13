@@ -21,6 +21,7 @@ final class MarginVoicePlayerTests: XCTestCase {
     /// 0.05 s tolerance is widened past a clip's length.)
     func testASharedVoiceIsHeardOnceAndEndsOnce() throws {
         let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
         let player = MarginVoicePlayer(host: host)
         let wav = try makeWAV(duration: 1)
         try player.prepareShared(try makePrompt(voice: wav), url: { wav }, rate: 1,
@@ -40,6 +41,7 @@ final class MarginVoicePlayerTests: XCTestCase {
     /// keeps the Margin on screen (Retry and Return to Source) and shows the failure.
     func testAFailedSharedVoiceStopsThePlayerAndThePollButKeepsTheCard() throws {
         let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
         let player = MarginVoicePlayer(host: host)
         let wav = try makeWAV(duration: 1)
         try Data("not audio".utf8).write(to: wav)
@@ -65,6 +67,7 @@ final class MarginVoicePlayerTests: XCTestCase {
     /// Stopping cancels the poll and forgets everything the player published, in both routes.
     func testStoppingCancelsThePollAndClearsWhatWasPublished() throws {
         let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
         let player = MarginVoicePlayer(host: host)
         let wav = try makeWAV(duration: 3)
         try player.prepareShared(try makePrompt(voice: wav), url: { wav }, rate: 1.5,
@@ -93,6 +96,7 @@ final class MarginVoicePlayerTests: XCTestCase {
     /// player moves only the phase (it reads Paused and resumes in place), and a failure clears only the flag.
     func testThePausedFlagAndThePhaseAreIndependentWrites() throws {
         let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
         let player = MarginVoicePlayer(host: host)
         let wav = try makeWAV(duration: 5)
         try player.prepareShared(try makePrompt(voice: wav), url: { wav }, rate: 1,
@@ -116,6 +120,7 @@ final class MarginVoicePlayerTests: XCTestCase {
     /// Your own Margin and a shared Margin publish separate state: starting your own leaves the shared state alone.
     func testOwnMarginPlaybackPublishesItsIdentityAndRate() throws {
         let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
         let player = MarginVoicePlayer(host: host)
         let wav = try makeWAV(duration: 3)
         let own = Interjection(
