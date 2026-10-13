@@ -98,7 +98,7 @@ final class Gate1AppModel: ObservableObject {
             }
             if oldValue.status.isPlaybackActive != snapshot.status.isPlaybackActive || oldValue.itemId != snapshot.itemId {
                 if !canPrepareLibraryAudio {
-                    foregroundAudioPreparationTask?.cancel()
+                    libraryAudioLoop.cancelOnly()
                 } else {
                     startForegroundAudioPreparationIfNeeded()
                 }
@@ -186,7 +186,7 @@ final class Gate1AppModel: ObservableObject {
             "openingState": String(describing: row?.startupAudioState),
             "openingChunks": String(row?.startupAudioCompletedChunkCount ?? 0),
             "openingTarget": String(row?.startupAudioTargetChunkCount ?? 0),
-            "workerActive": String(foregroundAudioPreparationTask != nil),
+            "workerActive": String(libraryAudioLoop.isRunning),
             "canPrepare": String(canPrepareLibraryAudio),
             "queueCount": String(audioPreparationQueue.count),
             "lowPower": String(ProcessInfo.processInfo.isLowPowerModeEnabled),
@@ -557,11 +557,8 @@ final class Gate1AppModel: ObservableObject {
     private var bulkSharePreparationGeneration = 0
     var shouldForceFirstSharedSourceMissForUITesting = UITestingHooks.forcesFirstSharedSourceMiss
     private var textAudioPrewarmTasks: [String: Task<Void, Never>] = [:]
-    var foregroundAudioPreparationTask: Task<Void, Never>?
-    let libraryAudioRenderGate = SerialWorkGate() // one Library item renders at a time (#281)
-    var libraryAudioTurns = LibraryAudioPreparationTurns() // which item the two passes are on (#281, #534)
-    var libraryAudioPreparingItemId: String? { get { libraryAudioTurns.preparingItemId } set { libraryAudioTurns.preparingItemId = newValue } }
-    var foregroundAudioPreparationGeneration = 0
+    let libraryAudioLoop = LibraryAudioPreparationLoop() // the foreground loop, its render gate and turns (#281, #534, #995)
+    var libraryAudioPreparingItemId: String? { get { libraryAudioLoop.turns.preparingItemId } set { libraryAudioLoop.turns.preparingItemId = newValue } }
     var episodeMapPreparationTask: Task<Void, Never>?
     var episodeMapPreparationItemId: String?
     var isUpdatingSkimAvailability = false
@@ -1021,7 +1018,7 @@ final class Gate1AppModel: ObservableObject {
         onDeviceSpeechGenerationDelayTask?.cancel()
         trashUndoDismissTask?.cancel()
         textAudioPrewarmTasks.values.forEach { $0.cancel() }
-        foregroundAudioPreparationTask?.cancel()
+        libraryAudioLoop.cancelOnly()
         sourceImportTask?.cancel()
         quickAccessRefreshTask?.cancel()
         interjectionAudioCompletionTask?.cancel()
@@ -1497,7 +1494,7 @@ final class Gate1AppModel: ObservableObject {
         SupertonicResourcePolicy.memoryBackoff.recordWarning()
         // Cancel demand before unloading: otherwise the next chunk can reload
         // the same sessions immediately after the warning.
-        foregroundAudioPreparationTask?.cancel()
+        libraryAudioLoop.cancelOnly()
         if let client = speechPlaybackClient as? SupertonicSpeechPlaybackClient {
             do {
                 if try stopOnDeviceRenderingRecordingFallback(client, returnsAutomatically: true, code: "memory_warning_stop", reason: .memoryWarning) {
@@ -3142,9 +3139,7 @@ final class Gate1AppModel: ObservableObject {
     func rebuildEngineForCurrentSettings() -> Bool {
         guard let store else { return true }
         do {
-            foregroundAudioPreparationTask?.cancel()
-            foregroundAudioPreparationGeneration += 1
-            foregroundAudioPreparationTask = nil
+            libraryAudioLoop.stopAndInvalidate()
             pendingStartupAudioPreparationItemIds.removeAll()
             let replacement = try makeEngine(store: store)
             let sessionId = engine?.currentSession?.id ?? snapshot.sessionId

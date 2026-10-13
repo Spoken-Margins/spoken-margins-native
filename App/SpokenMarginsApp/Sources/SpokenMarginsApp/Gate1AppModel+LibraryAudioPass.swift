@@ -18,7 +18,15 @@ import PDFKit
 #endif
 
 /// Library audio preparation passes: the foreground loop and the background task's pass (#991).
-extension Gate1AppModel {
+extension Gate1AppModel: LibraryAudioPreparationHost {
+    func runForegroundAudioPreparationPasses() async {
+        await runForegroundPreparationLoop { await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) }
+    }
+
+    func foregroundAudioPreparationLoopDidEnd() {
+        if let store { try? refreshLibraryRows(store: store) }
+    }
+
     func performBackgroundPreparationPass() async -> BackgroundPreparationWorkResult {
         guard let store else { return .finished }
         let progressToken = {
@@ -72,33 +80,13 @@ extension Gate1AppModel {
     }
 
     func startForegroundAudioPreparationIfNeeded() {
-        requestContinuedAudioPreparationIfNeeded() // before the guard: a loop may already be running when the listener asks (#905)
-        guard foregroundAudioPreparationTask == nil else { return }
-        foregroundAudioPreparationGeneration += 1
-        let generation = foregroundAudioPreparationGeneration
-        foregroundAudioPreparationTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            await self.runForegroundPreparationLoop { await self.performBackgroundAudioPreparationPass(foregroundDemandOnly: true) }
-            let ownsLoop = self.foregroundAudioPreparationGeneration == generation
-            if ownsLoop || self.foregroundAudioPreparationTask == nil {
-                // Also when cancelled between passes: its item stops showing progress (#281).
-                let resume = ownsLoop ? self.libraryAudioTurns.foregroundLoopEnded() : false
-                if !ownsLoop { self.libraryAudioTurns.stopped(.foreground) }
-                if ownsLoop { self.foregroundAudioPreparationTask = nil }
-                if ownsLoop, Task.isCancelled || resume, self.playbackAllowsLibraryAudioPreparation {
-                    self.startForegroundAudioPreparationIfNeeded()
-                }
-                if let store = self.store {
-                    try? self.refreshLibraryRows(store: store)
-                }
-            }
-        }
+        libraryAudioLoop.start(host: self)
     }
 
     #if canImport(BackgroundTasks) && canImport(UIKit)
     /// The background task stopped: its item stops showing progress, and the foreground loop picks its own work again (#534).
     func libraryAudioBackgroundDrainEnded() {
-        libraryAudioTurns.stopped(.background)
+        libraryAudioLoop.turns.stopped(.background)
         if let store { try? refreshLibraryRows(store: store) }
         if canPrepareLibraryAudio, UIApplication.shared.applicationState == .active { startForegroundAudioPreparationIfNeeded() }
     }
@@ -110,7 +98,7 @@ extension Gate1AppModel {
 
     /// The foreground loop and the background task take turns, so two Library items never render at once (#281).
     func performBackgroundAudioPreparationPass(foregroundDemandOnly: Bool = false) async -> Bool {
-        await libraryAudioRenderGate.run { await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) }
+        await libraryAudioLoop.renderGate.run { await self.preparationPassInTurn(foregroundDemandOnly: foregroundDemandOnly) }
     }
 
     private func preparationPassInTurn(foregroundDemandOnly: Bool) async -> Bool {
@@ -118,10 +106,10 @@ extension Gate1AppModel {
         let caller: LibraryAudioPreparationCaller = foregroundDemandOnly ? .foreground : .background
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
-        guard canPrepareLibraryAudio else { libraryAudioTurns.stopped(caller); return false }
+        guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); return false }
         guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
               hasAcceptedCurrentTerms,
-              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioTurns.blocked(caller); return false } // settles until these change (#647)
+              let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioLoop.turns.blocked(caller); return false } // settles until these change (#647)
         let device = preparationSeams.deviceConditions() // heat and Low Power Mode, checked per chunk (#64)
         do {
             try Task.checkCancellation()
@@ -135,7 +123,7 @@ extension Gate1AppModel {
             }
             let hasMoreMatchingJobs = { try !LibraryAudioPreparationTurns.eligible(store.loadAudioPreparationJobs(), for: caller).isEmpty }
             let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
-            guard var job = libraryAudioTurns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioTurns.stopped(caller); return false }
+            guard var job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
             if let previous, previous != job.itemId,
                libraryItems.first(where: { $0.id == previous })?.startupAudioState == .preparing { updateLibraryStartupAudioState(itemId: previous, state: .waiting) }
             if libraryItems.first(where: { $0.id == job.itemId })?.startupAudioState == .waiting { updateLibraryStartupAudioState(itemId: job.itemId, state: .preparing) }
