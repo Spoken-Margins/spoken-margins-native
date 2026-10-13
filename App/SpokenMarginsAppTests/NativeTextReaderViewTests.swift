@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 import UIKit
 import SessionKit
 @testable import SpokenMarginsApp
@@ -53,5 +54,66 @@ final class NativeTextReaderViewTests: XCTestCase {
         view.layoutIfNeeded()
         XCTAssertEqual(view.selectedRange, selection, "A normal SwiftUI update must preserve a multi-sentence selection")
         XCTAssertEqual(view.contentOffset, scrolled, "The initial scroll must not run again after the listener browses")
+    }
+
+    /// Mounts the whole sheet: the reader tests above build the UITextView alone and cannot see
+    /// a SwiftUI ancestor's identifier replace the text view's (#1426). SwiftUI vends its
+    /// accessibility nodes lazily, so the XCUI hierarchy in J1 is the real check that the sheet
+    /// identifier still exists; this test guards only the text view's identifier through the mounted sheet.
+    func testMountedSheetKeepsTheTextViewIdentifier() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousKeyWindow = scene.windows.first { $0.isKeyWindow }
+        let text = "First sentence. Current sentence. Last sentence."
+        let host = UIHostingController(rootView: NativeTextPeekView(
+            title: "Article", text: text, chapters: [], currentOffset: "First sentence. ".count
+        ))
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+            previousKeyWindow?.makeKeyAndVisible()
+        }
+
+        var textView: UITextView?
+        for _ in 0..<150 where textView == nil {
+            host.view.layoutIfNeeded()
+            textView = Self.subviews(of: host.view).compactMap { $0 as? UITextView }.first
+            if textView == nil { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        let mountedTextView = try XCTUnwrap(textView, "The full-source reader never mounted its text view")
+        XCTAssertEqual(mountedTextView.accessibilityIdentifier, NativeTextPeekView.textIdentifier)
+
+        var found: [(identifier: String, node: NSObject)] = []
+        var visited = Set<ObjectIdentifier>()
+        Self.collectIdentifiers(from: host.view, into: &found, visited: &visited)
+        XCTAssertTrue(found.contains { $0.identifier == NativeTextPeekView.textIdentifier },
+                      "The text view must keep its identifier; saw \(found.map { $0.identifier })")
+        XCTAssertFalse(found.contains { $0.identifier == NativeTextPeekView.sheetIdentifier && $0.node === mountedTextView },
+                       "The sheet's identifier replaced the text view's")
+    }
+
+    private static func subviews(of view: UIView) -> [UIView] {
+        [view] + view.subviews.flatMap { subviews(of: $0) }
+    }
+
+    /// Walks views and the accessibility elements SwiftUI vends, which are not always views.
+    private static func collectIdentifiers(from node: NSObject, into found: inout [(identifier: String, node: NSObject)],
+                                           visited: inout Set<ObjectIdentifier>) {
+        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
+        if node.responds(to: Selector(("accessibilityIdentifier"))),
+           let identifier = node.value(forKey: "accessibilityIdentifier") as? String, !identifier.isEmpty {
+            found.append((identifier, node))
+        }
+        var children: [NSObject] = []
+        if let view = node as? UIView { children += view.subviews }
+        children += (node.accessibilityElements ?? []).compactMap { $0 as? NSObject }
+        let count = node.accessibilityElementCount()
+        if count != NSNotFound, count > 0 {
+            children += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
+        }
+        for child in children { collectIdentifiers(from: child, into: &found, visited: &visited) }
     }
 }
