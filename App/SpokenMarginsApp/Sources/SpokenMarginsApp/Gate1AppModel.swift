@@ -17,18 +17,6 @@ import AVFoundation
 import PDFKit
 #endif
 
-struct PiperVoiceOption: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let language: String
-    let modelURL: URL
-    let configURL: URL?
-
-    var displayName: String {
-        language.isEmpty ? name : "\(name) · \(language)"
-    }
-}
-
 struct ObsidianImportRequest: Sendable {
     let url: URL
     let itemId: String
@@ -462,9 +450,6 @@ final class Gate1AppModel: ObservableObject {
         rawValue: UserDefaults.standard.string(forKey: "ttsVoiceSelection") ?? ""
     ) ?? .james
     @Published var ttsMode = UserDefaults.standard.string(forKey: "ttsMode") ?? "supertonic"
-    @Published var piperVoiceId = UserDefaults.standard.string(forKey: "piperVoiceId") ?? ""
-    @Published var piperVoiceOptions: [PiperVoiceOption] = []
-    @Published var piperStatus = "Not checked"
     @Published var isRenderingSupertonicPreview = false
     @Published var providerAPIKey = KeychainStore.load(service: "SpokenMargins", account: "OpenAICompatibleAPIKey") ?? ""
     @Published var providerProbeStatus = "Not checked"
@@ -1709,52 +1694,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    func importPiperVoiceAssets(urls: [URL]) {
-        guard !urls.isEmpty else {
-            reportFailure("No Piper voice files were selected.")
-            return
-        }
-
-        do {
-            let assetsDirectory = try piperAssetsDirectory()
-            try FileManager.default.createDirectory(at: assetsDirectory, withIntermediateDirectories: true)
-
-            var copied: [String] = []
-            var ignored: [String] = []
-
-            for url in urls {
-                let didAccess = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didAccess {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-
-                guard isSupportedPiperVoiceAsset(url) else {
-                    ignored.append(url.lastPathComponent)
-                    continue
-                }
-
-                let destinationURL = assetsDirectory.appending(path: url.lastPathComponent)
-                if FileManager.default.fileExists(atPath: destinationURL.path) {
-                    try FileManager.default.removeItem(at: destinationURL)
-                }
-                try FileManager.default.copyItem(at: url, to: destinationURL)
-                copied.append(url.lastPathComponent)
-            }
-
-            refreshPiperVoiceStatus()
-            let ignoredSuffix = ignored.isEmpty ? "" : " Ignored: \(ignored.joined(separator: ", "))."
-            if copied.isEmpty {
-                reportFailure("No Piper assets were imported. Select a .onnx voice model and its .onnx.json config.\(ignoredSuffix)")
-            } else {
-                reportConfirmation("Imported Piper asset\(copied.count == 1 ? "" : "s").\(ignoredSuffix)")
-            }
-        } catch {
-            reportFailure(error, context: "Piper voice import failed")
-        }
-    }
-
     func start() {
         guard !blockOfflineEpisodeStart(itemId: activeItemId) else { return }
         guard !requireTermsDecisionBeforePlayback(.startCurrentItem) else { return }
@@ -2662,33 +2601,6 @@ final class Gate1AppModel: ObservableObject {
         handleGate2CompactURL(url)
     }
 
-    func refreshPiperVoiceStatus() {
-        do {
-            piperVoiceOptions = try discoverPiperVoiceOptions()
-            if piperVoiceId.isEmpty, let first = piperVoiceOptions.first {
-                piperVoiceId = first.id
-                UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
-            } else if !piperVoiceId.isEmpty, !piperVoiceOptions.contains(where: { $0.id == piperVoiceId }) {
-                piperVoiceId = piperVoiceOptions.first?.id ?? ""
-                UserDefaults.standard.set(piperVoiceId, forKey: "piperVoiceId")
-            }
-            if piperVoiceOptions.isEmpty {
-                piperStatus = "No Piper voices installed. Import a .onnx model and .onnx.json config."
-            } else if let selected = piperVoiceOptions.first(where: { $0.id == piperVoiceId }) {
-                piperStatus = "Selected \(selected.displayName). Piper renderer not linked in this build; playback will fail instead of falling back to system speech."
-            } else {
-                piperStatus = "\(piperVoiceOptions.count) Piper voice\(piperVoiceOptions.count == 1 ? "" : "s") installed."
-            }
-            diagnostics["piperVoices"] = "\(piperVoiceOptions.count)"
-            diagnostics["piperVoice"] = piperVoiceId.isEmpty ? "none" : piperVoiceId
-            diagnostics["piperStatus"] = piperStatus
-        } catch {
-            piperVoiceOptions = []
-            piperStatus = "Piper voice check failed: \(error.localizedDescription)"
-            diagnostics["piperStatus"] = piperStatus
-        }
-    }
-
     var hasActiveSession: Bool {
         snapshot.sessionId != nil
     }
@@ -3279,84 +3191,6 @@ final class Gate1AppModel: ObservableObject {
             in: .userDomainMask,
             appropriateFor: nil,
             create: true
-        )
-    }
-
-    private func piperAssetsDirectory() throws -> URL {
-        try applicationSupportDirectory().appending(path: "Piper", directoryHint: .isDirectory)
-    }
-
-    private func isSupportedPiperVoiceAsset(_ url: URL) -> Bool {
-        let lowercasedName = url.lastPathComponent.lowercased()
-        return lowercasedName.hasSuffix(".onnx") || lowercasedName.hasSuffix(".onnx.json")
-    }
-
-    private func discoverPiperVoiceOptions() throws -> [PiperVoiceOption] {
-        let directory = try piperAssetsDirectory()
-        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-        let urls = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        return urls
-            .filter { $0.lastPathComponent.lowercased().hasSuffix(".onnx") }
-            .compactMap { modelURL -> PiperVoiceOption? in
-                let voiceId = piperVoiceId(forModelURL: modelURL)
-                guard !voiceId.isEmpty else { return nil }
-                let configURL = piperConfigURL(forVoiceId: voiceId, in: directory)
-                let metadata = piperVoiceMetadata(configURL: configURL)
-                return PiperVoiceOption(
-                    id: voiceId,
-                    name: metadata.name ?? piperDisplayName(for: voiceId),
-                    language: metadata.language ?? "",
-                    modelURL: modelURL,
-                    configURL: configURL
-                )
-            }
-            .sorted { lhs, rhs in
-                lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
-            }
-    }
-
-    func piperVoiceId(forModelURL url: URL) -> String {
-        let name = url.lastPathComponent
-        guard name.lowercased().hasSuffix(".onnx") else { return "" }
-        return String(name.dropLast(5))
-    }
-
-    private func piperConfigURL(forVoiceId voiceId: String, in directory: URL) -> URL? {
-        let candidates = [
-            directory.appending(path: "\(voiceId).onnx.json"),
-            directory.appending(path: "\(voiceId).json")
-        ]
-        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
-    }
-
-    private func piperDisplayName(for voiceId: String) -> String {
-        voiceId
-            .replacingOccurrences(of: "_", with: " ")
-            .replacingOccurrences(of: "-", with: " ")
-            .split(separator: " ")
-            .map { token in
-                token.prefix(1).uppercased() + token.dropFirst()
-            }
-            .joined(separator: " ")
-    }
-
-    private func piperVoiceMetadata(configURL: URL?) -> (name: String?, language: String?) {
-        guard let configURL,
-              let data = try? Data(contentsOf: configURL),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            return (nil, nil)
-        }
-        let dataset = object["dataset"] as? String
-        let language = object["language"] as? [String: Any]
-        let languageCode = language?["code"] as? String
-        let languageName = language?["name"] as? String
-        return (
-            dataset?.isEmpty == false ? dataset : nil,
-            languageName ?? languageCode
         )
     }
 
