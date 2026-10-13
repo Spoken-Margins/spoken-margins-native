@@ -10,6 +10,8 @@ struct ExperienceTimelineRailScreen: View {
     var onReturnToPlayback: (() -> Void)? = nil
     var onEditorFocusChange: ((Bool) -> Void)? = nil
 
+    @State private var followsPlayback = true
+    @State private var selectedSource: PlaybackTimelineSourceView.Selection?
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var entries: [TimelineRailEntry] = []
@@ -18,7 +20,7 @@ struct ExperienceTimelineRailScreen: View {
 
     var body: some View {
         if onReturnToPlayback != nil {
-            content
+            content.environment(\.colorScheme, .dark)
         } else {
             NavigationStack {
                 content
@@ -35,7 +37,8 @@ struct ExperienceTimelineRailScreen: View {
                     Text(model.selectedItem.title)
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
-                        .lineLimit(onReturnToPlayback == nil ? nil : 1)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.bottom, 12)
 
@@ -69,7 +72,22 @@ struct ExperienceTimelineRailScreen: View {
                 .frame(maxWidth: .infinity)
             }
             .scrollDismissesKeyboard(.interactively)
-            .background(AppColors.bone)
+            .background(onReturnToPlayback == nil ? AppColors.bone : AppColors.listeningBackground)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                if onReturnToPlayback != nil && !followsPlayback && !responseEditorFocused {
+                    HStack {
+                        Spacer()
+                        Button("Follow playback", systemImage: "location.fill") {
+                            followsPlayback = true
+                            focusTimeline(using: proxy)
+                        }
+                        .frame(minHeight: 44)
+                        .accessibilityIdentifier("timeline.followPlayback.button")
+                    }
+                    .padding(.horizontal, 18)
+                    .background(AppColors.listeningBackground)
+                }
+            }
             .safeAreaInset(edge: .bottom, spacing: 8) {
                 if onReturnToPlayback == nil && model.shouldShowMiniPlayer && !responseEditorFocused {
                     MiniPlayerBar()
@@ -79,10 +97,24 @@ struct ExperienceTimelineRailScreen: View {
             }
             .onAppear {
                 refreshEntries(from: model.selectedItem)
-                focusRequestedMargin(using: proxy)
+                focusTimeline(using: proxy)
             }
             .onReceive(model.$selectedItem) { item in
                 refreshEntries(from: item)
+            }
+            .onChange(of: model.selectedItem.id) { _, _ in
+                followsPlayback = true
+                focusTimeline(using: proxy)
+            }
+            .onChange(of: currentEntryID) { _, _ in
+                guard onReturnToPlayback != nil && followsPlayback else { return }
+                focusTimeline(using: proxy)
+            }
+            .onChange(of: model.requestedTimelineFocusMarginID) { _, id in
+                if id != nil { focusTimeline(using: proxy) }
+            }
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { followsPlayback = false }
             }
             .onDisappear { onEditorFocusChange?(false) }
             .onChange(of: responseEditorFocused) { _, isFocused in
@@ -120,6 +152,9 @@ struct ExperienceTimelineRailScreen: View {
                     .accessibilityIdentifier("timeline.keyboard.done")
             }
         }
+        .sheet(item: $selectedSource) { entry in
+            PlaybackTimelineSourceView(selection: entry)
+        }
         .sheet(item: $selectedSharedMargin) { row in
             SharedMarginDetailView(row: row).environmentObject(model)
         }
@@ -130,22 +165,8 @@ struct ExperienceTimelineRailScreen: View {
     }
 
     private var timelineRail: some View {
-        LazyVStack(spacing: 0) {
-            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                TimelineRailRow(
-                    entry: entry,
-                    isCurrent: isCurrent(entry.action),
-                    isFirst: index == 0,
-                    isLast: index == entries.count - 1,
-                    action: { perform(entry.action) }
-                )
-                .equatable()
-                .contextMenu { details(for: entry.action) }
-                .id(entry.id)
-                .accessibilityIdentifier(entry.accessibilityIdentifier)
-            }
-        }
-        .accessibilityIdentifier("timeline.rail")
+        PlaybackTimelineListView(entries: entries, currentIDs: currentEntryIDs,
+                                 perform: perform, details: details)
     }
 
     private var reflectionComposer: some View {
@@ -186,6 +207,16 @@ struct ExperienceTimelineRailScreen: View {
 
     static func makeEntries(from item: ItemDetailState, sessionID: String?, playbackDurationMs: Int? = nil) -> [TimelineRailEntry] {
         var result: [TimelineRailEntry] = []
+        let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
+
+        for entry in item.timelineSource.entries {
+            let position = Double(entry.start) / Double(max(1, item.timelineSource.characterCount)) * 100
+            result.append(TimelineRailEntry(
+                id: entry.id, position: Int(position.rounded()), rank: 0, provenance: .source,
+                title: entry.label ?? entry.role.timelineTitle,
+                detail: TimelineTextPresentation.excerpt(entry.text, characterLimit: TimelineTextPresentation.supportingCharacterLimit),
+                action: .sourceText(entry), precisePosition: position))
+        }
 
         let sourceAlreadyStartsAtBeginning = item.chapters.contains { $0.percent == 0 }
             || item.mediaChapters.contains { $0.startMs == 0 }
@@ -217,12 +248,14 @@ struct ExperienceTimelineRailScreen: View {
                     provenance: .source,
                     title: chapter.title,
                     detail: "Chapter · \(chapter.percent)%",
-                    action: .chapter(chapter)
+                    action: .chapter(chapter),
+                    precisePosition: TimelineRailSortKey.percent(position: chapter.startChar, length: sourceLength)
                 )
             )
         }
 
-        let duration = max(1, item.mediaDurationMs ?? playbackDurationMs ?? 1)
+        let knownDuration = (item.mediaDurationMs ?? playbackDurationMs).flatMap { $0 > 0 ? $0 : nil }
+        let duration = knownDuration ?? 1
         let sourceChapterIDs = Set(item.chapters.map(\.id))
         for chapter in item.mediaChapters where !sourceChapterIDs.contains(chapter.id) {
             let position = max(0, min(100, Int((Double(chapter.startMs) / Double(duration) * 100).rounded())))
@@ -234,7 +267,7 @@ struct ExperienceTimelineRailScreen: View {
                     provenance: .source,
                     title: chapter.title,
                     detail: "Chapter · \(formatTime(chapter.startMs))",
-                    action: .mediaChapter(chapter)
+                    action: .mediaChapter(chapter), precisePosition: TimelineRailSortKey.percent(position: chapter.startMs, length: knownDuration)
                 )
             )
         }
@@ -248,7 +281,7 @@ struct ExperienceTimelineRailScreen: View {
                 id: "source.listeningMapScene.\(scene.id)", position: position, rank: 0,
                 provenance: .listeningMap, title: scene.title,
                 detail: "Generated scene · \(formatTime(scene.startMs))" + (summary.map { " · \($0)" } ?? ""),
-                action: .listeningMapScene(scene)
+                action: .listeningMapScene(scene), precisePosition: TimelineRailSortKey.percent(position: scene.startMs, length: knownDuration)
             ))
         }
 
@@ -265,7 +298,8 @@ struct ExperienceTimelineRailScreen: View {
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
                     detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
                     action: .sharedMargin(row),
-                    isNew: row.isNew
+                    isNew: row.isNew,
+                    precisePosition: TimelineRailSortKey.percent(position: margin.resolution.localMediaTimeMs ?? row.placementStatus.previousMediaTimeMs, length: knownDuration)
                 ))
             }
         }
@@ -287,19 +321,20 @@ struct ExperienceTimelineRailScreen: View {
                         characterLimit: TimelineTextPresentation.marginCharacterLimit
                     ),
                     detail: row.needsAttention ? row.attentionDescription : "Captured at \(position)%",
-                    action: .margin(row)
+                    action: .margin(row),
+                    precisePosition: preciseSourcePosition(row.interjection, in: item, durationMs: knownDuration)
                 )
             )
         }
 
         var children: [String: [TimelineRailEntry]] = [:]
         for (turnIndex, turn) in item.turns.enumerated() {
-            let position = turnPosition(turn, in: item, visited: [])
+            let position = turnPosition(turn, in: item, durationMs: knownDuration, visited: [])
             let provenance: TimelineProvenance = turn.role == "user" ? .userResponse : .assistantResponse
             result.append(
                 TimelineRailEntry(
                     id: "turn.\(turn.id)",
-                    position: position,
+                    position: Int(position.rounded()),
                     rank: 2 + turnIndex * 10,
                     provenance: provenance,
                     title: turn.role == "user" ? "My response" : "Assistant response",
@@ -307,7 +342,7 @@ struct ExperienceTimelineRailScreen: View {
                         turn.summary ?? turn.text ?? humanize(turn.status),
                         characterLimit: TimelineTextPresentation.supportingCharacterLimit
                     ),
-                    action: .turn(turn)
+                    action: .turn(turn), precisePosition: position
                 )
             )
             for chapter in turn.chapters ?? [] {
@@ -364,7 +399,17 @@ struct ExperienceTimelineRailScreen: View {
             .map { MarginRow(interjection: $0, itemTitle: item.title, sessionDate: sessionDate) }
     }
 
-    private static func turnPosition(_ turn: ConversationTurn, in item: ItemDetailState, visited: Set<String>) -> Int {
+    private static func preciseSourcePosition(_ margin: Interjection, in item: ItemDetailState, durationMs: Int?) -> Double? {
+        if item.isNativeAudio {
+            return TimelineRailSortKey.percent(position: margin.anchor.mediaTimeMs, length: durationMs)
+        }
+        guard margin.anchor.endChar > margin.anchor.startChar else { return nil }
+        let length = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
+        return TimelineRailSortKey.percent(position: margin.anchor.startChar, length: length)
+    }
+
+    private static func turnPosition(_ turn: ConversationTurn, in item: ItemDetailState, durationMs: Int?,
+                                     visited: Set<String>) -> Double {
         guard !visited.contains(turn.id) else { return 100 }
         let visited = visited.union([turn.id])
         let sourceIDs = Set(turn.sourceInterjectionIds)
@@ -372,10 +417,11 @@ struct ExperienceTimelineRailScreen: View {
             .filter { $0.sessionId == turn.sessionId && sourceIDs.contains($0.id) }
             .map { margin in
                 if margin.targetType == .item {
-                    return InterjectionPositionPresentation.sortPercent(for: margin, durationMs: item.mediaDurationMs)
+                    return preciseSourcePosition(margin, in: item, durationMs: durationMs)
+                        ?? Double(InterjectionPositionPresentation.sortPercent(for: margin, durationMs: item.mediaDurationMs))
                 }
                 guard let parent = item.turns.first(where: { $0.id == margin.targetId }) else { return 100 }
-                return turnPosition(parent, in: item, visited: visited)
+                return turnPosition(parent, in: item, durationMs: durationMs, visited: visited)
             }.max() ?? 100
     }
 
@@ -392,6 +438,8 @@ struct ExperienceTimelineRailScreen: View {
 
     private func perform(_ action: TimelineRailEntry.Action) {
         switch action {
+        case .sourceText(let entry):
+            selectedSource = .init(entry: entry, sourceReference: model.selectedItem.externalReference)
         case .beginning:
             if let first = model.selectedItem.chapters.first {
                 model.jumpToChapter(first, fromTimeline: true)
@@ -426,11 +474,38 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
-    private func focusRequestedMargin(using proxy: ScrollViewProxy) {
-        guard let id = model.requestedTimelineFocusMarginID else { return }
-        DispatchQueue.main.async {
+    private var currentSourceEntryID: String? {
+        guard model.snapshot.itemId == model.selectedItem.id,
+              model.snapshot.targetType == TargetType.itemTextTTS.rawValue,
+              let offset = model.snapshot.currentTextStart else { return nil }
+        return model.selectedItem.timelineSource.entry(atCharacter: offset)?.id
+    }
+
+    private var currentEntryIDs: Set<String> {
+        let sourceID = currentSourceEntryID
+        return Set(entries.filter { entry in
+            if case .sourceText = entry.action { return entry.id == sourceID }
+            return isCurrent(entry.action)
+        }.map(\.id))
+    }
+
+    private var currentEntryID: String? {
+        currentSourceEntryID ?? entries.first(where: { isCurrent($0.action) })?.id
+    }
+
+    private func focusTimeline(using proxy: ScrollViewProxy) {
+        guard !responseEditorFocused else { return }
+        let requested = model.requestedTimelineFocusMarginID
+        guard requested != nil || followsPlayback,
+              let id = requested ?? currentEntryID ?? entries.first?.id else { return }
+        if requested != nil { followsPlayback = false }
+        Task { @MainActor in
+            await Task.yield()
+            guard !responseEditorFocused else { return }
             withAnimation(.snappy) { proxy.scrollTo(id, anchor: .center) }
-            model.requestedTimelineFocusMarginID = nil
+            if model.requestedTimelineFocusMarginID == requested {
+                model.requestedTimelineFocusMarginID = nil
+            }
         }
     }
 
@@ -453,6 +528,7 @@ struct ExperienceTimelineRailScreen: View {
 
 struct TimelineRailEntry: Identifiable, Equatable {
     enum Action: Equatable {
+        case sourceText(TimelineSourceContent.Entry)
         case beginning
         case chapter(Chapter)
         case mediaChapter(MediaTimelineChapter)
@@ -472,9 +548,20 @@ struct TimelineRailEntry: Identifiable, Equatable {
     let action: Action
     /// A shared Margin the listener hasn't heard yet (#469).
     var isNew = false
+    var precisePosition: Double? = nil
 
     var sortKey: TimelineRailSortKey {
-        TimelineRailSortKey(position: position, rank: rank, id: id)
+        TimelineRailSortKey(position: position, rank: rank, id: id, precisePosition: precisePosition)
+    }
+
+    var provenanceLabel: String {
+        if case .sourceText = action { return "Source" }
+        return provenance.label
+    }
+
+    var currentLabel: String {
+        if case .sourceText = action { return "Current passage" }
+        return "Current chapter"
     }
 
     var accessibilityIdentifier: String {
@@ -487,121 +574,7 @@ struct TimelineRailEntry: Identifiable, Equatable {
         case .mediaChapter(let chapter): "timeline.mediaChapter.jump.\(chapter.id)"
         case .listeningMapScene(let scene): "timeline.listeningMapScene.jump.\(scene.id)"
         case .beginning: "timeline.source.beginning"
-        }
-    }
-}
-
-private struct TimelineRailRow: View, Equatable {
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    let entry: TimelineRailEntry
-    let isCurrent: Bool
-    let isFirst: Bool
-    let isLast: Bool
-    let action: () -> Void
-
-    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.entry == rhs.entry && lhs.isCurrent == rhs.isCurrent && lhs.isFirst == rhs.isFirst && lhs.isLast == rhs.isLast
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 14) {
-            if !dynamicTypeSize.isAccessibilitySize {
-                ZStack(alignment: .top) {
-                    Rectangle()
-                        .fill(AppColors.border)
-                        .frame(width: 2)
-                        .padding(.top, isFirst ? 22 : 0)
-                        .padding(.bottom, isLast ? 44 : 0)
-                    provenanceMarker
-                        .padding(.top, 20)
-                }
-                .frame(width: 30)
-            }
-
-            Button(action: action) {
-                VStack(alignment: .leading, spacing: 7) {
-                    (dynamicTypeSize.isAccessibilitySize
-                        ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                        : AnyLayout(HStackLayout(alignment: .firstTextBaseline))) {
-                        Label(dynamicTypeSize.isAccessibilitySize ? entry.provenance.label : entry.provenance.label.uppercased(), systemImage: entry.provenance.systemImage)
-                            .font(.caption2.weight(.bold))
-                            .tracking(dynamicTypeSize.isAccessibilitySize ? 0 : 0.8)
-                            .foregroundStyle(provenanceColor)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if entry.isNew { NewMarginBadge() }
-                        if !dynamicTypeSize.isAccessibilitySize { Spacer() }
-                        Text("\(entry.position)%")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(AppColors.secondaryText)
-                    }
-                    if isCurrent {
-                        Label("Current chapter", systemImage: "speaker.wave.2.fill")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(AppColors.evergreen)
-                    }
-                    Text(entry.title)
-                        .font(.headline)
-                        .foregroundStyle(AppColors.text)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 3)
-                    Text(entry.detail)
-                        .font(.subheadline)
-                        .foregroundStyle(AppColors.secondaryText)
-                        .multilineTextAlignment(.leading)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 4)
-                }
-                .padding(15)
-                .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
-                .background(isCurrent ? AppColors.evergreen.opacity(0.14) : surfaceColor)
-                .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 17, style: .continuous)
-                        .stroke(provenanceColor.opacity(entry.provenance == .assistantResponse ? 0.55 : 0.24), style: StrokeStyle(lineWidth: 1, dash: entry.provenance == .assistantResponse ? [5, 4] : []))
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 12)
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(isCurrent ? "Current chapter. " : "")\(entry.isNew ? "New to you. " : "")\(entry.provenance.label), \(entry.position) percent. \(entry.title). \(entry.detail)")
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { action() }
-    }
-
-    @ViewBuilder
-    private var provenanceMarker: some View {
-        switch entry.provenance {
-        case .source:
-            Circle().fill(provenanceColor).frame(width: 13, height: 13)
-        case .listeningMap:
-            Image(systemName: "map").font(.caption.bold()).foregroundStyle(provenanceColor)
-        case .myMargin:
-            RoundedRectangle(cornerRadius: 2).fill(provenanceColor).frame(width: 13, height: 13).rotationEffect(.degrees(45))
-        case .userResponse:
-            Circle().stroke(provenanceColor, lineWidth: 3).frame(width: 14, height: 14)
-        case .sharedMargin:
-            Image(systemName: "person.2.fill").font(.caption.bold()).foregroundStyle(provenanceColor)
-        case .assistantResponse:
-            Image(systemName: "sparkle").font(.caption.bold()).foregroundStyle(provenanceColor)
-        }
-    }
-
-    private var provenanceColor: Color {
-        switch entry.provenance {
-        case .source, .listeningMap: AppColors.evergreen
-        case .myMargin: AppColors.coral
-        case .userResponse: AppColors.ochre
-        case .sharedMargin, .assistantResponse: AppColors.plum
-        }
-    }
-
-    private var surfaceColor: Color {
-        switch entry.provenance {
-        case .source: AppColors.panel
-        case .listeningMap: AppColors.evergreen.opacity(0.07)
-        case .myMargin: AppColors.coral.opacity(0.08)
-        case .userResponse: AppColors.ochre.opacity(0.08)
-        case .sharedMargin, .assistantResponse: AppColors.plum.opacity(0.07)
+        case .sourceText(let entry): "timeline.sourceText.\(entry.id)"
         }
     }
 }
