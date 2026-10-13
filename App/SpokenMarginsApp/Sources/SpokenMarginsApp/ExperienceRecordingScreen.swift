@@ -49,6 +49,7 @@ struct ExperienceRecordingView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
         .onAppear { saveTapGuard = RecordingSaveTapGuard(appearedAt: Date()) }
+        .onDisappear(perform: model.listeningScreenAppeared) // the screen behind it is drawn now (#148)
         .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {
             Button("Keep recording", role: .cancel) {}
             Button("Discard recording", role: .destructive, action: model.cancelInterjection)

@@ -286,7 +286,7 @@ final class Gate1AppModel: ObservableObject {
     /// #783: the line shown before iOS's first microphone prompt.
     @Published var microphonePrimer = MicrophonePrimer()
     @Published var isFinishingInterjection = false
-    @Published var isMarginCaptureCoolingDown = false
+    @Published var marginRestartShield = MarginRestartShield() // #148; read through isMarginCaptureCoolingDown
     @Published var isDismissingMiniPlayer = false
     @Published var requestedTimelineFocusMarginID: String?
     @Published var pastedAssistantResponse = ""

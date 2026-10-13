@@ -1623,7 +1623,18 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.beginInterjection()
         XCTAssertFalse(model.isRequestingRecordingPermission)
         XCTAssertFalse(model.snapshot.isRecording)
-        try await waitFor("capture cooldown") { !model.isMarginCaptureCoolingDown }
+        // #148: the old timer ran out 0.7 s after the save returned, while the listening screen was still being
+        // drawn, and the queued second tap on Add a Margin then started a recording. The shield now waits for the
+        // screen to appear.
+        try await Task.sleep(nanoseconds: 900_000_000)
+        XCTAssertTrue(model.isMarginCaptureCoolingDown, "no listening screen has appeared yet")
+        model.beginInterjection()
+        XCTAssertFalse(model.snapshot.isRecording)
+        model.listeningScreenAppeared()
+        model.beginInterjection()
+        XCTAssertFalse(model.isRequestingRecordingPermission, "a tap right after the draw is the queued second tap")
+        XCTAssertFalse(model.snapshot.isRecording)
+        try await waitFor("capture cooldown", timeoutNanoseconds: 2_000_000_000) { !model.isMarginCaptureCoolingDown }
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.snapshot.isRecording)
         model.dispatchGate2CompactCommand(.cancelInterjection)
