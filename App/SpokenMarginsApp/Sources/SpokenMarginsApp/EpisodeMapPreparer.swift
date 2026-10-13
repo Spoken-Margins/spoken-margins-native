@@ -57,7 +57,7 @@ protocol EpisodeMapPreparerHost: AnyObject {
 final class EpisodeMapPreparer {
     /// What the item screen shows. Every assignment tells the host first, as `@Published` did.
     private(set) var status = "Not started" {
-        willSet { }
+        willSet { host?.episodeMapPreparationStatusWillChange() }
     }
     private(set) var task: Task<Void, Never>?
     private(set) var itemId: String?
@@ -73,12 +73,18 @@ final class EpisodeMapPreparer {
 
     /// Cancels the running preparation when it is for `itemId`.
     func cancel(itemId: String) {
-        task?.cancel()
+        if self.itemId == itemId {
+            task?.cancel()
+        }
     }
 
     /// Starts preparing the private map for `itemId`, or waits for its download.
     func prepare(itemId requestedItemId: String, policy: PreparationJobPolicy = .explicit) {
         guard let host else { return }
+        guard task == nil else {
+            host.episodeMapWarn("An episode map is already being prepared.")
+            return
+        }
         do {
             let store = try host.requireStore()
             let item = try store.loadItem(id: requestedItemId)
@@ -141,6 +147,7 @@ final class EpisodeMapPreparer {
             var job = initialJob
             defer {
                 self.task = nil
+                self.itemId = nil
             }
             do {
                 let store = try host.requireStore()
