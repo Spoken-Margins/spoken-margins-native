@@ -111,6 +111,13 @@ class ParsingTests(unittest.TestCase):
                      'Test Desk T4 hand-off, build bb007253: #335 not run', 'Lane report t4-1 — MAYBE', 'Lane report (T4)', 'Lane report\nPASS', ''):
             self.assertFalse(desk.is_desk_report(body), body)
 
+    def test_prose_and_odd_words_in_a_desk_report_do_not_change_what_it_is(self):
+        # a half-done check's hand-off must not answer it; "journeys-" in the title is not a runner id
+        self.assertFalse(desk.is_desk_report('Lane report t4-5-abc — hand-off: J3 pass, J5 not run'))
+        self.assertFalse(desk.is_desk_report('Lane report t4-1 — in progress; will fail if not fixed'))
+        self.assertTrue(desk.is_desk_report('**Lane report (T4): FAIL · PR #644 journeys-batch fix**'))
+        self.assertTrue(desk.is_desk_report('Lane report t4-1 — PASS (integration-test of share)'))
+
     def test_journey_steps_from_the_real_journeys_doc(self):
         steps = desk.journey_steps(SCRIPTS.parent)
         self.assertEqual(steps['J3'], 4)
@@ -185,6 +192,19 @@ class DescribeTests(unittest.TestCase):
         self.assertIn('PR head is now 9999999', usable[1]['note'])
         self.assertEqual(dropped, [])
 
+    def test_issue_fallback_still_sees_a_merge_and_a_missing_pr_does_not_abort(self):
+        class Api(FakeGitHub):
+            def get(self, path):
+                if path == 'pulls/1':
+                    raise RuntimeError('boom')
+                if path == 'issues/1':
+                    return {'title': 'm', 'state': 'closed', 'labels': [], 'pull_request': {'merged_at': '2026-10-13T12:00:00Z'}}
+                raise RuntimeError('404')
+        requests = [dict(desk.parse_request(REQUEST_335), number=n, stamp=('x', n), created='x', steps=3) for n in (1, 2)]
+        usable, dropped = desk.describe(Api([], {}), requests)
+        self.assertEqual([(c['number'], c['target']) for c in usable], [(1, desk.NEXT_TIP)])
+        self.assertEqual(dropped, [(2, 'not found')])
+
     def test_closed_unmerged_pr_is_left_off(self):
         usable, dropped = self.describe({1: pull('abandoned', 'closed', False)}, 1)
         self.assertEqual(usable, [])
@@ -226,6 +246,15 @@ class BatchTests(unittest.TestCase):
 class DecisionTests(unittest.TestCase):
     def verdict(self, checks, **options):
         return desk.decide(desk.make_batches(checks), NOW, **options)
+
+    def test_a_lone_priority_check_does_not_hide_a_ready_batch(self):
+        checks = [check(1, 'abc1234', 2, '2026-10-13T19:00:00Z', ['priority'])] + \
+                 [check(n, 'next tip', 6, '2026-10-13T19:00:00Z') for n in (2, 3, 4, 5)]
+        batches = desk.make_batches(checks)
+        self.assertEqual(batches[0]['target'], 'abc1234')
+        go, why = desk.decide(batches, NOW)
+        self.assertTrue(go, why)
+        self.assertEqual(batches[0]['target'], 'next tip')
 
     def test_nothing_waiting(self):
         self.assertEqual(desk.decide([], NOW), (False, 'no unanswered /lane T4 requests'))
@@ -307,7 +336,16 @@ class MainTests(unittest.TestCase):
                 raise RuntimeError('gh api: no route to host')
         code, out, err, files, _ = self.run_main(Down())
         self.assertEqual((code, out, files), (2, '', []))
-        self.assertIn('ERROR: gh api: no route to host', err)
+        self.assertIn('ERROR: RuntimeError: gh api: no route to host', err)
+
+    def test_a_failure_after_go_is_exit_2_not_stop(self):
+        out, err = io.StringIO(), io.StringIO()
+        with tempfile.TemporaryDirectory() as folder, contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            blocker = Path(folder) / 'file'
+            blocker.write_text('')
+            code = desk.main(['--out-dir', str(blocker / 'sub')], api=self.api(3), now=NOW)
+        self.assertEqual(code, 2)
+        self.assertIn('ERROR:', err.getvalue())
 
     def test_comments_are_read_page_by_page(self):
         comments = [comment(1000 + n, 5, 'chatter', '2026-10-13T09:00:00Z') for n in range(150)]

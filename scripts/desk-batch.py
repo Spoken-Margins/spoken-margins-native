@@ -60,8 +60,9 @@ DEFAULT_CHECK_STEPS = 4
 NEXT_TIP = 'next tip'
 
 REQUEST = re.compile(r'\s*/lane\s+T4\b', re.I)
-REPORT = re.compile(r'Lane report\b(?=.*\b(?:PASS|FAIL|INCONCLUSIVE)\b)', re.I)
-RUNNER_ID = re.compile(r'\b(pr\d+-r\d+|integration-|journeys-)', re.I)
+# `Lane report <id> — PASS` or `Lane report (T4): FAIL`; the verdict is upper case, so prose doesn't count
+REPORT = re.compile(r'(?i:Lane report)\s+(?:\(T[45]\):?|(\S+)\s+[—–:-]+)\s*(?:PASS|FAIL|INCONCLUSIVE)\b')
+RUNNER_ID = re.compile(r'(pr\d+-r\d+|integration-|journeys-)', re.I)
 FIELD = re.compile(r'(commit|changed|run|tests|scenario|watch for|not needed):\s*(.*)', re.I)
 NUMBERED = re.compile(r'\s*\d+[.)]\s+\S')
 
@@ -101,8 +102,8 @@ def parse_request(body):
 
 
 def is_desk_report(body):
-    line = first_line(body)
-    return bool(REPORT.match(line)) and not RUNNER_ID.search(line)
+    match = REPORT.match(first_line(body))
+    return bool(match) and not RUNNER_ID.match(match.group(1) or '')
 
 
 def journey_steps(root=ROOT):
@@ -188,7 +189,12 @@ def describe(api, requests):
             merged = bool(item.get('merged_at') or item.get('merged'))
             head = (item.get('head') or {}).get('sha', '')
         except RuntimeError:
-            item, merged, head = api.get(f'issues/{number}'), False, ''
+            try:
+                item = api.get(f'issues/{number}')
+            except RuntimeError:
+                dropped.append((number, 'not found'))
+                continue
+            merged, head = bool((item.get('pull_request') or {}).get('merged_at')), ''
         request.update(title=item.get('title', ''), merged=merged, state=item.get('state', ''),
                        labels=[label['name'] for label in item.get('labels', [])], head=head)
         if request['state'] != 'open' and not merged:
@@ -227,12 +233,9 @@ def make_batches(checks, budget=BUDGET, max_checks=MAX_CHECKS):
     return sorted(batches, key=lambda batch: order_key(batch['checks'][0]))
 
 
-def decide(batches, now, min_checks=MIN_CHECKS, min_units=MIN_UNITS, max_wait=MAX_WAIT_HOURS, force=False):
-    if not batches:
-        return False, 'no unanswered /lane T4 requests'
-    first = batches[0]
-    checks, units = len(first['checks']), first['steps']
-    waited = max((now - parse_time(c['created'])).total_seconds() for c in first['checks']) / 3600
+def judge(batch, now, min_checks, min_units, max_wait):
+    checks, units = len(batch['checks']), batch['steps']
+    waited = max((now - parse_time(c['created'])).total_seconds() for c in batch['checks']) / 3600
     facts = f'{checks} check{"s" * (checks != 1)}, {units} steps, oldest waiting {waited:.0f} h'
     if checks >= min_checks:
         return True, f'GO: {facts} ({min_checks} checks make a desk)'
@@ -240,7 +243,19 @@ def decide(batches, now, min_checks=MIN_CHECKS, min_units=MIN_UNITS, max_wait=MA
         return True, f'GO: {facts} ({min_units} steps make a desk)'
     if waited >= max_wait:
         return True, f'GO: {facts} (waited past {max_wait:g} h)'
-    return force, f'STOP: {facts}; waiting for {min_checks} checks, {min_units} steps, or {max_wait:g} h'
+    return False, f'STOP: {facts}; waiting for {min_checks} checks, {min_units} steps, or {max_wait:g} h'
+
+
+def decide(batches, now, min_checks=MIN_CHECKS, min_units=MIN_UNITS, max_wait=MAX_WAIT_HOURS, force=False):
+    """(go, verdict). When it is GO, the batch that earned it has been moved to the front of `batches`."""
+    if not batches:
+        return False, 'no unanswered /lane T4 requests'
+    for index, batch in enumerate(batches):
+        go, verdict = judge(batch, now, min_checks, min_units, max_wait)
+        if go:
+            batches.insert(0, batches.pop(index))
+            return True, verdict
+    return force, judge(batches[0], now, min_checks, min_units, max_wait)[1]
 
 
 def age(created, now):
@@ -302,10 +317,14 @@ def main(argv=None, api=None, now=None):
     args = parser.parse_args(argv)
     now = now or dt.datetime.now(dt.timezone.utc)
     try:
-        batches, dropped = plan(api or GitHub(), now, args.window_days, args.budget, args.max_checks)
-    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as error:
-        print(f'ERROR: {error}', file=sys.stderr)
+        return run(args, api, now)
+    except Exception as error:  # a broken setup must never look like a quiet queue (exit 1)
+        print(f'ERROR: {type(error).__name__}: {error}', file=sys.stderr)
         return 2
+
+
+def run(args, api, now):
+    batches, dropped = plan(api or GitHub(), now, args.window_days, args.budget, args.max_checks)
     go, verdict = decide(batches, now, args.min_checks, args.min_steps, args.max_wait_hours, args.force)
     if args.json:
         slim = [{'target': b['target'], 'steps': b['steps'],
