@@ -1601,10 +1601,18 @@ final class SupertonicSpeechTests: XCTestCase {
     /// a semaphore inside TextToSpeech while `axassetsd` loaded the synthesis provider. That is the
     /// simulator starting its speech service, not what these tests check, and it always landed on
     /// whichever stand-in test ran first. So each stand-in test first waits, once per run, for one
-    /// write to finish, with the longest allowance the plan permits (180 s). The 100 s budget
-    /// leaves room for that test's own renders, which queue behind a stuck write and time out at
-    /// 30 s each, so a service that never starts fails the test with this message, not the clock.
-    /// The later stand-in tests then fail on their own 30 s timeouts.
+    /// write to finish, with the longest allowance the plan permits (180 s).
+    ///
+    /// #1622: the wait used to fail the test at 100 s, and 2 of 14 lane runs landed just past it
+    /// (the others ran 0.9 to 98 s) while every later stand-in case passed: the service did start,
+    /// only late. Now only a write that errors fails here. A write still waiting after
+    /// `iOSVoiceWarmUpWait` is noted and left running; the writes are serial, so the test's own
+    /// renders queue behind it with 30 s timeouts each, and a service that never starts fails that
+    /// test and every later stand-in test with their "guard never reported" messages. Cost: such a
+    /// failure now names the stand-in test, not the warm-up, so the note below goes in the first test's log and activity list.
+    /// The wait leaves 60 s of the first test's 180 s for its own renders and waits.
+    private let iOSVoiceWarmUpWait: TimeInterval = 120
+
     private func warmUpTheIOSVoice() async throws {
         guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
         executionTimeAllowance = 180
@@ -1615,11 +1623,15 @@ final class SupertonicSpeechTests: XCTestCase {
         do {
             _ = try await SystemVoiceChunkRenderer().render(
                 text: "The iOS voice is ready.", voiceIdentifier: nil,
-                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: 100
+                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: iOSVoiceWarmUpWait
             )
             print("#1230 iOS voice warm-up took \(Date().timeIntervalSince(started)) s")
+        } catch SystemVoiceChunkRenderer.Failure.timedOut {
+            let note = "#1622 the simulator's speech service had not finished a first iOS-voice write in \(Int(iOSVoiceWarmUpWait)) s; the stand-in renders decide whether it ever starts"
+            print(note)
+            XCTContext.runActivity(named: note) { _ in }
         } catch {
-            XCTFail("the simulator's speech service did not finish a first iOS-voice write in 100 s: \(error)")
+            XCTFail("the simulator's speech service failed its first iOS-voice write: \(error)")
         }
     }
 
