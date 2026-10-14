@@ -42,10 +42,18 @@ extension Gate1AppModel {
         let enabled = automaticAudioPreparationPolicy == .whileCharging
         Task { [weak self] in
             if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
-            AudioPreparationBackgroundController.shared.submitIfEnabled(
-                enabled || self?.automaticEpisodeMapPreparationPolicy == .whileCharging
-            )
+            self?.scheduleAudioPreparationBackgroundTask()
         }
+        #endif
+    }
+
+    func scheduleAudioPreparationBackgroundTask() {
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        AudioPreparationBackgroundController.shared.submitIfEnabled(OfflinePreparationRecovery.shouldSchedule(
+            jobs: (try? store?.loadAudioPreparationJobs()) ?? [],
+            automaticAudio: automaticAudioPreparationPolicy,
+            automaticEpisodeMaps: automaticEpisodeMapPreparationPolicy
+        ))
         #endif
     }
 
@@ -382,10 +390,12 @@ extension Gate1AppModel {
             job.maximumChunkCount = nil
             job.requestedAt = Date()
             job.isCancelled = false
+            job.lastFailureCode = nil
             try store.saveAudioPreparationJob(job)
             try refreshLibraryRows(store: store)
             diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
             reportConfirmation("Prioritized \(item.title) for audio preparation.")
+            scheduleAudioPreparationBackgroundTask()
             startForegroundAudioPreparationIfNeeded()
         } catch {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
@@ -431,12 +441,7 @@ extension Gate1AppModel {
                 guard manifest.state != .readyOffline else { continue }
                 var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
                     ?? AudioPreparationJob(id: "job-\(manifest.id)", itemId: item.id, manifestId: manifest.id, policy: .whileCharging, requestedAt: item.createdAt ?? Date())
-                let unfinishedStartupHorizon = job.policy == .demandWindow
-                    && job.maximumChunkCount.map { manifest.chunks.count < $0 } == true
-                if !unfinishedStartupHorizon {
-                    job.policy = .whileCharging
-                    job.maximumChunkCount = nil
-                }
+                job = OfflinePreparationRecovery.automaticJob(job, committedChunks: manifest.chunks.count)
                 job.isCancelled = false
                 try store.saveAudioPreparationJob(job)
             }

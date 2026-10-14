@@ -20,6 +20,7 @@ public enum OfflinePreparationRun {
     /// One queue entry, as far as a run cares.
     public struct Job: Equatable, Sendable {
         public var id: String
+        public var manifestId: String
         public var requestedAt: Date
         public var policy: PreparationJobPolicy
         public var state: PreparedAudioState
@@ -28,6 +29,7 @@ public enum OfflinePreparationRun {
 
         public init(
             id: String = "",
+            manifestId: String = "",
             requestedAt: Date = Date(timeIntervalSince1970: 0),
             policy: PreparationJobPolicy,
             state: PreparedAudioState,
@@ -35,6 +37,7 @@ public enum OfflinePreparationRun {
             plannedChunks: Int
         ) {
             self.id = id
+            self.manifestId = manifestId
             self.requestedAt = requestedAt
             self.policy = policy
             self.state = state
@@ -69,6 +72,36 @@ public enum OfflinePreparationRun {
         let total = open.reduce(0) { $0 + max(0, $1.plannedChunks) }
         let completed = open.reduce(0) { $0 + min(max(0, $1.completedChunks), max(0, $1.plannedChunks)) }
         return Progress(completedChunks: completed, totalChunks: total)
+    }
+
+    /// A running system banner retains verified completions, even after their queue rows disappear.
+    /// A rendered last chunk still needs final assembly and verification before reporting 100%.
+    public static func continuedProgress(_ jobs: [Job]) -> Progress {
+        let explicit = jobs.filter { $0.policy == .explicit }
+        let total = explicit.reduce(0) { $0 + max(0, $1.plannedChunks) }
+        let completed = explicit.reduce(0) { count, job in
+            let limit = max(0, job.plannedChunks - (job.state == .readyOffline ? 0 : 1))
+            return count + min(max(0, job.completedChunks), limit)
+        }
+        return Progress(completedChunks: completed, totalChunks: total)
+    }
+
+    public static func continuedRunFinished(_ jobs: [Job]) -> Bool {
+        let explicit = jobs.filter { $0.policy == .explicit }
+        return !explicit.isEmpty && explicit.allSatisfy { $0.state == .readyOffline }
+    }
+
+    /// Disappearance alone can mean Skip, Clear Queue, failure or completion. Only a verified
+    /// artifact proves completion. The app supplies the actual manifest from its store.
+    public static func resolvingRemovedJob(_ job: Job, manifest: PreparedAudioManifest?) -> Job {
+        var resolved = job
+        if let manifest, manifest.state == .readyOffline, manifest.artifact != nil {
+            resolved.state = .readyOffline
+            resolved.completedChunks = max(0, job.plannedChunks)
+        } else {
+            resolved.state = .stopped
+        }
+        return resolved
     }
 
     /// The requests that are still open, to remember as declined when the background time ends.

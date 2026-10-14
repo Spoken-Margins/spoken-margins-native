@@ -22,24 +22,25 @@ final class ContinuedAudioPreparationController {
     /// What the controller reads from the app model, and how it stops the loop.
     struct Hooks {
         /// The audio preparation queue, as a run reads it.
-        var jobs: @MainActor () -> [OfflinePreparationRun.Job]
+        /// Includes manifests of jobs the running banner already knows, even after queue removal.
+        var jobs: @MainActor ([OfflinePreparationRun.Job]) -> [OfflinePreparationRun.Job]
         /// True while the preparation loop is rendering or waiting out a heat pause.
         var isRunning: @MainActor () -> Bool
         var isCoolingDown: @MainActor () -> Bool
         /// Stops the loop for good, so it doesn't restart itself. Queued jobs and committed chunks stay.
         var stop: @MainActor () -> Void
+        var deferRemaining: @MainActor (Set<OfflinePreparationRun.RequestKey>) -> Void
         /// A short trail of what happened, for the diagnostics export.
         var report: @MainActor (String) -> Void
     }
 
-    /// iOS starts a task it accepted within seconds. A request older than this never started, so
-    /// a new one may be made.
-    private static let staleRequestSeconds: TimeInterval = 120
     private static let pollSeconds = 1
 
     private var hooks: Hooks?
     private var registered = false
-    private var requestedAt: Date?
+    // A queued request may wait longer than two minutes; it still owns its place with iOS.
+    private var requestIsPending = false
+    private var requestedJobs: [OfflinePreparationRun.Job] = []
     private var taskIsActive = false
     private var expired = false
     /// Requests iOS or the listener ended the background time for. They keep their place in the queue
@@ -77,9 +78,9 @@ final class ContinuedAudioPreparationController {
     /// has a long run queued and the app is on screen.
     func requestIfNeeded() {
         guard let hooks else { return }
-        let progress = OfflinePreparationRun.explicitProgress(hooks.jobs(), excluding: declined)
-        let alreadyRequested = taskIsActive
-            || requestedAt.map { Date().timeIntervalSince($0) < Self.staleRequestSeconds } == true
+        let jobs = hooks.jobs([])
+        let progress = OfflinePreparationRun.explicitProgress(jobs, excluding: declined)
+        let alreadyRequested = taskIsActive || requestIsPending
         guard OfflinePreparationRun.shouldRequestContinuedProcessing(
             progress,
             alreadyRequested: alreadyRequested,
@@ -90,18 +91,21 @@ final class ContinuedAudioPreparationController {
             title: OfflinePreparationRun.continuedTitle,
             subtitle: OfflinePreparationRun.continuedSubtitle(progress, phase: .preparing)
         )
+        request.strategy = .queue
         do {
             try BGTaskScheduler.shared.submit(request)
-            requestedAt = Date()
+            requestIsPending = true
+            requestedJobs = jobs
             note("requested")
         } catch {
             // The run still goes on while the app is on screen, and the queue keeps its jobs.
             note("request_failed:\(error.localizedDescription)")
+            hooks.deferRemaining(OfflinePreparationRun.openExplicitRequests(hooks.jobs([])))
         }
     }
 
     private func run(_ task: BGContinuedProcessingTask) async {
-        requestedAt = nil
+        requestIsPending = false
         guard let hooks else {
             task.setTaskCompleted(success: false)
             return
@@ -111,24 +115,32 @@ final class ContinuedAudioPreparationController {
         lastSubtitle = nil
         trail.removeAll()
         note("started")
+        // The foreground loop may have finished while iOS queued this launch. Keep its manifests
+        // so that a late launch reports verified completion instead of an empty, failed run.
+        var jobs = hooks.jobs(requestedJobs)
+        requestedJobs = []
         task.expirationHandler = Self.expirationHandler { [weak self] in self?.handleExpiration() }
-        while hooks.isRunning(), !expired {
-            publish(to: task, hooks: hooks)
+        while hooks.isRunning(), !expired, !OfflinePreparationRun.openExplicitRequests(jobs).isEmpty {
+            jobs = hooks.jobs(jobs)
+            publish(to: task, jobs: jobs, hooks: hooks)
             try? await Task.sleep(for: .seconds(Self.pollSeconds))
         }
-        publish(to: task, hooks: hooks)
-        let finished = OfflinePreparationRun.explicitProgress(hooks.jobs()).remainingChunks == 0
+        jobs = hooks.jobs(jobs)
+        publish(to: task, jobs: jobs, hooks: hooks)
+        let finished = OfflinePreparationRun.continuedRunFinished(jobs)
         if finished, task.progress.totalUnitCount > 0 {
             task.progress.completedUnitCount = task.progress.totalUnitCount
         }
         taskIsActive = false
+        task.expirationHandler = nil
+        let remaining = OfflinePreparationRun.openExplicitRequests(jobs)
+        if !remaining.isEmpty { hooks.deferRemaining(remaining) }
         note(expired ? "expired" : (finished ? "finished" : "stopped_with_work_left"))
         task.setTaskCompleted(success: finished && !expired)
     }
 
-    private func publish(to task: BGContinuedProcessingTask, hooks: Hooks) {
-        let progress = OfflinePreparationRun.explicitProgress(hooks.jobs())
-        // The queue drops a job the moment it finishes, so an empty queue keeps the last numbers.
+    private func publish(to task: BGContinuedProcessingTask, jobs: [OfflinePreparationRun.Job], hooks: Hooks) {
+        let progress = OfflinePreparationRun.continuedProgress(jobs)
         if progress.totalChunks > 0 {
             task.progress.totalUnitCount = Int64(progress.totalChunks)
             task.progress.completedUnitCount = Int64(progress.completedChunks)
@@ -141,10 +153,13 @@ final class ContinuedAudioPreparationController {
     }
 
     private func handleExpiration() {
+        guard taskIsActive else { return }
         expired = true
         guard let hooks else { return }
-        declined.formUnion(OfflinePreparationRun.openExplicitRequests(hooks.jobs()))
+        let remaining = OfflinePreparationRun.openExplicitRequests(hooks.jobs([]))
+        declined.formUnion(remaining)
         hooks.stop()
+        hooks.deferRemaining(remaining)
     }
 
     private func note(_ event: String) {
