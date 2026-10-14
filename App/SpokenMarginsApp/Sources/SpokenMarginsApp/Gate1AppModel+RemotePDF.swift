@@ -88,6 +88,10 @@ extension Gate1AppModel {
         let item = try await browserTextImportEngine().importBrowserTextInBackgroundOffMain(
             Self.sanitizedBrowserTextHandoff(handoff), structuredDocument: structuredDocument
         )
+        if let store, let support = try? applicationSupportDirectory() {
+            let ledger = requireOfflineLedger(store: store, rootDirectory: support)
+            await ledger.removeRetiredPreparedAudio(itemId: item.id)
+        }
         return try finishBackgroundBrowserTextImport(item, handoff: handoff)
     }
 

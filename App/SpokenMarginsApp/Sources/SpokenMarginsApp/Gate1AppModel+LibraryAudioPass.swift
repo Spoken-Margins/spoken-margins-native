@@ -147,8 +147,10 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             guard manifest.signature == signature else {
                 manifest.state = .needsRepreparation
                 manifest.updatedAt = Date()
-                try store.savePreparedAudioManifest(manifest)
-                try store.deleteAudioPreparationJob(id: job.id)
+                _ = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, _ in
+                    try store.savePreparedAudioManifest(manifest)
+                    try store.deleteAudioPreparationJob(id: job.id)
+                }
                 return try hasMoreMatchingJobs()
             }
             let plan = await Task.detached(priority: .utility) {
@@ -226,16 +228,41 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             guard let updated = try store.loadPreparedAudioManifest(id: manifest.id),
                   let committed = updated.chunks.first(where: { $0.index == next.index }) else {
                 try? await ledger.release(reservationId: reservation.id)
-                return !foregroundDemandOnly
+                return try hasMoreMatchingJobs()
             }
-            try await ledger.commit(reservationId: reservation.id, asset: PreparedAudioCoordinator.ledgerAsset(for: committed, itemId: item.id))
-            job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
-            recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
-                                                                "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
-            job.nextChunkIndex = updated.chunks.count
-            job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
-            if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
-                try store.saveAudioPreparationJob(job)
+            guard try await ledger.commitPrepared(reservationId: reservation.id, asset: PreparedAudioCoordinator.ledgerAsset(for: committed, itemId: item.id), manifest: updated) else {
+                return try hasMoreMatchingJobs()
+            }
+            let needsAssembly = try PreparedAudioEnqueue.withCurrentManifest(updated, repository: store) { _, _ in
+                job = (try store.loadAudioPreparationJobs()).first(where: { $0.id == job.id }) ?? job
+                recordDeveloperDiagnostic("preparation.committed", ["item": DeveloperDiagnosticRecording.token(item.id), "chunks": String(updated.chunks.count),
+                                                                    "renderMs": String(renderMs), "thermal": SupertonicResourcePolicy.currentConditions().thermal.rawValue])
+                job.nextChunkIndex = updated.chunks.count
+                job.lastFailureCode = PreparedAudioCoordinator.hasStandIns(updated) ? PreparedAudioCoordinator.standInRetried : nil
+                if PreparedAudioCoordinator.matchingChunks(in: updated, plan: plan, sourceText: sourceText).count == plan.count {
+                    try store.saveAudioPreparationJob(job)
+                    return true
+                } else if let maximumChunkCount = job.maximumChunkCount {
+                    let horizon = plan.prefix(min(maximumChunkCount, plan.count))
+                    if PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) {
+                        if automaticAudioPreparationPolicy == .whileCharging {
+                            job.policy = .whileCharging
+                            job.maximumChunkCount = nil
+                            try store.saveAudioPreparationJob(job)
+                        } else {
+                            try store.deleteAudioPreparationJob(id: job.id)
+                        }
+                        diagnostics["startupAudioPreparation:\(item.id)"] = "ready_\(horizon.count)_of_\(plan.count)"
+                    } else {
+                        try store.saveAudioPreparationJob(job)
+                    }
+                } else {
+                    try store.saveAudioPreparationJob(job)
+                }
+                return false
+            }
+            guard let needsAssembly else { return try hasMoreMatchingJobs() }
+            if needsAssembly {
                 try await finishBackgroundPreparedAudio(
                     item: item,
                     sourceText: sourceText,
@@ -248,22 +275,6 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                     coordinator: coordinator,
                     support: support
                 )
-            } else if let maximumChunkCount = job.maximumChunkCount {
-                let horizon = plan.prefix(min(maximumChunkCount, plan.count))
-                if PreparedAudioCoordinator.isPrepared(Array(horizon), in: updated, sourceText: sourceText) {
-                    if automaticAudioPreparationPolicy == .whileCharging {
-                        job.policy = .whileCharging
-                        job.maximumChunkCount = nil
-                        try store.saveAudioPreparationJob(job)
-                    } else {
-                        try store.deleteAudioPreparationJob(id: job.id)
-                    }
-                    diagnostics["startupAudioPreparation:\(item.id)"] = "ready_\(horizon.count)_of_\(plan.count)"
-                } else {
-                    try store.saveAudioPreparationJob(job)
-                }
-            } else {
-                try store.saveAudioPreparationJob(job)
             }
             applyPreparedChunkProgress(item: item, manifest: updated,
                                        remainingJobs: try store.loadAudioPreparationJobs())
@@ -275,7 +286,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
                !suppressedAutomaticAudioPreparationItemIds.contains(job.itemId),
                let store {
                 job.lastFailureCode = "background_time_expired"
-                try? store.saveAudioPreparationJob(job)
+                if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
+                    _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
+                        if try store.loadAudioPreparationJobs().contains(where: { $0.id == job.id }) { try store.saveAudioPreparationJob(job) }
+                    }
+                }
                 try? refreshAudioPreparationPresentation(store: store)
             }
             diagnostics["backgroundAudioPreparation"] = "expired"
@@ -283,7 +298,11 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         } catch {
             if var job = attemptedJob, let store {
                 job.lastFailureCode = String(describing: type(of: error))
-                try? store.saveAudioPreparationJob(job)
+                if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
+                    _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
+                        if try store.loadAudioPreparationJobs().contains(where: { $0.id == job.id }) { try store.saveAudioPreparationJob(job) }
+                    }
+                }
                 if job.maximumChunkCount != nil {
                     failedStartupAudioPreparationItemIds.insert(job.itemId)
                 }
@@ -297,66 +316,4 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         }
     }
 
-    private func finishBackgroundPreparedAudio(
-        item: Item,
-        sourceText: String,
-        voice: SupertonicVoiceID,
-        signature: TTSRenderSignature,
-        manifest: PreparedAudioManifest,
-        plan: [PreparedChunkPlan],
-        store: SQLiteSessionStore,
-        ledger: OfflineStorageLedger,
-        coordinator: PreparedAudioCoordinator,
-        support: URL
-    ) async throws {
-        // A stand-in (iOS voice) chunk waits for a play to retry Supertonic; don't bake it in (#363).
-        guard !PreparedAudioCoordinator.hasStandIns(manifest) else { return }
-        // Narration replaces Item.text with its own, so it keeps Item.text and maps into it (#336).
-        guard let speech = PreparedSpeechHooks.texts.resolve(item: item, documents: store), speech.text == sourceText else { return }
-        let chunks = try PreparedAudioCoordinator.assemblyChunks(
-            plan: plan, manifest: manifest, sourceText: sourceText,
-            preparedRoot: support.appending(path: "PreparedAudio", directoryHint: .isDirectory)
-        )
-        let assemblyReservation = try await ledger.reserve(
-            ownerId: "prepared-artifact-\(manifest.id)",
-            byteCount: max(1, manifest.chunks.reduce(0) { $0 + $1.byteCount }),
-            pinning: PreparedAudioCoordinator.ledgerPaths(ofChunksIn: manifest) // its inputs stay until assembled (#645)
-        )
-        do {
-            let prepared = try await SupertonicPreparedAudioAssembler.assemble(
-                itemId: item.id,
-                sourceText: speech.itemText,
-                projection: speech.assemblyProjection(),
-                voice: voice,
-                chunks: chunks,
-                outputDirectory: support.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory)
-            )
-            guard attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false),
-                  let rawURL = prepared.media.url,
-                  let url = URL(string: rawURL) else {
-                throw SessionKitError.persistenceFailed("prepared_audio_attach_failed")
-            }
-            try await coordinator.complete(itemId: item.id, signature: signature, prepared: prepared)
-            try refreshLibraryRows(store: store)
-            let values = try url.resourceValues(forKeys: [.fileSizeKey])
-            let relative = String(url.standardizedFileURL.path.dropFirst(support.standardizedFileURL.path.count + 1))
-            try await ledger.commit(
-                reservationId: assemblyReservation.id,
-                asset: OwnedOfflineAsset(
-                    id: "prepared-artifact-\(manifest.id)",
-                    itemId: item.id,
-                    category: .preparedAudio,
-                    relativePath: relative,
-                    byteCount: Int64(values.fileSize ?? 0),
-                    isReproducible: true
-                )
-            )
-            for asset in try store.loadOwnedOfflineAssets() where asset.itemId == item.id && asset.category == .preparedChunk {
-                try store.updateOwnedOfflineAsset(id: asset.id) { $0.isRedundant = true }
-            }
-        } catch {
-            try? await ledger.release(reservationId: assemblyReservation.id)
-            throw error
-        }
-    }
 }

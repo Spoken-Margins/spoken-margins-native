@@ -62,7 +62,7 @@ extension Gate1AppModel {
         do {
             let store = try requireStore()
             let item = try store.loadItem(id: itemId)
-            guard item.sourceCompletedAt == nil,
+            guard item.deletedAt == nil, item.sourceCompletedAt == nil,
                   !PreparationChunkGate.itemAlreadyListened(try store.loadSessions(itemId: itemId)),
                   LibraryRowBuilder.shouldPrewarmTextAudio(for: item),
                   item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
@@ -119,30 +119,19 @@ extension Gate1AppModel {
                 plan: plan
             )
             let targetChunkCount = min(Self.startupAudioChunkCount, plan.count)
-            if manifest.chunks.count < targetChunkCount {
-                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                    ?? AudioPreparationJob(
-                        id: "job-\(manifest.id)",
-                        itemId: item.id,
-                        manifestId: manifest.id,
-                        policy: .demandWindow
-                    )
-                if job.policy == .demandWindow {
-                    job.requestedAt = item.createdAt ?? job.requestedAt
-                    job.maximumChunkCount = targetChunkCount
-                }
-                job.isCancelled = false
-                job.lastFailureCode = nil
-                try store.saveAudioPreparationJob(job)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "queued_0_of_\(targetChunkCount)"
-            } else if let job = try store.loadAudioPreparationJobs().first(where: {
-                $0.manifestId == manifest.id && $0.policy == .demandWindow && $0.maximumChunkCount != nil
-            }) {
-                try store.deleteAudioPreparationJob(id: job.id)
-                diagnostics["startupAudioPreparation:\(itemId)"] = "ready_from_cache"
-            }
+            _ = try PreparedAudioEnqueue.configureJob(
+                manifest: manifest, sourceText: sourceText, repository: store,
+                request: .startup(maximumChunkCount: targetChunkCount, requestedAt: item.createdAt)
+            )
+            diagnostics["startupAudioPreparation:\(itemId)"] = manifest.chunks.count < targetChunkCount
+                ? "queued_0_of_\(targetChunkCount)" : "ready_from_cache"
             try refreshLibraryRows(store: store)
             startForegroundAudioPreparationIfNeeded()
+        } catch PreparedAudioEnqueue.Rejection.staleSource {
+            diagnostics["startupAudioPreparation:\(itemId)"] = "retired_source"
+            // The import may have requested startup audio while the old request was still pending.
+            // Re-read the new source after this call's defer releases that pending entry.
+            Task { @MainActor [weak self] in self?.scheduleStartupAudioPreparationIfNeeded(itemId: itemId) }
         } catch is CancellationError {
             diagnostics["startupAudioPreparation:\(itemId)"] = "cancelled"
         } catch {
@@ -370,23 +359,13 @@ extension Gate1AppModel {
                 reportConfirmation("\(item.title) is already available offline.")
                 return
             }
-            var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                ?? AudioPreparationJob(
-                    id: "job-\(manifest.id)",
-                    itemId: item.id,
-                    manifestId: manifest.id,
-                    policy: .explicit
-                )
-            job.policy = .explicit
-            job.userPriority = 0
-            job.maximumChunkCount = nil
-            job.requestedAt = Date()
-            job.isCancelled = false
-            try store.saveAudioPreparationJob(job)
+            _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: sourceText, repository: store, request: .explicit)
             try refreshLibraryRows(store: store)
             diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
             reportConfirmation("Prioritized \(item.title) for audio preparation.")
             startForegroundAudioPreparationIfNeeded()
+        } catch PreparedAudioEnqueue.Rejection.staleSource {
+            diagnostics["explicitAudioPreparation:\(item.id)"] = "retired_source"
         } catch {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "failed:\(error.localizedDescription)"
             reportFailure(error, context: "Preparing audio failed to start")
@@ -422,23 +401,15 @@ extension Gate1AppModel {
                     Self.preparedChunkPlan(for: text)
                 }.value
                 guard !plan.isEmpty else { continue }
-                let manifest = try await coordinator.begin(
-                    itemId: item.id,
-                    sourceText: text,
-                    signature: signature,
-                    plan: plan
-                )
+                let manifest: PreparedAudioManifest
+                do {
+                    manifest = try await coordinator.begin(itemId: item.id, sourceText: text, signature: signature, plan: plan)
+                } catch PreparedAudioEnqueue.Rejection.staleSource { continue }
                 guard manifest.state != .readyOffline else { continue }
-                var job = (try store.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifest.id })
-                    ?? AudioPreparationJob(id: "job-\(manifest.id)", itemId: item.id, manifestId: manifest.id, policy: .whileCharging, requestedAt: item.createdAt ?? Date())
-                let unfinishedStartupHorizon = job.policy == .demandWindow
-                    && job.maximumChunkCount.map { manifest.chunks.count < $0 } == true
-                if !unfinishedStartupHorizon {
-                    job.policy = .whileCharging
-                    job.maximumChunkCount = nil
-                }
-                job.isCancelled = false
-                try store.saveAudioPreparationJob(job)
+                do {
+                    _ = try PreparedAudioEnqueue.configureJob(manifest: manifest, sourceText: text, repository: store,
+                                                             request: .automatic(requestedAt: item.createdAt))
+                } catch PreparedAudioEnqueue.Rejection.staleSource { continue }
             }
             try refreshAudioPreparationPresentation(store: store)
             diagnostics["automaticAudioPreparationQueue"] = "queued"

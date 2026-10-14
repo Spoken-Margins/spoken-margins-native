@@ -106,7 +106,7 @@ final class StructuredDocumentUpgradeGuardTests: XCTestCase {
         XCTAssertEqual(try fixture.store.loadImportedCommentaryInterjections(layerId: layer.id).map(\.id), ["their-margin"])
     }
 
-    func testPreparedAudioRenderedFromTheOldTextKeepsItOnItsOldExtraction() throws {
+    func testPreparedAudioDoesNotCreateADuplicateAndMarginsAndPositionSurvive() throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
         try fixture.store.savePreparedAudioManifest(PreparedAudioManifest(
@@ -114,12 +114,22 @@ final class StructuredDocumentUpgradeGuardTests: XCTestCase {
             signature: TTSRenderSignature(
                 engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
                 synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "digest"
-            ),
-            state: .preparing, plannedChunkCount: 3
+            ), state: .preparing, plannedChunkCount: 3
         ))
-
-        try fixture.assertItStaysOnV1(because: .preparedAudio)
-        XCTAssertEqual(try fixture.store.loadPreparedAudioManifests(itemId: fixture.v1.id).map(\.id), ["manifest-from-v1-text"])
+        try fixture.store.saveAudioPreparationJob(AudioPreparationJob(
+            id: "old-job", itemId: fixture.v1.id, manifestId: "manifest-from-v1-text", policy: .explicit
+        ))
+        let imported = try fixture.reimport()
+        XCTAssertEqual(imported.id, fixture.v1.id)
+        XCTAssertEqual(try fixture.store.listItems().count, 1)
+        XCTAssertEqual(try fixture.store.loadItem(id: fixture.v1.id).text, fixture.document.text)
+        XCTAssertNotNil(try fixture.store.loadStructuredDocument(itemId: fixture.v1.id))
+        XCTAssertTrue(try fixture.store.loadPreparedAudioManifests(itemId: fixture.v1.id).isEmpty)
+        XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().isEmpty)
+        let stored = try fixture.stored()
+        let text = try XCTUnwrap(stored.item.text)
+        XCTAssertEqual(stored.margins.compactMap { words($0, in: text) }.sorted(), ["Methods", "morning light"])
+        XCTAssertTrue(text.dropFirst(try XCTUnwrap(stored.sessions.first).position.charOffset).hasPrefix("Sleep improved"))
     }
 
     /// A Margin on a summary or reply (`.turn`), a media time or a transcript span has offsets that count in some
@@ -210,12 +220,15 @@ final class PDFReimportFixture {
             ]),
             repository: store
         )
-        v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+        var imported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
             captureMode: .markdownFile,
             source: BrowserTextSource(url: url, title: "Paper"),
             text: "# Paper\n\n## Methods\n\nWe measured sleep in adults.\nThe effect held across cohorts.\n\n## Results\n\nSleep improved with morning light.",
             contentFormat: .markdown
         ))
+        imported.createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try store.saveItem(imported)
+        v1 = imported
         // v2 adds a running head and a reference list around the same sentences, so every Margin below can land.
         document = StructuredDocumentBuilder.build(lines: [
             StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),

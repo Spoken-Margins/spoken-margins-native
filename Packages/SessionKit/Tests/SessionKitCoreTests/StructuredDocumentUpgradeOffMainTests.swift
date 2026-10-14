@@ -79,14 +79,9 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
     func testAPDFThatCannotMoveBecomesItsOwnEditionOffMainToo() async throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
-        try fixture.store.savePreparedAudioManifest(PreparedAudioManifest(
-            id: "manifest-from-v1-text", itemId: fixture.v1.id, sourcePackageId: "source",
-            signature: TTSRenderSignature(
-                engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
-                synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "digest"
-            ),
-            state: .preparing, plannedChunkCount: 3
-        ))
+        var margin = try fixture.addMargin(id: "unmovable", sessionId: "session-reading", words: "Methods", editionHash: nil)
+        margin.anchor.anchorType = .media
+        try fixture.store.saveInterjection(margin)
         let before = try fixture.stored()
 
         let reimported = try await fixture.reimportOffMain()
@@ -185,7 +180,7 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         XCTAssertEqual(try fixture.stored(), before)
     }
 
-    func testTheStoreRefusesAPlanWhenPreparedAudioWasSavedAfterItWasMade() throws {
+    func testTheStoreRetiresPreparedAudioSavedWhileThePlanWasMade() throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
         guard case .success(let upgrade) = try fixture.plan() else { return XCTFail("fixture should move") }
@@ -197,13 +192,10 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
             ),
             state: .preparing, plannedChunkCount: 3
         ))
-        let before = try fixture.stored()
+        try fixture.store.applyStructuredDocumentUpgrade(upgrade)
+        XCTAssertEqual(try fixture.store.loadItem(id: fixture.v1.id).text, fixture.document.text)
+        XCTAssertTrue(try fixture.store.loadPreparedAudioManifests(itemId: fixture.v1.id).isEmpty)
 
-        XCTAssertThrowsError(try fixture.store.applyStructuredDocumentUpgrade(upgrade)) {
-            XCTAssertEqual($0 as? StructuredDocumentUpgradeError, .changedSincePlanned)
-        }
-
-        XCTAssertEqual(try fixture.stored(), before)
     }
 }
 
