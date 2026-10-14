@@ -883,7 +883,11 @@ def make_plan(cfg: Config, machine: Machine) -> Plan:
     plan = Plan()
     protected = cfg.protected()
     procs = machine.processes()
-    trees = list_worktrees(cfg, machine)
+    try:
+        trees = list_worktrees(cfg, machine)
+    except PermissionError as error:
+        plan.skipped.append(f'worktrees: {error.filename or "a folder"}: {NO_ACCESS}')
+        trees = []
     busy = busy_worktrees(trees, procs, machine)
 
     # A folder macOS won't let this job read skips that step, not the whole run: the job
