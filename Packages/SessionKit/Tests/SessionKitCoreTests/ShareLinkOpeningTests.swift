@@ -135,6 +135,24 @@ final class ShareLinkOpeningTests: XCTestCase {
         }
     }
 
+    #if !canImport(FoundationNetworking)
+    /// Audit on 39b55b5: the live download used the public transport's 30-second whole-download cap, so a valid
+    /// 8 MB link on a slow phone connection timed out and was reported as expired.
+    func testTheLiveDownloadGivesTheLargestAllowedPacketTimeToArriveOnASlowConnection() {
+        let configuration = ShareLinkPacketDownloader.liveConfiguration()
+        let secondsAtOneMegabit = Double(ShareLinkPacketDownloader.maximumSealedBytes * 8) / 1_000_000
+        XCTAssertGreaterThanOrEqual(configuration.timeoutIntervalForResource, secondsAtOneMegabit)
+        // Everything else is still the anonymous public transport.
+        XCTAssertEqual(configuration.timeoutIntervalForRequest, 15)
+        XCTAssertNil(configuration.urlCache)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertNil(configuration.urlCredentialStorage)
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        // Small config and manifest fetches keep their short cap.
+        XCTAssertEqual(BridgePublicTransport.configuration().timeoutIntervalForResource, 30)
+    }
+    #endif
+
     func testAURLSessionCancellationIsACancellationNotAnUnreachableLink() async throws {
         let downloader = ShareLinkPacketDownloader { _, _ in throw URLError(.cancelled) }
         do {

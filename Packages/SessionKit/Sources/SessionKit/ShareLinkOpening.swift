@@ -70,8 +70,20 @@ public struct ShareLinkPacketDownloader: Sendable {
         self.fetch = fetch
     }
 
+    /// Time allowed for the whole download. The largest packet takes about 170 seconds at 1 Mbps, so the public
+    /// transport's 30-second cap for small files would call a slow but valid link expired.
+    static let resourceTimeout: TimeInterval = 300
+
     #if !canImport(FoundationNetworking)
-    public static let live = ShareLinkPacketDownloader(fetch: { try await BridgePublicTransport.fetch($0, $1) })
+    /// The anonymous public transport (no cookies, no redirects, pinned host) with a whole-download cap sized
+    /// for `maximumSealedBytes`.
+    static func liveConfiguration() -> URLSessionConfiguration {
+        BridgePublicTransport.configuration(resourceTimeout: resourceTimeout)
+    }
+
+    public static let live = ShareLinkPacketDownloader(fetch: {
+        try await BridgePublicTransport.fetch($0, $1, configuration: liveConfiguration())
+    })
     #endif
 
     /// Downloads, opens and writes `<id>.spokenmargins` into `directory`, which is created if needed.

@@ -5,7 +5,9 @@ import Foundation
 /// Public requests carry no install identity, cookies or credentials. Refuse all
 /// redirects, including to another path on our host, and stop reading at the cap.
 public enum BridgePublicTransport {
-    static func configuration() -> URLSessionConfiguration {
+    /// `resourceTimeout` caps the whole download. The 30-second default suits config and manifest files;
+    /// a caller allowed megabytes passes a longer one. The 15-second idle timeout stays either way.
+    static func configuration(resourceTimeout: TimeInterval = 30) -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
@@ -13,7 +15,7 @@ public enum BridgePublicTransport {
         configuration.urlCredentialStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
+        configuration.timeoutIntervalForResource = resourceTimeout
         return configuration
     }
 
