@@ -27,7 +27,7 @@ def trim_body(body, user):
                                                                            '## Codex audit', 'Lane report'))
     if not structured:
         return (body or '')[:300]
-    kept = lines[:4] + [line for line in lines[4:] if MARKER_LINE.match(line)]
+    kept = lines[:4] + [line for line in lines[4:] if MARKER_LINE.match(line) or line.startswith('not merged')]
     return '\n'.join(kept)
 
 

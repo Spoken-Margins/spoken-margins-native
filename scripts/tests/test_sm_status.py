@@ -212,13 +212,21 @@ class RedOnHead(unittest.TestCase):
 
 
 class T3Gate(unittest.TestCase):
+    QUEUED = ('automerge', 'lane:queued')
+
     def test_a_request_with_no_report_holds_the_merge(self):
-        row = status.analyse(bundle([request()]))
+        row = status.analyse(bundle([request()], labels=self.QUEUED))
         self.assertEqual(codes(row), ['t3-held'])
+
+    def test_a_request_nothing_will_run_is_called_out(self):
+        # lane.yml runs on the label event: no lane:queued / lane:running means the request sits forever
+        self.assertEqual(codes(status.analyse(bundle([request()]))), ['t3-held', 't3-unqueued'])
+        self.assertEqual(codes(status.analyse(bundle([request()], labels=('automerge', 'lane:running')))), ['t3-held'])
 
     def test_a_t3_pass_after_the_request_releases_it(self):
         row = status.analyse(bundle([request(), report('PASS', tier='T3')]))
         self.assertEqual(codes(row), [])
+        self.assertEqual(codes(status.analyse(bundle([request(), report('PASS', tier='T3')], labels=self.QUEUED))), [])
 
     def test_a_t3_fail_on_an_earlier_commit_still_holds_a_new_head(self):
         row = status.analyse(bundle([request(commit=OLD[:7]), report('FAIL', commit=OLD, tier='T3')]))
@@ -228,7 +236,7 @@ class T3Gate(unittest.TestCase):
 
     def test_a_new_request_after_the_fail_is_waiting_not_red(self):
         row = status.analyse(bundle([request(commit=OLD[:7]), report('FAIL', commit=OLD, tier='T3'),
-                                     request(at='2026-10-14T19:00:00Z')]))
+                                     request(at='2026-10-14T19:00:00Z')], labels=self.QUEUED))
         held = [f for f in row['flags'] if f['code'] == 't3-held']
         self.assertEqual([f['severity'] for f in held], [status.LOOK])
 
@@ -245,8 +253,33 @@ class Conflict(unittest.TestCase):
                 self.assertEqual(row['mergeable'], word)
                 self.assertEqual(row['flags'], [])
 
-    def test_a_draft_says_so(self):
+    def test_a_draft_says_so_but_a_conflicting_draft_is_still_a_conflict(self):
         self.assertEqual(status.analyse(bundle(draft=True, state='draft'))['mergeable'], 'draft')
+        self.assertEqual(codes(status.analyse(bundle(draft=True, mergeable=False, state='dirty'))), ['conflict'])
+
+
+class HeldByTheRunner(unittest.TestCase):
+    def held_report(self, line):
+        marker = json.dumps({'commit': HEAD, 'tier': 'auto'})
+        return comment(f'Lane report pr1-r9 — PASS\ncommit {HEAD[:7]} (tested merged with next at 1234567) · tier auto\n'
+                       f'ran: x\n{line}\n<!-- lane-request: {marker} -->\n', login=status.LANE_BOT)
+
+    def test_a_pass_that_did_not_merge_is_flagged_with_the_runners_reason(self):
+        for line in ('not merged by the runner: it inherits a blocking audit finding on #1568',
+                     'not merged: the PR moved on, lost the automerge label',
+                     'not merged: next kept moving (3 attempts)'):
+            with self.subTest(line=line):
+                row = status.analyse(bundle([self.held_report(line)]))
+                self.assertEqual(codes(row), ['held-by-runner'])
+                self.assertIn(line.split(': ', 1)[1][:30], row['flags'][0]['detail'])
+
+    def test_a_plain_pass_is_not_held(self):
+        self.assertEqual(codes(status.analyse(bundle([report('PASS')]))), [])
+
+    def test_a_hold_on_an_older_head_is_not_this_heads(self):
+        old = self.held_report('not merged: next kept moving (3 attempts)')
+        old['body'] = old['body'].replace(HEAD, OLD)
+        self.assertEqual(codes(status.analyse(bundle([old]))), ['older-head-only'])
 
 
 class ArmedWithoutARequest(unittest.TestCase):
@@ -255,7 +288,8 @@ class ArmedWithoutARequest(unittest.TestCase):
         self.assertEqual(codes(row), ['armed-no-lane-request'])
 
     def test_a_request_or_a_t3_report_answers_it(self):
-        self.assertEqual(codes(status.analyse(bundle([request()], files=[APP_FILE]))), ['t3-held'])
+        self.assertEqual(codes(status.analyse(bundle([request()], files=[APP_FILE], labels=('automerge', 'lane:queued')))),
+                         ['t3-held'])
         self.assertEqual(codes(status.analyse(bundle([request(), report('PASS', tier='T3')], files=[APP_FILE]))), [])
 
     def test_an_unarmed_pr_or_a_docs_change_is_not_flagged(self):
@@ -265,11 +299,11 @@ class ArmedWithoutARequest(unittest.TestCase):
     def test_a_lane_request_for_t4_does_not_count_as_a_t3_request(self):
         self.assertEqual(codes(status.analyse(bundle([request('T4')], files=[APP_FILE]))), ['armed-no-lane-request'])
 
-    def test_an_unknown_scope_flags_nothing_it_cannot_know(self):
+    def test_an_unknown_scope_says_so_instead_of_judging_what_it_cannot_know(self):
         def broken(paths):
             raise OSError('no checkout')
         row = status.analyse(bundle(files=[APP_FILE]), classify=broken)
-        self.assertEqual(row['flags'], [])
+        self.assertEqual(codes(row), ['scope-unknown'])
 
 
 class Audits(unittest.TestCase):
@@ -284,6 +318,11 @@ class Audits(unittest.TestCase):
         row = status.analyse(bundle([audit('Blocking: the description has no Cost and catch.')], files=self.AUDIO))
         self.assertEqual(codes(row), ['audit-blocking'])
         self.assertEqual(row['audit']['verdict'], 'blocking')
+
+    def test_findings_on_a_change_the_runner_does_not_audit_are_shown_but_not_red(self):
+        row = status.analyse(bundle([audit('Blocking: x')], files=['docs/x.md']))
+        self.assertEqual(codes(row), ['audit-blocking'])
+        self.assertEqual(row['flags'][0]['severity'], status.LOOK)
 
     def test_a_clean_audit_of_an_older_head_does_not_clear_it(self):
         row = status.analyse(bundle([audit(sha=OLD[:7])], files=self.AUDIO))
@@ -347,6 +386,19 @@ class Snapshot(unittest.TestCase):
         b['pull'] = dict(b['pull'], number=2)
         snap = status.snapshot(FakeAPI(routes_for(a, b)), NOW, only=[2], sleep=lambda s: None)
         self.assertEqual([r['number'] for r in snap['prs']], [2])
+
+    def test_asking_for_a_pr_that_is_not_open_says_so_instead_of_saying_nothing_is_pending(self):
+        snap = status.snapshot(FakeAPI(routes_for(bundle())), NOW, only=[99], sleep=lambda s: None)
+        self.assertEqual(snap['missing'], [99])
+        self.assertIn('#99 is not an open PR into next', status.render(snap))
+        self.assertNotIn('(no open PRs)', status.render(snap))
+
+    def test_running_and_failing_checks_show_in_the_line(self):
+        run = {'id': 1, 'name': 'automerge', 'status': 'in_progress', 'conclusion': None}
+        bad = {'id': 2, 'name': 'lane', 'status': 'completed', 'conclusion': 'failure'}
+        self.assertIn('checks running automerge', status.line(status.analyse(bundle(checks=[run]))))
+        self.assertIn('checks failing lane', status.line(status.analyse(bundle(checks=[bad]))))
+        self.assertIn('checks ok', status.line(status.analyse(bundle())))
 
     def test_no_open_prs_says_so(self):
         text = status.render(status.snapshot(FakeAPI(routes_for()), NOW, sleep=lambda s: None))

@@ -17,13 +17,18 @@ Flags (`!!` red, `!` look) mark what a reply must not hide:
                       run on it is failing
   t3-held             the PR's T3 request is unanswered or its newest T3 report (on any commit) isn't PASS, which
                       holds the merge (lane-runner.py t3_gate), though the head itself may look quiet
-  audit-blocking      the newest Claude or Codex audit of the head has findings
+  audit-blocking      the newest Claude or Codex audit of the head has findings (red only for audio, persistence,
+                      packet and lane diffs, the kinds the runner consults audits for)
   conflict            the PR doesn't merge cleanly into next
   older-head-only     lane reports exist, but only for commits other than the head: a PASS there says nothing
   inconclusive-on-head  the newest lane report on the head is INCONCLUSIVE (not a pass, and its check stays green)
   armed-no-lane-request  `automerge` is on, the diff needs simulator tests (scripts/test-scope.py, by path) and
                       no `/lane T3` request was ever posted
   audit-pending       the diff is audio, persistence, packet or lane work and no audit names the head yet
+  held-by-runner      the newest automerge report on the head carries a "not merged …" line (inherited audit finding,
+                      the PR moved on, next kept moving, the push failed): a PASS that did not merge
+  t3-unqueued         a /lane T3 request is unanswered and the PR has neither `lane:queued` nor `lane:running`
+  scope-unknown       the diff couldn't be classified, so audit and simulator-test needs are not judged
   owner-tap           touches scripts/lane-runner.py or .github/: the runner never merges it, only the owner does
   unreadable          a read for this PR failed, so nothing about it can be called quiet
 
@@ -204,7 +209,8 @@ def runner_reports(comments: list[dict]) -> list[dict]:
             tier = wanted.get('tier') or (re.search(r'tier (\S+)', body) or [None, ''])[1]
             found.append({'index': index, 'verdict': verdict.group(1), 'tier': tier, 'at': at,
                           'id': body.split(' ', 3)[2], 'commit': wanted.get('commit') or (line.group(1) if line else ''),
-                          'url': comment.get('html_url') or ''})
+                          'url': comment.get('html_url') or '',
+                          'holds': [text.strip() for text in body.splitlines() if text.startswith('not merged')]})
             continue
         identical = IDENTICAL.search(body)
         if identical and LANE_NOTE in body:
@@ -343,10 +349,10 @@ def short(report: dict | None) -> dict | None:
 
 def mergeable_word(pull: dict) -> str:
     state = pull.get('mergeable_state')
-    if pull.get('draft'):
-        return 'draft'
     if pull.get('mergeable') is False or state == 'dirty':
         return 'conflict'
+    if pull.get('draft'):
+        return 'draft'
     return {'clean': 'clean', 'behind': 'behind', 'blocked': 'blocked', 'unstable': 'unstable'}.get(state, 'unknown')
 
 
@@ -376,6 +382,11 @@ def analyse(bundle: dict, classify=None) -> dict:
     def flag(code, severity, detail):
         flags.append({'code': code, 'severity': severity, 'detail': detail})
 
+    held = newest(on_head, lambda r: r['tier'] == 'auto')
+    if held and held.get('holds'):
+        flag('held-by-runner', LOOK, f'the newest automerge report on {head7} ({held["verdict"]}, {held["id"]}) says: '
+             + ' / '.join(text[:160] for text in held['holds']))
+
     for name, why in sorted(bundle['errors'].items()):
         flag('unreadable', RED, f'could not read the PR\'s {name}: {why}')
 
@@ -403,6 +414,9 @@ def analyse(bundle: dict, classify=None) -> dict:
         answered = newest(t3_reports, lambda r: True)
         if answered is None or answered['index'] < asked:
             if not (t3 and t3['index'] > asked):
+                if not {'lane:queued', 'lane:running'} & set(labels):
+                    flag('t3-unqueued', LOOK, 'the newest /lane T3 request has no report and the PR carries neither '
+                         '`lane:queued` nor `lane:running`: nothing will run it until the label is (re)added')
                 flag('t3-held', LOOK, 'the newest /lane T3 request has no T3 report yet; the runner merges nothing '
                      'until it does')
         elif answered['verdict'] != 'PASS':
@@ -412,7 +426,10 @@ def analyse(bundle: dict, classify=None) -> dict:
                  f'on a T3 PASS')
 
     if audit and not audit['clean']:
-        flag('audit-blocking', RED, f'the {audit["who"]} audit of {head7} has findings: "{audit["line"][:100]}"')
+        audited = not scope.get('known') or bool(scope['audit_kinds'])   # the runner consults audits for those only
+        flag('audit-blocking', RED if audited else LOOK,
+             f'the {audit["who"]} audit of {head7} has findings: "{audit["line"][:100]}"'
+             + ('' if audited else ' (not an audited kind of change, so the runner ignores it)'))
     elif scope.get('known') and scope['audit_kinds'] and not audit:
         older = f' (the audit on file is for {other_audit["shas"][0][:7]})' if other_audit else ''
         flag('audit-pending', LOOK, f'touches {" and ".join(scope["audit_kinds"])}; no audit names the head '
@@ -426,6 +443,9 @@ def analyse(bundle: dict, classify=None) -> dict:
         flag('armed-no-lane-request', LOOK, f'automerge is on and the diff needs simulator tests ({scope["tier"]} by '
              'path), but no /lane T3 request was posted')
 
+    if not scope.get('known'):
+        flag('scope-unknown', LOOK, f'could not work out what the diff touches ({scope.get("why")}), so audit, '
+             'simulator-test and owner-tap needs are not judged')
     if scope.get('known') and scope['owner_tap']:
         flag('owner-tap', LOOK, f'touches {", ".join(scope["owner_tap"])}: the runner never merges it; '
              'it waits for the owner\'s tap')
@@ -449,7 +469,9 @@ def snapshot(api, now: dt.datetime | None = None, only: list[int] | None = None,
     """Read every open PR into `next` and judge it. Raises GitHubError when the PR list itself can't be read."""
     now = now or dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
     summaries = api.pages(f'pulls?state=open&base={BASE}&sort=created&direction=asc')
+    missing = []
     if only:
+        missing = sorted(set(only) - {s['number'] for s in summaries})
         summaries = [s for s in summaries if s['number'] in only]
     tip = ''
     try:
@@ -463,7 +485,7 @@ def snapshot(api, now: dt.datetime | None = None, only: list[int] | None = None,
               'look': sum(bool(r['flags']) and not any(f['severity'] == RED for f in r['flags']) for r in rows),
               'armed': sum(r['armed'] for r in rows)}
     return {'as_of': stamp(now), 'repo': getattr(api, 'repo', REPO), 'base': BASE, 'base_tip': tip[:7], 'counts': counts,
-            'prs': rows}
+            'missing': missing, 'prs': rows}
 
 
 def lane_text(row: dict) -> str:
@@ -486,8 +508,11 @@ def line(row: dict) -> str:
     issue = f'closes #{row["issue"]}' if row['issue'] else 'no linked issue'
     labels = ' '.join(row['labels']) or 'no labels'
     title = row['title'] if len(row['title']) <= 60 else row['title'][:59] + '…'
-    return (f'{marks}#{row["number"]} {row["head7"]} | {lane_text(row)} | {audit_text(row)} | merge {row["mergeable"]} | '
-            f'{labels} | {issue} | {title}')
+    checks = row['checks']
+    shown = ('checks failing ' + ', '.join(checks['failing']) if checks['failing'] else
+             'checks running ' + ', '.join(checks['running']) if checks['running'] else 'checks ok')
+    return (f'{marks}#{row["number"]} {row["head7"]} | {lane_text(row)} | {audit_text(row)} | {shown} | '
+            f'merge {row["mergeable"]} | {labels} | {issue} | {title}')
 
 
 def render(snap: dict) -> str:
@@ -499,7 +524,9 @@ def render(snap: dict) -> str:
     for row in snap['prs']:
         for flagged in row['flags']:
             lines.append(f'   #{row["number"]} {flagged["code"]} ({flagged["severity"]}): {flagged["detail"]}')
-    if not snap['prs']:
+    for number in snap.get('missing', []):
+        lines.append(f'   #{number} is not an open PR into {snap["base"]} (merged, closed or another base)')
+    if not snap['prs'] and not snap.get('missing'):
         lines.append('   (no open PRs)')
     lines.append('Lane verdicts count only on the head shown; "none on head" means no runner report tests it yet.')
     return '\n'.join(lines)
