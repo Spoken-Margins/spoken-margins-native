@@ -88,6 +88,24 @@ final class PreparedSpeechTextTests: XCTestCase {
         XCTAssertEqual(cache.resolve(item: changed, documents: store)?.text, changed.text, "a changed Item.text isn't served the old entry")
         XCTAssertNil(cache.resolve(item: paper(text: nil).withoutText, documents: store))
     }
+    func testInvalidationFindsNewRolesWhenCanonicalTextDidNotChange() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "speech-cache-\(UUID()).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let body = StructuredDocumentBuilder.build(lines: [.init(text: "Words whose role changed.", role: .body, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let reference = StructuredDocumentBuilder.build(lines: [.init(text: "Words whose role changed.", role: .reference, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let item = paper(text: body.text)
+        try store.saveItem(item)
+        try store.saveStructuredDocument(body, itemId: item.id)
+        let cache = PreparedSpeechTextCache()
+        XCTAssertEqual(cache.resolve(item: item, documents: store)?.text, body.text)
+        try store.saveStructuredDocument(reference, itemId: item.id)
+        XCTAssertEqual(reference.text, body.text)
+        XCTAssertEqual(cache.resolve(item: item, documents: store)?.text, body.text, "negative control: text equality retains the old entry")
+        cache.invalidate(itemId: item.id)
+        XCTAssertEqual(cache.resolve(item: item, documents: store)?.text, "", "references must leave the speech projection")
+    }
+
 }
 
 private extension Item {
