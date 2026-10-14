@@ -68,6 +68,22 @@ final class SpeechEngineSelectionTests: XCTestCase {
         XCTAssertEqual(log, "thermal=serious lowPower=true power=external memoryBackoff=false")
     }
 
+    /// #849 audit (I14): when the app's own backup voice takes over, the line names the cause and never says the
+    /// iOS voice is reading, since it isn't.
+    func testTheBackupVoiceLineNamesTheCauseAndNeverTheIOSVoice() {
+        let all: [SpeechFallbackReason] = [.deviceTooWarm, .memoryWarning, .renderTooSlow, .playbackFailed,
+                                           .playerStalled, .listenerStoppedGeneration]
+        for reason in all {
+            let line = reason.bundledVoiceExplanation
+            XCTAssertTrue(line.contains("backup voice"), line)
+            XCTAssertFalse(line.contains("iOS voice"), line)
+            XCTAssertTrue(line.contains("next time you press play"), line)
+        }
+        XCTAssertTrue(SpeechFallbackReason.deviceTooWarm.bundledVoiceExplanation.contains("too warm"))
+        XCTAssertTrue(SpeechFallbackReason.memoryWarning.bundledVoiceExplanation.contains("memory warning"))
+        XCTAssertFalse(SpeechFallbackReason.deviceTooWarm.bundledVoiceExplanation.contains("Low Power"))
+    }
+
     /// #314: a stop keeps its reason. Before, an assembly failure read as "using the iOS system
     /// voice", which was wrong: playback never left the on-device voice.
     func testEveryGenerationStopSaysWhyAndAnAssemblyFailureKeepsItsError() {

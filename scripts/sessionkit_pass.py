@@ -31,6 +31,9 @@ READS = (
     'App/SpokenMarginsAppTests/',
     # Supertonic's narration tests read the bundled voice resources.
     'App/SpokenMarginsApp/Resources/Supertonic/',
+    # The Kitten fallback voice's tests read the bundled model and the front end's test vectors (#849).
+    'App/SpokenMarginsApp/Resources/Kitten/',
+    'research/C2/frontend/',
     'research/B2/',
     'research/B4/',
     # Pocket's renderer tests read the committed passages, the PyTorch reference results, and the scoring script

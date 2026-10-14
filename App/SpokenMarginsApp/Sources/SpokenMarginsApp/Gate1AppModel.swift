@@ -480,6 +480,7 @@ final class Gate1AppModel: ObservableObject {
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
     var supertonicRenderer: SupertonicNarrationRenderer?
+    var kittenRenderer: KittenNarrationRenderer? // bundled fallback voice, built on first use (#849)
     var preparedAudioCoordinator: PreparedAudioCoordinator?
     var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
         didSet { if let digest = currentSupertonicRenderSignature?.digest, digest != oldValue?.digest { Task { [ledger = offlineStorageLedger] in _ = try? await ledger?.markSupersededPreparedChunks(currentSignatureDigest: digest) } } }
@@ -1501,9 +1502,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         diagnostics["supertonicMemoryPressure"] = "sessions_unloaded"
-        if let renderer = supertonicRenderer {
-            Task { await renderer.unload(removingGeneratedAudio: false) }
-        }
+        unloadNarrationRenderers(removingGeneratedAudio: false)
     }
 
     func makeAppOverviewSample() throws -> (Item, ListeningMap) {

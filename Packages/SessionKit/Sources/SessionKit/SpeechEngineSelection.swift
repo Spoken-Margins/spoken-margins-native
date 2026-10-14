@@ -75,6 +75,19 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
         self == .deviceTooWarm || self == .memoryWarning || self == .playerStalled
     }
 
+    /// One line for the player when the app's own backup voice, not the iOS voice, reads in place of the chosen
+    /// voice (#849). Only heat and memory send narration there; anything else gets the general line.
+    public var bundledVoiceExplanation: String {
+        switch self {
+        case .deviceTooWarm:
+            "Using the app's backup voice while this iPhone is too warm. Your voice comes back the next time you press play after it cools."
+        case .memoryWarning:
+            "Using the app's backup voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
+        case .renderTooSlow, .playbackFailed, .playerStalled, .listenerStoppedGeneration:
+            "Using the app's backup voice for now. Your voice comes back the next time you press play."
+        }
+    }
+
     /// One line for the player, saying why and what happens next.
     public var listenerExplanation: String {
         switch self {

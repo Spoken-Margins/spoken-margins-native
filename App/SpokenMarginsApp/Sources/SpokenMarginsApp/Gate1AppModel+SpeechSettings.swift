@@ -140,6 +140,10 @@ extension Gate1AppModel {
             supertonicRenderer = nil
             Task { await renderer.unload() }
         }
+        if ttsVoiceSelection == .system, let renderer = kittenRenderer {
+            kittenRenderer = nil
+            Task { await renderer.unload() }
+        }
         reportSuccess("Voice changed to \(ttsVoiceSelection.displayName). Press play when you are ready.")
     }
 

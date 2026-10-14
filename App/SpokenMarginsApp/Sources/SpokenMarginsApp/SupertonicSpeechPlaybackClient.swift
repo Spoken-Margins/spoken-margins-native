@@ -22,6 +22,15 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
 
+/// The bundled voice that renders a chunk when Supertonic isn't allowed (#849). A seam so a test can hold one render
+/// open while a play releases the voice; the app passes `KittenNarrationRenderer`.
+protocol BundledVoiceRendering: Sendable {
+    func render(text: String) async throws -> SupertonicNarrationResult
+    func discardGeneratedAudio(at url: URL) async
+}
+
+extension KittenNarrationRenderer: BundledVoiceRendering {}
+
 /// Background preparation's view of the shared renderer: every render is paced, whatever the
 /// app's state, without touching the pacing the listener's live narration gets (#377).
 struct BackgroundPreparationRenderer: SupertonicRendering {
@@ -274,6 +283,9 @@ enum SupertonicResourcePolicy {
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+    /// The bundled voice took a passage: `block` is the resource that refused Supertonic when Kitten took the
+    /// generation (nil when it had cleared by then), not what the phone reports when the passage plays (#849 audit).
+    typealias BundledVoiceHandler = @Sendable (_ block: SpeechFallbackReason?, _ charOffset: Int, _ targetId: String) -> Void
     /// A stall or its end, with the audio session's and player's state then (#288).
     typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// A pause, or a missing resume, the listener didn't ask for, with its cause (#538).
@@ -373,6 +385,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)?
     private let observesPlayerLifecycle: Bool
     private let onDeviceRenderingAllowed: @Sendable () -> Bool
+    /// The bundled Kitten voice (#849): renders a chunk when `onDeviceRenderingAllowed` refuses Supertonic, so a
+    /// hot, low-power or memory-pressed phone keeps one steady voice instead of dropping to the iOS voice.
+    /// nil in tests that exercise the iOS-voice fallback.
+    private let pressureRenderer: (any BundledVoiceRendering)?
     /// Plays the cue that introduces the iOS voice when it takes over a passage (#934). nil in tests that don't listen.
     private let voiceChangeCue: (@Sendable () -> Void)?
     private let lock = NSLock()
@@ -419,11 +435,27 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// Items whose on-device generation is stopped, each with the reason it stopped (#314).
     private var generationDisabledReasons: [String: String] = [:]
     private var generationPlan: [RenderRequest] = []
+    /// The article's own chunks as the plan saved for prepared audio has them, before the first chunk of a fallback
+    /// play is split for a quick start. The same as `generationPlan` otherwise.
+    private var preparationPlan: [RenderRequest] = []
     private var generationRenderOrder: [RenderRequest] = []
     private var generationResults: [Int: SupertonicPreparedChunk] = [:]
     /// Chunks the guard gave to the iOS voice. While any remain, the whole article isn't
     /// assembled into the item's audio, so the next play can try Supertonic again (#363 audit).
     private var standInOffsets: Set<Int> = []
+    /// The stand-ins the bundled Kitten voice rendered (#849). They hold back an assembled file like any stand-in, but
+    /// are not the iOS voice: no "iOS voice for this part" notice, no voice-change chime.
+    private var bundledVoiceOffsets: Set<Int> = []
+    /// The generation the bundled Kitten voice holds (#849 audit, I14): once Kitten renders a chunk, it renders the
+    /// rest of that generation too, so Supertonic comes back only at a play, never mid-sentence.
+    private var bundledVoiceGeneration: UUID?
+    /// The generation whose listener was told the bundled voice took over (#849 audit, I14: a visible, logged reason).
+    private var bundledVoiceNoticeGeneration: UUID?
+    /// What refused Supertonic when the bundled voice took `bundledVoiceGeneration`, for the notice (#849 audit).
+    private var bundledVoiceBlock: SpeechFallbackReason?
+    /// The playhead chunk as the article plan has it, keyed by its start, when a fallback play split it for a quick
+    /// start (#849 audit): saved Supertonic audio for the whole chunk still plays when there is some.
+    private var fastStartOriginals: [Int: RenderRequest] = [:]
     /// Decides which passage gets the voice-change cue, per generation (#934).
     private var voiceChangeCueDecider = NarrationVoiceChangeCue()
     private var voiceChangeCueGeneration: UUID?
@@ -438,6 +470,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// which starts that queue then (#540 audit).
     private var heldRenderQueueGeneration: UUID?
     private let onRestore: RestoreHandler?
+    /// Told when the bundled Kitten voice starts playing in place of Supertonic (#849 audit, I14), with the resource
+    /// that refused Supertonic when Kitten took over, so the listener sees why and diagnostics log it. Never after a
+    /// play released the voice. `onRestore` clears it.
+    private let onBundledVoice: BundledVoiceHandler?
     private let onStall: StallHandler?
     private let onSystemPause: SystemPauseHandler?
     private let onRenderPace: RenderPaceHandler?
@@ -536,6 +572,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         observesPlayerLifecycle: Bool = true,
         voiceChangeCue: (@Sendable () -> Void)? = nil,
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { SupertonicResourcePolicy.allowsRendering() },
+        pressureRenderer: (any BundledVoiceRendering)? = nil,
         fallbackClient: AudioPlaybackClient? = nil,
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,
@@ -548,6 +585,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
+        onBundledVoice: BundledVoiceHandler? = nil,
         onStall: StallHandler? = nil,
         onSystemPause: SystemPauseHandler? = nil,
         stallThreshold: Duration = .seconds(5),
@@ -583,6 +621,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.observesPlayerLifecycle = observesPlayerLifecycle
         self.voiceChangeCue = voiceChangeCue
         self.onDeviceRenderingAllowed = onDeviceRenderingAllowed
+        self.pressureRenderer = pressureRenderer
         self.interruptionHandler = interruptionHandler
         self.maxCharacters = maxCharacters
         self.startupBufferChunkCount = max(1, startupBufferChunkCount)
@@ -596,6 +635,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         self.onRestore = onRestore
+        self.onBundledVoice = onBundledVoice
         self.onStall = onStall
         self.onSystemPause = onSystemPause
         self.stallThreshold = stallThreshold
@@ -686,6 +726,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             return
         }
         let spokenOffset = resumeSpokenOffset(targetId: targetId, sourceOffset: charOffset)
+        replaceBundledVoiceChunks(after: spokenOffset, targetId: targetId)
         let before = resumeDiagnostics(targetId: targetId, spokenOffset: spokenOffset)
         let action = resumeAction(targetId: targetId, fromSpokenOffset: spokenOffset, isSeek: isSeek)
         reportResumeDecision(action, before: before)
@@ -721,6 +762,60 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             throw SessionKitError.invalidCommandForState("supertonic_playback_text_empty")
         }
         enqueueRender(request, shouldPlayWhenReady: false)
+    }
+
+    /// I14 for the bundled voice: once Supertonic is allowed again, a play (resume, seek, next item) releases the
+    /// generation from Kitten and lets go of the chunks after the one holding the playhead that are rendered and
+    /// waiting, from the first Kitten one on, so they render again with Supertonic. The whole waiting run goes, not
+    /// only its Kitten chunks: the render chain stops at the first chunk still waiting, so a Kitten chunk past it
+    /// would never be rendered again (#849 audit). The chunk holding the playhead is finished first, so the voice
+    /// never changes mid-sentence (#849).
+    private func replaceBundledVoiceChunks(after spokenOffset: Int, targetId: String) {
+        guard pressureRenderer != nil, onDeviceRenderingAllowed() else { return }
+        let work = lock.withLock { () -> (urls: [URL], restart: RenderRequest?, told: Bool) in
+            let told = bundledVoiceNoticeGeneration != nil
+            bundledVoiceGeneration = nil
+            bundledVoiceNoticeGeneration = nil
+            bundledVoiceBlock = nil
+            let order = generationRenderOrder
+            guard let first = order.firstIndex(where: {
+                $0.startOffset > spokenOffset && bundledVoiceOffsets.contains($0.startOffset)
+                    && renderedCache[$0.startOffset] != nil && !inFlightOffsets.contains($0.startOffset)
+            }) else { return ([], nil, told) }
+            var stale: [RenderRequest] = []
+            for planned in order[first...] {
+                guard renderedCache[planned.startOffset] != nil, !inFlightOffsets.contains(planned.startOffset) else { break }
+                stale.append(planned)
+            }
+            var urls: Set<URL> = []
+            for planned in stale {
+                let offset = planned.startOffset
+                if let cached = renderedCache.removeValue(forKey: offset) { urls.insert(cached.url) }
+                if let result = generationResults.removeValue(forKey: offset) { urls.insert(result.audioURL) }
+                standInOffsets.remove(offset)
+                bundledVoiceOffsets.remove(offset)
+            }
+            if let active = activeAudioURL { urls.remove(active) }
+            return (Array(urls), stale.first, told)
+        }
+        if work.told { onRestore?(targetId) }
+        for url in work.urls { discardAudio(url) }
+        if let restart = work.restart { enqueueRender(restart, shouldPlayWhenReady: false) }
+    }
+
+    /// Whether the bundled voice holds `generation` (#849 audit).
+    private func holdsBundledVoice(for generation: UUID) -> Bool {
+        lock.withLock { bundledVoiceGeneration == generation }
+    }
+
+    /// Kitten renders the rest of `generation` from here on, until a play releases it (#849 audit).
+    private func holdBundledVoice(for generation: UUID) {
+        let block = SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+        lock.withLock {
+            guard self.generation == generation else { return }
+            if bundledVoiceGeneration != generation { bundledVoiceBlock = block }
+            bundledVoiceGeneration = generation
+        }
     }
 
     /// I14: the chosen voice comes back once the condition that forced the fallback clears.
@@ -993,6 +1088,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationRenderOrder.removeAll()
             generationResults.removeAll()
             standInOffsets.removeAll()
+            bundledVoiceOffsets.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
             failedRenderReasons.removeAll()
@@ -1064,6 +1160,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationRenderOrder.removeAll()
             generationResults.removeAll()
             standInOffsets.removeAll()
+            bundledVoiceOffsets.removeAll()
             failedRenderReasons.removeAll()
             initialPlaybackOffset = nil
             initialRequestedSpokenOffset = nil
@@ -1235,6 +1332,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationRenderOrder.removeAll()
             generationResults.removeAll()
             standInOffsets.removeAll()
+            bundledVoiceOffsets.removeAll()
             failedRenderReasons.removeAll()
             preparedAudioAssemblyStarted = false
             return (source, nextGeneration, Array(urls), renderControl)
@@ -1252,9 +1350,30 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             articleIdentity = spokenPlan.articleIdentity
                 ?? (article.text == nil ? NarrationChunkPlanner.identity(ofArticle: preparedSourceText) : nil)
         }
-        let plan = spokenPlan.chunks.map {
-            RenderRequest(generation: snapshot.generation, targetId: targetId, startOffset: $0.startOffset,
-                          sourceLength: $0.sourceLength, text: $0.text, boundary: $0.boundary, articleIndex: $0.articleIndex)
+        func requests(_ chunks: [NarrationChunkPlanner.SpokenChunk]) -> [RenderRequest] {
+            chunks.map {
+                RenderRequest(generation: snapshot.generation, targetId: targetId, startOffset: $0.startOffset,
+                              sourceLength: $0.sourceLength, text: $0.text, boundary: $0.boundary, articleIndex: $0.articleIndex)
+            }
+        }
+        let canonicalPlan = requests(spokenPlan.chunks)
+        // Starting on the bundled voice (Supertonic isn't allowed): a short first chunk, so audio starts in about
+        // a second. The article's own plan is unchanged (#849). The split is used only when the playhead is in its
+        // first half, and the whole chunk is kept: when it has saved Supertonic audio, that plays instead (#849 audit).
+        var plan = canonicalPlan
+        var fastStartOriginal: RenderRequest?
+        if pressureRenderer != nil, !onDeviceRenderingAllowed(),
+           let original = canonicalPlan.last(where: {
+               $0.startOffset <= spokenOffset && spokenOffset < $0.startOffset + max(1, $0.sourceLength)
+           }) {
+            let split = requests(NarrationChunkPlanner.splittingFirstChunk(
+                of: spokenPlan.chunks, spokenText: snapshot.source, playheadOffset: spokenOffset))
+            if let head = split.first(where: { $0.startOffset == original.startOffset }),
+               head.sourceLength < original.sourceLength,
+               spokenOffset < head.startOffset + head.sourceLength {
+                plan = split
+                fastStartOriginal = original
+            }
         }
         guard !plan.isEmpty else { return nil }
         let playbackIndex = plan.lastIndex {
@@ -1265,6 +1384,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         let forward = Array(plan[playbackIndex...])
         lock.withLock {
             generationPlan = plan
+            preparationPlan = canonicalPlan
+            fastStartOriginals = fastStartOriginal.map { [$0.startOffset: $0] } ?? [:]
             // Navigation is also a demand signal. Render from the new playhead
             // forward and leave skipped material for an explicit offline job;
             // wrapping to the prefix keeps the model hot for audio the listener
@@ -1287,6 +1408,58 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let source = preparedSourceText.count - article.count
             return (preparedSpeechProjection.spokenCharacterOffset(atOrAfterSourceOffset: source), source, article)
         }
+    }
+
+    /// The saved Supertonic audio for the whole chunk a fallback play split for a quick start, when there is some
+    /// (#849 audit): prepared audio first, then the disk cache, as for any chunk. On a hit the whole chunk takes the
+    /// place of both halves in the plan, so the saved audio plays and the second half is not rendered.
+    private func savedAudioForUnsplitChunk(
+        _ head: RenderRequest
+    ) async -> (request: RenderRequest, result: SupertonicNarrationResult)? {
+        let known = lock.withLock { () -> (original: RenderRequest, identity: String?, articleStart: Int)? in
+            guard generation == head.generation, let original = fastStartOriginals[head.startOffset],
+                  original.generation == head.generation, original.sourceLength > head.sourceLength else { return nil }
+            return (original, articleIdentity, articleSpokenStart)
+        }
+        guard let known else { return nil }
+        let original = known.original
+        var saved: SupertonicNarrationResult?
+        if let identity = known.identity, let index = original.articleIndex, let preparedChunkLookup,
+           let recovered = await preparedChunkLookup(original.targetId, identity, PreparedChunkPlan(
+               index: index,
+               startOffset: original.startOffset - known.articleStart,
+               sourceLength: original.sourceLength,
+               text: original.text
+           )) {
+            saved = SupertonicNarrationResult(
+                audioURL: recovered.audioURL,
+                duration: recovered.duration,
+                sampleRate: 0,
+                renderDuration: 0,
+                sessionLoadCount: 0
+            )
+        } else if let cached = diskCache?.cachedAudio(
+            text: original.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8
+        ) {
+            saved = cached
+        }
+        guard let saved else { return nil }
+        let adopted = lock.withLock { () -> Bool in
+            guard generation == head.generation, fastStartOriginals.removeValue(forKey: head.startOffset) != nil else {
+                return false
+            }
+            let tailStart = head.startOffset + head.sourceLength
+            func unsplit(_ plan: [RenderRequest]) -> [RenderRequest] {
+                plan.compactMap {
+                    $0.startOffset == head.startOffset ? original : ($0.startOffset == tailStart ? nil : $0)
+                }
+            }
+            generationPlan = unsplit(generationPlan)
+            generationRenderOrder = unsplit(generationRenderOrder)
+            return true
+        }
+        // Saved audio belongs to the disk cache or the prepared store, so a lost race deletes nothing.
+        return adopted ? (original, saved) : nil
     }
 
     /// The prepared-audio plan entry for a chunk, in the article's own coordinates, and the
@@ -1352,7 +1525,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard shouldStart else { return }
         reportGenerationState(.rendering)
         let waitLimit = renderWaitLimit
-        let task = Task { [weak self, renderer, voice] in
+        let pressureRenderer = pressureRenderer
+        let task = Task { [weak self, renderer, voice, pressureRenderer] in
+            // Each renderer deletes only the files it wrote and ignores the rest.
+            let discard: @Sendable (URL) async -> Void = { url in
+                await renderer.discardGeneratedAudio(at: url)
+                await pressureRenderer?.discardGeneratedAudio(at: url)
+            }
             let timeout = Task { @MainActor [weak self] in
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: waitLimit) } catch { return }
@@ -1377,7 +1556,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     let needsPlan = self.onPreparationPlan != nil
                         && request.startOffset == self.generationRenderOrder.first?.startOffset
                     let start = self.articleSpokenStart
-                    let plan = needsPlan ? self.generationPlan.compactMap { part in
+                    let plan = needsPlan ? self.preparationPlan.compactMap { part in
                         part.articleIndex.map {
                             PreparedChunkPlan(index: $0, startOffset: part.startOffset - start, sourceLength: part.sourceLength, text: part.text)
                         }
@@ -1388,12 +1567,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     await self?.onPreparationPlan?(request.targetId, preparation.0, preparation.1)
                 }
                 try Task.checkCancellation()
-                let result: SupertonicNarrationResult
+                var result: SupertonicNarrationResult
                 var performedInference = false
                 var renderWall: Duration?
                 var ownsResult = false
-                let articleChunk = self?.articleChunkPlan(for: request)
-                if let articleChunk,
+                // A split head's whole chunk may have saved Supertonic audio; it plays in place of both halves.
+                var chunk = request
+                // Once the bundled voice holds this generation it renders every later chunk, saved Supertonic audio
+                // included, so the voice stays the same until a play releases it (#849 audit).
+                let holdsBundledVoice = pressureRenderer != nil && self?.holdsBundledVoice(for: request.generation) == true
+                let articleChunk = holdsBundledVoice ? nil : self?.articleChunkPlan(for: request)
+                if let unsplit = await self?.savedAudioForUnsplitChunk(request) {
+                    chunk = unsplit.request
+                    result = unsplit.result
+                } else if let articleChunk,
                    let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.identity, articleChunk.plan) {
                     result = SupertonicNarrationResult(
                         audioURL: recovered.audioURL,
@@ -1402,7 +1589,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         renderDuration: 0,
                         sessionLoadCount: 0
                     )
-                } else if let cached = self?.diskCache?.cachedAudio(
+                } else if !holdsBundledVoice, let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
                     voice: voice,
                     language: "en",
@@ -1411,22 +1598,32 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 ) {
                     result = cached
                 } else {
-                    guard self?.onDeviceRenderingAllowed() != false else {
+                    // Supertonic is not allowed now, or the bundled voice holds this generation: the bundled Kitten
+                    // voice renders the chunk when there is one, otherwise the iOS voice takes the passage (#849).
+                    let allowedNow = self?.onDeviceRenderingAllowed() != false
+                    let usesPressureRenderer = pressureRenderer != nil && (!allowedNow || holdsBundledVoice)
+                    guard allowedNow || usesPressureRenderer else {
                         await MainActor.run {
                             self?.renderFailed(request: request, shouldPlayWhenReady: shouldPlayWhenReady,
                                                reason: "supertonic_resource_pressure")
                         }
                         return
                     }
-                    performedInference = true
                     let renderStartedAt = ContinuousClock.now
-                    let rendered = try await renderer.render(
-                        text: request.text,
-                        voice: voice,
-                        language: "en",
-                        speed: 1.0,
-                        synthesisSteps: 8
-                    )
+                    let rendered: SupertonicNarrationResult
+                    if usesPressureRenderer, let pressureRenderer {
+                        self?.holdBundledVoice(for: request.generation)
+                        rendered = try await pressureRenderer.render(text: request.text)
+                    } else {
+                        performedInference = true
+                        rendered = try await renderer.render(
+                            text: request.text,
+                            voice: voice,
+                            language: "en",
+                            speed: 1.0,
+                            synthesisSteps: 8
+                        )
+                    }
                     renderWall = ContinuousClock.now - renderStartedAt
                     // Only Supertonic's own audio is cached under its key. An iOS-voice stand-in
                     // isn't, so the next play renders Supertonic again and re-checks it (#311).
@@ -1453,11 +1650,29 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 if Task.isCancelled {
                     // An uncached render (a stand-in, or no disk cache) belongs to nothing else: a
                     // stop or seek during it must delete it, not leak it (#363 audit).
-                    if ownsResult { Task { await renderer.discardGeneratedAudio(at: result.audioURL) } }
+                    if ownsResult { let owned = result.audioURL; Task { await discard(owned) } }
                     throw CancellationError()
                 }
+                if performedInference, self?.onDeviceRenderingAllowed() == false, let pressureRenderer {
+                    // The condition turned while Supertonic rendered: its chunk is let go and the bundled voice
+                    // renders the text, so the queue keeps going on one steady voice (#849).
+                    let letGo = result.audioURL
+                    Task { await discard(letGo) }
+                    self?.holdBundledVoice(for: request.generation)
+                    let renderStartedAt = ContinuousClock.now
+                    result = try await pressureRenderer.render(text: request.text)
+                    renderWall = ContinuousClock.now - renderStartedAt
+                    ownsResult = true
+                    performedInference = false
+                    if Task.isCancelled {
+                        let cancelled = result.audioURL
+                        Task { await discard(cancelled) }
+                        throw CancellationError()
+                    }
+                }
                 guard !performedInference || self?.onDeviceRenderingAllowed() != false else {
-                    Task { await renderer.discardGeneratedAudio(at: result.audioURL) }
+                    let refused = result.audioURL
+                    Task { await discard(refused) }
                     await MainActor.run {
                         self?.renderFailed(
                             request: request,
@@ -1468,11 +1683,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     return
                 }
                 if let renderWall {
-                    self?.recordRenderPace(request: request, audioSeconds: result.duration, wall: renderWall)
+                    self?.recordRenderPace(request: chunk, audioSeconds: result.duration, wall: renderWall)
                 }
                 await self?.renderCompleted(
                     result: result,
-                    request: request,
+                    request: chunk,
                     shouldPlayWhenReady: shouldPlayWhenReady
                 )
             } catch is CancellationError {
@@ -1521,8 +1736,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let cached = CachedAudio(url: result.audioURL, duration: result.duration, request: request)
             if result.engine == SupertonicNarrationResult.supertonicEngine {
                 standInOffsets.remove(request.startOffset)
+                bundledVoiceOffsets.remove(request.startOffset)
             } else {
                 standInOffsets.insert(request.startOffset)
+                if result.engine == KittenNarrationRenderer.engine {
+                    bundledVoiceOffsets.insert(request.startOffset)
+                } else {
+                    bundledVoiceOffsets.remove(request.startOffset)
+                }
             }
             generationResults[request.startOffset] = SupertonicPreparedChunk(
                 startOffset: request.startOffset,
@@ -1710,6 +1931,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 }
                 generationResults.removeAll()
                 standInOffsets.removeAll()
+            bundledVoiceOffsets.removeAll()
                 failedRenderReasons.removeAll()
                 preparedAudioAssemblyStarted = false
                 // Another hand-over replaces one still waiting for its voice; its kept chunk is among `urls`.
@@ -1819,9 +2041,22 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 voiceChangeCueGeneration = request.generation
                 voiceChangeCueDecider = NarrationVoiceChangeCue()
             }
-            return voiceChangeCueDecider.leadIn(forStandIn: standInOffsets.contains(request.startOffset))
+            return voiceChangeCueDecider.leadIn(forStandIn: isSystemVoiceStandIn(at: request.startOffset))
         }
         if cueLeadIn > 0, let voiceChangeCue { voiceChangeCue() }
+        // I14: the first bundled-voice passage of a generation tells the listener why the voice changed (#849 audit).
+        // Only while the bundled voice still holds the generation: a Kitten chunk that was still rendering when a play
+        // released the voice must not announce it again, on a phone that has cooled (#849 audit).
+        let bundledNotice = lock.withLock { () -> (announces: Bool, block: SpeechFallbackReason?) in
+            guard bundledVoiceGeneration == request.generation,
+                  bundledVoiceOffsets.contains(request.startOffset),
+                  bundledVoiceNoticeGeneration != request.generation else { return (false, nil) }
+            bundledVoiceNoticeGeneration = request.generation
+            return (true, bundledVoiceBlock)
+        }
+        if bundledNotice.announces {
+            onBundledVoice?(bundledNotice.block, sourceOffset(forSpokenOffset: request.startOffset), request.targetId)
+        }
         let delay = requestedDelay + (voiceChangeCue == nil ? 0 : cueLeadIn)
         do {
             // Keep the session continuous between ready chunks so opted-in
@@ -1908,13 +2143,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
+    /// A chunk the iOS voice reads in place of the chosen voice. Call with `lock` held.
+    private func isSystemVoiceStandIn(at offset: Int) -> Bool {
+        standInOffsets.contains(offset) && !bundledVoiceOffsets.contains(offset)
+    }
+
     /// The guard's replacement that is playing now (#306), not a render prepared ahead.
     /// Full-item fallbacks have their own reason; this notice is only for a temporary passage.
     var replacementVoiceTargetId: String? {
         lock.withLock {
             guard !fallbackIsActive, transportIntent == .playing, !playbackComplete,
                   player?.currentItem != nil, startedTargetId == currentTargetId,
-                  standInOffsets.contains(currentStartOffset),
+                  isSystemVoiceStandIn(at: currentStartOffset),
                   !observesPlayerLifecycle || player?.timeControlStatus == .playing else { return nil }
             return currentTargetId
         }
@@ -2559,9 +2799,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     private func discardAudio(_ url: URL) {
         if diskCache?.owns(url) == true { return }
-        Task { [renderer] in
-            await renderer.discardGeneratedAudio(at: url)
-        }
+        Task { await discardGeneratedAudio(at: url) }
+    }
+
+    /// Each renderer deletes only the files it wrote and ignores the rest.
+    private func discardGeneratedAudio(at url: URL) async {
+        await renderer.discardGeneratedAudio(at: url)
+        await pressureRenderer?.discardGeneratedAudio(at: url)
     }
 
     private func resumeAction(targetId: String, fromSpokenOffset spokenOffset: Int, isSeek: Bool) -> ResumeAction {
