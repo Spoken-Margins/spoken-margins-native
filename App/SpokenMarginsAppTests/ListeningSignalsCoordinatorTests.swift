@@ -8,7 +8,9 @@ import SessionKitPersistence
 final class ListeningSignalsCoordinatorTests: XCTestCase {
     /// #1340: the refresh is the test's own, awaited, after the model's launch refresh has landed.
     /// It used to start an unstructured refresh that a still-running launch refresh could swallow,
-    /// and the swallowed run left the cached "no source" context in place.
+    /// and the swallowed run left the cached "no source" context in place. Since the collector keys
+    /// on the item's own source fields, this case checks the refresh path still ends in a correct
+    /// export; the no-refresh case below is the one that guards the collector.
     func testFollowingAnExistingSubscriptionRefreshesACachedMissingItemRelationship() async throws {
         try await checkAnItemThatGainsAFollowedSource(refreshing: true)
     }
