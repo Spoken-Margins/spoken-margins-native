@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["J8SWC6J3VY.com.spokenmargins.native"],
+        "components": [
+          { "/": "/l/*", "comment": "Share links open in the app" }
+        ]
+      }
+    ]
+  }
+}

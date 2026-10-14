@@ -109,6 +109,106 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         model.cancelSpokenMarginsPackageImport()
     }
 
+    // MARK: Share links (#488)
+
+    private static let shareLinkID = "0123456789abcdef0123456789abcdef"
+
+    @MainActor
+    private func shareLinkModel(root: URL, fetch: @escaping ShareLinkPacketDownloader.Fetch) -> Gate1AppModel {
+        let model = Gate1AppModel(
+            sourceLinkResolver: podcastResolver(),
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: root.appendingPathComponent("recipient.sqlite")
+        )
+        model.resetAndSeed()
+        model.shareLinkOpener.downloader = ShareLinkPacketDownloader(fetch: fetch)
+        return model
+    }
+
+    @MainActor
+    private func waitForShareLink(_ model: Gate1AppModel, until done: @MainActor () -> Bool) async throws {
+        for _ in 0..<250 where !done() {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(done(), "Timed out waiting for the share link: \(model.diagnostics["lastShareLink"] ?? "no state")")
+    }
+
+    @MainActor
+    func testTappingAShareLinkDownloadsTheSealedPacketAndShowsTheImportReview() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-open")
+        let packageURL = root.appendingPathComponent("link.spokenmargins")
+        _ = try writePodcastPackage(to: packageURL, packageID: "package-share-link")
+        let key = ShareLinkSealing.Key.random()
+        let sealed = try ShareLinkSealing.seal(
+            packet: try Data(contentsOf: packageURL), preview: Data(#"{"schema":"spokenmargins.link-preview.v1"}"#.utf8), key: key
+        )
+        let requested = ShareLinkRequestLog()
+        let model = shareLinkModel(root: root) { url, _ in
+            requested.record(url)
+            return (200, sealed.packet)
+        }
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: key
+        ))
+
+        model.handleIncomingURL(link)
+        try await waitForShareLink(model) { model.spokenMarginsPackageImportReview != nil }
+
+        XCTAssertEqual(model.spokenMarginsPackageImportReview?.contents.manifest.item.title, Self.podcastTitle)
+        XCTAssertEqual(requested.urls.map(\.absoluteString), ["https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)/packet"])
+        XCTAssertEqual(model.diagnostics["lastShareLink"], "opened")
+        XCTAssertFalse(model.diagnostics.values.contains { $0.contains(key.fragment) }, "the key must never reach diagnostics")
+        model.cancelSpokenMarginsPackageImport()
+    }
+
+    @MainActor
+    func testAnExpiredShareLinkSaysSoAndOpensNoReview() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-expired")
+        let model = shareLinkModel(root: root) { _, _ in (410, Data()) }
+        let link = try XCTUnwrap(ShareLinkSealing.linkURL(
+            base: URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!, key: .random()
+        ))
+
+        model.handleIncomingURL(link)
+        try await waitForShareLink(model) { model.lastError != nil }
+
+        XCTAssertEqual(model.lastError, "This link has expired or can't be reached.")
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+    }
+
+    @MainActor
+    func testAShareLinkWithoutItsKeySaysItIsDamagedWithoutAskingTheServer() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-keyless")
+        let requested = ShareLinkRequestLog()
+        let model = shareLinkModel(root: root) { url, _ in
+            requested.record(url)
+            return (200, Data())
+        }
+
+        model.handleIncomingURL(URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)")!)
+        try await waitForShareLink(model) { model.lastError != nil }
+
+        XCTAssertEqual(model.lastError, "This link is incomplete or damaged.")
+        XCTAssertTrue(requested.urls.isEmpty)
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+    }
+
+    @MainActor
+    func testALinkOnTheShareHostThatIsNotAShareLinkIsRefusedWithoutADownload() async throws {
+        let root = try temporaryDirectory(named: "spoken-margins-share-link-foreign-path")
+        let requested = ShareLinkRequestLog()
+        let model = shareLinkModel(root: root) { url, _ in
+            requested.record(url)
+            return (200, Data())
+        }
+
+        model.handleIncomingURL(URL(string: "https://spokenmargins.proximitytoprogress.com/l/\(Self.shareLinkID)/packet")!)
+
+        XCTAssertEqual(model.lastError, "This isn't a Spoken Margins share link.")
+        XCTAssertTrue(requested.urls.isEmpty)
+        XCTAssertNil(model.spokenMarginsPackageImportReview)
+    }
+
     @MainActor
     func testPodcastPackageImportBindsToImportedItemInsteadOfStaleSelection() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-podcast-binding")
@@ -1025,4 +1125,16 @@ private final class ArticlePackageExtractor: ReadablePageExtracting {
         lastExtractor = "recorded"
         return handoff
     }
+}
+
+private final class ShareLinkRequestLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [URL] = []
+
+    func record(_ url: URL) {
+        lock.lock(); defer { lock.unlock() }
+        recorded.append(url)
+    }
+
+    var urls: [URL] { lock.lock(); defer { lock.unlock() }; return recorded }
 }
