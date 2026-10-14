@@ -1527,8 +1527,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             if hasActiveSession || (!opensItem && !handoff.requestedContinuation.startSession) {
                 let itemId = try importBrowserTextInBackground(handoff)
-                // #1437: a share shows its item whatever is in Now Playing. Opening the page leaves playback alone.
-                if opensItem { openItem(id: itemId) }
+                if opensItem { openItem(id: itemId) } // #1437: a share shows its item whatever is in Now Playing; playback is untouched
                 reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
                 return itemId
             }
