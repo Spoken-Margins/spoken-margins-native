@@ -6,7 +6,21 @@ import SessionKitPersistence
 
 @MainActor
 final class ListeningSignalsCoordinatorTests: XCTestCase {
+    /// #1340: the refresh is the test's own, awaited, after the model's launch refresh has landed.
+    /// It used to start an unstructured refresh that a still-running launch refresh could swallow,
+    /// and the swallowed run left the cached "no source" context in place.
     func testFollowingAnExistingSubscriptionRefreshesACachedMissingItemRelationship() async throws {
+        try await checkAnItemThatGainsAFollowedSource(refreshing: true)
+    }
+
+    /// The collector alone: the item gains the followed source's URL while the subscriptions stay as
+    /// they were, and nothing refreshes. This is the case that fails without the collector keying
+    /// its cache on the item's own source fields (#1340).
+    func testAnItemThatGainsAFollowedSourceIsCreditedWithoutAnyRefresh() async throws {
+        try await checkAnItemThatGainsAFollowedSource(refreshing: false)
+    }
+
+    private func checkAnItemThatGainsAFollowedSource(refreshing: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -24,21 +38,27 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
         let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
         model.listeningSignals = signals
+        // The model's launch refresh reassigns feedSubscriptions, which ends listening. Let it
+        // land before the window under test, so it can't end the interval half way through.
+        let launchDeadline = Date().addingTimeInterval(10)
+        while model.diagnostics["followedSourceCount"] == nil || model.isRefreshingFollowedSources, Date() < launchDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNotNil(model.diagnostics["followedSourceCount"], "the launch refresh landed before playback")
         signals.playbackProgress(itemId: item.id, status: .playing)
         _ = await signals.exportFileURL() // The same collector has cached a missing relationship.
         item.sourceURL = subscription.source.canonicalURL
         try store.saveItem(item)
-        // Publishing the followed-source refresh must invalidate item relationships too, even
-        // when the already-followed subscription itself did not change. The entry is a refresh
-        // completion marker; it is not the listened item and cannot provide its context.
-        try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
-            canonicalURL: "https://publisher.example/other", title: "Other", state: .unseen))
-        model.refreshFollowedSources(force: false)
-        let deadline = Date().addingTimeInterval(5)
-        while !model.followedSourceEntries.contains(where: { $0.id == "refresh-marker" }), Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        if refreshing {
+            // Publishing the followed-source refresh must invalidate item relationships too, even
+            // when the already-followed subscription itself did not change. The entry is a refresh
+            // completion marker; it is not the listened item and cannot provide its context.
+            try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
+                canonicalURL: "https://publisher.example/other", title: "Other", state: .unseen))
+            XCTAssertFalse(model.isRefreshingFollowedSources, "a refresh already running would swallow this one")
+            await model.performFollowedSourceRefresh(force: false)
+            XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
         }
-        XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
         XCTAssertEqual(try store.loadFeedSubscriptions(), originalSubscriptions)
         signals.playbackProgress(itemId: item.id, status: .playing)
         try await Task.sleep(for: .milliseconds(1_100))
