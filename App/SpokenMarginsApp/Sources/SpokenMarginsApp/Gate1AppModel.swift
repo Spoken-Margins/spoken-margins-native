@@ -1309,27 +1309,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// Spoken podcast Margins get the full moment: lead-in, the Margin inline, then the item's other spoken
-    /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
-    private func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
-        guard interjection.isInlineSpokenMargin, let anchorMs = interjection.anchor.mediaTimeMs else { return }
-        let spoken = inlineSpokenMargins(itemId: interjection.itemId, store: store)
-        var voiceURLs: [String: URL] = [:]
-        for margin in spoken + [interjection] {
-            if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
-        }
-        startMarginMoment(
-            itemId: interjection.itemId,
-            target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
-            otherMargins: spoken.map {
-                MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
-            },
-            voiceURLs: voiceURLs,
-            title: "Your Margin",
-            isApproximate: false
-        )
-    }
-
     /// Tapping a shared Margin in the Timeline plays its moment (#158): a lead-in, their voice, then the item.
     /// Position is the best the app has: a verified or interpolated match, else the sender's own time.
     func playSharedMarginMoment(_ row: SharedMarginRow) {
@@ -1366,14 +1345,6 @@ final class Gate1AppModel: ObservableObject {
         marginMomentConductor?.onChimeStarted = { [weak self] in self?.diagnostics["marginMoment.chime"] = "played:\($0)" }
         if !snapshot.status.isPlaybackActive { resumePlayback() }
         screen = .playback
-    }
-
-    /// The listener's spoken Margins on the item, from every session, in no particular order.
-    func inlineSpokenMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
-        let sessions: [Session] = (try? store.loadSessions(itemId: itemId)) ?? []
-        return sessions
-            .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
-            .filter(\.isInlineSpokenMargin)
     }
 
     /// `resumingAtMediaTimeMs` starts the moment already listening (#1538): no lead-in, no seek, `target` is the
