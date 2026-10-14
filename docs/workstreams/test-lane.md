@@ -62,6 +62,8 @@ A week after the first script gates, the desk's daily hand-off on #184 counts tw
 
 Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane currently doesn't work with Xcode 27 ([docs](https://code.claude.com/docs/en/desktop-ios-simulator)). This repo builds with Xcode 27, so drive the simulator through computer use from the CLI, as the journeys do today, until the pane supports Xcode 27.
 
+**Audio.** A simulator plays and records through the Mac's default audio devices, and on 2026-10-13 that moved the owner's AirPods from his iPhone to the Mac (#1556). `scripts/lane_audio.py` switches a wireless default (Bluetooth, AirPlay, the iPhone's Continuity microphone) to the Mac's built-in speakers and microphone when a lane simulator boots, and puts it back when the last one shuts down, unless the default was changed by hand meanwhile. It leaves wired and virtual devices alone, and does nothing with the lid closed and no external display. `python3 scripts/lane_audio.py status|settle` shows or settles it by hand; `SM_LANE_AUDIO=off` switches it off. Whether pinning is enough to stop the AirPods auto-connecting needs the owner's check on the phone.
+
 ## Guard rails (deterministic, not advisory)
 
 - **Only the lane boots simulators.** A1 installs a `PreToolUse` hook in the Mac's **user-level** settings (`~/.claude/settings.json`), so it applies to every session whatever branch it started on. It blocks `xcrun simctl boot|install|launch`, `xcodebuild test`, and `verify-tests.py --plan app|adapters|ui|release` unless the session is the Test Desk. Stream agents then *can't* start a simulator flood by accident. `AGENTS.md` sends `--plan app` through the lane for this reason.

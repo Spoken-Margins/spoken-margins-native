@@ -20,6 +20,7 @@ from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
+import lane_audio
 import lane_sim
 import sessionkit_pass
 import lane_sim_pool
@@ -638,6 +639,7 @@ class Run:
                     shutdown = subprocess.run(['xcrun', 'simctl', 'shutdown', device],
                                               stdout=log, stderr=subprocess.STDOUT, timeout=20)
                     entry['simulator_shutdown_exit'] = shutdown.returncode
+                    lane_audio.settle(drop=device)
             except BaseException:
                 # The runner itself failed: don't leave xcodebuild running orphaned (#767).
                 stop_process_group(process)
@@ -873,6 +875,7 @@ class Run:
             print(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) is on the lane\'s unsafe list ({marked["reason"]}); '
                   'replacing it with a fresh one', flush=True)
             subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']], cwd=ROOT, capture_output=True, timeout=60)
+            lane_audio.settle(drop=chosen['udid'])
             self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=120)
             chosen, template = dedicated_simulator(listed(), ios)
         if chosen is not None:
@@ -1006,6 +1009,7 @@ class Run:
                 # Don't leave an idle simulator holding memory after the run.
                 subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],
                                cwd=ROOT, capture_output=True, timeout=60)
+                lane_audio.settle(drop=chosen['udid'])
             if slot:
                 if simulator_slot_fd is not None:
                     slot.close()

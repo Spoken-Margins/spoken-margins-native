@@ -12,6 +12,7 @@ from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import lane_audio  # noqa: E402
 import lane_sim  # noqa: E402
 import lane_slots  # noqa: E402
 
@@ -253,6 +254,17 @@ class LaneSimTests(unittest.TestCase):
         self.assertGreaterEqual(lane_sim.boot(UDID, 'test', out=self.quiet), 0)
         self.assertEqual([r.get('boot') for r in self.records() if 'boot' in r], [UDID])
         self.assertEqual(lane_sim.unsafe_devices(), {})
+
+    def test_the_boot_pins_the_audio_first_and_each_shutdown_settles_it(self):
+        events = []
+        with mock.patch.object(lane_audio, 'pin', side_effect=lambda udid, **kw: events.append(('pin', udid))), \
+                mock.patch.object(lane_audio, 'settle', side_effect=lambda **kw: events.append(('settle',))):
+            lane_sim.boot(UDID, 'test', out=self.quiet)
+            self.assertEqual(events, [('pin', UDID)])
+            self.assertEqual([r['boot'] for r in self.records() if 'boot' in r], [UDID])
+            lane_sim.release(UDID)
+            lane_sim.stop(UDID, 'test')
+        self.assertEqual(events, [('pin', UDID), ('settle',), ('settle',)])
 
     def test_a_failed_boot_stops_marks_the_device_and_is_never_retried(self):
         with mock.patch.dict(os.environ, {'FAKE_BOOT': 'invalid'}):
