@@ -2596,8 +2596,9 @@ final class Gate1AppModel: ObservableObject {
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
         // A headphone click, car button or Lock Screen play/pause while a Margin records ends it (#1030).
-        // A save already under way from the screen is not asked twice.
-        if snapshot.isRecording, command.endsRecordingMargin {
+        // Only from Now Playing: a stale queued widget command must not save a Margin. A save already
+        // under way from the screen is not asked twice.
+        if snapshot.isRecording, command.endsRecordingMargin, origin.hasPrefix("now_playing") {
             guard !isFinishingInterjection else { return }
             recordDeveloperDiagnostic("transport.ends_margin", ["command": command.rawValue, "origin": origin])
             performGate2CompactCommand(.finishInterjection, origin: origin)

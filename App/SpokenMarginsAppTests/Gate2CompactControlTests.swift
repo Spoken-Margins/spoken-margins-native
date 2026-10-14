@@ -239,6 +239,7 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(availability.canPause)
         XCTAssertTrue(availability.canTogglePlayPause)
         XCTAssertTrue(availability.canSkipForward)
+        XCTAssertTrue(availability.canStop)
         XCTAssertFalse(availability.canSkipBack, "back isn't an end command")
         XCTAssertFalse(availability.canSeek)
         XCTAssertFalse(availability.canNextTrack)
@@ -275,6 +276,20 @@ final class Gate2CompactControlTests: XCTestCase {
             XCTAssertFalse(model.snapshot.isRecording, "\(command.rawValue) from the headphones ends the Margin")
             XCTAssertEqual(model.diagnostics["gate2LastCommand"], "finishInterjection", command.rawValue)
         }
+    }
+
+    func testQueuedWidgetPlayPauseDoesNotEndARecordingMargin() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+
+        model.dispatchGate2CompactCommand(.togglePlayPause, origin: "widget_queue")
+
+        XCTAssertTrue(model.snapshot.isRecording, "only a headphone click or Now Playing command ends it")
     }
 
     func testSkipBackWhileRecordingStillDoesNotEndTheMargin() {

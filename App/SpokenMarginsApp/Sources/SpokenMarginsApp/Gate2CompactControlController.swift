@@ -57,6 +57,7 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
             canPause = true
             canTogglePlayPause = true
             canSkipForward = true
+            canStop = true // registered as pause
         }
     }
 }
