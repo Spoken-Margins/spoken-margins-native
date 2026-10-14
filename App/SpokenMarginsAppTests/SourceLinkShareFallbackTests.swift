@@ -90,7 +90,7 @@ final class SourceLinkShareFallbackTests: XCTestCase {
 
         model.importPendingSourceLinkHandoffs()
         try await waitFor("voiceover diagnostic") {
-            model.diagnostics["sharedLinkVoiceover"]?.hasSuffix(": none") == true
+            model.diagnostics["sharedLinkVoiceover"]?.hasSuffix(": none:no_preloads") == true
         }
 
         let row = try XCTUnwrap(model.libraryItems.first { $0.title == Self.postTitle })
