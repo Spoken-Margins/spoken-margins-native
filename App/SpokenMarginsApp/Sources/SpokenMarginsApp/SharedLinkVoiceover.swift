@@ -6,7 +6,8 @@ import SessionKitPersistence
 /// A Substack post shared as a link, or pasted into the Link field, keeps the post's own voiceover beside the
 /// article, as a followed post does (#810). After the article is imported, the post page the link resolver
 /// already fetched is read (`SharedPostVoiceoverLookup`); the page is fetched only when the resolver didn't.
-/// A completed voiceover of that same post is saved as the item's `publisher_audio` record, and its
+/// A completed voiceover of that same post, or failing that Substack's automatic narration of it (owner's call,
+/// 2026-10-14), is saved as the item's `publisher_audio` record, and its
 /// text-to-time map is started. A failed fetch leaves the article as it is.
 @MainActor
 final class SharedLinkVoiceover {
@@ -24,8 +25,8 @@ final class SharedLinkVoiceover {
     /// Looks for the voiceover of the post at `sharedURL` (or the address the article was read from) and
     /// saves it for `itemId`. `fetched` holds the pages the link resolver read for this import. `report` gets
     /// the log's summary, one `<itemId>: <status>` line per recently shared item, after each change. The
-    /// status is `saved`, `none:<reason>` (the page was read and has no voiceover; `generated_voice_only` is a
-    /// post with only Substack's automatic narration), `not_substack`, `item removed` or `failed:<reason>`,
+    /// status is `saved`, `none:<reason>` (the page was read and has no recording to keep; `generated_voice_paywalled`
+    /// is a paid post's automatic narration), `not_substack`, `item removed` or `failed:<reason>`,
     /// then the text map's progress after a save.
     func remember(
         sharedURL: URL,

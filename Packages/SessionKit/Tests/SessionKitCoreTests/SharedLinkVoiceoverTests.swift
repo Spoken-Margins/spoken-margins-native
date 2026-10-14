@@ -259,20 +259,36 @@ final class SharedLinkVoiceoverTests: XCTestCase {
 
     /// The owner's phone, 2026-10-05 to 2026-10-12: the post he shared from the Substack app (on a publication's own
     /// domain) shows a Listen button in the Substack app, but its page carries only Substack's automatic narration
-    /// (`audio_items` of type `tts`, `has_voiceover` false). No recording by the author exists to keep, so
-    /// nothing is saved, and the diagnostic says why instead of a bare `none`.
-    func testAPostWithOnlySubstacksAutomaticNarrationGivesNothingAndSaysWhy() async throws {
+    /// (`audio_items` of type `tts`, `has_voiceover` false). The owner's call (2026-10-14) is that it plays that
+    /// voice, so the record is kept, marked as generated, not as the author's voiceover.
+    func testAPostWithOnlySubstacksAutomaticNarrationKeepsItMarkedAsGenerated() async throws {
         let page = try Self.fixture("substack-generated-voice-only-page.html")
         let post = URL(string: "https://captured.example/p/generated-voice?r=4x1y&utm_medium=ios&triedRedirect=true")!
-        XCTAssertNil(PublisherNarrationEvidence.voiceover(inPostPage: page))
-        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: post, itemId: "item"))
+        XCTAssertNil(PublisherNarrationEvidence.voiceover(inPostPage: page), "it is not the author's voiceover")
+        let expected = PublisherAudio(
+            itemId: "item", audioURL: "https://recordings.example/tts/en-US-AlloyTurboMultilingualNeural.mp3", durationMs: nil,
+            detectedFrom: "substack_post_generated_voice"
+        )
+        XCTAssertEqual(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: post, itemId: "item"), expected)
         let fetched = FetchedPageMemo()
         fetched.remember(Data(page.utf8), for: post)
         let outcome = await SharedPostVoiceoverLookup.find(
             sharedURL: post, articleURL: post.absoluteString, itemId: "item", fetched: fetched,
             fetchPage: { _ in XCTFail("the resolver's page is the answer"); throw URLError(.badURL) }
         )
-        XCTAssertEqual(outcome, .noVoiceover(reason: "generated_voice_only"))
+        XCTAssertEqual(outcome, .found(expected))
+        // Another post's page, or a page whose narration is not finished, keeps nothing.
+        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: URL(string: "https://captured.example/p/another")!, itemId: "item"))
+        let processing = try Self.page(editingPost: { Self.editFirstAudioItem(&$0) { $0["status"] = "processing" } }, from: page)
+        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: processing, finalURL: post, itemId: "item"))
+        for (name, edit) in [
+            ("not https", { (item: inout [String: Any]) in item["audio_url"] = "http://recordings.example/a.mp3" }),
+            ("no audio address", { (item: inout [String: Any]) in item["audio_url"] = NSNull() }),
+            ("another post's audio", { (item: inout [String: Any]) in item["post_id"] = 99 })
+        ] as [(String, (inout [String: Any]) -> Void)] {
+            let edited = try Self.page(editingPost: { Self.editFirstAudioItem(&$0, edit) }, from: page)
+            XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: edited, finalURL: post, itemId: "item"), name)
+        }
     }
 
     /// A paid post read without a subscription says `has_voiceover` true but lists only a paywalled automatic
@@ -284,7 +300,8 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertEqual(PublisherNarrationEvidence.absence(postPage: page, finalURL: post), "generated_voice_paywalled")
     }
 
-    /// An author's voiceover is kept, not Substack's automatic narration listed beside it, whichever comes first.
+    /// An author's voiceover is kept, not Substack's automatic narration listed beside it, whichever comes first;
+    /// the automatic narration is kept only when there is no voiceover.
     func testAPostWithBothKeepsTheAuthorsVoiceoverWhicheverIsListedFirst() throws {
         let page = try Self.fixture("substack-voiceover-and-generated-voice-page.html")
         let post = URL(string: "https://captured.example/p/voiceover-and-generated-voice?r=4x1y&utm_medium=ios")!
@@ -298,7 +315,9 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         let reversed = Self.page(withAudioItems: [generated, voiceover], from: page)
         XCTAssertEqual(PublisherNarrationEvidence.publisherAudio(postPage: reversed, finalURL: post, itemId: "item"), expected)
         let generatedOnly = Self.page(withAudioItems: [generated], from: page)
-        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: generatedOnly, finalURL: post, itemId: "item"))
+        let kept = PublisherNarrationEvidence.publisherAudio(postPage: generatedOnly, finalURL: post, itemId: "item")
+        XCTAssertEqual(kept?.detectedFrom, "substack_post_generated_voice")
+        XCTAssertEqual(kept?.audioURL, "https://recordings.example/tts/en-US-OnyxTurboMultilingualNeural.mp3")
     }
 
     /// Why a page gives no voiceover, one row per neighbouring page shape.
@@ -328,6 +347,7 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertEqual(reason(try changing { $0.removeValue(forKey: "type") }), "not_a_newsletter_post")
         XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["type"] = "tts"; $0["status"] = "processing" } }), "generated_voice_processing")
         XCTAssertEqual(reason(try changing { $0["canonical_url"] = NSNull() }), "voiceover_unreadable")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["type"] = "tts"; $0["audio_url"] = "http://recordings.example/a.mp3" } }), "generated_voice_unreadable")
         XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["audio_url"] = NSNull() } }), "no_audio_url")
         XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["audio_url"] = "http://recordings.example/a.mp3" } }), "voiceover_unreadable")
         XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["post_id"] = 99 } }), "no_recording_listed")
