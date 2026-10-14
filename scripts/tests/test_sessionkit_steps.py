@@ -188,6 +188,7 @@ class ParallelCoreTests(unittest.TestCase):
             self.assertEqual(args[-1], '--rest')
             self.assertEqual((kw['expected'], kw['tests']), (REST, True))
             self.assertIn('SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus', kw['allowed_skips'])
+            self.assertIn('SessionKitTests/PocketRendererTests/testRendersAndRefusesEmptyAndCancelledText', kw['allowed_skips'])
             # Together they are the same tests the one step expected before.
             self.assertEqual(CORE | REST, host.step('package-core')[1]['expected'] | kw['expected'])
 
