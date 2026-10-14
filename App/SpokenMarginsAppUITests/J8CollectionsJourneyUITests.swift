@@ -50,10 +50,9 @@ final class J8CollectionsJourneyUITests: XCTestCase {
             let field = app.textFields["collection.new.field"].firstMatch
             XCTAssertTrue(field.waitForExistence(timeout: 5), "The New Collection field is missing")
             field.tap()
-            field.typeText(collectionName)
-            tap("collection.new.button")
-            let row = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "collection.row.")).firstMatch
+            // Return submits the field, so the button never has to be reached past the keyboard.
+            field.typeText(collectionName + "\n")
+            let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "collection.row.")).firstMatch
             XCTAssertTrue(row.waitForExistence(timeout: 5), "The new collection is not listed")
             XCTAssertTrue(row.isSelected, "The new collection does not show this item as in it")
             attachScreenshot("collection-sheet-with-collection")
@@ -62,7 +61,7 @@ final class J8CollectionsJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J8 step 3: The Margins scope offers the collection") { _ in
             tap("collection.done.button")
             XCTAssertTrue(element("home.screen").waitForExistence(timeout: 5), "Did not return to the Library")
-            tap("navigation.tab.margins")
+            openMarginsTab()
             XCTAssertTrue(element("margins.screen").waitForExistence(timeout: 5), "Margins did not open")
             let picker = app.buttons["margins.scope.picker"].firstMatch
             XCTAssertTrue(picker.waitForExistence(timeout: 5), "The scope picker is missing")
@@ -71,6 +70,14 @@ final class J8CollectionsJourneyUITests: XCTestCase {
                           "The scope picker does not list the new collection")
             attachScreenshot("margins-scope-picker")
         }
+    }
+
+    /// The tab bar on iPhone, the top tabs on iPad: the identifier sits on the tab's label, which iPhone exposes by name.
+    private func openMarginsTab() {
+        let byIdentifier = app.tabBars.buttons["navigation.tab.margins"].firstMatch
+        let tab = byIdentifier.exists ? byIdentifier : app.buttons["Margins"].firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 5), "The Margins tab is missing")
+        tab.tap()
     }
 
     private func attachScreenshot(_ name: String) {
