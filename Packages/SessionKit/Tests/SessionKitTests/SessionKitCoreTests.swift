@@ -6073,6 +6073,41 @@ final class SessionKitCoreTests: XCTestCase {
         }
     }
 
+    /// #1144: a text that opens with its own title (a PDF's printed title) is not preceded by the
+    /// title again; the preface says only the chapter count, and offsets still line up with it.
+    func testFreshStartSkipsTheTitleInThePrefaceWhenTheTextOpensWithIt() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let text = "Evaluation Agents\nOne. Two."
+        let item = Item(id: "item-agents", title: "Evaluation Agents", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 22, percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: 22, endChar: 27, percent: 81)
+        ]
+        let map = ListeningMap(
+            id: "map-agents",
+            itemId: item.id,
+            overview: ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count),
+            chapters: chapters
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.preparedTexts.last, "2 chapters.\n\n\(text)")
+
+        _ = try engine.jumpToChapter(chapterId: "ch-2")
+        XCTAssertEqual(audio.playedOffsets.last, "2 chapters.\n\n".count + 22)
+    }
+
     func testInspectSessionDoesNotStartPlayback() throws {
         let profile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",

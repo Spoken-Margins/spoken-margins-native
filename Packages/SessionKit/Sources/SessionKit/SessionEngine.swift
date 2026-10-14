@@ -5337,10 +5337,12 @@ public final class SessionEngine {
 
     private func itemPlaybackPreface() -> String {
         guard let map = currentMap else { return "" }
+        let title = currentItem?.title ?? ""
         return ListeningMapOverviewText.spokenPreface(
             overview: map.overview,
-            title: currentItem?.title ?? "",
-            chapterCount: map.chapters.count
+            title: title,
+            chapterCount: map.chapters.count,
+            textOpening: String((listenableProjection()?.text ?? currentItem?.text ?? "").prefix(title.count * 2 + 200))
         )
     }
 
