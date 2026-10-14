@@ -1,5 +1,10 @@
 # Device Validation Checklist
 
+For the Solid Ground evidence session after #1101 releases the phone, use the
+[combined validation protocol](solid-ground-phone-validation.md). It maps each
+remaining issue to the required observations and separates owner-phone checks
+from controlled fault-injection tests.
+
 ## The rolling phone build (#384)
 
 The newest `next` build waits on the Mac, ready for the owner's iPhone. No TestFlight, no Xcode window.
