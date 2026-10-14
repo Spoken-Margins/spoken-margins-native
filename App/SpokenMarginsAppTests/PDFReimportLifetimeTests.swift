@@ -295,15 +295,18 @@ final class PDFReimportLifetimeTests: XCTestCase {
     @MainActor
     func testAppReimportInvalidatesSpeechProjectionWhenCanonicalTextIsUnchanged() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "pdf-projection-cache-\(UUID())")
-        defer { try? FileManager.default.removeItem(at: root) }
-        let model = Gate1AppModel(storageRootOverride: root)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appending(path: "store.sqlite"))
         let source = BrowserTextSource(url: "shared-file://Paper.pdf", title: "Paper")
         let body = StructuredDocumentBuilder.build(lines: [.init(text: "A reference is not body text.", role: .body, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
         let references = StructuredDocumentBuilder.build(lines: [.init(text: "A reference is not body text.", role: .reference, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
         XCTAssertEqual(body.text, references.text)
         let handoff = BrowserTextHandoff(captureMode: .markdownFile, source: source, text: body.text, contentFormat: .plainText)
         let id = try model.importBrowserTextInBackground(handoff, structuredDocument: body)
-        let store = try model.requireStore()
+        let store = try model.libraryStoreForTesting()
+        addTeardownBlock { [weak model, weak store] in
+            if model == nil, store == nil { try? FileManager.default.removeItem(at: root) }
+        }
         let original = try store.loadItem(id: id)
         XCTAssertFalse(try XCTUnwrap(PreparedSpeechHooks.preparedText(of: original, in: store)).isEmpty)
         let imported = try await model.importBrowserTextInBackgroundOffMain(handoff, structuredDocument: references)
