@@ -2045,7 +2045,8 @@ final class SupertonicSpeechTests: XCTestCase {
             pressureRenderer: kitten,
             fallbackClient: fallback,
             onGenerationProgress: { log.record($0) },
-            onFallback: { reason, _, _ in log.recordFallback(reason) }
+            onFallback: { reason, _, _ in log.recordFallback(reason) },
+            onBundledVoice: { reason, _, _ in log.recordNotice(reason) }
         )
         let text = (0..<4).map { _ in
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
@@ -2064,10 +2065,81 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(supertonicRenders, 0, "Supertonic is refused")
         XCTAssertEqual(fallback.playedOffsets, [], "the iOS voice is never asked")
         XCTAssertEqual(log.fallbacks, [])
+        XCTAssertEqual(log.notices, ["supertonic_resource_pressure"], "I14: the listener is told once why the voice changed")
         XCTAssertEqual(log.totalChunks, plannedChunks + 1, "the first chunk is split in two")
         XCTAssertEqual(log.completedChunks, log.totalChunks)
         let kittenDiagnostics = await kitten.diagnostics()
         XCTAssertEqual(kittenDiagnostics.sessionLoadCount, 1)
+        try client.stop()
+        await kitten.unload()
+    }
+
+    /// #849 audit (I14): once the bundled voice takes a generation, it keeps it. Supertonic is allowed again while the
+    /// chain renders (the phone cools), yet no later chunk switches to it mid-play: the split head ends at a comma,
+    /// so before the fix the tail came back in Supertonic mid-sentence. The next play releases it.
+    func testTheBundledVoiceKeepsItsGenerationUntilThePlayAfterTheConditionClears() async throws {
+        let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
+        let output = FileManager.default.temporaryDirectory.appending(path: "kitten-hold-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output)
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let log = KittenClientLog()
+        let allowed = KittenAllowedFlag()
+        let started = expectation(description: "audio started")
+        started.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                started.fulfill()
+            },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { allowed.value },
+            pressureRenderer: kitten,
+            fallbackClient: fallback,
+            onGenerationProgress: { progress in
+                log.record(progress)
+                // The condition clears as soon as the bundled voice has rendered the first chunk.
+                if progress.completedChunks >= 1 { allowed.value = true }
+            },
+            onFallback: { reason, _, _ in log.recordFallback(reason) },
+            onRestore: { _ in log.recordRestore() },
+            onBundledVoice: { reason, _, _ in log.recordNotice(reason) }
+        )
+        let text = (0..<4).map { _ in
+            "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
+        }.joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "kitten-hold")
+
+        await fulfillment(of: [started], timeout: 60)
+        let deadline = ContinuousClock.now + .seconds(120)
+        while log.totalChunks == 0 || log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        XCTAssertEqual(log.completedChunks, log.totalChunks)
+        XCTAssertTrue(allowed.value, "the condition cleared during the generation")
+        let rendersDuringGeneration = await supertonic.renderCount
+        XCTAssertEqual(rendersDuringGeneration, 0, "no chunk of the generation switches back to Supertonic mid-play")
+        XCTAssertEqual(fallback.playedOffsets, [])
+        XCTAssertEqual(log.notices, ["supertonic_resource_pressure"])
+
+        // A play releases the generation: the listener's notice is cleared and Supertonic renders what is left.
+        try client.pause()
+        try client.play(targetId: "kitten-hold", from: client.currentCharOffset() ?? 0)
+        XCTAssertEqual(log.restores, 1, "the play after the condition cleared releases the bundled voice")
+        let releaseDeadline = ContinuousClock.now + .seconds(30)
+        var rendersAfterPlay = await supertonic.renderCount
+        while rendersAfterPlay == 0, ContinuousClock.now < releaseDeadline {
+            try await Task.sleep(for: .milliseconds(100))
+            rendersAfterPlay = await supertonic.renderCount
+        }
+        XCTAssertGreaterThan(rendersAfterPlay, 0, "Supertonic takes the chunks after the playhead again")
         try client.stop()
         await kitten.unload()
     }
@@ -3924,12 +3996,28 @@ private final class KittenClientLog: @unchecked Sendable {
     private let lock = NSLock()
     private var progress = RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0)
     private var fallbackReasons: [String] = []
+    private var noticeReasons: [String] = []
+    private var restoreCount = 0
 
     func record(_ value: RenderedSpeechGenerationProgress) { lock.withLock { progress = value } }
     func recordFallback(_ reason: String) { lock.withLock { fallbackReasons.append(reason) } }
+    func recordNotice(_ reason: String) { lock.withLock { noticeReasons.append(reason) } }
+    func recordRestore() { lock.withLock { restoreCount += 1 } }
+    var notices: [String] { lock.withLock { noticeReasons } }
+    var restores: Int { lock.withLock { restoreCount } }
     var completedChunks: Int { lock.withLock { progress.completedChunks } }
     var totalChunks: Int { lock.withLock { progress.totalChunks } }
     var fallbacks: [String] { lock.withLock { fallbackReasons } }
+}
+
+/// Whether Supertonic may render, flipped by a test while a generation runs (#849 audit).
+private final class KittenAllowedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var allowed = false
+    var value: Bool {
+        get { lock.withLock { allowed } }
+        set { lock.withLock { allowed = newValue } }
+    }
 }
 
 private actor CountingAudioSupertonicRenderer: SupertonicRendering {

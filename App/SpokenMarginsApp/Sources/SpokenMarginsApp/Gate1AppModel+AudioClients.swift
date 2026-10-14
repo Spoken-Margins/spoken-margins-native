@@ -167,6 +167,9 @@ extension Gate1AppModel {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
+                onBundledVoice: { [weak self] code, offset, _ in
+                    Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(code: code, offset: offset) }
+                },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
@@ -213,6 +216,23 @@ extension Gate1AppModel {
         if let renderer = kittenRenderer {
             Task { await renderer.unload(removingGeneratedAudio: removingGeneratedAudio) }
         }
+    }
+
+    /// I14 for the bundled Kitten voice (#849 audit): the listener sees why the voice changed, and the event is logged
+    /// with the power state beside it. Preparation is left alone: Supertonic picks up again at the next play.
+    func reportBundledVoiceTookOver(code: String, offset: Int) {
+        let conditions = currentResourceConditions()
+        let reason = SpeechFallbackReason(
+            supertonicCode: code, resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions))
+        recordSupertonicFallbackEvent(code: "\(code):\(KittenNarrationRenderer.engine)", reason: reason,
+                                      conditions: conditions, offset: offset)
+        diagnostics["supertonicFallback"] = "\(code):\(KittenNarrationRenderer.engine)"
+        diagnostics["supertonicFallbackReason"] = reason.rawValue
+        diagnostics["supertonicFallbackConditions"] = conditions.logDescription
+        diagnostics["supertonicFallbackOffset"] = "\(offset)"
+        let message = reason.bundledVoiceExplanation
+        statusMessage = message
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
     }
 
     /// The bundled Kitten voice that takes over when Supertonic isn't allowed (#849). nil when its files can't be
