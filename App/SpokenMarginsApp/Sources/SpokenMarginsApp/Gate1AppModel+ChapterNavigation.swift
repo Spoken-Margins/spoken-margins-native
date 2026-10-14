@@ -89,7 +89,7 @@ extension Gate1AppModel {
         }
         resetMixWithOtherAudioForNewSession()
         if engine.currentSession != nil {
-            snapshot = try endEngineSession(engine)
+            snapshot = try endEngineSession(engine, reason: .chapterActionSwitchItem)
         }
         let started = try engine.startSession(itemId: activeItemId)
         snapshot = try applyPreferredPlaybackRate(to: started, engine: engine)

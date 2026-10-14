@@ -123,13 +123,13 @@ final class Gate1AppModel: ObservableObject {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/latest.json"))
 
-    private let playbackEventRecording = DeveloperDiagnosticRecording(
+    let playbackEventRecording = DeveloperDiagnosticRecording(
         limit: 300,
         fileURL: Gate1AppModel.isRunningUnitTests ? nil : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/playback-events.json"),
         automatic: true
     )
-    private var lastPlaybackEventCheckpoint: TimeInterval = 0
+    var lastPlaybackEventCheckpoint: TimeInterval = 0
     var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
@@ -139,15 +139,6 @@ final class Gate1AppModel: ObservableObject {
            !kind.hasPrefix("scrub."), kind != "main.delayed" {
             playbackEventRecording.record(kind, fields)
         }
-    }
-
-    private func recordPlaybackEventState(previous: SessionSnapshot) {
-        let now = ProcessInfo.processInfo.systemUptime
-        let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
-            || previous.lastFailure != snapshot.lastFailure
-        guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
-        lastPlaybackEventCheckpoint = now
-        playbackEventRecording.record("playback.state", playbackStateRecordFields())
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -2028,7 +2019,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
-            _ = try? endEngineSession(engine)
+            _ = try? endEngineSession(engine, reason: .startNewSession)
             snapshot = engine.snapshot
         }
         activeItemId = id
