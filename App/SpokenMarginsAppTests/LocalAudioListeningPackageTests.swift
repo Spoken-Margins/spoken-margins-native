@@ -311,6 +311,10 @@ final class LocalAudioListeningPackageTests: XCTestCase {
                 if nudgedAt == nil, let frozen = frozenSince, now - frozen.at > toNudge {
                     nudgedAt = "+\((now - began).formatted(.units(allowed: [.milliseconds]))) at playerMs=\(frozen.rawMs)"
                     print("#835 player clock frozen \(toNudge.formatted(.units(allowed: [.milliseconds]))) while playing: pause and resume once, \(nudgedAt ?? "")")
+                    let note = XCTAttachment(string: "#835 nudge: \(nudgedAt ?? "")\n\(Self.compactPlayerState(raw))")
+                    note.name = "player-clock-frozen-nudge"
+                    note.lifetime = .keepAlways
+                    add(note)
                     model.pause()
                     model.resumePlayback()
                     playingSince = nil
@@ -331,8 +335,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let stallEvents = stallTrace.map { Array($0.events.dropFirst(stallEventsBefore)) } ?? []
         return "clock \(player.currentMediaTimeMs() ?? -1) ms after \(waited.formatted(.units(allowed: [.milliseconds]))); "
             + "player reported playing for \(playedFor?.formatted(.units(allowed: [.milliseconds])) ?? "none"); last \(lastState); "
-            + (nudgedAt.map { "; player clock was frozen, paused and resumed once at \($0)" } ?? "")
-            + "; raw samples [\(samples.joined(separator: " | "))]"
+            + (nudgedAt.map { "player clock was frozen, paused and resumed once at \($0); " } ?? "")
+            + "raw samples [\(samples.joined(separator: " | "))]"
             + (stallTrace == nil ? "" : "; stall trace [\(stallEvents.suffix(4).map(Self.compactPlayerState).joined(separator: " | "))]")
     }
 
