@@ -268,11 +268,13 @@ class TestScopeTests(unittest.TestCase):
 
 
 class LaneRunnerRoutingTests(unittest.TestCase):
-    def route(self, paths=(), labels=(), online=True, **overrides):
+    def route(self, paths=(), labels=(), online=True, vps=True, **overrides):
         pr = {'labels': [{'name': label} for label in labels], 'changed_files': len(paths)}
         files = [[{'filename': path} for path in paths]]
         runners = [{'runners': [{'status': 'online' if online else 'offline', 'busy': True,
                                 'labels': [{'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}]
+        if vps:  # the VPS runner the off-Mac automerge job needs (#861)
+            runners[0]['runners'].append({'status': 'online', 'busy': False, 'labels': [{'name': 'sm-vps-t1'}]})
         return scope.runner_routing(overrides.get('pr', pr), overrides.get('files', files),
                                     overrides.get('runners', runners))
 
@@ -308,7 +310,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
 
     def test_no_online_runner_falls_back_for_both_priority_reasons(self):
         self.assert_normal(self.route([APP + 'Gate1AppModel.swift'], ['priority'], online=False))
-        self.assert_normal(self.route(['ops/codex/sm_codex_worker.py'], online=False))
+        self.assertEqual(self.route(['ops/codex/sm_codex_worker.py'], online=False)['automerge'], ['sm-vps-t1'])
         self.assert_normal(self.route(labels=['priority'], runners=[]))
 
     def test_runner_must_match_all_priority_labels(self):
@@ -382,7 +384,9 @@ class LaneRunnerRoutingTests(unittest.TestCase):
     def test_priority_work_still_routes_priority_when_the_priority_runner_is_idle(self):
         runners = [self.runner('sm-lane-build', True), self.runner('sm-lane-priority', False)]
         self.assert_priority(self.spill(runners, labels=['priority']))
-        self.assert_priority(self.spill(runners, paths=['ops/codex/a.py']))
+        self.assert_priority(self.spill(runners, paths=['scripts/lane_slots.py']))
+        self.assertEqual(self.spill(runners + [self.runner('sm-vps-t1', False)], paths=['ops/codex/a.py'])['automerge'],
+                         ['sm-vps-t1'])
 
     def test_main_runner_counts_as_a_build_runner(self):
         main = self.runner('sm-lane', False)
@@ -400,8 +404,8 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                                                  {'name': 'self-hosted'}, {'name': 'sm-lane-priority'}]}]}], root=root)
             self.assert_normal(result)
 
-    def test_ops_only_and_lane_only_t1_route_priority(self):
-        self.assert_priority(self.route(['ops/codex/sm_codex_worker.py']))
+    def test_ops_only_goes_hosted_and_lane_only_t1_routes_priority(self):
+        self.assertEqual(self.route(['ops/codex/sm_codex_worker.py'])['automerge'], ['sm-vps-t1'])
         self.assert_priority(self.route(['scripts/lane_slots.py']))
 
     def test_cli_reads_real_json_files_and_falls_back_on_bad_json(self):
@@ -434,7 +438,7 @@ class LaneRunnerRoutingTests(unittest.TestCase):
                 # A failed or skipped route falls back to the normal queues; a cancelled run stays cancelled
                 # (always() would start a queued Mac job even after the run was cancelled).
                 self.assertIn('!cancelled() &&', text)
-                self.assertNotIn('always()', text)
+                self.assertNotIn('always()', text.split('    steps:', 1)[0])
                 self.assertIn(f'fromJSON(needs.route.outputs.{job} ||', text)
                 self.assertIn(f'"{normal}"', text)
 

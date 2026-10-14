@@ -281,7 +281,27 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
-def runner_routing(pr, file_pages, runner_pages, root=ROOT):
+HOSTED_RUNNER = ['sm-vps-t1']  # runs-on for the off-Mac automerge job; lane.yml and lane-runner.py key on it
+
+
+# Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
+MAC_ONLY_OPS = ('ops/power/',)
+
+
+def hosted_automerge(scope):
+    """Only T0 and ops plus docs can run without the Mac. Lane/app inputs always stay there."""
+    files = scope['files']
+    paths = [f['path'] for f in files]
+    if not paths or any(is_lane_path(p) or p.startswith(('App/', 'Packages/', 'Contracts/') + MAC_ONLY_OPS)
+                        for p in paths):
+        return False
+    if scope['tier'] == 'T0':
+        return True
+    return (scope['tier'] == 'T1' and all(f['category'] in ('ops', 'docs') for f in files)
+            and all(p.startswith(('ops/', 'docs/')) or p.endswith('.md') for p in paths))
+
+
+def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
     """Choose queue labels, never capacity. API errors/incomplete diffs keep today's queues.
 
     Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
@@ -293,10 +313,40 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT):
               'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
     priority = ['self-hosted', 'sm-lane-priority']
     try:
+        # An API error, malformed page, duplicate or truncated listing cannot prove a hosted diff.
+        if not isinstance(file_pages, list) or not all(isinstance(p, list) for p in file_pages):
+            return normal
+        if not isinstance(runner_pages, list) or not runner_pages:
+            return normal
+        if not all(isinstance(page['runners'], list) for page in runner_pages):
+            return normal
         runners = [r for page in runner_pages for r in page['runners']]
+        if not all(r['status'] in ('online', 'offline') and isinstance(r['labels'], list)
+                   and all(isinstance(label['name'], str) for label in r['labels']) for r in runners):
+            return normal
+        files = [file for page in file_pages for file in page]
+        if not all(isinstance(file, dict) for file in files):
+            return normal
+        if any(file.get('status') == 'renamed' and 'previous_filename' not in file for file in files):
+            return normal
+        paths = {file['filename'] for file in files}
+        complete = (bool(files) and len(files) == pr['changed_files'] and len(paths) == len(files)
+                    and all(isinstance(p, str) and p for p in paths))
+        paths.update(file['previous_filename'] for file in files if 'previous_filename' in file)
+        if not all(isinstance(p, str) and p for p in paths):
+            return normal
+        labelled = any(label['name'] == 'priority' for label in pr['labels'])
 
         def names(runner):
             return {label['name'] for label in runner['labels']}
+
+        # The free GitHub-hosted Linux minutes ran out (#1023), so "hosted" is the VPS runner that already runs PR
+        # code in isolation (linux-t1.yml). With it offline or unlisted the job would wait forever: stay on the Mac.
+        if offmac and complete and hosted_automerge(classify(paths, root=root)) \
+                and any(r['status'] == 'online' and HOSTED_RUNNER[0] in names(r) for r in runners):
+            # Only the automerge job leaves the Mac: explicit /lane requests keep the Mac routing they had.
+            return dict(runner_routing(pr, file_pages, runner_pages, root, offmac=False),
+                        automerge=list(HOSTED_RUNNER))
 
         # Only an explicit busy=false is idle: a runner whose state is missing or unreadable is not.
         def idle(runner, wanted):
@@ -307,14 +357,10 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT):
         overflow = dict(normal)
         if any(idle(r, set(priority)) for r in runners) and not any(idle(r, {'sm-lane-build'}) for r in runners):
             overflow['automerge'] = priority
-        labelled = any(label['name'] == 'priority' for label in pr['labels'])
         if not labelled:
-            files = [file for page in file_pages for file in page]
-            if not files or len(files) != pr['changed_files']:
+            if not complete:
                 return overflow
             # Both sides of a rename belong to the diff: moving app code into ops isn't ops-only.
-            paths = {file['filename'] for file in files}
-            paths.update(file['previous_filename'] for file in files if 'previous_filename' in file)
             if not all(path.startswith(('ops/', 'docs/')) or is_lane_path(path) for path in paths):
                 return overflow
             if classify(paths, root=root)['tier'] != 'T1':
