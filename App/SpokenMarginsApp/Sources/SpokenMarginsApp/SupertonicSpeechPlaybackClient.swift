@@ -2048,7 +2048,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // Only while the bundled voice still holds the generation: a Kitten chunk that was still rendering when a play
         // released the voice must not announce it again, on a phone that has cooled (#849 audit).
         let bundledNotice = lock.withLock { () -> (announces: Bool, block: SpeechFallbackReason?) in
-            guard bundledVoiceOffsets.contains(request.startOffset),
+            guard bundledVoiceGeneration == request.generation,
+                  bundledVoiceOffsets.contains(request.startOffset),
                   bundledVoiceNoticeGeneration != request.generation else { return (false, nil) }
             bundledVoiceNoticeGeneration = request.generation
             return (true, bundledVoiceBlock)
