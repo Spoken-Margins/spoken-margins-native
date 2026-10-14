@@ -101,6 +101,38 @@ final class PasteAndGoTests: XCTestCase {
         XCTAssertEqual(row.mediaType, "text")
     }
 
+    /// #828: an article added with nothing in Now Playing gets the same "Added <title> to Library." and
+    /// Play now as other adds, stays on the screen it was added from, and doesn't play by itself.
+    func testARecordedArticleOffersPlayNowAndStaysOnTheScreenItWasAddedFrom() async throws {
+        let model = makeModel()
+        model.declineCurrentTerms()
+        let articleURL = try XCTUnwrap(URL(string: PasteAndGoURLProtocol.articleURL))
+        model.readablePageExtractor = PasteAndGoPageExtractor(.success(BrowserTextHandoff(
+            itemId: "item-browser-paste-and-go-play-now",
+            captureMode: .readablePage,
+            source: BrowserTextSource(url: articleURL.absoluteString, title: "A recorded article"),
+            text: "# A recorded article\n\nThe article's first paragraph.",
+            contentFormat: .markdown
+        )))
+        model.openHome()
+        model.dismissFeedback()
+
+        XCTAssertEqual(model.pasteAndGo(PasteAndGoURLProtocol.articleURL), .resolvingLink)
+        try await waitFor("article link import") { model.sourceLinkImportState != "resolving" }
+
+        XCTAssertEqual(model.screen, .home)
+        XCTAssertNil(model.snapshot.sessionId, "Nothing plays by itself")
+        let event = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertEqual(event.message, "Added A recorded article to Library.")
+        let action = try XCTUnwrap(event.action, "Play now must be offered when Now Playing is empty")
+        XCTAssertEqual(action.title, "Play now")
+
+        action.perform()
+        let row = try XCTUnwrap(model.libraryItems.first { $0.title == "A recorded article" })
+        XCTAssertEqual(model.snapshot.itemId, row.id)
+        XCTAssertEqual(model.screen, .playback)
+    }
+
     func testAnArticlePageThatAnswers403OffersSafariAndCreatesNothing() async throws {
         let model = makeModel()
         let before = model.libraryItems.map(\.id)

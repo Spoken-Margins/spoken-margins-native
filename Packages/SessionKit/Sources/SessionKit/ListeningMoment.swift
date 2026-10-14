@@ -55,7 +55,7 @@ public struct ListeningMoment: Sendable, Equatable {
     public static func rule(for use: Use) -> Rule {
         switch use {
         case .playThisMoment:
-            Rule(leadInMs: 30_000, carryOn: .sourceContinues, fallbacks: [.stream])
+            Rule(leadInMs: 8_000, carryOn: .sourceContinues, fallbacks: [.stream])
         case .friendsCut:
             Rule(leadInMs: 20_000, carryOn: .fixed(ms: 3_000, fadesOut: true), fallbacks: [.stream, .readPacketQuote])
         case .listenBack:
@@ -280,4 +280,3 @@ public struct ListeningMoment: Sendable, Equatable {
         }
     }
 }
-

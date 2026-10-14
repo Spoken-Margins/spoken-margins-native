@@ -19,8 +19,12 @@
       "journey": "J7"
     },
     {
-      "test": "SpokenMarginsAppUITests/J8HearNewMarginsJourneyUITests",
+      "test": "SpokenMarginsAppUITests/J8CollectionsJourneyUITests",
       "journey": "J8"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J9HearNewMarginsJourneyUITests",
+      "journey": "J9"
     }
   ]
 }

@@ -1,0 +1,433 @@
+import Foundation
+import SessionKit
+import SessionKitAudio
+import SessionKitPersistence
+import SessionKitSharing
+
+/// The "review, confirm, place a shared packet" flow, moved out of `Gate1AppModel+PackageImport.swift` (T5, #963).
+/// It owns the three pieces of import state and everything that touches the packet's files; the model keeps
+/// forwarders under today's names, the four task launch shells, and the publication of the state to views.
+///
+/// The coordinator reaches the app only through `Environment`, so its tests run with a real SQLite store and real
+/// packet files but without a `Gate1AppModel`. Behavior is unchanged, including these deliberate quirks:
+/// - Success keeps `SpokenMargins/IncomingPackages/<uuid>/assets` for good. The folder is removed only by
+///   `cancel`, a failed stage, duplicate staging and the model's restore-audio task.
+/// - `confirm` works on the review captured when it began, not on whatever review is showing when it ends.
+/// - Staging never clears or cleans up a review that is already showing.
+@MainActor
+final class SpokenMarginsPackageImportCoordinator {
+    /// Opens tapped share links into this flow (#488); the model reaches it as `shareLinkOpener`.
+    let shareLinkOpener = ShareLinkOpener()
+    /// What the flow needs from the app. The live one is `Environment.live(model:)`.
+    struct Environment {
+        var requireStore: @MainActor () throws -> SQLiteSessionStore
+        var applicationSupportDirectory: @MainActor () throws -> URL
+        var bootstrapLibrary: @MainActor () -> Void
+        var recordDiagnostic: @MainActor (_ key: String, _ value: String) -> Void
+        var reportSuccess: @MainActor (String) -> Void
+        var reportConfirmation: @MainActor (String) -> Void
+        var reportFailureMessage: @MainActor (String) -> Void
+        var reportFailure: @MainActor (_ error: Error, _ context: String) -> Void
+        var openItem: @MainActor (String) -> Void
+        /// Makes the imported item the open one: active id, Library rows, item detail, then the item screen, in that order.
+        var showImportedItem: @MainActor (_ itemId: String, _ store: SQLiteSessionStore) throws -> Void
+        var recordPacketImport: @MainActor (_ itemId: String?, _ packetId: String, _ marginCount: Int) -> Void
+        var localAudiobookDigest: @MainActor (Item) -> String?
+        var ownedAudiobookURL: @MainActor (Item) -> URL?
+        var validatedLocalURL: @MainActor (_ itemId: String) -> URL?
+        var registerRemoteDownload: @MainActor (_ itemId: String, _ remoteURL: URL) -> Void
+        var resolvePodcastCommentary: @MainActor (_ itemId: String, _ localURL: URL) -> Void
+        var acquirePodcast: @MainActor (SharedItemIdentity) async throws -> String
+        var acquireArticle: @MainActor (SharedItemIdentity) async throws -> String
+        var offlineLedger: @MainActor (_ store: SQLiteSessionStore, _ rootDirectory: URL) -> OfflineStorageLedger
+        var summaryBridgeAssetID: @MainActor (_ itemId: String, _ proposalId: String, _ sceneId: String, _ suppliedAssetId: String?) -> String
+        var selectedItemID: @MainActor () -> String
+        var refreshSelectedItem: @MainActor () -> Void
+        var prepareLocalAudioBridges: @MainActor (_ itemId: String) -> Void
+        /// True once, when a UI test forces the first shared source to miss.
+        var consumeForcedSourceMiss: @MainActor () -> Bool
+        /// The views' copy of the state. Called synchronously, once per change, in the order the changes happen.
+        var publishReview: @MainActor (SpokenMarginsPackageImportReview?) -> Void
+        var publishIsImporting: @MainActor (Bool) -> Void
+        var publishError: @MainActor (String?) -> Void
+    }
+
+    enum StageResult {
+        case rejected
+        case staged
+        /// An already-imported listening package on owned audio. The caller launches the task that places it
+        /// and removes `directory` when that task ends.
+        case restoreAudio(RestoreAudio)
+    }
+
+    struct RestoreAudio {
+        let item: Item
+        let contents: VerifiedSpokenMarginsPackage
+        let directory: URL
+    }
+
+    private let environment: Environment
+    private var isAdoptingFromViews = false
+
+    private(set) var review: SpokenMarginsPackageImportReview? {
+        didSet { if !isAdoptingFromViews { environment.publishReview(review) } }
+    }
+    private(set) var isImporting = false {
+        didSet { if !isAdoptingFromViews { environment.publishIsImporting(isImporting) } }
+    }
+    private(set) var importError: String? {
+        didSet { if !isAdoptingFromViews { environment.publishError(importError) } }
+    }
+
+    init(environment: Environment) {
+        self.environment = environment
+    }
+
+    // MARK: State written by the views
+
+    /// The sheet binding (or a test) wrote the model's property. Keeps this copy in step without publishing it back,
+    /// and without the cleanup `cancel()` does: a bare write of nil has never removed the extraction folder.
+    func adoptReviewFromViews(_ value: SpokenMarginsPackageImportReview?) {
+        guard value?.id != review?.id else { return }
+        isAdoptingFromViews = true
+        review = value
+        isAdoptingFromViews = false
+    }
+
+    func adoptIsImportingFromViews(_ value: Bool) {
+        guard value != isImporting else { return }
+        isAdoptingFromViews = true
+        isImporting = value
+        isAdoptingFromViews = false
+    }
+
+    func adoptErrorFromViews(_ value: String?) {
+        guard value != importError else { return }
+        isAdoptingFromViews = true
+        importError = value
+        isAdoptingFromViews = false
+    }
+
+    // MARK: Stage
+
+    /// Copies the packet into its own folder under Application Support, verifies it and either opens an item it
+    /// already belongs to or shows it for review.
+    func stage(from sourceURL: URL) -> StageResult {
+        var workingDirectory: URL?
+        do {
+            environment.bootstrapLibrary()
+            let didAccess = sourceURL.startAccessingSecurityScopedResource()
+            defer { if didAccess { sourceURL.stopAccessingSecurityScopedResource() } }
+            let root = try environment.applicationSupportDirectory()
+                .appending(path: "SpokenMargins/IncomingPackages/\(UUID().uuidString)", directoryHint: .isDirectory)
+            workingDirectory = root
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let copiedPackage = root.appending(path: "package.spokenmargins")
+            try FileManager.default.copyItem(at: sourceURL, to: copiedPackage)
+            let contents = try SpokenMarginsPackageArchive.read(
+                from: copiedPackage,
+                extractingAssetsTo: root.appending(path: "assets", directoryHint: .isDirectory)
+            )
+            guard let digest = contents.manifest.contentDigest else {
+                throw SpokenMarginsPackageArchiveError.invalidDigest
+            }
+            let store = try environment.requireStore()
+            if let existing = try store.loadImportedCommentaryLayer(packageDigest: digest),
+               existing.sourceResolutionStatus != .wrongSource,
+               let associatedItemId = existing.itemId,
+               let associatedItem = try? store.loadItem(id: associatedItemId),
+               associatedItem.deletedAt == nil,
+               SharedPacketItemMatcher.layerHasValidItemAssociation(existing, item: associatedItem,
+                   ownedAudiobookDigest: environment.localAudiobookDigest(associatedItem)) {
+                if let itemId = existing.itemId {
+                    environment.openItem(itemId)
+                    if let item = try? store.loadItem(id: itemId), item.mediaType == "audiobook" {
+                        return .restoreAudio(RestoreAudio(item: item, contents: contents, directory: root))
+                    }
+                    if let localURL = environment.validatedLocalURL(itemId) {
+                        environment.resolvePodcastCommentary(itemId, localURL)
+                    }
+                    environment.reportSuccess("These shared Margins are already in your library. Playback has not started.")
+                } else {
+                    environment.reportSuccess("These shared Margins are already in your library.")
+                }
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate:\(digest)")
+                try? FileManager.default.removeItem(at: root)
+                return .staged
+            }
+            let matchingItemId = try matchingItemID(for: contents.manifest.item, store: store)
+            importError = nil
+            review = SpokenMarginsPackageImportReview(
+                packageURL: copiedPackage,
+                extractionDirectory: root,
+                contents: contents,
+                matchingItemId: matchingItemId
+            )
+            if try store.loadImportedCommentaryLayer(packageDigest: digest) == nil {
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "previewed:\(digest)")
+            } else {
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "repair_previewed:\(digest)")
+            }
+            return .staged
+        } catch {
+            if let workingDirectory { try? FileManager.default.removeItem(at: workingDirectory) }
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "rejected:\(SharedMarginsImportMessage.diagnosticDetail(error))")
+            environment.reportFailureMessage(SharedMarginsImportMessage.userFacing(error))
+            return .rejected
+        }
+    }
+
+    /// The model's restore-audio task: places an already-imported listening package on the listener's audio.
+    func restoreAudio(_ restore: RestoreAudio) async {
+        do {
+            try await placeOnOwnedAudio(
+                restore.item, contents: restore.contents,
+                admission: verifyLocalAudioForImport(restore.item, contents: restore.contents))
+            environment.reportSuccess("Restored this listening package. Playback has not started.")
+        } catch {
+            environment.reportFailure(error, "Restoring listening package failed")
+        }
+    }
+
+    // MARK: Cancel and re-match
+
+    func cancel() {
+        guard !isImporting else { return }
+        let directory = review?.extractionDirectory
+        review = nil
+        importError = nil
+        if let directory { try? FileManager.default.removeItem(at: directory) }
+    }
+
+    /// Reconciles a pending recipient-supplied package after Add Source returns.
+    func refreshAfterAddingSource() {
+        guard let review,
+              review.requiresRecipientItem,
+              !isImporting else { return }
+        do {
+            let store = try environment.requireStore()
+            let matchingItemId = try matchingItemID(for: review.contents.manifest.item, store: store)
+            self.review = SpokenMarginsPackageImportReview(
+                packageURL: review.packageURL,
+                extractionDirectory: review.extractionDirectory,
+                contents: review.contents,
+                matchingItemId: matchingItemId
+            )
+            if matchingItemId == nil {
+                importError = "That source does not match the item described by this package yet. Add the same item or cancel the import."
+            } else {
+                importError = nil
+                environment.reportConfirmation("Source matched. Review the shared Margins before importing.")
+            }
+        } catch {
+            importError = SharedMarginsImportMessage.userFacing(error)
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "source_reconciliation_failed:\(error.localizedDescription)")
+        }
+    }
+
+    // MARK: Confirm
+
+    /// The synchronous half of confirming, run before the model launches its task. Returns the review the task
+    /// must import, or nil when there is nothing to do.
+    func beginConfirmation() -> SpokenMarginsPackageImportReview? {
+        guard let review, !isImporting else { return nil }
+        guard !review.requiresRecipientItem else {
+            importError = "This package does not include the item. Add the matching source, then return to this pending import."
+            return nil
+        }
+        isImporting = true
+        importError = nil
+        return review
+    }
+
+    /// The model's confirm task body. `review` is the one `beginConfirmation()` returned; a different review
+    /// staged meanwhile is not what gets imported, but it is what success clears and failure annotates.
+    func confirm(_ review: SpokenMarginsPackageImportReview) async {
+        do {
+            let store = try environment.requireStore()
+            let itemId: String?
+            if let matching = review.matchingItemId {
+                itemId = matching
+            } else if review.contents.manifest.itemTransport.kind == .embeddedText {
+                itemId = try installEmbeddedItem(from: review.contents, store: store)
+            } else if review.contents.manifest.item.itemType == .podcast {
+                itemId = try await environment.acquirePodcast(review.contents.manifest.item)
+            } else {
+                itemId = try await environment.acquireArticle(review.contents.manifest.item)
+            }
+            let item = try itemId.map { try store.loadItem(id: $0) }
+            let localItem = item.map {
+                SharedPacketItemMatcher.localIdentity(for: $0, ownedAudiobookDigest: environment.localAudiobookDigest($0))
+            }
+            var localAudioAdmission: LocalAudioPacketAdmission?
+            if let item, item.mediaType == "audiobook" {
+                localAudioAdmission = try await verifyLocalAudioForImport(item, contents: review.contents)
+            }
+            let itemText = item?.text
+            let disposition: ImportedCommentaryImportDisposition
+            if let digest = review.contents.manifest.contentDigest,
+               let existing = try store.loadImportedCommentaryLayer(packageDigest: digest) {
+                try SpokenMarginsPackageImporter.repairAssociation(
+                    existing: existing,
+                    contents: review.contents,
+                    itemId: itemId,
+                    localItem: localItem,
+                    itemText: itemText,
+                    repository: store
+                )
+                if let itemId { environment.recordDiagnostic("lastSpokenMarginsPackageRepair", "reassociated:\(existing.id):\(itemId)") }
+                disposition = .duplicate(existingLayerId: existing.id)
+            } else {
+                disposition = try SpokenMarginsPackageImporter.importPackage(
+                    review.contents,
+                    itemId: itemId,
+                    localItem: localItem,
+                    itemText: itemText,
+                    repository: store
+                )
+            }
+            switch disposition {
+            case .duplicate(let existingLayerId):
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "duplicate_layer:\(existingLayerId)")
+            case .imported(let layerId, let interjectionIds):
+                environment.recordDiagnostic("lastSpokenMarginsPackageImport", "imported:\(layerId):\(interjectionIds.count)")
+                environment.recordPacketImport(itemId, review.contents.manifest.packageId, interjectionIds.count)
+            }
+            if let itemId {
+                try environment.showImportedItem(itemId, store)
+                if let item,
+                   item.media?.sourceType == .remoteStream,
+                   let rawURL = item.media?.url,
+                   let remoteURL = URL(string: rawURL) {
+                    environment.registerRemoteDownload(itemId, remoteURL)
+                }
+                if let item, let localAudioAdmission {
+                    try await placeOnOwnedAudio(item, contents: review.contents, admission: localAudioAdmission)
+                } else if let localURL = environment.validatedLocalURL(itemId) {
+                    environment.resolvePodcastCommentary(itemId, localURL)
+                }
+            }
+            self.review = nil
+            isImporting = false
+            environment.reportConfirmation("Imported shared Margins. Playback has not started.")
+        } catch {
+            isImporting = false
+            importError = SharedMarginsImportMessage.userFacing(error)
+            environment.recordDiagnostic("lastSpokenMarginsPackageImport", "failed:\(error.localizedDescription)")
+            environment.reportFailure(error, "Shared Margins import failed")
+        }
+    }
+
+    // MARK: Local audio
+
+    private func verifyLocalAudioForImport(_ item: Item, contents: VerifiedSpokenMarginsPackage) async throws -> LocalAudioPacketAdmission {
+        guard let url = environment.ownedAudiobookURL(item) else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Local source audio is unavailable")
+        }
+        let actualDigest = try await Task.detached(priority: .utility) {
+            try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: url)
+        }.value
+        return try LocalAudioPacketAdmission.admitted(
+            contents,
+            recipient: SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: environment.localAudiobookDigest(item)),
+            itemId: item.id,
+            actualDigest: actualDigest
+        )
+    }
+
+    /// Exact maps project at the sender's times; a podcast packet on the listener's copy is placed like a download.
+    private func placeOnOwnedAudio(_ item: Item, contents: VerifiedSpokenMarginsPackage, admission: LocalAudioPacketAdmission) async throws {
+        if admission == .exactEdition { return try await activateImportedLocalAudioMaps(item: item, contents: contents) }
+        if let url = environment.ownedAudiobookURL(item) { environment.resolvePodcastCommentary(item.id, url) }
+    }
+
+    private func activateImportedLocalAudioMaps(item: Item, contents: VerifiedSpokenMarginsPackage) async throws {
+        let store = try environment.requireStore()
+        let recipient = SharedPacketItemMatcher.localIdentity(for: item, ownedAudiobookDigest: environment.localAudiobookDigest(item))
+        for proposal in contents.listeningMapProposals {
+            let projection = try ExactLocalAudioImport.projection(
+                proposal: proposal, source: contents.manifest.item, recipient: recipient, itemId: item.id
+            )
+            for scene in proposal.scenes where scene.summaryAssetId != nil {
+                try await adoptSuppliedSummary(scene: scene, proposalId: proposal.id, itemId: item.id, contents: contents, store: store)
+            }
+            try store.savePortableListeningMapProposal(proposal, itemId: item.id)
+            try store.saveResolvedListeningMapProjection(projection)
+        }
+        if environment.selectedItemID() == item.id { environment.refreshSelectedItem() }
+        environment.prepareLocalAudioBridges(item.id)
+    }
+
+    private func adoptSuppliedSummary(
+        scene: PortableListeningMapScene, proposalId: String, itemId: String,
+        contents: VerifiedSpokenMarginsPackage, store: SQLiteSessionStore
+    ) async throws {
+        guard let suppliedID = scene.summaryAssetId,
+              let descriptor = contents.manifest.assets.first(where: { $0.id == suppliedID && $0.role == SpokenMarginsAssetRole.summaryVoice }),
+              let sourceURL = contents.extractedAssetURLs[suppliedID],
+              let checksum = descriptor.sha256, let byteCount = descriptor.byteCount else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("Supplied summary audio is unavailable")
+        }
+        let assetID = environment.summaryBridgeAssetID(itemId, proposalId, scene.id, suppliedID)
+        let relativePath = "SpokenMargins/EpisodeMaps/\(PodcastAnchorEvidencePaths.safeComponent(itemId))/SummaryBridges/\(assetID).m4a"
+        let support = try environment.applicationSupportDirectory()
+        let destination = support.appending(path: relativePath)
+        let ledger = environment.offlineLedger(store, support)
+        let reservation = try await ledger.reserve(ownerId: assetID, byteCount: Int64(byteCount))
+        do {
+            try await Task.detached(priority: .utility) {
+                guard try PodcastAnchorEvidenceGenerator.exactEditionSHA256(of: sourceURL) == checksum else {
+                    throw SpokenMarginsPackageArchiveError.invalidAsset(suppliedID)
+                }
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(contentsOf: sourceURL).write(to: destination, options: .atomic)
+            }.value
+            try await ledger.commit(reservationId: reservation.id, asset: OwnedOfflineAsset(
+                id: assetID, itemId: itemId, category: .summaryBridge, relativePath: relativePath,
+                byteCount: Int64(byteCount), checksumSHA256: checksum, isReproducible: false
+            ))
+        } catch {
+            try? await ledger.release(reservationId: reservation.id)
+            throw error
+        }
+    }
+
+    // MARK: Items
+
+    private func installEmbeddedItem(
+        from contents: VerifiedSpokenMarginsPackage,
+        store: SQLiteSessionStore
+    ) throws -> String {
+        guard contents.manifest.itemTransport.kind == .embeddedText,
+              let artifactID = contents.manifest.itemTransport.embeddedArtifactId,
+              let embedded = contents.embeddedTextItems.first(where: { $0.id == artifactID }),
+              let digest = contents.manifest.contentDigest else {
+            throw SessionKitError.persistenceFailed("shared_embedded_item_is_unavailable")
+        }
+        let itemID = "item-shared-\(digest.prefix(20))"
+        let item = Item(
+            id: itemID,
+            title: contents.manifest.item.title,
+            mediaType: "text",
+            text: embedded.text,
+            externalReference: "shared-package:\(contents.manifest.packageId)",
+            status: "ready",
+            externalReferenceType: "spoken_margins_package"
+        )
+        try store.seed(item: item)
+        return itemID
+    }
+
+    private func matchingItemID(
+        for itemIdentity: SharedItemIdentity,
+        store: SQLiteSessionStore
+    ) throws -> String? {
+        if environment.consumeForcedSourceMiss() {
+            environment.recordDiagnostic("uiTestSharedSourceMiss", "forced_once")
+            return nil
+        }
+        return SharedPacketItemMatcher.matchingItemId(
+            for: itemIdentity, among: try store.listItems(),
+            ownedAudiobookDigest: { [environment] in environment.localAudiobookDigest($0) })
+    }
+}

@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitPersistence
 
 struct ExperienceItemDetailScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
@@ -11,6 +12,11 @@ struct ExperienceItemDetailScreen: View {
     @State private var showsAdvanced = false
     /// Set while Continue waits on the "hear new Margins first?" question (#474).
     @State private var newMarginsOfferItemId: String?
+    @State private var episodeLinkStatus = ImportedFileEpisodeLinker.Status()
+    @State private var asksForEpisodeLink = false
+    @State private var episodeLinkText = ""
+    @State private var showsReactions = false
+    private let episodeLinker = ImportedFileEpisodeLinker()
 
     var body: some View {
         NavigationStack {
@@ -23,6 +29,7 @@ struct ExperienceItemDetailScreen: View {
                     if !sharingCoordinator.importedLayers.isEmpty {
                         Build23ImportedMarginPresentation(coordinator: sharingCoordinator)
                     }
+                    reactionsEntry
                     SourceFollowSuggestionCard()
                     ManualSourceFollowButton()
                     if !model.selectedItem.overview.isEmpty { overview }
@@ -64,6 +71,23 @@ struct ExperienceItemDetailScreen: View {
                             model.openExport(sessionId: model.selectedItem.sessions.first?.id)
                         }
                         .disabled(model.selectedItem.sessions.isEmpty)
+                        if episodeLinkStatus.canLink && !episodeLinkStatus.canChange {
+                            Button("Episode can't change: friends' Margins are on it", systemImage: "link") {}
+                                .disabled(true)
+                        }
+                        if episodeLinkStatus.canLink && episodeLinkStatus.canChange {
+                            Button(
+                                episodeLinkStatus.episodeTitle == nil ? "This is a podcast episode…" : "Change linked episode…",
+                                systemImage: "link.badge.plus"
+                            ) {
+                                episodeLinkText = ""
+                                asksForEpisodeLink = true
+                            }
+                            .accessibilityIdentifier("item.linkEpisode.button")
+                            if episodeLinkStatus.episodeTitle != nil {
+                                Button("Unlink episode", systemImage: "minus.circle") { unlinkEpisode() }
+                            }
+                        }
                         if !model.selectedItem.id.isEmpty {
                             Button("Move to Recently Deleted", systemImage: "trash", role: .destructive) {
                                 confirmsTrash = true
@@ -76,6 +100,20 @@ struct ExperienceItemDetailScreen: View {
                     }
                     .accessibilityLabel("Item options")
                 }
+            }
+            .task(id: model.selectedItem.id) { refreshEpisodeLinkStatus() }
+            .sheet(isPresented: $showsReactions) {
+                ExperienceReactionsScreen().environmentObject(model)
+            }
+            .alert("Which episode is this?", isPresented: $asksForEpisodeLink) {
+                TextField("Episode link", text: $episodeLinkText)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    .autocorrectionDisabled()
+                Button("Cancel", role: .cancel) {}
+                Button("Link") { linkEpisode() }
+            } message: {
+                Text("Paste the link to this episode, like the one a friend shared. Margins a friend shares by link for it will then land on this file.")
             }
             .alert("Move to Recently Deleted?", isPresented: $confirmsTrash) {
                 Button("Cancel", role: .cancel) {}
@@ -109,8 +147,46 @@ struct ExperienceItemDetailScreen: View {
         .accessibilityElement(children: .combine)
     }
 
+    private func refreshEpisodeLinkStatus() {
+        guard let store = model.store, !model.selectedItem.id.isEmpty else {
+            episodeLinkStatus = ImportedFileEpisodeLinker.Status()
+            return
+        }
+        episodeLinkStatus = episodeLinker.status(itemId: model.selectedItem.id, store: store)
+    }
+
+    private func linkEpisode() {
+        guard let store = model.store else { return }
+        let itemId = model.selectedItem.id
+        let pasted = episodeLinkText
+        Task { @MainActor in
+            do {
+                let title = try await episodeLinker.link(itemId: itemId, to: pasted, store: store)
+                refreshEpisodeLinkStatus()
+                model.refreshSpokenMarginsPackageImportAfterAddingSource()
+                model.reportConfirmation("Linked to \u{201C}\(title)\u{201D}. Margins a friend shares by link for it will land on this file.")
+            } catch {
+                model.reportFailure(error.localizedDescription, itemId: itemId)
+            }
+        }
+    }
+
+    private func unlinkEpisode() {
+        guard let store = model.store else { return }
+        do {
+            try episodeLinker.unlink(itemId: model.selectedItem.id, store: store)
+            refreshEpisodeLinkStatus()
+            model.reportConfirmation("Episode unlinked. The file and its Margins are unchanged.")
+        } catch {
+            model.reportFailure(error.localizedDescription, itemId: model.selectedItem.id)
+        }
+    }
+
     @ViewBuilder
     private var metadataPills: some View {
+        if let episodeTitle = episodeLinkStatus.episodeTitle {
+            metadataPill("Episode: \(episodeTitle)", systemImage: "link")
+        }
         if chapterCount > 0 {
             metadataPill("\(chapterCount) chapter\(chapterCount == 1 ? "" : "s")", systemImage: "list.bullet")
         }
@@ -147,6 +223,28 @@ struct ExperienceItemDetailScreen: View {
                 HStack(spacing: 10) { secondaryActionButtons }
                 VStack(alignment: .leading, spacing: 8) { secondaryActionButtons }
             }
+        }
+    }
+
+    /// "Where people reacted" (#476): offered once the item has Margins from two or more people.
+    @ViewBuilder
+    private var reactionsEntry: some View {
+        let item = model.selectedItem
+        if MarginLayerSynthesis.offersReactions(
+            itemId: item.id,
+            layers: item.importedCommentaryLayers,
+            interjections: item.importedCommentaryInterjections,
+            ownMargins: item.interjections
+        ) {
+            Button {
+                showsReactions = true
+            } label: {
+                Label("Where people reacted", systemImage: "person.2.fill")
+                    .frame(maxWidth: .infinity, minHeight: 40)
+            }
+            .buttonStyle(.bordered)
+            .tint(AppColors.evergreen)
+            .accessibilityIdentifier("item.reactions.button")
         }
     }
 
@@ -322,7 +420,11 @@ struct ExperienceItemDetailScreen: View {
     }
 
     private var listeningMap: some View {
-        ExperienceListeningMapSection(scenes: model.selectedItem.listeningMapScenes, model: model)
+        ExperienceListeningMapSection(
+            scenes: model.selectedItem.listeningMapScenes,
+            isCommunityMap: model.selectedItem.listeningMapIsCommunity,
+            model: model
+        )
             .equatable()
     }
 
@@ -426,16 +528,30 @@ struct ExperienceItemDetailScreen: View {
                         .buttonStyle(.bordered)
                         .tint(AppColors.evergreen)
                 case .downloading:
-                    ProgressView()
-                        .tint(readinessColor)
+                    if let progress = model.selectedPodcastDownloadProgress {
+                        ProgressView(value: progress)
+                            .tint(readinessColor)
+                            .frame(width: 72)
+                    } else {
+                        ProgressView()
+                            .tint(readinessColor)
+                    }
                 case .availableOffline, .none:
                     EmptyView()
                 }
             }
             .accessibilityIdentifier("item.podcastDownload.status")
         case .availableOffline:
-            Button("Download Again", action: model.redownloadSelectedPodcast)
-                .buttonStyle(.bordered)
+            HStack(spacing: 12) {
+                Label(readinessLabel, systemImage: readinessIcon)
+                    .font(.subheadline)
+                    .foregroundStyle(readinessColor)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("item.podcastDownload.saved")
+                Spacer(minLength: 8)
+                Button("Download Again", action: model.redownloadSelectedPodcast)
+                    .buttonStyle(.bordered)
+            }
         case .none:
             EmptyView()
         }
@@ -507,8 +623,8 @@ struct ExperienceItemDetailScreen: View {
         case .waitingForWiFi: "Waiting for Wi-Fi"
         case .streamingOnly: "Streaming available"
         case .failed, .evicted: "Download needs attention"
-        case .downloading: "Downloading"
-        case .availableOffline: "Available offline"
+        case .downloading: model.selectedPodcastDownloadStatusText ?? "Downloading"
+        case .availableOffline: model.selectedPodcastDownloadStatusText ?? "Available offline"
         case .none: ""
         }
     }
@@ -569,15 +685,22 @@ struct ExperienceItemDetailScreen: View {
 // its value inputs; keep those updates from rebuilding every summary row.
 private struct ExperienceListeningMapSection: View, Equatable {
     let scenes: [MediaTimelineChapter]
+    let isCommunityMap: Bool
     let model: Gate1AppModel
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.scenes == rhs.scenes && lhs.model === rhs.model
+        lhs.scenes == rhs.scenes && lhs.isCommunityMap == rhs.isCommunityMap && lhs.model === rhs.model
     }
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 12) {
-            sectionHeading("Listening Map", detail: "Scene navigation and Skim summaries")
+            sectionHeading(
+                isCommunityMap ? "Community map" : "Listening Map",
+                detail: isCommunityMap
+                    ? "Made from other listeners' transcripts. Scene navigation and Skim summaries."
+                    : "Scene navigation and Skim summaries"
+            )
+            .accessibilityIdentifier(isCommunityMap ? "listeningMap.heading.community" : "listeningMap.heading")
             ExperienceSurface(tint: AppColors.evergreen.opacity(0.18)) {
                 LazyVStack(spacing: 0) {
                     ForEach(Array(scenes.enumerated()), id: \.element.id) { index, scene in

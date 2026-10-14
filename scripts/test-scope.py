@@ -36,7 +36,8 @@ BROWSER_FILES = {'package.json', 'package-lock.json'}
 BUILD_FILES = ('project.yml', 'SpokenMarginsNative.xcodeproj/', 'Config/')
 
 # The lane's own machinery (owner rule 2026-10-01). A PR touching any of these merges only after a clean
-# Codex audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
+# Codex or Claude audit of its head, like an audio, persistence or packet change (lane-runner.py, merge_blockers).
+# scripts/lane-runner.py and .github/ go further: only the owner merges those (lane-runner.py, owner_tap_paths).
 # The list: every workflow; the runner and its helpers (lane-runner.py, lane_sim.py, lane_slots.py,
 # lane_guard.py, lane-sim-boot, xcodebuild-lane, host-test-lane, install-lane-guard.py); the policies the
 # runner loads from next (this file, hot_file_ratchet.py, merge_audit.py); verify-tests.py, which runs the
@@ -47,8 +48,9 @@ LANE_PREFIXES = ('.github/workflows/', 'scripts/lane')
 LANE_FILES = {'scripts/xcodebuild-lane', 'scripts/host-test-lane', 'scripts/install-lane-guard.py',
               'scripts/test-scope.py', 'scripts/hot_file_ratchet.py', 'scripts/merge_audit.py',
               'scripts/verify-tests.py', 'TestPlans/AppBehavior.xctestplan', 'TestPlans/AudioAdapters.xctestplan'}
-LANE_NOTE = ('Lane change: the runner merges it only after a Codex audit of the head that says "No blocking '
-             'findings". The audit runs by itself once the automerge run passes.')
+LANE_NOTE = ('Lane change: the runner merges it only after a Codex or Claude audit of the head that says "No blocking '
+             'findings". The audit runs by itself once the automerge run passes. A change to scripts/lane-runner.py or '
+             '.github/ also needs the owner\'s merge tap: the runner never merges it.')
 
 SESSIONKIT_RISK = {'SessionKitAudio': 'audio', 'SessionKitPersistence': 'persistence', 'SessionKitSharing': 'packet'}
 SESSIONKIT_PACKET_FILES = {'SharingModels.swift', 'ShareableLinkPolicy.swift'}
@@ -99,7 +101,9 @@ NOTES = {
               'change needs the owner\'s OK.',
     'persistence': 'Persistence: the previous build must still open the database (PriorBuildPersistenceTests); '
                    'prefer new record kinds over new fields.',
-    'audio': 'Audio: host and app tests fake the audio session. Audible behavior is the owner\'s T6 check.',
+    'audio': 'Audio: host and app tests fake the audio session. Audible behavior is the owner\'s T6 check. '
+             'A state-machine change needs one test across a chunk boundary with lifecycle on '
+             '(SupertonicClientHarness, #353).',
     'app-ui': 'If a listener would notice this change, the milestone needs a T4 journey.',
     'guard': 'After changing the guard, run scripts/install-lane-guard.py so new sessions use it.',
     'ui-tests': 'Scripted journeys run only in the integration run on next\'s tip, never per PR. Name the '
@@ -282,27 +286,39 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT):
 
     Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
     count: priority work queues there, but an absent/offline runner must not strand a job.
+    Overflow (#1327): an automerge job that isn't priority work goes to the priority runner when it
+    is idle and no build runner is, instead of queueing behind them while the Mac has a runner free.
     """
     normal = {'lane': ['self-hosted', 'macOS', 'sm-lane'],
               'automerge': ['self-hosted', 'macOS', 'sm-lane-build']}
     priority = ['self-hosted', 'sm-lane-priority']
     try:
-        online = any(r['status'] == 'online' and set(priority) <= {label['name'] for label in r['labels']}
-                     for page in runner_pages for r in page['runners'])
-        if not online:
+        runners = [r for page in runner_pages for r in page['runners']]
+
+        def names(runner):
+            return {label['name'] for label in runner['labels']}
+
+        # Only an explicit busy=false is idle: a runner whose state is missing or unreadable is not.
+        def idle(runner, wanted):
+            return runner['status'] == 'online' and runner.get('busy') is False and wanted <= names(runner)
+
+        if not any(r['status'] == 'online' and set(priority) <= names(r) for r in runners):
             return normal
+        overflow = dict(normal)
+        if any(idle(r, set(priority)) for r in runners) and not any(idle(r, {'sm-lane-build'}) for r in runners):
+            overflow['automerge'] = priority
         labelled = any(label['name'] == 'priority' for label in pr['labels'])
         if not labelled:
             files = [file for page in file_pages for file in page]
             if not files or len(files) != pr['changed_files']:
-                return normal
+                return overflow
             # Both sides of a rename belong to the diff: moving app code into ops isn't ops-only.
             paths = {file['filename'] for file in files}
             paths.update(file['previous_filename'] for file in files if 'previous_filename' in file)
             if not all(path.startswith(('ops/', 'docs/')) or is_lane_path(path) for path in paths):
-                return normal
+                return overflow
             if classify(paths, root=root)['tier'] != 'T1':
-                return normal
+                return overflow
         return {'lane': priority, 'automerge': priority}
     except (KeyError, TypeError, ValueError):
         return normal

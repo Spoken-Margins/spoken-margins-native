@@ -25,8 +25,8 @@ public enum HandsFreeMarginTimings {
     /// top still ends by press or by the cap.
     public static let lowestThresholdDB: Double = -50
     public static let highestThresholdDB: Double = -25
-    /// At the end of the listening window, anything this far above the background counts as an
-    /// attempt to talk: the recording is saved, not thrown away for a flag.
+    /// At a press, removed headphones or the end of the listening window, anything more than this
+    /// far above the background counts as an attempt to talk: save the recording instead of a flag.
     public static let attemptMarginDB: Double = 4
     /// A tone that never reports finishing (a call cut it off, the player failed) counts as finished
     /// after this: the start tone opens the microphone, the closing tone resumes the source.
@@ -100,8 +100,9 @@ public enum HandsFreeMarginCommand: Equatable, Sendable {
 /// A small state machine fed by a trigger, voice levels, tone and save completions, and
 /// interruption and route events, on an injected clock. It returns commands and owns nothing:
 /// no audio session, no recorder, no player. Saying nothing makes a flag; a press finishes at
-/// once; a call keeps the Margin only with at least a second of speech; removed headphones save
-/// and leave the source paused.
+/// once and keeps faint words as the silence timer does; a call keeps the Margin only with at
+/// least a second of speech; removed headphones save what was said, faint words included, and
+/// leave the source paused.
 public final class HandsFreeMarginCoordinator {
     public enum Phase: Equatable, Sendable {
         case idle
@@ -152,6 +153,13 @@ public final class HandsFreeMarginCoordinator {
 
     private var isRecording: Bool { [.listening, .speaking, .trailingSilence].contains(phase) }
 
+    /// Something rose above the background but never past the threshold: faint words, not silence.
+    /// Ending the Margin keeps them rather than lose words the threshold missed.
+    private var heardAnAttempt: Bool {
+        guard let backgroundDB else { return false }
+        return loudestDB > backgroundDB + HandsFreeMarginTimings.attemptMarginDB
+    }
+
     // MARK: Inputs
 
     /// A press, a Siri request or a button. Starts a Margin when idle; finishes one in progress.
@@ -175,7 +183,9 @@ public final class HandsFreeMarginCoordinator {
             // Pressed again before the microphone opened: nothing to keep, so a flag.
             commands += [.requestFlag] + close(tone: .flag, resume: true)
         case .listening:
-            commands += flag()
+            // A press ends the Margin like the silence timer does: faint words the threshold missed
+            // are kept, and only a Margin with nothing said is a flag.
+            commands += heardAnAttempt ? finish(.press) : flag()
         case .speaking, .trailingSilence:
             commands += finish(.press)
         case .saving where awaitingInterruptionEnd && !awaitingSave:
@@ -317,6 +327,7 @@ public final class HandsFreeMarginCoordinator {
             phase = .idle
             return due + [.requestFlag]
         case .listening:
+            if heardAnAttempt { return due + finish(.headphonesRemoved) }
             phase = .idle
             return due + [.cancelRecording, .requestFlag]
         case .speaking, .trailingSilence:
@@ -408,12 +419,7 @@ public final class HandsFreeMarginCoordinator {
         guard isRecording else { return [] }
         let elapsed = now - recordingStartedAt
         if phase == .listening, elapsed >= HandsFreeMarginTimings.listeningWindow {
-            // Something rose above the background but never past the threshold: keep it
-            // rather than lose words the threshold missed.
-            if let backgroundDB, loudestDB > backgroundDB + HandsFreeMarginTimings.attemptMarginDB {
-                return finish(.silence)
-            }
-            return flag()
+            return heardAnAttempt ? finish(.silence) : flag()
         }
         if phase == .trailingSilence, let since = silenceSince, now - since >= HandsFreeMarginTimings.trailingSilence {
             return finish(.silence)

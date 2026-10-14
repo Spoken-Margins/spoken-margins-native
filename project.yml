@@ -23,6 +23,9 @@ targets:
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
         buildPhase: resources
+      - path: App/SpokenMarginsApp/Resources/Kitten
+        type: folder
+        buildPhase: resources
       - path: App/SpokenMarginsApp/Resources/Legal
         type: folder
         buildPhase: resources
@@ -63,7 +66,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsApp/SpokenMarginsApp.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "30"
+        CURRENT_PROJECT_VERSION: "32"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         INFOPLIST_FILE: App/SpokenMarginsApp/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Spoken Margins
@@ -123,10 +126,12 @@ targets:
         NSSupportsLiveActivities: true
         UIBackgroundModes:
           - audio
+          - fetch
           - processing
         BGTaskSchedulerPermittedIdentifiers:
           - com.spokenmargins.native.audio-preparation
           - com.spokenmargins.native.audio-preparation.continued
+          - com.spokenmargins.native.feed-refresh
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown
@@ -152,7 +157,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.gate2widget
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsGate2Widget/SpokenMarginsGate2Widget.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "30"
+        CURRENT_PROJECT_VERSION: "32"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         MARKETING_VERSION: "0.1"
@@ -184,7 +189,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.browsertext
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsBrowserTextExtension/SpokenMarginsBrowserTextExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "30"
+        CURRENT_PROJECT_VERSION: "32"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsBrowserTextExtension/Info.plist
@@ -199,6 +204,10 @@ targets:
       - path: App/SpokenMarginsShareExtension/Sources
         type: syncedFolder
       - path: App/SpokenMarginsShareExtension/Resources
+      # Shared text routing (#662), host-tested in SessionKit. The extension compiles these two
+      # Foundation-only files rather than linking SessionKit.
+      - path: Packages/SessionKit/Sources/SessionKit/ClipboardIntakeClassifier.swift
+      - path: Packages/SessionKit/Sources/SessionKit/SharedTextIntake.swift
       - path: App/Gate2Shared/Sources
         type: syncedFolder
         excludes:
@@ -211,7 +220,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.spokenmargins.native.share
         CODE_SIGN_ENTITLEMENTS: App/SpokenMarginsShareExtension/SpokenMarginsShareExtension.entitlements
         CODE_SIGN_STYLE: Automatic
-        CURRENT_PROJECT_VERSION: "30"
+        CURRENT_PROJECT_VERSION: "32"
         DEVELOPMENT_TEAM: J8SWC6J3VY
         ENABLE_DEBUG_DYLIB: NO
         INFOPLIST_FILE: App/SpokenMarginsShareExtension/Info.plist
@@ -275,6 +284,9 @@ targets:
         product: SessionKitEPUB
       - package: SessionKit
         product: SessionKitFeeds
+      # Build 29's frozen packet reader, so a test can read the packet the app's exporter wrote (#1039).
+      - package: SessionKit
+        product: ShippedPacketReader
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

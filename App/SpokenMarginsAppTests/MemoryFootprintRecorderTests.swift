@@ -76,7 +76,62 @@ final class MemoryFootprintRecorderTests: XCTestCase {
         let recorder = makeRecorder(diagnostics: diagnostics)
         recorder.record(.memoryWarning, mediaType: "text")
         XCTAssertEqual(diagnostics.values["memoryFootprint"], "09-21 14:13:20Z memory_warning text 200MB")
-        XCTAssertNotNil(MemoryFootprintRecorder.readCurrent()?.footprintBytes, "the real reader works on this device")
+    }
+
+    /// The real reader (#1129, PERSIST-08). "Not nil" passed for 0 and for the wrong field, so this
+    /// checks what the footprint is: memory the app owns rises and falls with it, and clean file
+    /// pages that only raise the resident size leave it alone.
+    func testTheRealReaderReportsTheFootprintJetsamCounts() throws {
+        let size = 64 << 20, megabyte: Int64 = 1 << 20
+        func footprint() throws -> Int64 { Int64(try XCTUnwrap(MemoryFootprintRecorder.readCurrent()).footprintBytes) }
+
+        let start = try footprint()
+        XCTAssertGreaterThan(start, 10 * megabyte, "a running app's footprint, in bytes")
+
+        let owned = try XCTUnwrap(TaskMemoryProbe.touchAnonymous(bytes: size))
+        let afterTouch = try footprint()
+        TaskMemoryProbe.unmap(owned, bytes: size)
+        let afterRelease = try footprint()
+        XCTAssertGreaterThanOrEqual(afterTouch - start, 48 * megabyte, "64 MB written by the app counts")
+        XCTAssertGreaterThanOrEqual(afterTouch - afterRelease, 48 * megabyte, "and stops counting when released")
+
+        // A 64 MB file, written a megabyte at a time so no big buffer lingers in the allocator.
+        let file = fileURL.deletingLastPathComponent().appendingPathComponent("mapped.bin")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        FileManager.default.createFile(atPath: file.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: file)
+        let chunk = Data(repeating: 7, count: 1 << 20)
+        for _ in 0..<(size >> 20) { try handle.write(contentsOf: chunk) }
+        try handle.close()
+
+        let residentBefore = Int64(try XCTUnwrap(TaskMemoryProbe.residentBytes()))
+        let beforeMapping = try footprint()
+        let mapped = try XCTUnwrap(TaskMemoryProbe.readMapped(path: file.path, bytes: size))
+        let residentGrowth = Int64(try XCTUnwrap(TaskMemoryProbe.residentBytes())) - residentBefore
+        let footprintGrowth = try footprint() - beforeMapping
+        TaskMemoryProbe.unmap(mapped, bytes: size)
+        XCTAssertGreaterThanOrEqual(residentGrowth, 48 * megabyte, "reading the mapped file makes it resident")
+        XCTAssertLessThan(footprintGrowth, 16 * megabyte, "but clean file pages aren't in the footprint, so the reader isn't reading the resident size")
+    }
+
+    /// #586: the longest chunk hand-over gap is recorded once per run, and a gap that is no longer is
+    /// never written again, so a replaced dictionary has to get the line back at once.
+    func testRefreshDiagnosticsDoesNotDropTheLongestHandOverGap() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        let stall = "2.40s after comma, waited for next chunk"
+        model.runtimeDiagnostics.recordChunkHandOverGap(.init(seconds: 2.4, boundary: .comma, nextChunkWasReady: false))
+        model.runtimeDiagnostics.recordChunkHandOverGap(.init(seconds: 0.3, boundary: .sentence, nextChunkWasReady: true))
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], stall, "a shorter gap doesn't replace it")
+
+        model.refreshDiagnostics() // the Settings button: replaces the whole dictionary
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], stall)
+
+        model.resetAndSeed() // replaces it too
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], stall)
+
+        model.runtimeDiagnostics.recordChunkHandOverGap(.init(seconds: 3.1, boundary: .sentence, nextChunkWasReady: false))
+        XCTAssertEqual(model.diagnostics["longestChunkHandOverGap"], "3.10s after sentence, waited for next chunk", "a longer gap does")
     }
 
     func testRefreshDiagnosticsDoesNotDropTheMemoryLines() {

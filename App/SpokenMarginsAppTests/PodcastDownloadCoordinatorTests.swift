@@ -264,6 +264,45 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         restored.shutdown()
     }
 
+    /// #936: Download Again tapped while a copy is already coming down must not cancel it and start over.
+    func testDownloadAgainWhileDownloadingDoesNotRestartTheDownload() async throws {
+        let fixture = try makeFixture()
+        let directory = fixture.support.appending(path: "PodcastAudio")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let saved = directory.appending(path: "saved.mp3")
+        try Data([1, 2, 3, 4]).write(to: saved)
+        try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+            id: "download-episode", itemId: "episode", remoteURL: "https://example.com/audio",
+            localRelativePath: saved.lastPathComponent, state: .availableOffline,
+            bytesWritten: 4, expectedBytes: 4
+        ))
+        let head = DownloadHeadGate()
+        let coordinator = try PodcastDownloadCoordinator(
+            store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in await head.length() }, startDownload: { _, _ in }
+        )
+
+        coordinator.redownload(itemId: "episode")
+        await head.waitUntilRequested()
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading)
+        let retriesAfterFirstTap = coordinator.recordsByItemId["episode"]?.retryCount
+
+        coordinator.redownload(itemId: "episode")
+        coordinator.redownload(itemId: "episode")
+        let preparation = try XCTUnwrap(coordinator.preparationTasks["episode"])
+
+        XCTAssertEqual(coordinator.recordsByItemId["episode"]?.retryCount, retriesAfterFirstTap,
+                       "Extra taps must not count as new attempts")
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading)
+        await head.finish(8)
+        await preparation.value
+        let requests = await head.requests
+        XCTAssertEqual(requests, 1, "Extra taps must not ask for the file's size again, which means starting over")
+        XCTAssertEqual(coordinator.validatedLocalURL(for: "episode"), saved, "The saved copy stays playable meanwhile")
+        coordinator.shutdown()
+    }
+
     func testFirstDownloadInProgressIsNotMarkedFailedWhenQueried() async throws {
         let fixture = try makeFixture()
         let head = DownloadHeadGate()
@@ -810,6 +849,229 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
         return wav
     }
 
+    // MARK: Test honesty (#1042: APA-03, APA-04, APA-10, APA-11)
+
+    /// APA-03: the older HTTP-failure test used a file the budget rejected anyway, so deleting the status check
+    /// still ended `.failed`. Here the file fits: only the status decides.
+    func testAnErrorPageThatFitsTheBudgetIsRefusedBecauseOfItsStatusAlone() async throws {
+        for httpOK in [false, true] {
+            let fixture = try makeFixture()
+            try fixture.store.saveOfflineStorageBudget(OfflineStorageBudget(limitBytes: 10))
+            let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+            let reservation = try await ledger.reserve(ownerId: "podcast-download-episode:status", byteCount: 3)
+            let attempt = PodcastDownloadAttempt(itemId: "episode", generation: "status",
+                reservationId: reservation.id, userInitiated: true)
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(id: "download", itemId: "episode",
+                remoteURL: "https://example.com/audio", state: .downloading))
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+            var published = false
+            coordinator.onLocalAssetReady = { _, _ in published = true }
+            coordinator.restoreAttempt(attempt)
+            let staged = fixture.root.appending(path: "status.mp3")
+            try Data([1, 2, 3]).write(to: staged)
+
+            await coordinator.finishDownload(attempt, stagedURL: staged, responseOK: httpOK)
+
+            let label = httpOK ? "a 2xx response" : "a non-2xx response"
+            XCTAssertFalse(FileManager.default.fileExists(atPath: staged.path), "\(label): the staged file is gone")
+            XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "\(label): the reservation is released")
+            if httpOK {
+                XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, "control: the same file is adopted")
+                XCTAssertEqual(try fixture.store.loadOwnedOfflineAssets().count, 1)
+                XCTAssertTrue(published)
+            } else {
+                XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, label)
+                XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "\(label): nothing is owned")
+                XCTAssertNil(coordinator.validatedLocalURL(for: "episode"), label)
+                XCTAssertFalse(published, label)
+            }
+            coordinator.shutdown()
+        }
+    }
+
+    /// APA-04: the older test delivered the old task's callbacks after the replacement had finished, where the record
+    /// state alone rejects them. The cancelled old task really reports while the replacement is still downloading.
+    func testACancelledOldAttemptCannotFailAReplacementThatIsStillDownloading() async throws {
+        let fixture = try makeFixture()
+        let ledger = OfflineStorageLedger(repository: fixture.store, rootDirectory: fixture.support)
+        var started: [PodcastDownloadAttempt] = []
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, ledger: ledger,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false,
+            contentLength: { _, _ in 8 }, startDownload: { _, description in
+                started.append(PodcastDownloadAttempt.decode(description)!)
+            })
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/audio")!)
+        try await waitForStarts(1, starts: { started.count })
+        let old = started[0]
+        coordinator.removeItem("episode")
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://example.com/new-audio")!)
+        try await waitForStarts(2, starts: { started.count })
+        let current = started[1]
+        XCTAssertNotEqual(old.generation, current.generation)
+
+        coordinator.completeDownload(old, error: URLError(.cancelled))
+        let oldFile = fixture.root.appending(path: "old.mp3")
+        try Data([9]).write(to: oldFile)
+        await coordinator.finishDownload(old, stagedURL: oldFile, responseOK: true)
+
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .downloading, "the replacement is still downloading")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldFile.path))
+        XCTAssertEqual(try fixture.store.loadOfflineStorageReservations().map(\.id), [current.reservationId],
+                       "only the replacement's reservation is held")
+        XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "the old bytes were not adopted")
+
+        let newFile = fixture.root.appending(path: "new.mp3")
+        try Data([4, 5, 6]).write(to: newFile)
+        await coordinator.finishDownload(current, stagedURL: newFile, responseOK: true)
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline)
+        XCTAssertEqual(try Data(contentsOf: XCTUnwrap(coordinator.validatedLocalURL(for: "episode"))), Data([4, 5, 6]))
+        coordinator.shutdown()
+    }
+
+    /// APA-11: the file exists and is not empty but is shorter than what was recorded (an interrupted or half-evicted
+    /// write). It must not be offered as the episode.
+    func testValidatedLocalURLRejectsATruncatedFile() throws {
+        let fixture = try makeFixture()
+        let audioDirectory = fixture.support.appending(path: "PodcastAudio", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        try Data([1, 2, 3]).write(to: audioDirectory.appending(path: "truncated.mp3"))
+        try Data([1, 2, 3]).write(to: audioDirectory.appending(path: "complete.mp3"))
+        try Data([1, 2, 3]).write(to: audioDirectory.appending(path: "unrecorded.mp3"))
+        for (itemId, recordedBytes) in [("truncated", Int64(10)), ("complete", 3), ("unrecorded", 0)] {
+            try fixture.store.savePodcastDownload(PodcastDownloadRecord(
+                id: "download-\(itemId)", itemId: itemId, remoteURL: "https://example.com/\(itemId).mp3",
+                localRelativePath: "\(itemId).mp3", state: .availableOffline, bytesWritten: recordedBytes))
+        }
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+
+        XCTAssertNil(coordinator.validatedLocalURL(for: "truncated"), "3 bytes on disk, 10 recorded")
+        let record = coordinator.recordsByItemId["truncated"]
+        XCTAssertEqual(record?.state, .failed)
+        XCTAssertNil(record?.localRelativePath)
+        XCTAssertEqual(try fixture.store.loadPodcastDownloads().first { $0.itemId == "truncated" }?.state, .failed)
+        XCTAssertEqual(record?.failureReason, "Downloaded file is missing or incomplete. Download it again.")
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "complete"), "control: size equals what was recorded")
+        XCTAssertNotNil(coordinator.validatedLocalURL(for: "unrecorded"), "control: a record with no size recorded is accepted")
+    }
+
+    /// APA-10 (redirect half): the BBC chain that failed App Transport Security is fixed in the delegate as well as
+    /// before the request. The delegate had never been called by a test.
+    func testRedirectToPlainHTTPIsRewrittenToHTTPSAndHTTPSIsLeftAlone() throws {
+        let fixture = try makeFixture()
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store, applicationSupportDirectory: fixture.support,
+            cacheLimit: .five, monitorsNetwork: false, usesBackgroundSession: false)
+        let session = URLSession(configuration: .ephemeral)
+        let task = session.dataTask(with: URL(string: "https://example.com/start")!)
+        defer { session.invalidateAndCancel(); coordinator.shutdown() }
+
+        func redirected(to target: String) throws -> URLRequest? {
+            let response = try XCTUnwrap(HTTPURLResponse(url: URL(string: "https://example.com/start")!, statusCode: 302,
+                httpVersion: nil, headerFields: ["Location": target]))
+            var handedBack: URLRequest?
+            var called = false
+            coordinator.urlSession(session, task: task, willPerformHTTPRedirection: response,
+                newRequest: URLRequest(url: URL(string: target)!)) { handedBack = $0; called = true }
+            XCTAssertTrue(called, "the delegate always answers the redirect")
+            return handedBack
+        }
+
+        XCTAssertEqual(try redirected(to: "http://cdn.example.com:80/episode.mp3")?.url?.absoluteString,
+                       "https://cdn.example.com/episode.mp3", "plain http becomes https and loses the port 80")
+        XCTAssertEqual(try redirected(to: "http://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/proto/http/x.mp3")?.url?.absoluteString,
+                       "https://open.live.bbc.co.uk/mediaselector/6/redir/version/2.0/proto/https/x.mp3",
+                       "the BBC media selector is asked for its https redirect chain")
+        XCTAssertEqual(try redirected(to: "https://cdn.example.com/episode.mp3")?.url?.absoluteString,
+                       "https://cdn.example.com/episode.mp3", "https is handed back as it came")
+    }
+
+    /// APA-10 (status half): `finishDownload` takes the response's status as a Bool, and every test passed that Bool
+    /// itself, so nothing ran the mapping from a real HTTP status in `didFinishDownloadingTo`. Here URLSession
+    /// downloads a real 503 whose body is valid audio that fits the budget: only the status can refuse it.
+    func testARealErrorStatusIsRefusedEvenWhenItsBodyIsAudio() async throws {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        DownloadProbeURLProtocol.reset(audio: Self.wavData(seconds: 0.025))
+        let fixture = try makeFixture()
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+            applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+            usesBackgroundSession: false, preflightSession: session,
+            foregroundSessionConfiguration: configuration)
+        defer { coordinator.shutdown() }
+        var published = false
+        coordinator.onLocalAssetReady = { _, _ in published = true }
+        coordinator.setNetworkTransportForTesting(.wifi)
+        coordinator.register(itemId: "episode", remoteURL: URL(string: "https://probe.example.com/error-503.mp3")!,
+                             userInitiated: true)
+        await coordinator.preparationTasks["episode"]?.value
+        for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+
+        XCTAssertEqual(DownloadProbeURLProtocol.requests, ["HEAD /error-503.mp3", "GET /error-503.mp3"],
+                       "the episode was really downloaded")
+        XCTAssertEqual(coordinator.status(itemId: "episode"), .failed, "a 503 is not the episode, whatever its body holds")
+        XCTAssertNil(coordinator.validatedLocalURL(for: "episode"))
+        XCTAssertFalse(published, "nothing is offered to the player")
+        XCTAssertTrue(try fixture.store.loadOwnedOfflineAssets().isEmpty, "nothing is owned")
+        XCTAssertTrue(try fixture.store.loadOfflineStorageReservations().isEmpty, "the reservation is released")
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: fixture.support.appending(path: "PodcastAudio").path).isEmpty,
+                      "the error response's body is not kept")
+    }
+
+    /// APA-10 (#1042), the file-name half: `didFinishDownloadingTo` names the staged file after the response's
+    /// suggested file name, keeping its extension only when it is short and letters or digits, and the adopted
+    /// episode keeps that extension. No test ran it. Each row is a real URLSession download through the probe host.
+    func testTheAdoptedEpisodeKeepsOnlyASafeExtensionFromTheServersFileName() async throws {
+        let rows: [(url: String, suggested: String, expected: String, note: String)] = [
+            ("https://probe.example.com/name-plain.mp3?download=1", "name-plain.mp3", "mp3",
+             "a query string after the file name doesn't hide a normal extension"),
+            ("https://probe.example.com/name-query-in-name.mp3", "episode.mp3?dl=1", "audio",
+             "punctuation in the extension"),
+            ("https://probe.example.com/name-long.mp3", "episode.abcdefghijklmnop", "audio",
+             "an extension longer than 10 characters"),
+            ("https://probe.example.com/name-bare.mp3", "episode", "audio",
+             "no extension"),
+        ]
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DownloadProbeURLProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let audio = Self.wavData(seconds: 0.025)
+        for row in rows {
+            // Precondition: the name the sanitizer is handed, as this platform's URL loading derives it from
+            // the probe's headers. If the platform names it differently, this says so before the outcome does.
+            let url = try XCTUnwrap(URL(string: row.url))
+            let served = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
+                                         headerFields: DownloadProbeURLProtocol.namedDownloadHeaders[url.path])
+            XCTAssertEqual(served?.suggestedFilename, row.suggested, "precondition: \(row.note)")
+            DownloadProbeURLProtocol.reset(audio: audio)
+            let fixture = try makeFixture()
+            let coordinator = try PodcastDownloadCoordinator(store: fixture.store,
+                applicationSupportDirectory: fixture.support, cacheLimit: .five, monitorsNetwork: false,
+                usesBackgroundSession: false, preflightSession: session,
+                foregroundSessionConfiguration: configuration)
+            defer { coordinator.shutdown() }
+            coordinator.setNetworkTransportForTesting(.wifi)
+            coordinator.register(itemId: "episode", remoteURL: url, userInitiated: true)
+            await coordinator.preparationTasks["episode"]?.value
+            for _ in 0..<200 where coordinator.status(itemId: "episode") == .downloading {
+                try await Task.sleep(for: .milliseconds(25))
+            }
+
+            XCTAssertEqual(coordinator.status(itemId: "episode"), .availableOffline, row.note)
+            let local = try XCTUnwrap(coordinator.validatedLocalURL(for: "episode"), row.note)
+            XCTAssertEqual(local.pathExtension, row.expected, row.note)
+            XCTAssertEqual(try Data(contentsOf: local), audio, "the downloaded bytes were adopted: \(row.note)")
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: fixture.support.appending(path: "PodcastAudio").path),
+                           [local.lastPathComponent], "only the adopted episode remains: \(row.note)")
+        }
+    }
+
     private func waitForStarts(_ count: Int, starts: () -> Int) async throws {
         for _ in 0..<100 where starts() < count { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(starts(), count)
@@ -828,7 +1090,8 @@ final class PodcastDownloadCoordinatorTests: XCTestCase {
 
 private actor DownloadHeadGate {
     private var continuation: CheckedContinuation<Int64, Never>?
-    func length() async -> Int64 { await withCheckedContinuation { continuation = $0 } }
+    private(set) var requests = 0
+    func length() async -> Int64 { requests += 1; return await withCheckedContinuation { continuation = $0 } }
     func waitUntilRequested() async {
         while continuation == nil { await Task.yield() }
     }
@@ -856,6 +1119,9 @@ private final class ReconcileHookFileManager: FileManager, @unchecked Sendable {
 /// - /head-ok.mp3: HEAD answers 200 with the audio's Content-Length.
 /// - /announces-nothing.mp3: HEAD is refused (405); GET answers 200 with no length at all.
 /// - /gone.mp3: every request answers 404.
+/// - /error-503.mp3: HEAD answers 200 with the audio's Content-Length; GET answers 503 with the audio as its body.
+/// - /name-*.mp3: HEAD answers 200 with the audio's Content-Length; GET answers 200 with the audio, under the
+///   file name `namedDownloadHeaders` gives that path (#1282).
 private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var seen: [String] = []
@@ -884,6 +1150,15 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
     /// "HEAD /path" or "GET /path", with " range" when the request asked for a byte range.
     static var requests: [String] { lock.withLock { seen } }
 
+    /// The headers that name each /name-*.mp3 download, as a host's Content-Type and Content-Disposition would.
+    /// The odd names are served as octet-stream, so the platform has no audio type to name the file after.
+    static let namedDownloadHeaders: [String: [String: String]] = [
+        "/name-plain.mp3": ["Content-Type": "audio/mpeg"],
+        "/name-query-in-name.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode.mp3?dl=1\""],
+        "/name-long.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode.abcdefghijklmnop\""],
+        "/name-bare.mp3": ["Content-Type": "application/octet-stream", "Content-Disposition": "attachment; filename=\"episode\""],
+    ]
+
     override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "probe.example.com" }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
@@ -901,9 +1176,24 @@ private final class DownloadProbeURLProtocol: URLProtocol, @unchecked Sendable {
             "Content-Disposition": "attachment; filename=\"episode.wav\"",
         ]
         var body = Data()
+        if let named = Self.namedDownloadHeaders[url.path] {
+            headers = named
+        }
         switch (url.path, method) {
+        case (let path, "HEAD") where path.hasPrefix("/name-"):
+            status = 200
+            headers["Content-Length"] = "\(audio.count)"
+        case (let path, _) where path.hasPrefix("/name-"):
+            status = 200
+            body = audio
         case ("/gone.mp3", _):
             status = 404
+        case ("/error-503.mp3", "HEAD"):
+            status = 200
+            headers["Content-Length"] = "\(audio.count)"
+        case ("/error-503.mp3", _):
+            status = 503
+            body = audio
         case ("/head-ok.mp3", "HEAD"):
             status = 200
             headers["Content-Length"] = "\(audio.count)"

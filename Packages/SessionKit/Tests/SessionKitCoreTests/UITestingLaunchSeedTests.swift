@@ -108,6 +108,18 @@ final class UITestingLaunchSeedTests: XCTestCase {
         )
     }
 
+    func testOnlyTheSeedsThatReplaceTheLibraryWriteToIt() {
+        // #1175: the app writes a seed that replaces the Library even when something opened the store first.
+        XCTAssertFalse(UITestingLaunchSeed.none.writesLibrary)
+        XCTAssertFalse(UITestingLaunchSeed.keepLibrary.writesLibrary)
+        XCTAssertTrue(UITestingLaunchSeed.fixture.writesLibrary)
+        XCTAssertTrue(UITestingLaunchSeed.importedPDF.writesLibrary)
+        XCTAssertTrue(UITestingLaunchSeed.text(title: "t", text: "x", reference: "r").writesLibrary)
+        XCTAssertTrue(UITestingLaunchSeed.offlinePodcast(title: "t", durationSeconds: 10).writesLibrary)
+        XCTAssertFalse(UITestingLaunchSeed(arguments: ["SpokenMarginsApp"], environment: everySeedVariable).writesLibrary)
+        XCTAssertFalse(UITestingLaunchSeed(arguments: ["--ui-testing"], environment: ["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY": "1"]).writesLibrary)
+    }
+
     // The co-op journey (#474): a relaunch that keeps the Library and adds one friend's Margin.
 
     func testTheCoopLayerComesOnlyWithAKeptLibraryAndTheCoopSwitch() {

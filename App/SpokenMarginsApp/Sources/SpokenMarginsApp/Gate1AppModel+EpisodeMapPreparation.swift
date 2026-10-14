@@ -1,0 +1,218 @@
+import Foundation
+import Security
+import SessionKit
+import SessionKitAI
+import SessionKitAudio
+import SessionKitSharing
+import SessionKitSupertonic
+import SessionKitPersistence
+import SessionKitFeeds
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(AVFoundation)
+import AVFoundation
+#endif
+#if canImport(PDFKit)
+import PDFKit
+#endif
+
+/// The model's face to `EpisodeMapPreparer` (#957), the host it asks for, and the summary bridge assets.
+extension Gate1AppModel {
+    var episodeMapPreparationStatus: String { episodeMapPreparer.status }
+
+    var episodeMapPreparationTask: Task<Void, Never>? { episodeMapPreparer.task }
+
+    var episodeMapPreparationItemId: String? { episodeMapPreparer.itemId }
+
+    /// The one item whose private map waits on a download or a transcript.
+    var pendingMapGenerationItemId: String? {
+        get { episodeMapPreparer.pendingRequestItemId }
+        set { episodeMapPreparer.pendingRequestItemId = newValue }
+    }
+
+    func prepareEpisodeMap(itemId: String? = nil, policy: PreparationJobPolicy = .explicit) {
+        episodeMapPreparer.prepare(itemId: itemId ?? activeItemId, policy: policy)
+    }
+
+    func episodeMapDirectory(itemId: String) throws -> URL {
+        try applicationSupportDirectory()
+            .appending(path: "SpokenMargins/EpisodeMaps", directoryHint: .isDirectory)
+            .appending(path: safePodcastEvidenceComponent(itemId), directoryHint: .isDirectory)
+    }
+
+    private func currentSummaryBridgeVoiceKey() -> String {
+        let systemIdentifier = ttsVoiceSelection == .system ? speechVoiceIdentifier : ""
+        return safePodcastEvidenceComponent("\(ttsVoiceSelection.rawValue)-\(systemIdentifier)-\(SummaryBridgeRatePolicy.cacheVersion)")
+    }
+
+    func summaryBridgeAssetID(itemId: String, proposalId: String, sceneId: String, suppliedAssetId: String? = nil) -> String {
+        let voiceKey = suppliedAssetId.map { "supplied-\(safePodcastEvidenceComponent($0))" } ?? currentSummaryBridgeVoiceKey()
+        return "summary-bridge-\(safePodcastEvidenceComponent(itemId))-\(safePodcastEvidenceComponent(proposalId))-\(safePodcastEvidenceComponent(sceneId))-\(voiceKey)"
+    }
+
+    func prepareSummaryBridgeAsset(
+        itemId: String,
+        proposalId: String,
+        scene: PortableListeningMapScene,
+        store: SQLiteSessionStore
+    ) async throws -> OwnedOfflineAsset? {
+        guard let summary = scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !summary.isEmpty else { return nil }
+        let assetID = summaryBridgeAssetID(itemId: itemId, proposalId: proposalId, sceneId: scene.id, suppliedAssetId: scene.summaryAssetId)
+        if let existing = try store.loadOwnedOfflineAssets().first(where: {
+            $0.id == assetID && $0.integrity == .valid
+        }), resolvedApplicationSupportAssetURL(for: existing.relativePath) != nil { return existing }
+        // An authored voice is part of the imported experience, not a request
+        // to silently synthesize replacement speech in the current system voice.
+        guard scene.summaryAssetId == nil else { return nil }
+        let directory = try episodeMapDirectory(itemId: itemId)
+            .appending(path: "SummaryBridges", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let ledger = try requireOfflineLedger(store: store, rootDirectory: try applicationSupportDirectory())
+        let reservation = try await ledger.reserve(
+            ownerId: "summary-bridge-\(assetID)",
+            byteCount: 64 * 1_024 * 1_024
+        )
+        do {
+            let sourceURL: URL
+            if let voice = ttsVoiceSelection.supertonicVoice {
+                let renderer = try makeSupertonicRenderer()
+                let result = try await renderer.render(
+                    text: summary,
+                    voice: voice,
+                    language: "en",
+                    speed: SummaryBridgeRatePolicy.synthesisSpeed,
+                    synthesisSteps: 8
+                )
+                sourceURL = result.audioURL
+            } else {
+                let title = scene.title ?? "Scene summary"
+                // An injected preparation job renders in place of the system voice, as it does for text items.
+                let prepared: PreparedTextAudio?
+                if let prewarm = preparedTextAudioPrewarmHandler {
+                    prepared = try await prewarm(
+                        assetID, title, summary, directory, speechVoiceIdentifier, SummaryBridgeRatePolicy.systemSynthesisRate
+                    ).get()
+                } else {
+                    prepared = try SystemTextAudioPreparationClient(
+                        outputDirectory: directory,
+                        voiceIdentifier: speechVoiceIdentifier,
+                        speechRate: SummaryBridgeRatePolicy.systemSynthesisRate,
+                        allowsSynchronousRendering: true
+                    ).prepareTextAudio(itemId: assetID, title: title, text: summary)
+                }
+                guard let prepared, let value = prepared.media.url, let url = URL(string: value) else {
+                    try? await ledger.release(reservationId: reservation.id)
+                    return nil
+                }
+                sourceURL = url
+            }
+            let destination = directory.appending(path: "\(assetID).\(sourceURL.pathExtension.isEmpty ? "caf" : sourceURL.pathExtension)")
+            if sourceURL.standardizedFileURL != destination.standardizedFileURL {
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: destination)
+            }
+            let bytes = (try destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
+            let asset = OwnedOfflineAsset(
+                id: assetID,
+                itemId: itemId,
+                category: .summaryBridge,
+                relativePath: "SpokenMargins/EpisodeMaps/\(safePodcastEvidenceComponent(itemId))/SummaryBridges/\(destination.lastPathComponent)",
+                byteCount: bytes,
+                isReproducible: true
+            )
+            try await ledger.commit(reservationId: reservation.id, asset: asset)
+            return asset
+        } catch {
+            try? await ledger.release(reservationId: reservation.id)
+            throw error
+        }
+    }
+
+    func purgeTransientEpisodeTranscriptionCaches(itemId: String) throws {
+        try purgeSourceTranscriptionAudioCaches(itemId: itemId)
+        let transientDirectory = try episodeMapDirectory(itemId: itemId)
+            .appending(path: "Transient", directoryHint: .isDirectory)
+        if FileManager.default.fileExists(atPath: transientDirectory.path) {
+            try FileManager.default.removeItem(at: transientDirectory)
+        }
+        if let store {
+            for asset in try store.loadOwnedOfflineAssets() where
+                asset.itemId == itemId && asset.category == .transientEpisodeTranscript {
+                try store.deleteOwnedOfflineAsset(id: asset.id)
+            }
+        }
+    }
+
+    func purgeSourceTranscriptionAudioCaches(itemId: String) throws {
+        try SourceTranscriptionCaches.purge(itemId: itemId)
+    }
+
+    func submitAutomaticEpisodeMapPreparationIfNeeded() {
+        guard automaticEpisodeMapPreparationPolicy == .whileCharging,
+              let store else { return }
+        let candidates = libraryItems.compactMap { row -> Item? in
+            guard (try? store.loadEditionFingerprintSpine(itemId: row.id)) == nil,
+                  let item = try? store.loadItem(id: row.id),
+                  item.media?.sourceType == .nativeMediaFile || item.media?.sourceType == .remoteStream,
+                  podcastDownloadCoordinator?.validatedLocalURL(for: row.id) != nil else { return nil }
+            return item
+        }
+        for item in candidates {
+            let id = "episode-map-job-\(safePodcastEvidenceComponent(item.id))"
+            if let existing = try? store.loadEpisodeMapPreparationJobs().first(where: { $0.id == id && !$0.isCancelled }) {
+                _ = existing
+                continue
+            }
+            try? store.saveEpisodeMapPreparationJob(EpisodeMapPreparationJob(
+                id: id,
+                itemId: item.id,
+                policy: .whileCharging
+            ))
+        }
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        scheduleAudioPreparationBackgroundTask()
+        #endif
+    }
+}
+
+extension Gate1AppModel: EpisodeMapPreparerHost {
+    func episodeMapPreparationStatusWillChange() {
+        objectWillChange.send()
+    }
+
+    func recordEpisodeMapDiagnostic(_ key: String, _ value: String) {
+        diagnostics[key] = value
+    }
+
+    func episodeMapTranscribed(itemId: String, timeline: TranscriptTimeline, store: SQLiteSessionStore) {
+        CommunityMapUploadService.shared.episodeTranscribed(itemId: itemId, timeline: timeline, store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 }
+    }
+
+    func episodeMapWarn(_ message: String) {
+        reportWarning(message)
+    }
+
+    func episodeMapSucceeded(_ message: String) {
+        reportSuccess(message)
+    }
+
+    func episodeMapFailedToStart(_ error: Error) {
+        reportFailure(error, context: "Episode map preparation failed")
+    }
+
+    func episodeMapPreparationDidComplete(itemId: String, status: String) {
+        if itemId == activeItemId {
+            refreshSelectedItem()
+            updateSkimAvailability()
+            reportConfirmation(status)
+        }
+    }
+
+    func episodeMapPreparationDidFail(itemId: String, error: Error) {
+        if itemId == activeItemId { reportFailure(error, context: "Episode map preparation failed", itemId: itemId) }
+    }
+}

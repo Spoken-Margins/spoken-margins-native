@@ -35,6 +35,9 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
     public static let coopMarginMediaTimeMs = 300_000
     public static let coopMarginDurationMs = 6_000
 
+    // The parsing below names the launch argument and environment values. A Release build compiles
+    // none of it (#517); the app reads them only through `UITestingHooks`, in Debug.
+    #if DEBUG
     public init(arguments: [String], environment: [String: String]) {
         guard arguments.contains("--ui-testing") else {
             self = .none
@@ -56,6 +59,16 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
             self = .importedPDF
         } else {
             self = .fixture
+        }
+    }
+    #endif
+
+    /// Whether a launch with this seed replaces the Library's contents. `.none` and
+    /// `.keepLibrary` load the Library as it is.
+    public var writesLibrary: Bool {
+        switch self {
+        case .none, .keepLibrary: return false
+        case .fixture, .text, .offlinePodcast, .importedPDF: return true
         }
     }
 
@@ -107,15 +120,6 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
-    /// Whether a keep-library UI-test relaunch also imports one friend's Margin onto the seeded podcast, the way a
-    /// co-op packet would: `SPOKEN_MARGINS_UI_TEST_COOP=1` (J5-style co-op journey, #474). It adds to the kept
-    /// Library and never changes which seed runs.
-    public static func importsCoopLayer(arguments: [String], environment: [String: String]) -> Bool {
-        arguments.contains("--ui-testing")
-            && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
-            && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
-    }
-
     /// The friend's collection that arrives with the co-op relaunch: enabled and placed on the seeded podcast, as an
     /// import of a packet for an episode the listener already has leaves it.
     public static func coopLayer(importedAt: Date) -> ImportedCommentaryLayer {
@@ -141,6 +145,16 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         )
     }
 
+    #if DEBUG
+    /// Whether a keep-library UI-test relaunch also imports one friend's Margin onto the seeded podcast, the way a
+    /// co-op packet would: `SPOKEN_MARGINS_UI_TEST_COOP=1` (J5-style co-op journey, #474). It adds to the kept
+    /// Library and never changes which seed runs.
+    public static func importsCoopLayer(arguments: [String], environment: [String: String]) -> Bool {
+        arguments.contains("--ui-testing")
+            && environment["SPOKEN_MARGINS_UI_TEST_KEEP_LIBRARY"] == "1"
+            && environment["SPOKEN_MARGINS_UI_TEST_COOP"] == "1"
+    }
+
     /// Whether a UI-test launch swaps the microphone and speech recognition for
     /// stand-ins that need no permission prompt: `SPOKEN_MARGINS_UI_TEST_RECORDING=1`,
     /// or the podcast seed, whose Margins would otherwise ask to transcribe.
@@ -148,6 +162,7 @@ public enum UITestingLaunchSeed: Equatable, Sendable {
         arguments.contains("--ui-testing")
             && (environment["SPOKEN_MARGINS_UI_TEST_RECORDING"] == "1" || environment["SPOKEN_MARGINS_UI_TEST_PODCAST"] == "1")
     }
+    #endif
 
     /// Whether the start of a session should add the generated timeline turns
     /// that older fixture-article UI tests expect.

@@ -1,17 +1,27 @@
 import Foundation
 
 public enum DeterministicListeningMapPolicy: Equatable, Sendable {
-    case adaptiveListeningSections
+    /// For every text source that has headings (web article, pasted text, Markdown or text file): the
+    /// chapters are the author's headings at one level, in order, with the author's titles (#1468).
+    /// A section is never merged into another however short it is (#1435). Only a very long one is
+    /// split, at its sub-headings where it has them. Substantial text before the first heading, with
+    /// the title heading that heads it, is a chapter of its own (#1435). A source with fewer than two
+    /// headings at any level gets no map here, and the generated map takes over.
+    case authoredSections
     case canonicalHeadings
 }
 
 public struct ParsedObsidianMarkdown: Equatable, Sendable {
-    private static let minimumChapterCount = 5
-    private static let targetMaximumChapterCount = 10
-    private static let hardMaximumChapterCount = 12
+    private static let minimumHeadingsPerLevel = 3
+    private static let minimumHeadingsAtFallbackLevel = 2
+    private static let canonicalMinimumChapterCount = 5
     private static let estimatedWordsPerMinute = 180
-    private static let minimumChapterWords = estimatedWordsPerMinute * 90 / 60
-    private static let maximumChapterWords = estimatedWordsPerMinute * 6
+    /// A section over about 20 minutes is split; the parts aim at about 10 minutes each.
+    private static let veryLongChapterWords = estimatedWordsPerMinute * 20
+    private static let splitTargetWords = estimatedWordsPerMinute * 10
+    /// Text before a long section's first sub-heading that is shorter than this (little more than the
+    /// section's own heading line) isn't a chapter of its own.
+    private static let minimumLeadWords = 20
 
     private struct DraftChapter {
         var baseTitle: String
@@ -37,40 +47,89 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
     /// was used as given.
     public var titleIsFallback = false
 
+    /// `titlePageEnd`: for a canonical map, where the document's title page (title, authors,
+    /// imprint) ends. When nothing else comes before the first chapter, the title page starts
+    /// that chapter instead of being a "Front Matter" chapter of its own (#1144). The caller
+    /// knows the roles of its text; plain text can't say. `titlePageChapter` names a chapter
+    /// that starts where the title page ends (an abstract labelled "Abstract" in body type),
+    /// added after the chapter depth is chosen so it never changes that depth.
     public func deterministicListeningMap(
         itemId: String,
-        policy: DeterministicListeningMapPolicy = .adaptiveListeningSections
+        policy: DeterministicListeningMapPolicy = .authoredSections,
+        titlePageEnd: Int? = nil,
+        titlePageChapter: String? = nil
     ) -> ListeningMap? {
         guard !headings.isEmpty, !text.isEmpty else { return nil }
         let ordered = normalizedContentHeadings()
         guard !ordered.isEmpty else { return nil }
-        // Adaptive maps end the authored sections where the notes start and give the notes one
-        // chapter of their own, so the tail is never split into "— part N" chapters of the last
-        // section (#124). Canonical maps keep their authored headings.
-        let notesStart = policy == .adaptiveListeningSections ? notesStartChar.flatMap { start in
+        // Text maps end the authored sections where the notes start and give the notes one chapter of
+        // their own, so the tail is never split into "— part N" chapters of the last section (#124).
+        // Canonical maps keep their authored headings.
+        let adaptive = policy == .authoredSections
+        let notesStart = adaptive ? notesStartChar.flatMap { start in
             ordered.contains { $0.startChar < start } && start < text.count ? start : nil
         } : nil
         let contentEnd = notesStart ?? text.count
-        let selected: [ParsedMarkdownHeading]
+        var selected: [ParsedMarkdownHeading]
         switch policy {
-        case .adaptiveListeningSections:
-            selected = headingsAtUsefulDepth(from: ordered.filter { $0.startChar < contentEnd })
+        case .authoredSections:
+            selected = headingsAtOneLevel(from: ordered.filter { $0.startChar < contentEnd })
+            // One heading is not a table of contents; the generated map is better than a single chapter.
+            guard selected.count >= Self.minimumHeadingsAtFallbackLevel else { return nil }
         case .canonicalHeadings:
             // Preserve a flat anthology verbatim, but project deeply nested
             // authored structure at the shallowest useful depth for listening.
             // The source text still retains every subheading; the Timeline no
             // longer turns each subsection into a near-duplicate chapter.
             selected = headingsAtUsefulDepth(from: ordered)
+            if let titlePageEnd, let titlePageChapter, let first = selected.first, first.startChar > titlePageEnd {
+                selected.insert(ParsedMarkdownHeading(
+                    level: selected.map(\.level).min() ?? first.level,
+                    title: titlePageChapter,
+                    startChar: titlePageEnd
+                ), at: 0)
+            }
         }
 
         let canonicalPrefix = selected.first.map {
             String(text.prefix($0.startChar)).trimmingCharacters(in: .whitespacesAndNewlines)
         } ?? ""
+        // A title page alone before the first chapter starts that chapter (#1144).
+        let leadIsTitlePage: Bool = {
+            guard let first = selected.first, let titlePageEnd else { return false }
+            return first.startChar <= titlePageEnd
+        }()
         let hasAuthoredFrontMatter = policy == .canonicalHeadings
+            && !leadIsTitlePage
             && !canonicalPrefix.isEmpty
             && Self.normalizedTitle(canonicalPrefix) != Self.normalizedTitle(title)
 
+        // Text before the first chapter heading is a chapter of its own when it's substantial: the
+        // listener hears the title and its preamble as that, not as the start of the first section, and
+        // the first section starts at its own heading (#1435). It is named by the title heading that
+        // heads it (the lone `#`), else by the item's title. A line or two of preamble is folded into
+        // the first chapter, as before.
+        // The heading at 0, if any, must be the title: the only heading at its level. A section heading
+        // there (`## Group 1` with `###` chapters under it, and another `## Group 2`) has no title above
+        // it, and its intro stays with its first sub-section, as the later groups' intros do.
+        let titleHeading = headings.first { $0.startChar == 0 && $0.level < (selected.first?.level ?? 1) }
+        let leadIsTitled = titleHeading.map { heading in headings.filter { $0.level == heading.level }.count == 1 } ?? true
+        let leadChapterEnd: Int? = {
+            guard adaptive, leadIsTitled, let first = selected.first, first.startChar > 0 else { return nil }
+            let words = String(text.prefix(first.startChar)).split(whereSeparator: \.isWhitespace).count
+            return words >= Self.minimumLeadWords ? first.startChar : nil
+        }()
+
         var drafts: [DraftChapter] = []
+        if let leadChapterEnd {
+            drafts.append(DraftChapter(
+                baseTitle: titleHeading?.title ?? title,
+                partNumber: 1,
+                level: 0,
+                startChar: 0,
+                endChar: leadChapterEnd
+            ))
+        }
         if hasAuthoredFrontMatter, let firstHeading = selected.first {
             drafts.append(DraftChapter(
                 baseTitle: "Front Matter",
@@ -86,14 +145,14 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
                 baseTitle: heading.title,
                 partNumber: 1,
                 level: heading.level,
-                startChar: index == 0 && (policy == .adaptiveListeningSections || !hasAuthoredFrontMatter)
+                startChar: index == 0 && leadChapterEnd == nil && (adaptive || !hasAuthoredFrontMatter)
                     ? 0
                     : heading.startChar,
                 endChar: index + 1 < selected.count ? selected[index + 1].startChar : contentEnd
             )
         })
-        if policy == .adaptiveListeningSections {
-            normalizeChapterCountAndDuration(&drafts)
+        if adaptive {
+            splitVeryLongChapters(&drafts, subheadings: ordered.filter { $0.startChar < contentEnd })
         }
         if let notesStart {
             drafts.append(DraftChapter(
@@ -136,70 +195,97 @@ public struct ParsedObsidianMarkdown: Equatable, Sendable {
         return ordered
     }
 
+    /// The chapter level: the shallowest level with at least three headings, else the shallowest with two.
+    /// One level only, so a page with four `##` and thirty `###` has four chapters, and the `###` are
+    /// sub-headings of those.
+    private func headingsAtOneLevel(from ordered: [ParsedMarkdownHeading]) -> [ParsedMarkdownHeading] {
+        let counts = Dictionary(grouping: ordered, by: \.level).mapValues(\.count)
+        for minimum in [Self.minimumHeadingsPerLevel, Self.minimumHeadingsAtFallbackLevel] {
+            if let level = counts.keys.sorted().first(where: { counts[$0, default: 0] >= minimum }) {
+                return ordered.filter { $0.level == level }
+            }
+        }
+        return []
+    }
+
+    /// For a canonical (PDF) map: every heading down to the first level at which there are enough.
     private func headingsAtUsefulDepth(from ordered: [ParsedMarkdownHeading]) -> [ParsedMarkdownHeading] {
         let levels = Array(Set(ordered.map(\.level))).sorted()
         var selected = ordered
         for level in levels {
             let candidates = ordered.filter { $0.level <= level }
             selected = candidates
-            if candidates.count >= Self.minimumChapterCount {
+            if candidates.count >= Self.canonicalMinimumChapterCount {
                 break
             }
         }
         return selected
     }
 
-    private func normalizeChapterCountAndDuration(_ drafts: inout [DraftChapter]) {
-        while drafts.count > Self.hardMaximumChapterCount {
-            mergeShortestChapter(in: &drafts)
-        }
-        while drafts.count > Self.minimumChapterCount,
-              let shortest = drafts.indices.min(by: { wordCount(in: drafts[$0]) < wordCount(in: drafts[$1]) }),
-              wordCount(in: drafts[shortest]) < Self.minimumChapterWords {
-            mergeChapter(at: shortest, in: &drafts)
-        }
-        while drafts.count < Self.targetMaximumChapterCount,
-              let longIndex = drafts.firstIndex(where: {
-                  wordCount(in: $0) >= Self.maximumChapterWords + Self.minimumChapterWords
-              }),
-              let split = naturalSplitOffset(in: drafts[longIndex], targetWords: Self.maximumChapterWords) {
-            let original = drafts[longIndex]
-            drafts[longIndex].endChar = split
-            drafts.insert(DraftChapter(
-                baseTitle: original.baseTitle,
-                partNumber: original.partNumber + 1,
-                level: original.level,
-                startChar: split,
-                endChar: original.endChar
-            ), at: longIndex + 1)
-        }
-    }
-
-    private func mergeShortestChapter(in drafts: inout [DraftChapter]) {
-        guard let shortest = drafts.indices.min(by: { wordCount(in: drafts[$0]) < wordCount(in: drafts[$1]) }) else { return }
-        mergeChapter(at: shortest, in: &drafts)
-    }
-
-    private func mergeChapter(at index: Int, in drafts: inout [DraftChapter]) {
-        guard drafts.count > 1, drafts.indices.contains(index) else { return }
-        if index == 0 {
-            drafts[1].startChar = drafts[0].startChar
-            drafts.removeFirst()
-            return
-        }
-        drafts[index - 1].endChar = drafts[index].endChar
-        drafts.remove(at: index)
-    }
-
-    private func wordCount(in draft: DraftChapter) -> Int {
+    /// Splits only a section over about 20 minutes: at the sub-headings it has (the shallowest level
+    /// below its own), named by them, and any part still that long at natural breaks as "— part N".
+    private func splitVeryLongChapters(_ drafts: inout [DraftChapter], subheadings: [ParsedMarkdownHeading]) {
         let characters = Array(text)
+        var result: [DraftChapter] = []
+        for draft in drafts {
+            guard wordCount(in: draft, characters: characters) > Self.veryLongChapterWords else {
+                result.append(draft)
+                continue
+            }
+            let inside = subheadings.filter { $0.level > draft.level && $0.startChar > draft.startChar && $0.startChar < draft.endChar }
+            var parts = [draft]
+            if let level = inside.map(\.level).min() {
+                let boundaries = inside.filter { $0.level == level }
+                parts = []
+                var start = draft.startChar
+                var title = draft.baseTitle
+                for boundary in boundaries {
+                    let lead = DraftChapter(baseTitle: title, partNumber: 1, level: draft.level, startChar: start, endChar: boundary.startChar)
+                    if parts.isEmpty, wordCount(in: lead, characters: characters) < Self.minimumLeadWords {
+                        // The heading line and a few words: the first sub-section takes them with it.
+                    } else {
+                        parts.append(lead)
+                        start = boundary.startChar
+                    }
+                    title = boundary.title
+                }
+                parts.append(DraftChapter(baseTitle: title, partNumber: 1, level: level, startChar: start, endChar: draft.endChar))
+            }
+            for part in parts {
+                result.append(contentsOf: splitAtNaturalBreaks(part, characters: characters))
+            }
+        }
+        drafts = result
+    }
+
+    private func splitAtNaturalBreaks(_ draft: DraftChapter, characters: [Character]) -> [DraftChapter] {
+        let words = wordCount(in: draft, characters: characters)
+        guard words > Self.veryLongChapterWords else { return [draft] }
+        let partCount = max(2, Int((Double(words) / Double(Self.splitTargetWords)).rounded()))
+        var parts: [DraftChapter] = []
+        var remaining = draft
+        var partsLeft = partCount
+        let target = words / partCount
+        while partsLeft > 1 {
+            guard target > 0, let split = naturalSplitOffset(in: remaining, targetWords: target, characters: characters) else { break }
+            var head = remaining
+            head.endChar = split
+            parts.append(head)
+            remaining.startChar = split
+            remaining.partNumber += 1
+            partsLeft -= 1
+        }
+        parts.append(remaining)
+        return parts
+    }
+
+    private func wordCount(in draft: DraftChapter, characters: [Character]) -> Int {
         let start = max(0, min(draft.startChar, characters.count))
         let end = max(start, min(draft.endChar, characters.count))
         return String(characters[start..<end]).split(whereSeparator: \.isWhitespace).count
     }
 
-    private func naturalSplitOffset(in draft: DraftChapter, targetWords: Int) -> Int? {
-        let characters = Array(text)
+    private func naturalSplitOffset(in draft: DraftChapter, targetWords: Int, characters: [Character]) -> Int? {
         let start = max(0, min(draft.startChar, characters.count))
         let end = max(start, min(draft.endChar, characters.count))
         var words = 0
@@ -330,8 +416,9 @@ public enum ObsidianMarkdownParser {
         var output: [String] = []
         // Parallel to `output`; nil for the blank separators.
         var notesLines: [NotesLine?] = []
-        var headings: [(level: Int, title: String, outputIndex: Int)] = []
+        var headings: [(level: Int, title: String, outputIndex: Int, boldOnly: Bool)] = []
         var skippingTimestampBlock = false
+        var lineIsBoldOnly = false
 
         for (lineIndex, rawLine) in lines.enumerated() {
             var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -355,7 +442,9 @@ public enum ObsidianMarkdownParser {
                 continue
             }
 
-            // Preserve explicit Setext and standalone bold headings from pasted text.
+            // Preserve explicit Setext headings, and standalone bold lines as headings when the text has
+            // no real ones (below), from pasted text.
+            lineIsBoldOnly = false
             if lineIndex + 1 < lines.count,
                lines[lineIndex + 1].trimmingCharacters(in: .whitespaces).range(of: #"^(?:={3,}|-{3,})$"#, options: .regularExpression) != nil,
                !line.isEmpty {
@@ -364,9 +453,10 @@ public enum ObsidianMarkdownParser {
                 continue
             } else if line.range(of: #"^\*\*[^*\n]{1,160}\*\*:?$"#, options: .regularExpression) != nil {
                 line = "## " + line
+                lineIsBoldOnly = true
             }
             if let heading = markdownHeading(in: line) {
-                headings.append((heading.level, heading.title, output.count))
+                headings.append((heading.level, heading.title, output.count, lineIsBoldOnly))
             }
             line = line.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
             line = line.replacingOccurrences(of: #"^\s*[-*+]\s+"#, with: "", options: .regularExpression)
@@ -397,7 +487,15 @@ public enum ObsidianMarkdownParser {
             .joined(separator: "\n")
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedHeadings = headings.compactMap { heading -> ParsedMarkdownHeading? in
+        // A bold line is a heading only in a text with no real ones: "**Key point:**" lead-ins in an
+        // article are not peers of its `##` sections (#1468).
+        // (A lone top-level heading is the title, not a section.)
+        var realHeadings = headings.filter { !$0.boldOnly }
+        if realHeadings.first?.level == 1, realHeadings.filter({ $0.level == 1 }).count == 1 {
+            realHeadings.removeFirst()
+        }
+        let hasRealHeadings = !realHeadings.isEmpty
+        let resolvedHeadings = headings.filter { !hasRealHeadings || !$0.boldOnly }.compactMap { heading -> ParsedMarkdownHeading? in
             guard heading.outputIndex < output.count else { return nil }
             let prefix = output.prefix(heading.outputIndex).joined(separator: "\n")
             let start = prefix.isEmpty ? 0 : prefix.count + 1
@@ -464,6 +562,7 @@ public enum ObsidianMarkdownParser {
         title = title.replacingOccurrences(of: #"\\([\\`*{}\[\]()#+\-.!_>])"#, with: "$1", options: .regularExpression)
         title = title.replacingOccurrences(of: #"\*\*([^*]+)\*\*"#, with: "$1", options: .regularExpression)
         title = title.replacingOccurrences(of: #"(?<!\*)\*([^*]+)\*(?!\*)"#, with: "$1", options: .regularExpression)
+        title = title.replacingOccurrences(of: #"`([^`]+)`"#, with: "$1", options: .regularExpression)
         title = SpeechTextNormalizer.normalize(title)
         guard !title.isEmpty else { return nil }
         return (match.1.count, title)

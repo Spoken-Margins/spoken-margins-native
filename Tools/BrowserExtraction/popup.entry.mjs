@@ -1,4 +1,5 @@
 import {
+  canRetry,
   capturePage,
   openNativeApp,
   storePayload,
@@ -31,7 +32,7 @@ import {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error));
       readablePageButton.disabled = false;
-      readablePageButton.hidden = false;
+      readablePageButton.hidden = !canRetry(error);
     }
   }
 

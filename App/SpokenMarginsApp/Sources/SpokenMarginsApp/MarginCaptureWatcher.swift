@@ -17,7 +17,7 @@ final class MarginCaptureWatcher {
     private var restart: () throws -> Void = {}
     private var changed: HealthChange = { _, _ in }
     private var pollTask: Task<Void, Never>?
-    private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int)?
+    private var lastReported: (health: MarginCaptureSupervisor.Health, restarts: Int, keepable: Bool)?
     private let autoPoll: Bool
     private var startedAtMs = 0
     /// Milliseconds on a clock that only moves forward. Tests replace it.
@@ -121,6 +121,12 @@ final class MarginCaptureWatcher {
         supervisor?.saveVerdict(reading: reading(), nowMs: nowMs()) ?? .save
     }
 
+    /// Whether the recording a call or lost headphones just stopped holds anything. Not a fresh reading:
+    /// the recorder is already stopped (see `MarginCaptureSupervisor.interruptionVerdict`).
+    func interruptionVerdict() -> MarginCaptureSupervisor.SaveVerdict {
+        supervisor?.interruptionVerdict(nowMs: nowMs()) ?? .saveCutShort
+    }
+
     func stop() {
         pollTask?.cancel()
         pollTask = nil
@@ -134,8 +140,9 @@ final class MarginCaptureWatcher {
     private func report() {
         guard let health = supervisor?.health else { return }
         let restarts = supervisor?.restarts ?? 0
-        guard lastReported?.health != health || lastReported?.restarts != restarts else { return }
-        lastReported = (health, restarts)
+        let keepable = supervisor?.hasKeepableAudio ?? false
+        guard lastReported?.health != health || lastReported?.restarts != restarts || lastReported?.keepable != keepable else { return }
+        lastReported = (health, restarts, keepable)
         changed(health, restarts)
     }
 }

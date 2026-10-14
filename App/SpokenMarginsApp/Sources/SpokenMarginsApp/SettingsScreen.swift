@@ -16,11 +16,13 @@ struct SettingsScreen: View {
     @State private var isResetConfirmationPresented = false
     @State private var diagnosticsExportURL: URL?
     @State private var isDiagnosticsSharePresented = false
+    @State private var isPreparingDiagnostics = false
     @State private var listeningSignalsExportURL: URL?
     @State private var isExportingListeningSignals = false
     @State private var isListeningSignalsSharePresented = false
     @State private var hasNoListeningSignals = false
     @AppStorage(CommunityMapUploadService.optInKey) private var helpsMakeListeningMaps = false
+    @AppStorage(CommunityMapFetchService.optInKey) private var looksUpCommunityMaps = false
 
     private enum Field {
         case mapModel
@@ -306,6 +308,7 @@ struct SettingsScreen: View {
                     }
                 }
                 Section("Import Inbox") {
+                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
                     if model.importInbox.isEmpty {
                         Text("No failed shares.")
                             .foregroundStyle(AppColors.secondaryText)
@@ -352,6 +355,15 @@ struct SettingsScreen: View {
                         }
                     }
                     .accessibilityIdentifier("settings.communityMaps.toggle")
+                    Toggle(isOn: $looksUpCommunityMaps) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Look up community maps")
+                            Text("When you open or play a public podcast episode with no chapters, ask the Spoken Margins server for a map other listeners helped make. This tells the server which episode you opened, and it can see your IP address.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .accessibilityIdentifier("settings.communityMapLookup.toggle")
                     NavigationLink("Terms of Use") {
                         SpokenMarginsTermsView(allowsAcceptance: !model.hasAcceptedCurrentTerms)
                     }
@@ -368,12 +380,27 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("settings.legal.openSource.link")
                     #if canImport(UIKit)
                     Button {
-                        diagnosticsExportURL = model.diagnosticsExportFileURL()
-                        isDiagnosticsSharePresented = diagnosticsExportURL != nil
+                        isPreparingDiagnostics = true
+                        Task {
+                            defer { isPreparingDiagnostics = false }
+                            diagnosticsExportURL = await model.prepareDiagnosticsExportFileURL()
+                            isDiagnosticsSharePresented = diagnosticsExportURL != nil
+                        }
                     } label: {
-                        Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                        Group {
+                            if isPreparingDiagnostics {
+                                HStack(spacing: 8) {
+                                    ProgressView()
+                                    Text("Preparing diagnostics…")
+                                }
+                            } else {
+                                Label("Share Diagnostics", systemImage: "square.and.arrow.up")
+                            }
+                        }
+                        .fullRowTapTarget()
                     }
                     .buttonStyle(.borderless)
+                    .disabled(isPreparingDiagnostics)
                     .accessibilityIdentifier("settings.shareDiagnostics.button")
                     .sheet(isPresented: $isDiagnosticsSharePresented) {
                         if let diagnosticsExportURL {
@@ -396,6 +423,7 @@ struct SettingsScreen: View {
                             hasNoListeningSignals ? "Nothing Recorded Yet" : "Export Listening Signals",
                             systemImage: "square.and.arrow.up"
                         )
+                        .fullRowTapTarget()
                     }
                     .buttonStyle(.borderless)
                     .accessibilityIdentifier("settings.exportListeningSignals.button")
@@ -537,3 +565,12 @@ private struct ShareFileActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 #endif
+
+private extension View {
+    /// A borderless button in a `Form` row only takes taps on its label's own size. Fill the row and
+    /// make the empty space hit-testable so a tap beside the words starts the action (#1436).
+    func fullRowTapTarget() -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+    }
+}

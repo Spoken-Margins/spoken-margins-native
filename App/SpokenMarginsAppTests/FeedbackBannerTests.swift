@@ -91,6 +91,76 @@ final class FeedbackBannerTests: XCTestCase {
         XCTAssertEqual(model.snapshot.sessionId, nowPlaying.sessionId)
     }
 
+    /// #1149: marking an item complete is confirmed on the shared top banner with an Undo button. It used
+    /// to be a row inside the Library list that pushed every row down.
+    func testMarkingCompleteOffersUndoOnTheSharedBannerAndUndoRestoresTheItem() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        let title = try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).title
+
+        model.markItemCompleted(id: "item-pill")
+
+        let event = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertEqual(event.kind, .success)
+        XCTAssertEqual(event.message, ManualCompletionMessages.completed(title: title))
+        let undo = try XCTUnwrap(event.action, "Marking complete must offer Undo")
+        XCTAssertEqual(undo.title, "Undo")
+        XCTAssertEqual(undo.identifier, "completion.undo.button")
+        XCTAssertEqual(undo.accessibilityLabel, ManualCompletionMessages.undoAccessibilityLabel(title: title))
+        XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).isCompleted)
+
+        undo.perform()
+
+        XCTAssertFalse(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).isCompleted)
+        XCTAssertEqual(model.feedbackEvent?.message, ManualCompletionMessages.undone(title: title))
+        XCTAssertNil(model.feedbackEvent?.action)
+    }
+
+    /// #1149: a second completion replaces the first banner, and the Undo left on screen undoes the newest.
+    func testTwoQuickCompletionsLeaveOneBannerWhoseUndoUndoesTheNewest() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.importTitle = "Second Article"
+        model.importText = "A second source, so two items can be marked complete in a row."
+        model.importTextItem(startListening: false)
+        let secondId = try XCTUnwrap(model.libraryItems.first { $0.title == "Second Article" }).id
+
+        model.markItemCompleted(id: "item-pill")
+        let first = try XCTUnwrap(model.feedbackEvent)
+        model.markItemCompleted(id: secondId)
+        let newest = try XCTUnwrap(model.feedbackEvent)
+
+        XCTAssertNotEqual(first.id, newest.id, "The second completion replaces the first banner")
+        XCTAssertEqual(newest.message, ManualCompletionMessages.completed(title: "Second Article"))
+        try XCTUnwrap(newest.action).perform()
+
+        XCTAssertFalse(try XCTUnwrap(model.libraryItems.first { $0.id == secondId }).isCompleted)
+        XCTAssertTrue(try XCTUnwrap(model.libraryItems.first { $0.id == "item-pill" }).isCompleted,
+                      "Undo on the newest banner must leave the earlier completion alone")
+    }
+
+    /// #1149: a long title is shortened, so the banner stays a couple of lines beside its Undo button.
+    func testALongTitleDoesNotMakeTheCompletionBannerTall() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        let long = "A very long episode title about automating research and the intelligence explosion that might follow"
+        model.importTitle = long
+        model.importText = "A source with a long title."
+        model.importTextItem(startListening: false)
+        let id = try XCTUnwrap(model.libraryItems.first { $0.title == long }).id
+
+        model.markItemCompleted(id: id)
+
+        let message = try XCTUnwrap(model.feedbackEvent?.message)
+        XCTAssertEqual(message, ManualCompletionMessages.completed(title: long))
+        XCTAssertLessThan(message.count, long.count, "The banner must not carry the whole title")
+        XCTAssertTrue(try XCTUnwrap(model.feedbackEvent?.action?.accessibilityLabel).contains(long),
+                      "VoiceOver still names the whole item")
+    }
+
     func testAConfirmationDoesNotCoverAnErrorThatOffersRetry() {
         let retryable = UserFeedbackEvent(kind: .error, message: "The request timed out.", retry: .init(key: "test") {})
         let plain = UserFeedbackEvent(kind: .error, message: "Clipboard does not contain text.")
@@ -109,7 +179,10 @@ final class FeedbackBannerTests: XCTestCase {
             try await waitForSummaryFailure(model)
 
             let failure = try XCTUnwrap(model.itemFailures.lastFailure(itemId: "item-pill"))
-            XCTAssertEqual(failure.message, model.feedbackEvent?.message)
+            XCTAssertEqual(model.feedbackEvent?.message, "Summary couldn’t finish.")
+            XCTAssertEqual(failure.message, "On-device summary failed: \(LocalFoundationModelError.invalidInterjectionSummary.localizedDescription) Tap Retry Summary to try the model again.")
+            XCTAssertEqual(model.lastError, failure.message)
+            XCTAssertEqual(model.providerProbeStatus, failure.message)
             XCTAssertGreaterThanOrEqual(failure.occurredAt, startedAt)
             XCTAssertLessThanOrEqual(failure.occurredAt, Date())
             XCTAssertEqual(model.feedbackEvent?.kind, .error)
@@ -138,9 +211,11 @@ final class FeedbackBannerTests: XCTestCase {
             try await waitForSummaryFailure(model)
 
             XCTAssertEqual(model.selectedItem.id, otherItemId)
-            XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message,
-                           model.feedbackEvent?.message)
-            XCTAssertNotNil(model.itemFailures.lastFailure(itemId: "item-pill"))
+            XCTAssertEqual(model.feedbackEvent?.message, "Summary couldn’t finish.")
+            let failure = try XCTUnwrap(model.itemFailures.lastFailure(itemId: "item-pill"))
+            XCTAssertEqual(failure.message, "On-device summary failed: \(LocalFoundationModelError.invalidInterjectionSummary.localizedDescription) Tap Retry Summary to try the model again.")
+            XCTAssertEqual(model.lastError, failure.message)
+            XCTAssertEqual(model.providerProbeStatus, failure.message)
             XCTAssertNil(model.itemFailures.lastFailure(itemId: otherItemId))
             XCTAssertEqual(model.feedbackEvent?.retry?.key, "summary")
         }

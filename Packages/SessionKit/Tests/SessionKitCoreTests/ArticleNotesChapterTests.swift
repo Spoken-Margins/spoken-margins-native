@@ -73,21 +73,22 @@ final class ArticleNotesChapterTests: XCTestCase {
         XCTAssertFalse(map.chapters.contains { $0.title == "Notes and references" })
     }
 
-    /// Done-when 2: an ordinary long section still splits into "— part N" chapters.
+    /// Done-when 2: an ordinary section over about 20 minutes (#1468) still splits into "— part N" chapters.
     func testLongOrdinarySectionWithoutNotesStillSplits() throws {
         let paragraph = words(300, "substantive")
-        let markdown = "---\ntitle: Long Read\n---\n\n## Main argument\n\n" + Array(repeating: paragraph, count: 8).joined(separator: "\n\n")
+        let markdown = "---\ntitle: Long Read\n---\n\n## Setup\n\n" + words(50, "setup") + "\n\n## Main argument\n\n"
+            + Array(repeating: paragraph, count: 14).joined(separator: "\n\n")
 
         let parsed = try ObsidianMarkdownParser.parse(fileName: "long-read.md", contents: markdown)
         XCTAssertNil(parsed.notesStartChar)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-read"))
-        XCTAssertEqual(map.chapters.map(\.title), ["Main argument", "Main argument — part 2"])
+        XCTAssertEqual(map.chapters.map(\.title), ["Setup", "Main argument", "Main argument — part 2"])
     }
 
     /// A closing "Notes" section is often prose (an Obsidian literature note), so it still splits.
     func testClosingNotesSectionOfProseStillSplits() throws {
         let markdown = "# Book\n\n## Summary\n\n" + words(100, "summary") + "\n\n## Notes\n\n"
-            + Array(repeating: words(300, "thought"), count: 10).joined(separator: "\n\n")
+            + Array(repeating: words(300, "thought"), count: 14).joined(separator: "\n\n")
 
         let parsed = try ObsidianMarkdownParser.parse(fileName: "book.md", contents: markdown)
         XCTAssertNil(parsed.notesStartChar)

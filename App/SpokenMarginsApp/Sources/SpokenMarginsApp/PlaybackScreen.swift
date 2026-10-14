@@ -48,13 +48,12 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
-    @State private var isSourceTextPresented = false
+    @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write }
-    @State private var sourceTextOffsetAtPresentation = 0
+    private enum OptionsDestination { case item, timeline, export, margins, write, sourceText }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -69,10 +68,11 @@ struct PlaybackScreen: View {
                             if model.snapshot.phase == .finished {
                                 Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
                             }
+                            // Keep the promised Margin visible before the large source header (#1577).
+                            marginMomentControl
                             playbackHeader
                             capturePermissionRecovery
                             importedCommentaryControl
-                            marginMomentControl
                             recentMarginPreview
                             if model.shouldShowGuidedOnboardingCoach {
                                 GuidedOnboardingPlaybackCard {
@@ -150,13 +150,8 @@ struct PlaybackScreen: View {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
-            .sheet(isPresented: $isSourceTextPresented) {
-                NativeTextPeekView(
-                    title: model.selectedItem.title,
-                    text: model.selectedItem.text,
-                    chapters: model.selectedItem.chapters,
-                    currentOffset: sourceTextOffsetAtPresentation
-                )
+            .sheet(item: $sourceTextTarget) { target in
+                NativeTextPeekView(title: model.selectedItem.title, target: target)
             }
             .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
@@ -187,11 +182,6 @@ struct PlaybackScreen: View {
                 .presentationDetents([.medium, .large])
             }
         }
-    }
-
-    private var isUITesting: Bool {
-        ProcessInfo.processInfo.arguments.contains("--ui-testing")
-            || ProcessInfo.processInfo.environment["SPOKEN_MARGINS_UI_TESTING"] == "1"
     }
 
     private var playbackControls: some View {
@@ -444,7 +434,23 @@ struct PlaybackScreen: View {
         case .export: model.openExport()
         case .margins: model.openMargins()
         case .write: model.beginWrittenMargin()
+        case .sourceText: openSourceText()
         }
+    }
+
+    /// #1547: the button sits in the More sheet, so close it first, then resolve the playhead when the
+    /// reader opens. The target is the sheet's item, so the reader can't open with a stale offset.
+    private func openSourceText() {
+        if isPlaybackOptionsPresented {
+            closeOptions(to: .sourceText)
+            return
+        }
+        sourceTextTarget = PlaybackTextReaderTarget.resolve(
+            text: model.selectedItem.text,
+            chapters: model.selectedItem.chapters,
+            offset: model.snapshot.currentTextStart,
+            fallbackChapterId: model.currentChapter?.id
+        )
     }
 
     @ViewBuilder
@@ -492,6 +498,38 @@ struct PlaybackScreen: View {
         }
     }
 
+    /// What the shared Margin's voice is doing, from the player's own report (#941).
+    @ViewBuilder
+    private var importedCommentaryStatus: some View {
+        switch model.importedCommentaryPhase {
+        case .loading:
+            Label("Loading Margin…", systemImage: "hourglass")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.loading")
+        case .playing:
+            Label("Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item", systemImage: "waveform")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.playing")
+        case .paused:
+            Label("Paused", systemImage: "pause.fill")
+                .font(.caption2)
+                .foregroundStyle(.white.opacity(0.72))
+                .accessibilityIdentifier("importedCommentary.status.paused")
+        case .failed:
+            VStack(spacing: 8) {
+                Label("Margin audio could not play", systemImage: "exclamationmark.triangle")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .accessibilityIdentifier("importedCommentary.status.failed")
+                Button("Retry", systemImage: "arrow.clockwise", action: model.retryImportedCommentary)
+                    .buttonStyle(SecondaryButtonStyle())
+                    .accessibilityIdentifier("importedCommentary.retry")
+            }
+        }
+    }
+
     @ViewBuilder
     private var importedCommentaryControl: some View {
         if let playing = model.playingImportedCommentary {
@@ -502,9 +540,7 @@ struct PlaybackScreen: View {
                 Text("Shared Margin \(playing.index) of \(playing.count)")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.72))
-                Text(model.importedCommentaryIsPaused ? "Paused" : "Playing at \(model.playingInterjectionAudioRate.formatted(.number.precision(.fractionLength(0...2))))× to match the item")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.72))
+                importedCommentaryStatus
                 Text(playing.interjection.approvedTranscript)
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.85))
@@ -582,11 +618,12 @@ struct PlaybackScreen: View {
                     Button("Skip to the item", systemImage: "forward.end.fill", action: model.skipMarginMomentVoice)
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("marginMoment.skip")
-                } else if let remaining = moment.msUntilTarget(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
-                    Label("\(model.marginMomentTitle) in \(Self.marginMomentCountdown(remaining))", systemImage: "text.bubble")
+                } else if let countdown = moment.targetCountdown(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
+                    Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
+                        .accessibilityIdentifier("marginMoment.countdown")
                     if model.marginMomentPositionIsApproximate {
                         Text("Approximate position: ads can differ between copies.")
                             .font(.footnote)
@@ -615,11 +652,6 @@ struct PlaybackScreen: View {
         }
     }
 
-    private static func marginMomentCountdown(_ ms: Int) -> String {
-        let seconds = max(0, Int((Double(ms) / 1000).rounded(.up)))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
             Button(action: model.openCurrentPlaybackItem) {
@@ -630,6 +662,14 @@ struct PlaybackScreen: View {
             .contentShape(Rectangle())
             .accessibilityHint("Opens item details and listening-session history")
             .accessibilityIdentifier("playback.itemTitle.button")
+
+            PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
+                selectedItemId: model.selectedItem.id,
+                playingItemId: model.snapshot.itemId,
+                sessionId: model.snapshot.sessionId,
+                interjections: model.selectedItem.interjections,
+                isRetrying: model.isRetryingInterjectionTranscription
+            ))
 
             if let chapterTitle = model.playbackChapterHeaderTitle {
                 Button(action: model.openCurrentPlaybackItem) {
@@ -728,18 +768,23 @@ struct PlaybackScreen: View {
                 .tint(AppColors.accent)
                 .accessibilityLabel("Playback position")
                 .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue("\(textScrubberPercent) percent")
+                .accessibilityValue(textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent")
                 .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
                 .disabled(model.snapshot.isRecording)
-                Text("100%")
+                Text(textTimeEstimate?.remainingText ?? "100%")
                     .frame(minWidth: 34, alignment: .leading)
+                    .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
         } else {
+            let barLabels = PlaybackProgressBarLabels(
+                percent: model.displayPlaybackProgressPercent,
+                estimate: model.isMediaPlaybackSnapshot ? nil : textTimeEstimate // starter audio still shows time left
+            )
             HStack(spacing: 8) {
                 Text("\(model.displayPlaybackProgressPercent)%")
                     .frame(minWidth: 34, alignment: .trailing)
@@ -756,9 +801,10 @@ struct PlaybackScreen: View {
                     }
                     .accessibilityLabel("Playback progress")
                     .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                    .accessibilityValue("\(model.displayPlaybackProgressPercent) percent")
-                Text("100%")
+                    .accessibilityValue(barLabels.accessibilityValue)
+                Text(barLabels.trailing)
                     .frame(minWidth: 34, alignment: .leading)
+                    .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
             .foregroundStyle(AppColors.watchSecondary)
@@ -864,16 +910,17 @@ struct PlaybackScreen: View {
     @ViewBuilder
     private var playbackSecondaryControls: some View {
         if let state = model.selectedPodcastDownloadState {
-            Button(state == .availableOffline ? "Download Again" : "Download Audio", action: model.redownloadSelectedPodcast)
+            Button(model.selectedPodcastDownloadButtonTitle, action: model.redownloadSelectedPodcast)
                 .disabled(state == .downloading)
                 .accessibilityIdentifier("playback.download.button")
         }
 
-        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
-            Button {
-                sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
-                isSourceTextPresented = true
-            } label: {
+        if PlaybackTextReaderAvailability.isAvailable(
+            targetType: model.snapshot.targetType,
+            itemText: model.selectedItem.text,
+            itemHasNativeAudio: model.selectedItem.isNativeAudio
+        ) {
+            Button(action: openSourceText) {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
                     .frame(minHeight: 32)
@@ -1115,13 +1162,6 @@ struct PlaybackScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("playback.preparedAudio.status")
-                if model.canPlayLiveSpeechInstead {
-                    Button(action: model.playLiveSpeechInstead) {
-                        Label("Play Live Speech Instead", systemImage: "speaker.wave.2")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("playback.liveSpeechFallback.button")
-                }
             }
         }
         .padding(20)
@@ -1243,6 +1283,16 @@ struct PlaybackScreen: View {
 
     private var textScrubRange: ClosedRange<Double> {
         0...Double(textLength)
+    }
+
+    /// "about 12 min left" at the listener's speed, following a drag (#305).
+    private var textTimeEstimate: ListeningTimeEstimate? {
+        let offset = textScrubState.displayedValue(canonicalValue: canonicalTextOffset, range: textScrubRange)
+        return ListeningTimeEstimator.estimate(
+            totalCharacters: textLength,
+            charactersHeard: Int(offset.rounded()),
+            playbackSpeed: model.speechPlaybackRateMultiplier
+        )
     }
 
     private var textScrubberPercent: Int {
@@ -1735,28 +1785,41 @@ private struct PastedAssistantResponseView: View {
 private struct NativeTextPeekView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
-    let text: String
-    let chapters: [Chapter]
-    let currentOffset: Int
+    let target: PlaybackTextReaderTarget
+    /// Height of the chapter text up to the current sentence, measured at the shown width.
+    @State private var sentenceTop: CGFloat?
+    private static let sentenceAnchor = "nativeText.peek.sentence"
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(chapterTitle)
-                            .font(.headline)
-                        Text(chapterText)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(target.chapterTitle ?? "Full Text")
+                                .font(.headline)
+                            Text(chapterText)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(alignment: .topLeading) { sentenceMeasure }
+                                .overlay(alignment: .topLeading) { sentenceMarker }
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppColors.inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
+                    }
+                    .padding(20)
                 }
-                .padding(20)
+                .onChange(of: sentenceTop) { _, top in
+                    guard top != nil else { return }
+                    // Next turn of the run loop, once the marker placed at that height is laid out.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(Self.sentenceAnchor, anchor: UnitPoint(x: 0, y: 0.25))
+                    }
+                }
             }
             .navigationTitle(title.isEmpty ? "Source Text" : title)
             .navigationBarTitleDisplayMode(.inline)
@@ -1769,25 +1832,42 @@ private struct NativeTextPeekView: View {
         }
     }
 
-    private var selectedChapter: Chapter? {
-        guard !chapters.isEmpty else { return nil }
-        let offset = max(0, min(currentOffset, text.count))
-        return chapters.first(where: { offset >= $0.startChar && offset < $0.endChar })
-            ?? chapters.last(where: { $0.startChar <= offset })
-            ?? chapters.first
+    /// The chapter, with the sentence being read lit.
+    private var chapterText: AttributedString {
+        guard !target.text.isEmpty else { return AttributedString("No native text is available.") }
+        var attributed = AttributedString(target.text)
+        if let sentence = target.sentence,
+           let lower = attributed.characters.index(attributed.startIndex, offsetBy: sentence.lowerBound, limitedBy: attributed.endIndex),
+           let upper = attributed.characters.index(attributed.startIndex, offsetBy: sentence.upperBound, limitedBy: attributed.endIndex) {
+            attributed[lower..<upper].backgroundColor = Color.yellow.opacity(0.28)
+        }
+        return attributed
     }
 
-    private var chapterTitle: String {
-        selectedChapter?.title ?? "Full Text"
+    /// The text before the sentence, laid out hidden at the same width, so its height reaches the sentence's line.
+    @ViewBuilder
+    private var sentenceMeasure: some View {
+        if let sentence = target.sentence, sentence.lowerBound > 0 {
+            Text(String(target.text.prefix(sentence.lowerBound)))
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .hidden()
+                .accessibilityHidden(true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sentenceTop = $0 }
+        }
     }
 
-    private var chapterText: String {
-        guard !text.isEmpty else { return "No native text is available." }
-        guard let chapter = selectedChapter else { return text }
-        let characters = Array(text)
-        let start = max(0, min(chapter.startChar, characters.count))
-        let end = max(start, min(chapter.endChar, characters.count))
-        return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    /// A point at the sentence's line for the scroll view to bring into view.
+    @ViewBuilder
+    private var sentenceMarker: some View {
+        if let sentenceTop {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .padding(.top, max(0, sentenceTop - 1))
+                .id(Self.sentenceAnchor)
+                .accessibilityHidden(true)
+        }
     }
 }
 

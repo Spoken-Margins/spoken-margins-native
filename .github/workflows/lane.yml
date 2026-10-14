@@ -3,12 +3,13 @@
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
 # lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
-# --plan fast, plus both builds when the diff reaches the app (scripts/test-scope.py), again on
+# --plan fast unless the diff is docs only (scripts/test-scope.py), with no app build (owner, 2026-10-09), again on
 # every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
 # the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
 # is an audio, persistence, packet or lane change with no clean Codex audit of its head yet
-# (scripts/lane-runner.py). Lane changes, this file included, merge that way too (owner rule
-# 2026-10-01).
+# (scripts/lane-runner.py). Other lane changes merge that way too (owner rule 2026-10-01), but the
+# runner never merges a change to this file, anything else under .github/ or scripts/lane-runner.py:
+# those need the owner's tap (owner rule 2026-10-09, #1203).
 #
 # Trigger: pull_request. GitHub builds these runs from the PR's merge ref, which it doesn't refresh
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
@@ -19,12 +20,18 @@
 # newest base in itself, so a report always tests the PR against the current next.
 #
 # `lane-check/**` bases exist only to test a change to the lane before it reaches next.
+#
+# workflow_dispatch (#1209): when a T3 PASS releases a held automerge run whose host tests have to run again, the
+# lane job on the simulator runner dispatches this workflow on the base branch with the PR, its head and the T3
+# report, and moves on to the next T3. The `release` job then runs those checks on a build runner and merges on
+# PASS. Unlike a label change, a dispatch sent with the workflow's own token does start a run. The dispatched run
+# uses the base branch's copy of this file and of lane-runner.py, never the PR's.
 name: lane
 
 # The run name carries what scripts/lane_dedupe.py needs to tell this PR's runs apart (#860): the PR, the
 # head and which of the two Mac jobs the event asks for, with the same conditions as the jobs' `if`.
 run-name: >-
-  lane pr=${{ github.event.pull_request.number }} head=${{ github.event.pull_request.head.sha }}
+  lane pr=${{ github.event.pull_request.number || inputs.pr }} head=${{ github.event.pull_request.head.sha || inputs.head }}
   lane=${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
   auto=${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
 
@@ -32,6 +39,20 @@ on:
   pull_request:
     branches: [next, 'lane-check/**']
     types: [labeled, synchronize, reopened]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'The PR whose released automerge run to test and merge'
+        required: true
+        type: string
+      head:
+        description: 'The PR head (full SHA) the T3 passed on'
+        required: true
+        type: string
+      t3:
+        description: 'Link to the T3 PASS report that released it'
+        required: false
+        type: string
 
 permissions:
   # write: the runner pushes the merge commits it tested to next. The checkout keeps no credentials
@@ -85,6 +106,15 @@ jobs:
           # Denied runner-list access, API outages, and uninstalled runners all fall back.
           GH_TOKEN="$RUNNERS_TOKEN" timeout 30s gh api --paginate --slurp "repos/$GH_REPO/actions/runners?per_page=100" > "$RUNNER_TEMP/runners.json" || echo '[]' > "$RUNNER_TEMP/runners.json"
           timeout 30s gh api --paginate --slurp "repos/$GH_REPO/pulls/$PR_NUMBER/files?per_page=100" > "$RUNNER_TEMP/files.json" || echo '[]' > "$RUNNER_TEMP/files.json"
+      - name: Choose queues
+        id: route
+        run: |
+          # The base can predate this helper while this workflow is first being introduced.
+          if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
+            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/route.json" >> "$GITHUB_OUTPUT"
+          else
+            echo '::warning::Runner routing unavailable; using the normal Mac queues.'
+          fi
       - name: Drop stale and duplicate runs
         id: dedupe
         env:
@@ -96,23 +126,15 @@ jobs:
           WANT_LANE: ${{ contains(github.event.pull_request.labels.*.name, 'lane:queued') && (github.event.action != 'labeled' || github.event.label.name == 'lane:queued') }}
           WANT_AUTO: ${{ contains(github.event.pull_request.labels.*.name, 'automerge') && (github.event.action != 'labeled' || github.event.label.name == 'automerge') }}
         run: |
+          # A same-head run still waiting in a different queue than the one chosen above is replaced (#1194).
           # Closed or moved-on PRs and duplicate runs stop here; older-head runs still waiting for a Mac are
           # cancelled. Any failure (including a base without the helper) leaves both outputs unset: run as before.
           # Bound all API calls together; discovery uses at most 60s, leaving 60s for checkout and routing.
           if timeout 60s python3 scripts/lane_dedupe.py --pr "$PR_NUMBER" --head "$EVENT_HEAD" --run-id "$RUN_ID" \
-              --lane "$WANT_LANE" --auto "$WANT_AUTO" > "$RUNNER_TEMP/dedupe.json"; then
+              --lane "$WANT_LANE" --auto "$WANT_AUTO" --queues "$RUNNER_TEMP/route.json" > "$RUNNER_TEMP/dedupe.json"; then
             jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/dedupe.json" >> "$GITHUB_OUTPUT"
           else
             echo '::warning::Lane dedupe unavailable; running as before.'
-          fi
-      - name: Choose queues
-        id: route
-        run: |
-          # The base can predate this helper while this workflow is first being introduced.
-          if python3 scripts/test-scope.py --runner-routing "$GITHUB_EVENT_PATH" "$RUNNER_TEMP/files.json" "$RUNNER_TEMP/runners.json" > "$RUNNER_TEMP/route.json"; then
-            jq -r 'to_entries[] | "\(.key)=\(.value | tojson)"' "$RUNNER_TEMP/route.json" >> "$GITHUB_OUTPUT"
-          else
-            echo '::warning::Runner routing unavailable; using the normal Mac queues.'
           fi
 
   lane:
@@ -132,8 +154,15 @@ jobs:
       group: lane-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: false
     # 150 minutes for the T3 itself (slot wait, boot and tests), plus room for the automerge run a T3
-    # PASS releases in this same job (#421): host tests and both builds, as in the automerge job.
+    # PASS releases in this same job (#421): host tests, as in the automerge job, when the hand-off to the
+    # build runner below fails.
     timeout-minutes: 240
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      # write: hand a released automerge run's host tests to a build runner (workflow_dispatch, #1209).
+      actions: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -184,8 +213,8 @@ jobs:
 
   automerge:
     needs: route
-    # The automerge label: host tests and builds on the build queue or priority runner.
-    # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_build).
+    # The automerge label: host tests on the build queue or priority runner, no app build.
+    # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_test_on_host).
     if: >-
       !cancelled() &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -247,3 +276,157 @@ jobs:
         run: >-
           /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
           --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode auto
+
+  release:
+    # #1209: the automerge run a T3 PASS released, handed over by the lane job (see the top of this file). It runs
+    # on a build runner under the build runner's room rules, then tests the merge commit and merges on PASS, as
+    # the lane job used to on the simulator runner. lane-runner.py re-reads the PR and does nothing unless it is
+    # still open on this head, armed and held for T3 with its T3 passed, so a stale or stray dispatch is harmless.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      (github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/lane-check/'))
+    runs-on: [self-hosted, macOS, sm-lane-build]
+    # Its own group: sharing the automerge job's would let this replace a pending automerge run, or wait behind it.
+    concurrency:
+      group: lane-release-pr-${{ inputs.pr }}
+      cancel-in-progress: false
+    # The build runner's room wait (up to 90 minutes), then host tests, as in the automerge job.
+    timeout-minutes: 150
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # Dispatch inputs reach the shell only through these variables, always quoted.
+      PR_NUMBER: ${{ inputs.pr }}
+      EVENT_HEAD: ${{ inputs.head }}
+      T3_REPORT: ${{ inputs.t3 }}
+      BASE_REF: ${{ github.ref_name }}
+      RUN_ID: ${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.head }}
+          fetch-depth: 0
+          persist-credentials: false
+          lfs: true
+      # Written under another name first: a redirect creates the file even when git show fails, and an empty
+      # lane-runner.py would let the tidy step "succeed" without posting anything (#1542).
+      - name: Take the lane runner from the base branch
+        run: >-
+          git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py.part" &&
+          mv "$RUNNER_TEMP/lane-runner.py.part" "$RUNNER_TEMP/lane-runner.py"
+      - name: Run the released automerge run
+        id: run
+        run: >-
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release --t3-report "$T3_REPORT"
+      # A dispatched run's check sits on next's tip, not on the PR, so a red one would read as "next is broken"
+      # and wake nobody: every verdict stays green here. The report and the lane:done relabel carry a FAIL.
+      - name: Verdict
+        if: steps.run.outputs.reported == 'true'
+        env:
+          VERDICT: ${{ steps.run.outputs.verdict }}
+        run: |
+          echo "Lane verdict: $VERDICT (the report is on the PR)"
+          if [ "$VERDICT" != PASS ]; then
+            echo "::warning title=Lane $VERDICT::The lane reported $VERDICT, not a pass. The report on the PR says why."
+          fi
+      - name: Tidy up after a cancelled or failed run
+        id: tidy
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true'
+        run: >-
+          /usr/bin/python3 "$RUNNER_TEMP/lane-runner.py" --cleanup --tree "$GITHUB_WORKSPACE" --pr "$PR_NUMBER"
+          --event-head "$EVENT_HEAD" --run-id "$RUN_ID" --base "$BASE_REF" --mode release
+      # #1542: the lane job left lane:done to this run, so a run that stops before it can report must still say so.
+      # When the checkout, its LFS fetch or the runner fetch failed, the tidy step above has no lane-runner.py to
+      # run. This step needs nothing they bring: only gh, the job's token and the quoted variables above. It posts
+      # the tidy step's "stopped before reporting" note (without a tested next, so it never counts toward an
+      # auto-revert) and removes and re-adds lane:done, which the Hourly dispatch wakes on. Like the release itself,
+      # it does nothing for a PR that moved on, closed, lost automerge or isn't from this repository.
+      # A run that never starts (cancelled or timed out in the queue) runs no step: the hand-off note on the PR says
+      # when the dispatcher treats it as lost.
+      - name: Say so on the PR when the tidy step could not
+        if: (failure() || cancelled()) && steps.run.outputs.reported != 'true' && steps.tidy.outcome != 'success'
+        shell: bash
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if ! [[ "$PR_NUMBER" =~ ^[0-9]+$ && "$EVENT_HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::warning::The dispatch named no PR number and full head; nothing to report on.'
+            exit 0
+          fi
+          pull=$(gh api "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '[.state, .head.sha, (.head.repo.full_name // "-"),
+            .base.ref, (any(.labels[]; .name == "automerge") | tostring)] | join(" ")')
+          if [ "$pull" != "open $EVENT_HEAD $GH_REPO $BASE_REF true" ]; then
+            echo "PR #$PR_NUMBER moved on, closed or lost automerge ($pull); nothing to report."
+            exit 0
+          fi
+          body="Lane: the automerge run stopped before reporting ($RUN_URL). It was the build runner's release run for \`${EVENT_HEAD:0:7}\` after its T3 PASS (#1209), and it ended (a failed checkout, a cancel or a timeout) before it could post a report. The T3 PASS stands: remove and re-add automerge to run the host tests and merge.
+          <!-- lane-note -->"
+          gh api "repos/$GH_REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+          gh api -X DELETE "repos/$GH_REPO/issues/$PR_NUMBER/labels/lane%3Adone" > /dev/null 2>&1 || true
+          gh api "repos/$GH_REPO/issues/$PR_NUMBER/labels" -f 'labels[]=lane:done' > /dev/null
+
+  # Tell the coordinator when a Mac lane runner is left idle (#1215). One job per Mac job, so the
+  # notice comes when either frees its runner, not when both are done (a PR with both labels runs
+  # both). Each runs on the owner's VPS runner (never a Mac runner, so it can't queue behind a lane
+  # job), with sm_lane_open.py taken from the base branch's tip. The script reads the runner list and
+  # the jobs still waiting for a lane runner; if a runner is idle with no job to take it, it sends
+  # "Lane open-<time>: <free> free, <queued> queued" through the Dial relay, at most once per 10
+  # minutes (one state file on that runner, so the two jobs share it). With the two secrets unset, or
+  # on any doubt, it sends nothing and the step still passes. It is not a gate: the Mac jobs and their
+  # Verdict steps don't depend on it.
+  lane-open-lane:
+    needs: [route, lane]
+    if: "!cancelled() && needs.lane.result != 'skipped'"
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      # read: the runs and jobs it counts (the runner list uses RUNNERS_TOKEN below).
+      actions: read
+    steps:
+      - name: Tell the coordinator the lane is open
+        # Not a lane result: a failure here must not make the run look red.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          # Reading the runner list needs more than the workflow token (as in route).
+          RUNNERS_TOKEN: ${{ secrets.SM_LANE_RUNNERS_TOKEN || github.token }}
+          SM_LANE_OPEN_URL: ${{ secrets.SM_LANE_OPEN_URL }}
+          SM_LANE_OPEN_TOKEN: ${{ secrets.SM_LANE_OPEN_TOKEN }}
+        run: |
+          # Base-branch code only. A base without the script (before this reached next) sends nothing.
+          if timeout 30s gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/$GH_REPO/contents/ops/lane/sm_lane_open.py?ref=$BASE_REF" > "$RUNNER_TEMP/sm_lane_open.py"; then
+            timeout 90s python3 "$RUNNER_TEMP/sm_lane_open.py" || echo '::warning::Lane open ping stopped.'
+          else
+            echo '::warning::sm_lane_open.py is not on the base branch yet; nothing sent.'
+          fi
+
+  lane-open-automerge:
+    needs: [route, automerge]
+    if: "!cancelled() && needs.automerge.result != 'skipped'"
+    runs-on: [self-hosted, Linux, sm-vps]
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Tell the coordinator the lane is open
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          RUNNERS_TOKEN: ${{ secrets.SM_LANE_RUNNERS_TOKEN || github.token }}
+          SM_LANE_OPEN_URL: ${{ secrets.SM_LANE_OPEN_URL }}
+          SM_LANE_OPEN_TOKEN: ${{ secrets.SM_LANE_OPEN_TOKEN }}
+        run: |
+          if timeout 30s gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/$GH_REPO/contents/ops/lane/sm_lane_open.py?ref=$BASE_REF" > "$RUNNER_TEMP/sm_lane_open.py"; then
+            timeout 90s python3 "$RUNNER_TEMP/sm_lane_open.py" || echo '::warning::Lane open ping stopped.'
+          else
+            echo '::warning::sm_lane_open.py is not on the base branch yet; nothing sent.'
+          fi

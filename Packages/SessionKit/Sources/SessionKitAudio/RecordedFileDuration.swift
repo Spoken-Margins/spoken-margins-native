@@ -1,6 +1,7 @@
 #if canImport(AVFoundation)
 import AVFoundation
 import Foundation
+import SessionKit
 
 /// How much audio a finished recording file really holds (#937).
 ///
@@ -24,6 +25,41 @@ enum RecordedFileDuration {
         let rate = file.processingFormat.sampleRate
         guard rate > 0 else { return .unreadable }
         return .milliseconds(Int((Double(file.length) / rate * 1_000).rounded()))
+    }
+}
+
+/// Whether a recording an unfinished Margin left behind can be used (#951). A file that will not open is not
+/// valid, however many bytes it has: a recorder killed mid-write leaves an AAC file without its closing index.
+public enum RecordingDraftProbe {
+    public static func isDecodable(_ url: URL) -> Bool {
+        if case .milliseconds(let ms) = RecordedFileDuration.measure(url) { return ms > 0 }
+        return false
+    }
+}
+
+/// Whether a restart may delete the file of the recorder it replaces (#1041). Pure, so the refusal is testable
+/// without a microphone.
+enum CaptureRestartGuard {
+    enum Verdict: Equatable {
+        /// Nothing worth keeping: the file may go.
+        case restart
+        /// The recorder holds audio worth saving.
+        case keepAudio
+        /// A stopped recorder's file hasn't been measured yet, or couldn't be: it may hold speech.
+        case keepUnknown
+    }
+
+    /// `capturedMs` is the most audio the recorder has shown, read just before it stopped when it was running.
+    /// `measurement` is the poll's background measurement of a recorder that had already stopped, nil until it lands.
+    static func verdict(capturedMs: Int, recorderHadStopped: Bool, measurement: RecordedFileDuration.Outcome?) -> Verdict {
+        var captured = capturedMs
+        if recorderHadStopped {
+            switch measurement {
+            case .milliseconds(let fileMs)?: captured = max(captured, fileMs)
+            case .unreadable?, nil: return .keepUnknown
+            }
+        }
+        return captured >= MarginCaptureTimings.keepAudioMs ? .keepAudio : .restart
     }
 }
 

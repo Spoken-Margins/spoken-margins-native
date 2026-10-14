@@ -50,24 +50,121 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertEqual(voiceover.durationMs, 752_875)
     }
 
-    func testOnlySubstackAddressesAreFetched() {
+    /// Neighbouring addresses (#810, #882): Substack hosts and a `/p/<slug>` post path on any host are worth one
+    /// fetch; anything else is not.
+    func testSubstackAddressesAndPostPathsOnAnyDomainAreFetched() {
         for yes in [
             "https://open.substack.com/pub/garymarcus/p/breaking?r=2abc&utm_medium=ios",
             "https://garymarcus.substack.com/p/breaking",
             "https://substack.com/home/post/p-123",
-            "https://GaryMarcus.Substack.com/p/breaking"
+            "https://GaryMarcus.Substack.com/p/breaking",
+            // A publication on its own domain, as the Substack app shared it on the owner's phone (2026-10-05).
+            "https://victory.forwardblue.org/p/the-only-path-to-progress-is-fixing?r=4x1y&utm_medium=ios&triedRedirect=true",
+            "https://www.platformer.news/p/breaking",
+            "https://www.platformer.news/p/breaking/",
+            "https://WWW.Platformer.NEWS/p/breaking#footnote-1",
+            "https://example.com/p/%E2%9C%93-unicode-slug"
         ] {
             XCTAssertTrue(PublisherNarrationEvidence.mayHaveVoiceover(URL(string: yes)!), yes)
         }
         for no in [
             "http://garymarcus.substack.com/p/breaking",
-            "https://evilsubstack.com/p/breaking",
-            "https://substack.com.evil.example/p/breaking",
-            "https://www.platformer.news/p/breaking",
-            "https://example.com/article"
+            "http://www.platformer.news/p/breaking",
+            "https://evilsubstack.com/article",
+            "https://substack.com.evil.example/article",
+            "https://example.com/article",
+            "https://example.com/p/",
+            "https://example.com/p",
+            "https://example.com/p/breaking/comments",
+            "https://example.com/blog/p/breaking",
+            "https://example.com/P/breaking",
+            "https://example.com/?p=123"
         ] {
             XCTAssertFalse(PublisherNarrationEvidence.mayHaveVoiceover(URL(string: no)!), no)
         }
+    }
+
+    /// The owner's phone, 2026-10-05: a post on its own domain, shared from the Substack app, was read with
+    /// on-device speech because only `substack.com` addresses were looked up. The resolver had already read the
+    /// page, so the voiceover is found with no further request.
+    func testACustomDomainPostSharedFromTheSubstackAppFindsItsVoiceover() async throws {
+        let shared = URL(string: "https://captured.example/p/voiceover?r=4x1y&utm_campaign=post&utm_medium=ios&triedRedirect=true")!
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data(try Self.page().utf8), for: shared)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: shared, articleURL: shared.absoluteString, itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("the resolver's page is the answer"); throw URLError(.badURL) }
+        )
+        XCTAssertEqual(outcome, .found(PublisherAudio(
+            itemId: "item", audioURL: "https://recordings.example/voiceover.mp3", durationMs: 752_875,
+            detectedFrom: "substack_post_voiceover"
+        )))
+    }
+
+    func testACustomDomainPostTheResolverDidNotReadIsFetchedOnce() async throws {
+        let requests = RequestLog()
+        let page = try Self.page()
+        let shared = URL(string: "https://captured.example/p/voiceover?r=4x1y&utm_medium=ios")!
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: shared, articleURL: "https://captured.example/p/voiceover", itemId: "item", fetched: FetchedPageMemo(),
+            fetchPage: { url in requests.append(url); return (page, URL(string: "https://captured.example/p/voiceover")!) }
+        )
+        guard case .found = outcome else { return XCTFail("\(outcome)") }
+        XCTAssertEqual(requests.urls, [shared])
+    }
+
+    /// A shared address that isn't a post path (a short link the resolver followed to the post) is still read when
+    /// the page it ended at declares Substack's `_preloads`, without another request.
+    func testARememberedPageDeclaringPreloadsIsReadWhateverItsAddress() async throws {
+        let short = URL(string: "https://captured.example/s/abc")!
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data(try Self.page().utf8), for: short, finalURL: URL(string: "https://captured.example/p/voiceover")!)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: short, articleURL: "https://captured.example/p/voiceover", itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("the remembered page is the answer"); throw URLError(.badURL) }
+        )
+        guard case .found = outcome else { return XCTFail("\(outcome)") }
+    }
+
+    func testAnOrdinaryArticleTheResolverReadIsNeitherReadNorFetched() async {
+        let article = URL(string: "https://openai.com/index/some-research")!
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data("<html><p>Research.</p></html>".utf8), for: article)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: article, articleURL: article.absoluteString, itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("no fetch for an ordinary article"); throw URLError(.badURL) }
+        )
+        XCTAssertEqual(outcome, .notSubstack)
+    }
+
+    /// A `/p/<slug>` page on a site that isn't Substack (a Blogger page, say) is fetched but gives nothing.
+    func testAPostPathPageWithoutAVoiceoverGivesNothing() async {
+        let page = URL(string: "https://someblog.example/p/about")!
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: page, articleURL: page.absoluteString, itemId: "item", fetched: nil,
+            fetchPage: { url in ("<html><p>About me.</p></html>", url) }
+        )
+        XCTAssertEqual(outcome, .noVoiceover(reason: "no_preloads"))
+    }
+
+    /// The owner's export could only show the last share (an openai.com link, `not_substack`), not what happened
+    /// to the Substack post shared before it. The log keeps each item's latest outcome.
+    func testTheLogKeepsEachSharedItemsLatestOutcome() {
+        var log = SharedPostVoiceoverLog()
+        log.record("none", for: "item-a")
+        log.record("saved", for: "item-b")
+        log.record("not_substack", for: "item-c")
+        log.record("text map 40%", for: "item-b")
+        XCTAssertEqual(log.summary, "item-a: none; item-c: not_substack; item-b: text map 40%")
+    }
+
+    func testTheLogKeepsOnlyTheMostRecentItems() {
+        var log = SharedPostVoiceoverLog()
+        for index in 0..<(SharedPostVoiceoverLog.capacity + 3) { log.record("none", for: "item-\(index)") }
+        let lines = log.summary.components(separatedBy: "; ")
+        XCTAssertEqual(lines.count, SharedPostVoiceoverLog.capacity)
+        XCTAssertEqual(lines.first, "item-3: none")
+        XCTAssertEqual(lines.last, "item-\(SharedPostVoiceoverLog.capacity + 2): none")
     }
 
     /// Codex audit on 749fc07: the share path fetched the post page for link resolution and then again for the
@@ -156,6 +253,136 @@ final class SharedLinkVoiceoverTests: XCTestCase {
             )
             guard case .failed = outcome else { return XCTFail("\(outcome)") }
         }
+    }
+
+    // MARK: Pages captured from real Substack posts (#810, 2026-10-14)
+
+    /// The owner's phone, 2026-10-05 to 2026-10-12: the post he shared from the Substack app (on a publication's own
+    /// domain) shows a Listen button in the Substack app, but its page carries only Substack's automatic narration
+    /// (`audio_items` of type `tts`, `has_voiceover` false). No recording by the author exists to keep, so
+    /// nothing is saved, and the diagnostic says why instead of a bare `none`.
+    func testAPostWithOnlySubstacksAutomaticNarrationGivesNothingAndSaysWhy() async throws {
+        let page = try Self.fixture("substack-generated-voice-only-page.html")
+        let post = URL(string: "https://captured.example/p/generated-voice?r=4x1y&utm_medium=ios&triedRedirect=true")!
+        XCTAssertNil(PublisherNarrationEvidence.voiceover(inPostPage: page))
+        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: post, itemId: "item"))
+        let fetched = FetchedPageMemo()
+        fetched.remember(Data(page.utf8), for: post)
+        let outcome = await SharedPostVoiceoverLookup.find(
+            sharedURL: post, articleURL: post.absoluteString, itemId: "item", fetched: fetched,
+            fetchPage: { _ in XCTFail("the resolver's page is the answer"); throw URLError(.badURL) }
+        )
+        XCTAssertEqual(outcome, .noVoiceover(reason: "generated_voice_only"))
+    }
+
+    /// A paid post read without a subscription says `has_voiceover` true but lists only a paywalled automatic
+    /// narration with no audio address.
+    func testAPaidPostReadWithoutASubscriptionGivesNothing() throws {
+        let page = try Self.fixture("substack-paid-post-page.html")
+        let post = URL(string: "https://captured.example/p/paid-post")!
+        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: post, itemId: "item"))
+        XCTAssertEqual(PublisherNarrationEvidence.absence(postPage: page, finalURL: post), "generated_voice_paywalled")
+    }
+
+    /// An author's voiceover is kept, not Substack's automatic narration listed beside it, whichever comes first.
+    func testAPostWithBothKeepsTheAuthorsVoiceoverWhicheverIsListedFirst() throws {
+        let page = try Self.fixture("substack-voiceover-and-generated-voice-page.html")
+        let post = URL(string: "https://captured.example/p/voiceover-and-generated-voice?r=4x1y&utm_medium=ios")!
+        let expected = PublisherAudio(
+            itemId: "item", audioURL: "https://api.recordings.example/api/v1/audio/upload/11111111-2222-3333-4444-555555555555/src",
+            durationMs: 1_136_378, detectedFrom: "substack_post_voiceover"
+        )
+        XCTAssertEqual(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: post, itemId: "item"), expected)
+
+        let (voiceover, generated) = try Self.audioItems(of: page)
+        let reversed = Self.page(withAudioItems: [generated, voiceover], from: page)
+        XCTAssertEqual(PublisherNarrationEvidence.publisherAudio(postPage: reversed, finalURL: post, itemId: "item"), expected)
+        let generatedOnly = Self.page(withAudioItems: [generated], from: page)
+        XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: generatedOnly, finalURL: post, itemId: "item"))
+    }
+
+    /// Why a page gives no voiceover, one row per neighbouring page shape.
+    func testEachWayAPageCanLackAVoiceoverHasItsOwnReason() throws {
+        let post = URL(string: "https://captured.example/p/voiceover")!
+        let page = try Self.page()
+        func reason(_ html: String, at url: URL? = nil) -> String {
+            PublisherNarrationEvidence.absence(postPage: html, finalURL: url ?? post)
+        }
+        func changing(_ edit: (inout [String: Any]) -> Void) throws -> String {
+            try Self.page(editingPost: edit, from: page)
+        }
+
+        XCTAssertEqual(reason("<html><p>Just text.</p></html>"), "no_preloads")
+        XCTAssertEqual(reason(Self.preloadsScript(root: ["publication": ["id": 1]])), "no_post")
+        XCTAssertEqual(reason(try changing { $0["type"] = "podcast" }), "podcast_post")
+        XCTAssertEqual(reason(try changing { $0["type"] = "thread" }), "not_a_newsletter_post")
+        XCTAssertEqual(reason(try changing { $0["has_voiceover"] = false; $0["audio_items"] = NSNull() }), "no_recording")
+        XCTAssertEqual(reason(try changing { $0["audio_items"] = [[String: Any]]() }), "no_recording_listed")
+        XCTAssertEqual(reason(try changing { $0["audio_items"] = NSNull() }), "no_recording_listed")
+        XCTAssertEqual(reason(try changing { $0["has_voiceover"] = false }), "voiceover_flag_off")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["status"] = "processing" } }), "voiceover_processing")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["status"] = "Odd status!" } }), "voiceover_Oddstatus")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["status"] = 7 } }), "voiceover_unknown")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["status"] = "" } }), "voiceover_unknown")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["status"] = String(repeating: "x", count: 500) } }), "voiceover_" + String(repeating: "x", count: 32))
+        XCTAssertEqual(reason(try changing { $0.removeValue(forKey: "type") }), "not_a_newsletter_post")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["type"] = "tts"; $0["status"] = "processing" } }), "generated_voice_processing")
+        XCTAssertEqual(reason(try changing { $0["canonical_url"] = NSNull() }), "voiceover_unreadable")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["audio_url"] = NSNull() } }), "no_audio_url")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["audio_url"] = "http://recordings.example/a.mp3" } }), "voiceover_unreadable")
+        XCTAssertEqual(reason(try changing { Self.editFirstAudioItem(&$0) { $0["post_id"] = 99 } }), "no_recording_listed")
+        XCTAssertEqual(reason(page, at: URL(string: "https://captured.example/p/another-post")!), "other_post")
+    }
+
+    private static func fixture(_ name: String) throws -> String {
+        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
+            let parent = root.deletingLastPathComponent()
+            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
+            root = parent
+        }
+        return String(decoding: try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/feeds/\(name)")), as: UTF8.self)
+    }
+
+    /// The page's `window._preloads` as a dictionary.
+    private static func preloads(of page: String) throws -> [String: Any] {
+        let start = try XCTUnwrap(page.range(of: #"JSON.parse("#))
+        let end = try XCTUnwrap(page.range(of: #");</script>"#, range: start.upperBound..<page.endIndex))
+        let literal = String(page[start.upperBound..<end.lowerBound])
+        let json = try JSONDecoder().decode(String.self, from: Data(literal.utf8))
+        return try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    }
+
+    private static func audioItems(of page: String) throws -> ([String: Any], [String: Any]) {
+        let post = try XCTUnwrap(preloads(of: page)["post"] as? [String: Any])
+        let items = try XCTUnwrap(post["audio_items"] as? [[String: Any]])
+        return (try XCTUnwrap(items.first { $0["type"] as? String == "voiceover" }), try XCTUnwrap(items.first { $0["type"] as? String == "tts" }))
+    }
+
+    /// `window._preloads = JSON.parse("…")` for `root`, as Substack embeds it.
+    private static func preloadsScript(root: [String: Any]) -> String {
+        let json = String(decoding: (try? JSONSerialization.data(withJSONObject: root)) ?? Data(), as: UTF8.self)
+        let literal = String(decoding: (try? JSONEncoder().encode(json)) ?? Data(), as: UTF8.self)
+        return "<script>window._preloads = JSON.parse(\(literal));</script>"
+    }
+
+    private static func page(withAudioItems items: [[String: Any]], from page: String) -> String {
+        (try? Self.page(editingPost: { $0["audio_items"] = items }, from: page)) ?? ""
+    }
+
+    private static func page(editingPost edit: (inout [String: Any]) -> Void, from page: String) throws -> String {
+        var root = try preloads(of: page)
+        var post = try XCTUnwrap(root["post"] as? [String: Any])
+        edit(&post)
+        root["post"] = post
+        return preloadsScript(root: root)
+    }
+
+    private static func editFirstAudioItem(_ post: inout [String: Any], _ edit: (inout [String: Any]) -> Void) {
+        var items = post["audio_items"] as? [[String: Any]] ?? []
+        guard !items.isEmpty else { return }
+        edit(&items[0])
+        post["audio_items"] = items
     }
 
     private let substackShare = URL(string: "https://open.substack.com/pub/captured/p/voiceover")!

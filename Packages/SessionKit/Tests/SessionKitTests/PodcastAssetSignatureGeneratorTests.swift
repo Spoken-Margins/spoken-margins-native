@@ -68,6 +68,11 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
         }
 
         let poolThreads = ProcessInfo.processInfo.activeProcessorCount
+        // Each job signs a 40 s composition, the resolver's probe chunk length. The starvation this guards
+        // against (#869) is a deadlock: once every cooperative worker is inside ShazamKit, none finishes,
+        // whatever the length. With the fix, signatures run one at a time, so the test costs jobs x length of audio
+        // decoded on one core; 900 s chunks took 12-58 s and timed out under load (#1283).
+        let jobSeconds = 40.0
         let entered = DispatchGroup()
         for _ in 0..<poolThreads { entered.enter() }
         let completed = DispatchGroup()
@@ -89,7 +94,7 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
                     let track = try XCTUnwrap(composition.addMutableTrack(
                         withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid
                     ))
-                    let targetDuration = CMTime(seconds: 900, preferredTimescale: 1_000)
+                    let targetDuration = CMTime(seconds: jobSeconds, preferredTimescale: 1_000)
                     var position = CMTime.zero
                     while position < targetDuration {
                         let length = CMTimeMinimum(sourceDuration, CMTimeSubtract(targetDuration, position))
@@ -127,7 +132,7 @@ final class PodcastAssetSignatureGeneratorTests: XCTestCase {
         XCTAssertEqual(probing.wait(timeout: .now() + 2), .success)
         XCTAssertLessThan(try XCTUnwrap(results.heartbeatDelays.max()), 1, "ShazamKit signature jobs starved unrelated async work")
         XCTAssertEqual(results.durations.count, poolThreads + 2, results.errors.joined(separator: "; "))
-        XCTAssertTrue(results.durations.allSatisfy { $0 > 890 && $0 < 910 })
+        XCTAssertTrue(results.durations.allSatisfy { abs($0 - jobSeconds) < 1 }, "\(results.durations)")
         print("Signature stress: \(poolThreads + 2) real jobs, started \(results.started), heartbeat max \(results.heartbeatDelays.max() ?? -1) s, completed \(results.durations.count)")
     }
 }

@@ -62,7 +62,7 @@ extension Gate1AppModel {
                   returnToMediaTimeMs: snapshot.currentMediaTimeMs, resumesAtEnd: thenContinue
               ) else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
-        announcedImportedInterjectionIDs.formUnion(entries.map(\.interjection.id))
+        entries.forEach { sharedMarginOffers.markAnnounced($0.interjection.id) }
         var voiceURLs: [String: URL] = [:]
         var heard: [String: ImportedCommentaryInterjection] = [:]
         for entry in entries {
@@ -99,6 +99,6 @@ extension Gate1AppModel {
         let stillNew = selectedItem.importedCommentaryInterjections.values.joined().filter {
             $0.isNewToListener && ahead.contains(SharedMarginReview.marginId(layerId: $0.layerId, interjectionId: $0.id))
         }
-        announcedImportedInterjectionIDs.subtract(stillNew.map(\.id))
+        sharedMarginOffers.markUnannounced(Set(stillNew.map(\.id)))
     }
 }

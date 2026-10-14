@@ -107,6 +107,12 @@ public final class MarginMomentConductor {
         onChange?()
     }
 
+    /// Starts a sequence that is already listening (#1538): the source is where the listener left it, so nothing seeks.
+    public func startListening(atMediaTimeMs mediaTimeMs: Int?) {
+        lastObservedMs = mediaTimeMs ?? sequence.startMediaTimeMs
+        onChange?()
+    }
+
     /// Call on each progress tick while the source plays.
     public func observe(mediaTimeMs: Int?) {
         defer { if let mediaTimeMs { lastObservedMs = mediaTimeMs } }

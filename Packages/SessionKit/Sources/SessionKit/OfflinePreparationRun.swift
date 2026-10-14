@@ -20,6 +20,7 @@ public enum OfflinePreparationRun {
     /// One queue entry, as far as a run cares.
     public struct Job: Equatable, Sendable {
         public var id: String
+        public var manifestId: String
         public var requestedAt: Date
         public var policy: PreparationJobPolicy
         public var state: PreparedAudioState
@@ -28,6 +29,7 @@ public enum OfflinePreparationRun {
 
         public init(
             id: String = "",
+            manifestId: String = "",
             requestedAt: Date = Date(timeIntervalSince1970: 0),
             policy: PreparationJobPolicy,
             state: PreparedAudioState,
@@ -35,6 +37,7 @@ public enum OfflinePreparationRun {
             plannedChunks: Int
         ) {
             self.id = id
+            self.manifestId = manifestId
             self.requestedAt = requestedAt
             self.policy = policy
             self.state = state
@@ -69,6 +72,36 @@ public enum OfflinePreparationRun {
         let total = open.reduce(0) { $0 + max(0, $1.plannedChunks) }
         let completed = open.reduce(0) { $0 + min(max(0, $1.completedChunks), max(0, $1.plannedChunks)) }
         return Progress(completedChunks: completed, totalChunks: total)
+    }
+
+    /// A running system banner retains verified completions, even after their queue rows disappear.
+    /// A rendered last chunk still needs final assembly and verification before reporting 100%.
+    public static func continuedProgress(_ jobs: [Job]) -> Progress {
+        let explicit = jobs.filter { $0.policy == .explicit }
+        let total = explicit.reduce(0) { $0 + max(0, $1.plannedChunks) }
+        let completed = explicit.reduce(0) { count, job in
+            let limit = max(0, job.plannedChunks - (job.state == .readyOffline ? 0 : 1))
+            return count + min(max(0, job.completedChunks), limit)
+        }
+        return Progress(completedChunks: completed, totalChunks: total)
+    }
+
+    public static func continuedRunFinished(_ jobs: [Job]) -> Bool {
+        let explicit = jobs.filter { $0.policy == .explicit }
+        return !explicit.isEmpty && explicit.allSatisfy { $0.state == .readyOffline }
+    }
+
+    /// Disappearance alone can mean Skip, Clear Queue, failure or completion. Only a verified
+    /// artifact proves completion. The app supplies the actual manifest from its store.
+    public static func resolvingRemovedJob(_ job: Job, manifest: PreparedAudioManifest?) -> Job {
+        var resolved = job
+        if let manifest, manifest.state == .readyOffline, manifest.artifact != nil {
+            resolved.state = .readyOffline
+            resolved.completedChunks = max(0, job.plannedChunks)
+        } else {
+            resolved.state = .stopped
+        }
+        return resolved
     }
 
     /// The requests that are still open, to remember as declined when the background time ends.
@@ -117,23 +150,31 @@ public enum OfflinePreparationRun {
         }
     }
 
-    // MARK: Waiting out a heat pause
+    // MARK: Waiting out a heat or memory pause
 
     /// Heat can hold a run for a long time. After this the run stops waiting and the queued jobs
     /// carry on the next time the listener opens the app.
     public static let maximumHeatWaitSeconds = 30 * 60
 
+    /// A memory warning blocks rendering for about a minute, so a backoff that is still there after
+    /// this long has been renewed again and again. The run stops waiting and the queued jobs carry
+    /// on the next time the listener opens the app.
+    public static let maximumMemoryWaitSeconds = 10 * 60
+
+    /// A memory backoff ends on its own within about a minute, so it is rechecked at the quick pace.
+    public static let memoryRecheckSeconds = 15
+
     public enum HeatWaitStop: String, Equatable, Sendable {
         /// Nothing the foreground loop prepares is queued any more.
         case noWorkWaiting = "no_work_waiting"
-        /// The pass stopped for a reason other than heat, so waiting would not help.
+        /// The pass stopped for a reason other than heat or a memory backoff, so waiting would not help.
         case notHeat = "not_heat"
         case waitedTooLong = "waited_too_long"
     }
 
     public enum HeatWaitStep: Equatable, Sendable {
         case wait(seconds: Int)
-        /// The phone cooled while the run waited: run the pass again.
+        /// The phone cooled, or the memory backoff ended, while the run waited: run the pass again.
         case resume
         case stop(HeatWaitStop)
     }
@@ -148,12 +189,35 @@ public enum OfflinePreparationRun {
         waitedSeconds: Int,
         foregroundWorkWaiting: Bool
     ) -> HeatWaitStep {
+        pauseWaitStep(
+            thermal: thermal,
+            memoryBackoffActive: false,
+            waitedSeconds: waitedSeconds,
+            foregroundWorkWaiting: foregroundWorkWaiting
+        )
+    }
+
+    /// `heatWaitStep` for the two pauses the loop can wait out: heat, and the backoff a memory
+    /// warning starts. Either one holds the run; once neither does and the run has waited, it goes
+    /// on. A backoff that keeps being renewed ends the wait after `maximumMemoryWaitSeconds`, heat
+    /// after `maximumHeatWaitSeconds`.
+    ///
+    /// Before this a memory warning ended the loop for good: the pass after it rendered nothing
+    /// because of the backoff, and nothing started the run again when the backoff was over (#1107).
+    public static func pauseWaitStep(
+        thermal: SpeechThermalLevel,
+        memoryBackoffActive: Bool,
+        waitedSeconds: Int,
+        foregroundWorkWaiting: Bool
+    ) -> HeatWaitStep {
         guard foregroundWorkWaiting else { return .stop(.noWorkWaiting) }
-        guard PreparationChunkGate.isTooWarm(thermal) else {
+        let tooWarm = PreparationChunkGate.isTooWarm(thermal)
+        guard tooWarm || memoryBackoffActive else {
             return waitedSeconds > 0 ? .resume : .stop(.notHeat)
         }
-        guard waitedSeconds < maximumHeatWaitSeconds else { return .stop(.waitedTooLong) }
-        return .wait(seconds: heatRecheckSeconds(afterWaiting: waitedSeconds))
+        let limit = tooWarm ? maximumHeatWaitSeconds : maximumMemoryWaitSeconds
+        guard waitedSeconds < limit else { return .stop(.waitedTooLong) }
+        return .wait(seconds: tooWarm ? heatRecheckSeconds(afterWaiting: waitedSeconds) : memoryRecheckSeconds)
     }
 
     public static func heatRecheckSeconds(afterWaiting waitedSeconds: Int) -> Int {

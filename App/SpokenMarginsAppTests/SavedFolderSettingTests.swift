@@ -12,7 +12,7 @@ final class SavedFolderSettingTests: XCTestCase {
         "marginOutputDestinationID",
     ]
 
-    func testChangingTheExportFolderLeavesTheNotesFolderAndItsDestinationAlone() throws {
+    func testChangingTheExportFolderLeavesTheNotesDestinationAlone() throws {
         let defaults = UserDefaults.standard
         let prior = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("saved-folder-\(UUID().uuidString)", isDirectory: true)
@@ -28,20 +28,19 @@ final class SavedFolderSettingTests: XCTestCase {
         }
         keys.forEach(defaults.removeObject(forKey:))
 
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.configureMarginNotesFolder(url: vault)
-        let notesBookmark = try XCTUnwrap(defaults.data(forKey: "marginNotesFolderBookmark"))
-        let destinationID = try XCTUnwrap(defaults.string(forKey: "marginOutputDestinationID"))
-        XCTAssertEqual(model.marginNotesFolderName, "Vault")
-        XCTAssertFalse(model.hasBatchExportFolder, "Picking the notes folder must not pick an export folder")
+        // The destinations live beside this test database, not in the app's own Application Support folder.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: root.appendingPathComponent("library.sqlite"))
+        let destination = try XCTUnwrap(model.marginOutput.addDestination(folder: vault))
+        XCTAssertEqual(model.marginOutput.rows.first?.folderName, "Vault")
+        XCTAssertFalse(model.hasBatchExportFolder, "Picking a notes folder must not pick an export folder")
 
         model.configureBatchExportFolder(url: onMyPhone)
 
         XCTAssertEqual(model.batchExportFolderName, "On My Phone Exports")
         XCTAssertTrue(model.hasBatchExportFolder)
-        XCTAssertEqual(defaults.data(forKey: "marginNotesFolderBookmark"), notesBookmark, "The notes folder moved with the export folder")
-        XCTAssertEqual(defaults.string(forKey: "marginOutputDestinationID"), destinationID, "A new destination ID makes notes delivery rewrite every Margin")
-        XCTAssertEqual(model.marginNotesFolderName, "Vault")
+        XCTAssertEqual(model.marginOutput.destination(destination.id)?.bookmark, destination.bookmark, "The notes folder moved with the export folder")
+        XCTAssertEqual(model.marginOutput.destinations.map(\.id), [destination.id], "The destination id is the writer journal key; a new one would rewrite every Margin")
+        XCTAssertEqual(model.marginOutput.rows.first?.folderName, "Vault")
     }
 
     func testFirstLaunchKeepsNotesInTheFolderTheyAlreadyUsed() throws {

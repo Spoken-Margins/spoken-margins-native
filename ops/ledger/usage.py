@@ -1,4 +1,4 @@
-"""Local, best-effort Codex usage ledger. Stdlib only, Python 3.9+.
+"""Local, best-effort model usage ledger (Codex and headless Claude). Stdlib only, Python 3.9+.
 
 One row per invocation, including batches. A locked pending journal allows the
 next wrapper/report to recover a wrapper killed before it could append its row.
@@ -28,6 +28,7 @@ def read_usage(transcript: Path) -> dict:
     missing = set()
     turns = completed = 0
     failed = False
+    sessions = []  # Claude session ids, so the transcript collector never counts a wrapped run twice
     try:
         with transcript.open(errors='replace') as source:
             for line in source:
@@ -41,6 +42,28 @@ def read_usage(transcript: Path) -> dict:
                     turns += 1
                 if event.get('type') in ('turn.failed', 'error'):
                     failed = True
+                if event.get('type') == 'result' and isinstance(event.get('usage'), dict):
+                    # `claude -p --output-format json` ends in one result object. Its input counts are
+                    # split three ways; as for Codex, cached input is part of input.
+                    turns += 1
+                    completed += 1
+                    failed = failed or bool(event.get('is_error'))
+                    if isinstance(event.get('session_id'), str) and event['session_id'] not in sessions:
+                        sessions.append(event['session_id'])
+                    values = event['usage']
+                    cached = values.get('cache_read_input_tokens')
+                    parts = [values.get('input_tokens'), values.get('cache_creation_input_tokens'), cached]
+                    counted = {
+                        'input_tokens': sum(parts) if all(type(v) is int and v >= 0 for v in parts) else None,
+                        'cached_input_tokens': cached if type(cached) is int and cached >= 0 else None,
+                        'output_tokens': values.get('output_tokens')
+                        if type(values.get('output_tokens')) is int and values['output_tokens'] >= 0 else None}
+                    for field in TOKEN_FIELDS:
+                        if counted[field] is None:
+                            missing.add(field)
+                        else:
+                            totals[field] += counted[field]
+                    continue
                 if event.get('type') != 'turn.completed':
                     continue
                 completed += 1
@@ -62,7 +85,10 @@ def read_usage(transcript: Path) -> dict:
     complete = not missing and not failed and completed >= turns
     reason = ('usage fields missing/invalid: ' + ', '.join(sorted(missing)) if missing else
               'unfinished/failed turn; counts cover completed turns only' if not complete else None)
-    return dict(totals, usage_complete=complete, usage_missing_reason=reason)
+    result = dict(totals, usage_complete=complete, usage_missing_reason=reason)
+    if sessions:
+        result['session_ids'] = sessions
+    return result
 
 
 def signature(text: str) -> str:

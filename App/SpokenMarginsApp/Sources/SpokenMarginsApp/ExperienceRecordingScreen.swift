@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isDiscardConfirmationPresented = false
     /// Ignores a stray second tap of a double tap on Add a Margin (#148).
     @State private var saveTapGuard = RecordingSaveTapGuard(appearedAt: Date())
@@ -35,6 +36,7 @@ struct ExperienceRecordingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     status
+                    replyCaption
                     recordingTime
                     if !showsMicrophonePrimer { anchor }
                     feedback
@@ -44,14 +46,11 @@ struct ExperienceRecordingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            // While the microphone line is up, VoiceOver goes from the line straight to Continue (#783).
-            finishControl.padding(24).accessibilityHidden(showsMicrophonePrimer)
-        }
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
         .onAppear { saveTapGuard = RecordingSaveTapGuard(appearedAt: Date()) }
+        .onDisappear(perform: model.listeningScreenAppeared) // the screen behind it is drawn now (#148)
         .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {
             Button("Keep recording", role: .cancel) {}
             Button("Discard recording", role: .destructive, action: model.cancelInterjection)
@@ -65,6 +64,18 @@ struct ExperienceRecordingView: View {
             } else {
                 model.cancelInterjection()
             }
+        }
+    }
+
+    /// The shared Margin this recording answers (#473).
+    @ViewBuilder
+    private var replyCaption: some View {
+        if let reply = model.pendingMarginReply {
+            Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recording.replyCaption.label")
         }
     }
 
@@ -164,16 +175,39 @@ struct ExperienceRecordingView: View {
         }
     }
 
+    /// Save & resume takes the bottom-row spot Add a Margin has on the playback screen, so starting and
+    /// stopping a Margin happens under the same thumb (#148). The guard window in `requestFinish` keeps a stray
+    /// second tap of a double tap on Add a Margin from saving an empty Margin.
     private var finishControl: some View {
         Button(action: requestFinish) {
             Label(model.isFinishingInterjection ? "Saving Margin…" : "Save & resume", systemImage: "checkmark")
-                .frame(maxWidth: .infinity, minHeight: 52)
+                .frame(maxWidth: .infinity)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(AppColors.captureBackground)
-        .foregroundStyle(AppColors.listeningBackground)
+        .buttonStyle(RecordingSaveButtonStyle())
         .disabled(isPreparing || isStartingCapture || model.isFinishingInterjection)
+        .accessibilityHidden(showsMicrophonePrimer)
+        // VoiceOver meets Save before the destructive Cancel, as when Save was at the top.
+        .accessibilitySortPriority(1)
         .accessibilityIdentifier("recording.finish.button")
+    }
+
+    /// Cancel is rare, so it is the small button on the far left of the bottom row.
+    private var cancelControl: some View {
+        Button(role: .destructive, action: requestDiscard) {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    Image(systemName: "xmark").accessibilityLabel("Cancel")
+                } else {
+                    Label("Cancel", systemImage: "xmark")
+                }
+            }
+            .font(.subheadline)
+            .frame(minWidth: 44, minHeight: 52)
+        }
+        .buttonStyle(.borderless)
+        .foregroundStyle(.white)
+        .disabled(model.isFinishingInterjection)
+        .accessibilityIdentifier("recording.cancel.button")
     }
 
     private var actionDock: some View {
@@ -209,14 +243,11 @@ struct ExperienceRecordingView: View {
                     .frame(minHeight: 44)
                     .accessibilityIdentifier("recording.writeInstead.button")
             }
-            Button(role: .destructive, action: requestDiscard) {
-                Label("Cancel", systemImage: "xmark")
-                    .frame(maxWidth: .infinity, minHeight: 44)
+            HStack(spacing: 12) {
+                cancelControl
+                finishControl
             }
-            .buttonStyle(.borderless)
-            .foregroundStyle(.white)
-            .disabled(model.isFinishingInterjection)
-            .accessibilityIdentifier("recording.cancel.button")
+            .accessibilityElement(children: .contain)
         }
         .padding(.horizontal, 24)
         .padding(.top, 12)
@@ -229,9 +260,7 @@ struct ExperienceRecordingView: View {
 
     private var context: RecordingPresentationContext {
         model.recordingPresentationContext ?? RecordingPresentationContext(
-            itemTitle: model.selectedItem.title.isEmpty ? "Current item" : model.selectedItem.title,
-            locationTitle: model.snapshot.chapterTitle ?? "Current listening position",
-            progressPercent: model.snapshot.currentPlaybackProgressPercent,
+            snapshot: model.snapshot,
             startedAt: Date()
         )
     }
@@ -253,5 +282,20 @@ struct ExperienceRecordingView: View {
     private func elapsedDescription(at date: Date) -> String {
         let seconds = max(0, Int(date.timeIntervalSince(context.startedAt)))
         return String(format: "%02d:%02d", seconds / 60, seconds % 60)
+    }
+}
+
+/// Save & resume looks like Add a Margin and dims the moment it is touched, so one tap clearly registers (#148).
+private struct RecordingSaveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.headline)
+            .frame(minHeight: 52)
+            .foregroundStyle(AppColors.interjectText)
+            .background(AppColors.captureBackground.opacity(configuration.isPressed ? 0.78 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .opacity(isEnabled ? 1 : 0.5)
     }
 }

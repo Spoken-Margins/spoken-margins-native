@@ -157,8 +157,11 @@ The reach pass (#141, #145–#149, #151) moves into B1, D3, D4 and D5.
 ## Branches and merging
 
 - `next` is the integration branch, created from `main`. Every stream branches `ws/<id>-…` from `next`, one branch per PR, and opens PRs back into `next`.
-- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. Audio, persistence, packet and lane diffs wait for a clean Codex audit of their head commit, then merge the same way.
-- GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open. The hourly dispatcher then removes `in-progress`, adds `status: needs-human-validation` and names the PR; only the owner validates it.
+- A PR merges into `next` when its tier's lane report is green. The lane runner merges armed `automerge` PRs itself. Audio, persistence, packet and lane diffs wait for a clean Claude (or legacy Codex) audit of their head commit, then merge the same way.
+- GitHub closes the issue named by "Closes #N" only when a PR merges into the default branch (`main`), so an issue whose PR merged into `next` stays open. The hourly dispatcher then removes `in-progress` and names the PR. What happens next depends on whether the owner could notice the change on the phone (owner, 2026-10-11):
+  - **Something the owner would see or hear** (a listener-facing bug fix or feature): add `status: needs-human-validation`. Only the owner validates it.
+  - **Internal work** (a model-split code move, a test-honesty or flaky-test fix, a lane, pipeline or ops fix, hardening with no visible change): close it with `sm-gh close-issue <n> --pr <merged pr>`. The owner's use of the milestone candidate covers it; reopen if that build regresses.
+  - When unsure, add the label.
 - Streams merge `next` into their branch at least daily, and before any lane request, so reports test what will actually integrate.
 - Merge order when PRs conflict: gate streams (A2 first), then the older PR.
 - A TestFlight candidate is a commit on `next` that passed T5. Releasing still follows "Releasing a build" in `AGENTS.md`. `main` is fast-forwarded only at release, by the owner's decision.

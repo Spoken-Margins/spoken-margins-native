@@ -20,14 +20,21 @@ public struct MarginCollectionQuery: Equatable, Sendable {
     public var text = ""
     public var filter: MarginCollectionFilter = .all
     public var itemID: String? = nil
+    /// Only the items of this collection (#490). Never set together with `itemID`; see `selectScope`.
+    public var collection: ItemCollectionScope? = nil
 
-    public init(text: String = "", filter: MarginCollectionFilter = .all, itemID: String? = nil) {
+    public init(text: String = "", filter: MarginCollectionFilter = .all, itemID: String? = nil,
+                collection: ItemCollectionScope? = nil) {
         self.text = text
         self.filter = filter
         self.itemID = itemID
+        self.collection = collection
     }
 
-    public func includes(itemID: String?) -> Bool { self.itemID == nil || self.itemID == itemID }
+    public func includes(itemID: String?) -> Bool {
+        if let collection, !(itemID.map(collection.contains(itemID:)) ?? false) { return false }
+        return self.itemID == nil || self.itemID == itemID
+    }
 
     public func matches(_ values: [String]) -> Bool {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -44,6 +51,8 @@ public enum MarginCollection {
         public let interjection: Interjection
         public let itemTitle: String
         public let sessionDate: Date?
+        /// The chapter and paragraph the Margin was made at, when `build` was given a way to read listening maps (#777).
+        public var place: MarginPlaces.Place? = nil
 
         public var id: String { "\(interjection.sessionId)::\(interjection.id)" }
     }
@@ -63,9 +72,13 @@ public enum MarginCollection {
 
     /// Reads remain in the caller's synchronous closures, in the original order.
     /// No partial result escapes if any read throws.
+    /// - `loadMap`: an item's listening map, nil when it has none. Without it, text Margins carry no `place`.
+    /// - `loadMediaChapters`: an item's chapters with start times. Without it, Margins with a clock time carry no `place`.
     public static func build(
         items: [Item],
         sessions: [Session],
+        loadMap: ((String) -> ListeningMap?)? = nil,
+        loadMediaChapters: ((String) -> [MediaTimelineChapter])? = nil,
         loadInterjections: (String) throws -> [Interjection],
         loadImportedLayers: () throws -> [ImportedCommentaryLayer],
         loadImportedInterjections: (String) throws -> [ImportedCommentaryInterjection]
@@ -101,7 +114,15 @@ public enum MarginCollection {
             }
             return lhs.id < rhs.id
         }
-        return Entries(privateRows: privateRows, sharedRows: sharedRows)
+        guard loadMap != nil || loadMediaChapters != nil else { return Entries(privateRows: privateRows, sharedRows: sharedRows) }
+        let places = MarginPlaces.places(
+            for: privateRows, items: items, loadMap: loadMap, loadMediaChapters: loadMediaChapters ?? { _ in [] })
+        let placedRows = privateRows.map { entry -> PrivateEntry in
+            var placed = entry
+            placed.place = places[entry.id]
+            return placed
+        }
+        return Entries(privateRows: placedRows, sharedRows: sharedRows)
     }
 
     public static func sourceContext(anchorBefore: String?, anchorAfter: String?) -> String? {

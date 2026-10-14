@@ -45,7 +45,7 @@ At the end of the episode, the recap row offers **Replay today's Margins**. Each
 | Source | Paused (not ducked). The anchor is saved first. | `SessionEngine.swift:1256-1295` |
 | Microphone | The session switches to `playAndRecord` with Bluetooth headset input allowed, so AirPods or a car's microphone are used automatically. | `AudioAdapters.swift:3304-3310` |
 | While recording | A full-screen recording view with a timer. Every remote command (AirPods, car, Lock Screen play/pause) is dropped. | `Gate1RootView.swift:19`, `Gate1AppModel.swift:9596-9599` |
-| Finish | Only the on-screen Save & resume button (at the top, out of thumb reach; #148 moves it). | `ExperienceRecordingScreen.swift:107-116` |
+| Finish | Only the on-screen Save & resume button (in the bottom row where Add a Margin was, with Cancel small on its left; #148). | `ExperienceRecordingScreen.swift` (`finishControl`) |
 | Resume | At exactly the saved spot, with no step back. | `SessionEngine.swift:1666-1669` |
 | Afterwards | Transcribed on the device in the background. Podcast anchor evidence is captured either side of the pause. | `Gate1AppModel.swift:12781`, `SessionEngine.swift:1631-1656` |
 | Later | The Margin appears on the timeline. "Play this moment" plays a 30-second lead-in, then the Margin, then carries on. | `MarginMoment.swift:26-60`, `MarginMomentConductor.swift` |
@@ -120,7 +120,8 @@ One rule covers every trigger: **trigger → tone → talk → silence → tone 
 3. **Listening window.** You have **6 seconds** to start talking.
    - If you don't, the falling double tick plays and a **flag** is saved at the anchor. The source carries on.
 4. **Talking.** You talk as long as you like, up to **5 minutes**. A soft tick at 4:30 warns you.
-5. **End on silence.** About **2.5 seconds** of quiet after you've spoken ends it. A press ends it immediately.
+5. **End on silence, or on a command.** About **2.5 seconds** of quiet after you've spoken ends it. A headphone click, a play/pause command or a skip-forward command (AirPods, a steering-wheel button) ends it immediately and keeps what you said, including quiet words that stayed under the speech threshold, the same as the silence timer. Only a Margin with nothing said becomes a flag. Saying "end margin" or "stop margin" aloud is a possible later option; it needs on-device speech recognition while recording, so it is not built yet.
+   - Before speech crosses the threshold, a level more than **4 dB above the measured room** counts as an attempt to talk and is kept. Exactly 4 dB or less stays a flag. This rule is the same for an end command and the silence timeout.
 6. **Save tone.** A falling two-note tone plays. The Margin is saved before the tone plays, so the tone means "it's safe".
 7. **Rejoin.** The source **backs up 3 seconds** (a podcast) or **to the start of the sentence** (an article), then plays.
 8. **Afterwards.** Transcription and anchor evidence run exactly as today.

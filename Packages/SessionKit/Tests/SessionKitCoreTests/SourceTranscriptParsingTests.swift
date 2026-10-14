@@ -132,7 +132,7 @@ final class SourceTranscriptParsingTests: XCTestCase {
         let source = try String(contentsOf: repository.appendingPathComponent(
             "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift"
         ), encoding: .utf8)
-        let start = try XCTUnwrap(source.range(of: "    private func scheduleSourceTranscriptImportIfAvailable("))
+        let start = try XCTUnwrap(source.range(of: "    func scheduleSourceTranscriptImportIfAvailable("))
         let end = try XCTUnwrap(source.range(of: "    private static func fetchTranscriptLink(", range: start.upperBound..<source.endIndex))
         let scheduler = String(source[start.lowerBound..<end.lowerBound])
         for literal in [

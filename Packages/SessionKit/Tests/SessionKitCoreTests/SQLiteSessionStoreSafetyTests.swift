@@ -175,10 +175,26 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         )
         try store.saveItem(healthy)
         try insertCorruptItem(path: path)
+        let healthyRow = try StoreRawSQL.rows("SELECT * FROM records WHERE id = 'healthy';", at: path)
 
-        XCTAssertEqual(try store.listItems().map(\.id), [healthy.id])
+        XCTAssertEqual(try store.listItems(), [healthy])
         XCTAssertEqual(try store.quarantinedRecordCount(), 1)
-        XCTAssertEqual(try store.listItems().map(\.id), [healthy.id])
+        // Counting quarantine rows alone also passes if the corrupt live row is never deleted:
+        // each read simply upserts the same quarantine entry and hides the same decoding failure.
+        XCTAssertEqual(try StoreRawSQL.ids(kind: "item", at: path), [healthy.id])
+        XCTAssertEqual(try StoreRawSQL.rows("SELECT kind, id, payload FROM quarantined_records;", at: path),
+                       [["item", "corrupt", "{not-json"]], "preserve the exact rejected bytes for recovery")
+        let quarantined = try StoreRawSQL.rows("SELECT * FROM quarantined_records;", at: path)
+        let decodeError = try XCTUnwrap(quarantined.first?[3])
+        XCTAssertFalse(decodeError.isEmpty, "quarantine records why decoding failed")
+
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try reopened.listItems(), [healthy])
+        XCTAssertEqual(try store.listItems(), [healthy])
+        XCTAssertEqual(try StoreRawSQL.rows("SELECT * FROM quarantined_records;", at: path), quarantined)
+        XCTAssertEqual(try StoreRawSQL.rows("SELECT * FROM records WHERE id = 'healthy';", at: path), healthyRow,
+                       "quarantining another row never rewrites the healthy item")
+        XCTAssertEqual(try StoreRawSQL.ids(kind: "item", at: path), [healthy.id])
     }
 
     func testVersionTwoMigrationBackfillsSessionTimestampsWithoutLosingTheSession() throws {
@@ -208,6 +224,26 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         XCTAssertEqual(finished.completedAt, finishedAt, "a finished session stays completed")
         XCTAssertEqual(finished.position.charOffset, 90)
         XCTAssertEqual(finished.completionPercent, 100)
+        XCTAssertEqual(try store.quarantinedRecordCount(), 0)
+    }
+
+    /// The app no longer moves a version 1 file aside before opening it (#1004), so the store
+    /// upgrades it in place. The tables are the ones version 1 wrote: no quarantine table yet.
+    func testVersionOneDatabaseUpgradesInPlaceWithoutLosingItsRecords() throws {
+        let path = temporaryDatabasePath()
+        try createVersionOneLibraryDatabase(path: path)
+
+        let store = try SQLiteSessionStore(path: path)
+
+        XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), SQLiteSessionStore.currentSchemaVersion)
+        XCTAssertEqual(try store.listItems().map(\.id), ["item-v1"], "the item survives the upgrade")
+        let session = try XCTUnwrap(store.loadSessions(itemId: "item-v1").first)
+        let legacyUpdatedAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-07-19T08:00:00Z"))
+        XCTAssertEqual(session.id, "session-v1")
+        XCTAssertEqual(session.createdAt, legacyUpdatedAt)
+        XCTAssertEqual(session.updatedAt, legacyUpdatedAt)
+        XCTAssertEqual(session.position.charOffset, 40, "the listener's place is kept")
+        XCTAssertEqual(session.completionPercent, 50)
         XCTAssertEqual(try store.quarantinedRecordCount(), 0)
     }
 
@@ -301,8 +337,13 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
     func testVersionFiveLibraryOpensWithoutRewritingKnownOrUnknownRecords() throws {
         let path = temporaryDatabasePath()
         try createVersionFiveLibraryDatabase(path: path)
+        // Capture before opening the store: an assertion through loadItem or an author substring
+        // would miss a startup rewrite that drops other fields or changes unknown record payloads.
+        let originalRows = try existingVersionFiveRows(path: path)
+        XCTAssertEqual(originalRows.count, 2)
 
         let store = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try existingVersionFiveRows(path: path), originalRows, "opening preserves every column and byte")
 
         XCTAssertEqual(try store.listItems().map(\.id), ["item-v5-existing"])
         try store.saveItem(Item(
@@ -316,8 +357,10 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
 
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         XCTAssertEqual(try store.listItems().map(\.id).sorted(), ["item-sharing-import", "item-v5-existing"])
-        XCTAssertTrue(try rawPayload(path: path, kind: "item", id: "item-v5-existing").contains("Quality Author"))
-        XCTAssertTrue(try recordExists(path: path, kind: "canonical_source", id: "canonical-v5"))
+        XCTAssertEqual(try existingVersionFiveRows(path: path), originalRows, "reads and unrelated saves preserve existing rows")
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try reopened.listItems().map(\.id).sorted(), ["item-sharing-import", "item-v5-existing"])
+        XCTAssertEqual(try existingVersionFiveRows(path: path), originalRows, "including after a reopen")
     }
 
     private func temporaryDatabasePath() -> String {
@@ -355,6 +398,26 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         for sql in statements {
             guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
                 throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 4)
+            }
+        }
+    }
+
+    private func createVersionOneLibraryDatabase(path: String) throws {
+        var database: OpaquePointer?
+        guard sqlite3_open(path, &database) == SQLITE_OK else {
+            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 11)
+        }
+        defer { sqlite3_close(database) }
+        let statements = [
+            "CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            "INSERT INTO metadata(key,value) VALUES('schema_version','1');",
+            "CREATE TABLE records (kind TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT, item_id TEXT, payload TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,id));",
+            "INSERT INTO records(kind,id,item_id,payload) VALUES('item','item-v1','item-v1','{\"id\":\"item-v1\",\"title\":\"Version One Item\",\"mediaType\":\"text\",\"text\":\"Still here.\",\"status\":\"ready\"}');",
+            "INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES('session','session-v1','session-v1','item-v1','{\"id\":\"session-v1\",\"itemId\":\"item-v1\",\"status\":\"in_progress\",\"phase\":\"item_playback\",\"currentTargetType\":\"item_text_tts\",\"currentTargetId\":\"item-v1\",\"position\":{\"charOffset\":40},\"completionPercent\":50,\"playbackRate\":1}','2026-07-19 08:00:00');"
+        ]
+        for sql in statements {
+            guard sqlite3_exec(database, sql, nil, nil, nil) == SQLITE_OK else {
+                throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 12)
             }
         }
     }
@@ -400,24 +463,11 @@ final class SQLiteSessionStoreSafetyTests: XCTestCase {
         }
     }
 
-    private func rawPayload(path: String, kind: String, id: String) throws -> String {
-        var database: OpaquePointer?
-        guard sqlite3_open(path, &database) == SQLITE_OK else {
-            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 9)
-        }
-        defer { sqlite3_close(database) }
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(database, "SELECT payload FROM records WHERE kind = ? AND id = ?;", -1, &statement, nil) == SQLITE_OK else {
-            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 10)
-        }
-        defer { sqlite3_finalize(statement) }
-        sqlite3_bind_text(statement, 1, kind, -1, testSQLiteTransient)
-        sqlite3_bind_text(statement, 2, id, -1, testSQLiteTransient)
-        guard sqlite3_step(statement) == SQLITE_ROW,
-              let value = sqlite3_column_text(statement, 0) else {
-            throw NSError(domain: "SQLiteSessionStoreSafetyTests", code: 11)
-        }
-        return String(cString: value)
+    private func existingVersionFiveRows(path: String) throws -> [[String?]] {
+        try StoreRawSQL.rows(
+            "SELECT kind, id, session_id, item_id, payload, updated_at FROM records WHERE id != ? ORDER BY kind, id;",
+            bindings: ["item-sharing-import"], at: path
+        )
     }
 
     private func recordExists(path: String, kind: String, id: String) throws -> Bool {

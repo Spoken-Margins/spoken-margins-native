@@ -38,6 +38,13 @@ final class MarginNoteDeliveryTests: XCTestCase {
         )
     }
 
+    func testAnItemNoteFolderCountsItemNotes() {
+        XCTAssertEqual(
+            MarginNoteDelivery.statusLine(.init(saved: 1), folderName: "Vault", checkedAt: "9:00 AM", noun: ("item note", "item notes")),
+            "1 item note saved to Vault. Last checked 9:00 AM."
+        )
+    }
+
     func testRealFailuresStillNeedAttention() {
         XCTAssertEqual(
             MarginNoteDelivery.failureMessage(.init(saved: 1, failures: ["The folder is read-only."])),

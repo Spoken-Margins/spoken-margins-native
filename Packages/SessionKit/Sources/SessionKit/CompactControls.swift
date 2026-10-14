@@ -48,6 +48,10 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     public var skimBridgeState: SkimBridgeState?
     public var canSkimForward: Bool
     public var canSkimBackward: Bool
+    /// Where Skim forward and back would land, so the Lock Screen can say it (#115). Nil when
+    /// that Skim isn't available. Optional, so a snapshot encoded without them still decodes.
+    public var skimForwardDestinationMs: Int?
+    public var skimBackwardDestinationMs: Int?
 
     public init(
         sessionId: String?,
@@ -78,7 +82,9 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         surfaceProfileId: String,
         skimBridgeState: SkimBridgeState? = nil,
         canSkimForward: Bool = false,
-        canSkimBackward: Bool = false
+        canSkimBackward: Bool = false,
+        skimForwardDestinationMs: Int? = nil,
+        skimBackwardDestinationMs: Int? = nil
     ) {
         self.sessionId = sessionId
         self.itemId = itemId
@@ -109,6 +115,32 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
         self.skimBridgeState = skimBridgeState
         self.canSkimForward = canSkimForward
         self.canSkimBackward = canSkimBackward
+        self.skimForwardDestinationMs = skimForwardDestinationMs
+        self.skimBackwardDestinationMs = skimBackwardDestinationMs
+    }
+}
+
+extension CompactControlCommand {
+    /// The commands a headphone click, a car button or the Lock Screen sends. While a Margin records,
+    /// the listener's hands are busy and any of them means "that's the Margin" (#1030).
+    public var endsRecordingMargin: Bool {
+        switch self {
+        case .play, .pause, .togglePlayPause, .skipForward:
+            return true
+        case .skipBack, .skimBackward, .skimForward, .seekToMediaTime, .setPlaybackRate, .jumpToChapter,
+             .beginInterjection, .finishInterjection, .cancelInterjection, .generateInterjectionSummary,
+             .submitFollowup:
+            return false
+        }
+    }
+}
+
+extension CompactControlSnapshot {
+    /// A Margin is recording and this surface may finish it, so the system transport commands must reach
+    /// the app and end the Margin. Now Playing keeps them enabled for that; disabled, iOS never delivers
+    /// the headphone click and the Margin can't be ended without touching the screen (#1030).
+    public var transportCommandsEndMargin: Bool {
+        isRecording && availableCommands.contains(.finishInterjection)
     }
 }
 
@@ -188,6 +220,19 @@ public final class CompactControlDispatcher {
         followUpText: String? = nil,
         summaryScope: SummaryScope? = nil
     ) throws -> CompactControlResult {
+        // While a start is pending the system card shows Play, because its clock must not run (#943).
+        // Before that change the card showed Pause and a tap cancelled the load, so a Play tap during a
+        // pending start still cancels it: the listener asked to stop waiting, not to start again.
+        // The same holds when playing audio has stalled for the network: the adapter publishes rate 0
+        // (Play glyph) while the engine still says playing, and `validate` would refuse that Play.
+        if command == .play,
+           canonicalRuntime.snapshot.status == .starting
+            || (canonicalRuntime.snapshot.status == .playing
+                && canonicalRuntime.currentPlaybackTransportState() == .waiting),
+           surfaceProfile.has("remoteControl", "send_transport_commands") {
+            let paused = try canonicalRuntime.pause()
+            return CompactControlResult(snapshot: compactSnapshot(from: paused), delegatedToCanonicalRuntime: true)
+        }
         try validate(command)
         let updated: SessionSnapshot
         switch command {

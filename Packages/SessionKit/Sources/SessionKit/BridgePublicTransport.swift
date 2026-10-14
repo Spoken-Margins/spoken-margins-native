@@ -5,7 +5,9 @@ import Foundation
 /// Public requests carry no install identity, cookies or credentials. Refuse all
 /// redirects, including to another path on our host, and stop reading at the cap.
 public enum BridgePublicTransport {
-    static func configuration() -> URLSessionConfiguration {
+    /// `resourceTimeout` caps the whole download. The 30-second default suits config and manifest files;
+    /// a caller allowed megabytes passes a longer one. The 15-second idle timeout stays either way.
+    static func configuration(resourceTimeout: TimeInterval = 30) -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.urlCache = nil
         configuration.httpCookieStorage = nil
@@ -13,7 +15,7 @@ public enum BridgePublicTransport {
         configuration.urlCredentialStorage = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 15
-        configuration.timeoutIntervalForResource = 30
+        configuration.timeoutIntervalForResource = resourceTimeout
         return configuration
     }
 
@@ -52,12 +54,17 @@ private final class BridgePublicSessionDelegate: NSObject, URLSessionTaskDelegat
 /// host but the pinned one.
 public enum CommunityMapTransport {
     public static func post(_ url: URL, _ body: Data) async throws -> Int {
+        try await post(url, body, configuration: BridgePublicTransport.configuration())
+    }
+
+    // Injectable only inside SessionKit/tests; the app always uses the anonymous configuration.
+    static func post(_ url: URL, _ body: Data, configuration: URLSessionConfiguration) async throws -> Int {
         guard BridgeManifestPolicy.production.isTrusted(url) else { throw BridgeRefreshError.untrustedURL }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
-        let session = URLSession(configuration: BridgePublicTransport.configuration(), delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
+        let session = URLSession(configuration: configuration, delegate: BridgePublicSessionDelegate(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let (_, response) = try await session.data(for: request)
         return (response as? HTTPURLResponse)?.statusCode ?? 0

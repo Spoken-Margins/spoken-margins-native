@@ -9,13 +9,25 @@ extension Gate1AppModel {
     /// can't be read (a row that no longer decodes still counts), nothing is removed: a recording is only
     /// deleted once no remaining Margin is known to use it. Only files under `SpokenMargins/`, where the
     /// recorder keeps them, are ever removed.
-    func removeMarginRecordings(_ deleted: [Interjection], store: SQLiteSessionStore) {
-        guard !deleted.isEmpty,
+    ///
+    /// `quarantinedAudioPaths` are the recordings of the item's Margins that were set aside because they
+    /// couldn't be decoded (`SQLiteSessionStore.quarantinedMarginAudioPaths`, read before the delete, #1466).
+    func removeMarginRecordings(_ deleted: [Interjection], quarantinedAudioPaths: [String] = [], store: SQLiteSessionStore) {
+        let deletedAudioPaths = deleted.compactMap(\.audioPath) + quarantinedAudioPaths
+        guard !deletedAudioPaths.isEmpty,
               let surviving = try? store.allMarginAudioPaths(),
               let supportDirectory = try? applicationSupportDirectory() else { return }
+        let recordings = supportDirectory.appending(path: "SpokenMargins", directoryHint: .isDirectory)
+        // The leveled playback copies (#467) are the same voice. They are found by the recording's content,
+        // so they go before the recording does.
+        for file in MarginRecordingCleanup.filesToRemove(
+            deletedAudioPaths: deletedAudioPaths, survivingAudioPaths: surviving, within: recordings,
+            resolve: resolvedInterjectionAudioURL(for:)
+        ) {
+            Self.leveledMargins.removeCopies(of: file)
+        }
         MarginRecordingCleanup.removeFiles(
-            deleted: deleted, survivingAudioPaths: surviving,
-            within: supportDirectory.appending(path: "SpokenMargins", directoryHint: .isDirectory),
+            deletedAudioPaths: deletedAudioPaths, survivingAudioPaths: surviving, within: recordings,
             resolve: resolvedInterjectionAudioURL(for:)
         )
     }

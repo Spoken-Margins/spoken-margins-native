@@ -6,7 +6,23 @@ import SessionKitPersistence
 
 @MainActor
 final class ListeningSignalsCoordinatorTests: XCTestCase {
+    /// #1340: the refresh is the test's own, awaited, after the model's launch refresh has landed.
+    /// It used to start an unstructured refresh that a still-running launch refresh could swallow,
+    /// and the swallowed run left the cached "no source" context in place. Since the collector keys
+    /// on the item's own source fields, this case checks the refresh path still ends in a correct
+    /// export; the no-refresh case below is the one that guards the collector.
     func testFollowingAnExistingSubscriptionRefreshesACachedMissingItemRelationship() async throws {
+        try await checkAnItemThatGainsAFollowedSource(refreshing: true)
+    }
+
+    /// The collector alone: the item gains the followed source's URL while the subscriptions stay as
+    /// they were, and nothing refreshes. This is the case that fails without the collector keying
+    /// its cache on the item's own source fields (#1340).
+    func testAnItemThatGainsAFollowedSourceIsCreditedWithoutAnyRefresh() async throws {
+        try await checkAnItemThatGainsAFollowedSource(refreshing: false)
+    }
+
+    private func checkAnItemThatGainsAFollowedSource(refreshing: Bool) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -24,21 +40,27 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
         let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
         model.listeningSignals = signals
+        // The model's launch refresh reassigns feedSubscriptions, which ends listening. Let it
+        // land before the window under test, so it can't end the interval half way through.
+        let launchDeadline = Date().addingTimeInterval(10)
+        while model.diagnostics["followedSourceCount"] == nil || model.isRefreshingFollowedSources, Date() < launchDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertNotNil(model.diagnostics["followedSourceCount"], "the launch refresh landed before playback")
         signals.playbackProgress(itemId: item.id, status: .playing)
         _ = await signals.exportFileURL() // The same collector has cached a missing relationship.
         item.sourceURL = subscription.source.canonicalURL
         try store.saveItem(item)
-        // Publishing the followed-source refresh must invalidate item relationships too, even
-        // when the already-followed subscription itself did not change. The entry is a refresh
-        // completion marker; it is not the listened item and cannot provide its context.
-        try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
-            canonicalURL: "https://publisher.example/other", title: "Other", state: .unseen))
-        model.refreshFollowedSources(force: false)
-        let deadline = Date().addingTimeInterval(5)
-        while !model.followedSourceEntries.contains(where: { $0.id == "refresh-marker" }), Date() < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        if refreshing {
+            // Publishing the followed-source refresh must invalidate item relationships too, even
+            // when the already-followed subscription itself did not change. The entry is a refresh
+            // completion marker; it is not the listened item and cannot provide its context.
+            try store.saveFeedEntry(FeedEntry(id: "refresh-marker", subscriptionId: subscription.id,
+                canonicalURL: "https://publisher.example/other", title: "Other", state: .unseen))
+            XCTAssertFalse(model.isRefreshingFollowedSources, "a refresh already running would swallow this one")
+            await model.performFollowedSourceRefresh(force: false)
+            XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
         }
-        XCTAssertTrue(model.followedSourceEntries.contains { $0.id == "refresh-marker" })
         XCTAssertEqual(try store.loadFeedSubscriptions(), originalSubscriptions)
         signals.playbackProgress(itemId: item.id, status: .playing)
         try await Task.sleep(for: .milliseconds(1_100))
@@ -51,6 +73,54 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
             return XCTFail("confirmed playing after relationship refresh must be exported")
         }
         XCTAssertGreaterThanOrEqual(seconds, 1, "the recorder rounds real elapsed time to tenths")
+        model.endSession()
+    }
+
+    /// The model's own playback ticker turns confirmed playing into listening time (#1129, PERSIST-06).
+    /// ListeningSignalMergeIntegrationTests checks the source text; this drives Gate1AppModel and
+    /// reads the rows. Nothing here calls the coordinator's playbackProgress: only the tick does.
+    func testThePlaybackTickerRecordsListeningTimeForAFollowedItem() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = root.appendingPathComponent("ticker.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: database.path)
+        let subscription = FeedSubscription(id: "followed", source: SourceIdentity(id: "publication", kind: .articleFeed,
+            canonicalURL: "https://publisher.example/feed", host: "publisher.example", title: "Publisher"), lastRefreshAt: Date())
+        try store.saveFeedSubscription(subscription)
+        var item = try store.loadItem(id: "item-pill")
+        item.externalReference = nil
+        item.sourceURL = subscription.source.canonicalURL
+        try store.saveItem(item)
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let signals = ListeningSignalsCoordinator(recorder: recorder, repository: { store })
+        model.listeningSignals = signals
+
+        // The launch refresh of followed sources reassigns feedSubscriptions, which ends the
+        // listening interval; let it land before playback so it doesn't split the window.
+        let deadline = Date().addingTimeInterval(10)
+        while model.diagnostics["followedSourceCount"] != "1" || model.isRefreshingFollowedSources, Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(model.diagnostics["followedSourceCount"], "1", "the launch refresh saw the followed source")
+
+        model.startItem(id: "item-pill")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        try await Task.sleep(for: .milliseconds(3_600)) // about seven 500 ms ticks
+        XCTAssertEqual(model.snapshot.status, .playing, "every tick saw confirmed playing")
+
+        let exported = await signals.exportFileURL()
+        let rows = exported.map(ListeningSignalRecorder.read) ?? []
+        XCTAssertFalse(rows.isEmpty, "the ticker recorded no listening time")
+        XCTAssertEqual(Set(rows.map { $0.source.id }), [subscription.source.id], "rows are for the followed source")
+        // A late second refresh could still split the interval in two, so add the pieces up.
+        let seconds = rows.reduce(0.0) { total, row in
+            guard case .listened(let seconds) = row.event else { XCTFail("unexpected row \(row.event.name)"); return total }
+            return total + seconds
+        }
+        XCTAssertGreaterThanOrEqual(seconds, 1, "the first tick to the last spans about 3 s")
         model.endSession()
     }
 
@@ -109,7 +179,12 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         try await checkCompletion(compact: true)
     }
 
-    private func checkCompletion(compact: Bool) async throws {
+    /// #771 audit P3: a Margin a call cut short is a spoken Margin like any other, so it counts once.
+    func testAMarginCutShortByACallRecordsTheSpokenSignal() async throws {
+        try await checkCompletion(compact: false, interruptedByACall: true)
+    }
+
+    private func checkCompletion(compact: Bool, interruptedByACall: Bool = false) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -120,8 +195,9 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         try XCTUnwrap(buffer.floatChannelData)[0].initialize(repeating: 0, count: 48_000)
         try AVAudioFile(forWriting: audioURL, settings: format.settings).write(from: buffer)
         let database = root.appendingPathComponent("library.sqlite")
+        let savedFileRecorder = SavedFileRecordingClient(path: audioURL.path)
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
-            recordingClient: SavedFileRecordingClient(path: audioURL.path),
+            recordingClient: savedFileRecorder,
             interjectionTranscriptionHandler: { _ in "A saved Margin." }, databaseURLOverride: database)
         model.resetAndSeed()
         model.declineCurrentTerms()
@@ -141,7 +217,11 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         model.startItem(id: item.id)
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.snapshot.isRecording)
-        if compact { model.dispatchGate2CompactCommand(.finishInterjection) }
+        if interruptedByACall {
+            savedFileRecorder.onInterruption?(.interruptionBegan, 5)
+            for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertNotNil(model.diagnostics["lastMarginCutShort"])
+        } else if compact { model.dispatchGate2CompactCommand(.finishInterjection) }
         else { model.finishInterjection() }
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
@@ -160,8 +240,10 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
     }
 }
 
-private struct SavedFileRecordingClient: RecordingClient {
+private final class SavedFileRecordingClient: RecordingClient, RecordingInterruptionReporting, @unchecked Sendable {
     let path: String
+    var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
+    init(path: String) { self.path = path }
     func beginRecording() throws {}
     func finishRecording(audioRef: String?) throws -> String { path }
     func cancelRecording() throws {}

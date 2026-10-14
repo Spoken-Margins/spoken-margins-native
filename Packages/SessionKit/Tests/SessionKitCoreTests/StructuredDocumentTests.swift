@@ -63,9 +63,10 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(titleText.split(whereSeparator: \.isNewline).first.map(String.init),
                        "Listening to Papers: A Field Study")
         let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: doc, title: "Listening to Papers", itemId: "item"))
-        // The canonical map includes one front-matter span before the first
-        // section, rather than a chapter for each title or author line.
-        XCTAssertEqual(map.chapters.map(\.title), ["Front Matter", "1 Introduction"])
+        // No chapter for each title or author line, and none for the title page as a
+        // whole: it is the start of the first chapter (#1144).
+        XCTAssertEqual(map.chapters.map(\.title), ["1 Introduction"])
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc), [
             "Listening to Papers: A Field Study",
             "of Researchers",
@@ -191,6 +192,54 @@ final class StructuredDocumentTests: XCTestCase {
         XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first?.hasPrefix("Pittas et al."), true)
     }
 
+    private func citationLabels(_ body: [String], references: [String]?) -> [String] {
+        var lines = body.map { StructuredDocumentLine(text: $0, role: .body, pageIndex: 0) }
+        if let references {
+            lines.append(StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2))
+            lines += references.map { StructuredDocumentLine(text: $0, role: .reference, pageIndex: 1) }
+        }
+        let doc = document(lines)
+        let characters = Array(doc.text)
+        return doc.markers.map { String(characters[$0.range.start..<$0.range.end]) }
+    }
+
+    private let numberedReferences = (1...20).map { "\($0). Author \($0). Title. Journal. 2019." }
+
+    func testRoundBracketNumbersAreCitationsWhenTheReferenceListIsNumbered() {
+        // #138: "(17)" and "(3–5, 8)" were read aloud; [17] already was silent.
+        let body = ["Cells divide (17).", "This was shown before (3–5, 8).", "A range may use a hyphen (3-5) or spaces (3 – 5 , 8)."]
+        XCTAssertEqual(citationLabels(body, references: numberedReferences),
+                       ["(17)", "(3–5, 8)", "(3-5)", "(3 – 5, 8)"])
+        XCTAssertEqual(citationLabels(["Cells divide [17]."], references: ["[1] Ada.", "[2] Ben.", "[3] Dee."]), ["[17]"])
+        XCTAssertEqual(citationLabels(["Cells divide (3) here, and then (1)."], references: ["[1] Ada.", "[2] Ben.", "[3] Cy."]), ["(3)", "(1)"],
+                       "a lone (1) or (3) after a word is a citation; only neighbouring digits list things")
+        let doc = document([
+            StructuredDocumentLine(text: "Cells divide (17).", role: .body, pageIndex: 0),
+            StructuredDocumentLine(text: "References", role: .heading, pageIndex: 1, level: 2),
+        ] + numberedReferences.map { StructuredDocumentLine(text: $0, role: .reference, pageIndex: 1) })
+        XCTAssertEqual(StructuredDocumentSpeech.spokenLines(doc).first, "Cells divide.")
+    }
+
+    func testOrdinaryNumbersInParenthesesAreStillRead() {
+        let listed = numberedReferences
+        XCTAssertEqual(citationLabels(["We tested (1) speed and (2) accuracy."], references: listed), [])
+        XCTAssertEqual(citationLabels(["The effect was large, n = 12 (95% CI)."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Cells divide (17)."], references: nil), [], "no reference list")
+        XCTAssertEqual(citationLabels(["In 2019 (2) groups met."], references: nil), [])
+        XCTAssertEqual(citationLabels(["Cells divide (17)."], references: ["Ada A. Cells. J Biol. 2019.", "Ben B. Growth. 2020.", "Cy C. Mitosis. 2018."]),
+                       [], "author-year references are not numbered")
+        XCTAssertEqual(citationLabels(["Cells divide (40)."], references: listed), [], "no such entry")
+        XCTAssertEqual(citationLabels(["Substituting into Eq. (2), we get x. Also see Figure (3) and Table (4)."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Responses used a Likert scale (1–5); ages (10–15) were included. E = mc² (3)"], references: listed), [])
+        XCTAssertEqual(citationLabels(["Aims were (1), (2) and (3) as follows.", "(2) Second item", "We counted (1) 5 patients."], references: listed), [])
+        let wrapped = ["1. Ada A. Cells. J Biol.", "45 (2):100–5.", "2. Ben B. Growth.", "10 mg doses were given.", "3. Cy C. Mitosis."]
+        XCTAssertEqual(citationLabels(["Cells divide (17)."], references: wrapped), [], "wrapped lines do not make a 45-entry list")
+        XCTAssertEqual(citationLabels(["(17) is the question."], references: listed), [], "nothing before it to cite")
+        XCTAssertEqual(citationLabels(["The year (2020) began."], references: listed), [])
+        XCTAssertEqual(citationLabels(["Cells divide (2)."], references: Array(numberedReferences.prefix(2))), [], "two entries are not a list")
+        XCTAssertEqual(citationLabels(["Cells divide (4)."], references: Array(numberedReferences.suffix(10))), [], "a list that does not start at 1")
+    }
+
     func testDocumentRoundTripsAsI13JSON() throws {
         let doc = document([StructuredDocumentLine(text: "Body [1].", role: .body, pageIndex: 0)])
         let json = try JSONEncoder().encode(doc)
@@ -232,5 +281,132 @@ final class StructuredDocumentTests: XCTestCase {
         let anchored = document([StructuredDocumentLine(text: "Body.", role: .body, pageIndex: 0, outlineEntries: [.init(title: "A", level: 1)])])
         let roundTrip = try JSONDecoder().decode(StructuredDocument.self, from: JSONEncoder().encode(anchored))
         XCTAssertEqual(roundTrip.outline, [StructuredDocument.OutlineAnchor(title: "A", level: 1, start: 0)])
+    }
+
+    // MARK: The title page before the first chapter (#1144)
+
+    private func sections(_ titles: [String], level: Int = 3, page: Int = 2) -> [StructuredDocumentLine] {
+        titles.flatMap { title in [
+            StructuredDocumentLine(text: title, role: .heading, pageIndex: page, level: level),
+            StructuredDocumentLine(text: "This section of the paper has ordinary prose about \(title).", role: .body, pageIndex: page),
+        ] }
+    }
+
+    private let titlePage: [StructuredDocumentLine] = [
+        StructuredDocumentLine(text: "What if automating AI R&D", role: .title, pageIndex: 0, level: 1),
+        StructuredDocumentLine(text: "triggers an intelligence", role: .title, pageIndex: 0, level: 1),
+        StructuredDocumentLine(text: "explosion?", role: .title, pageIndex: 0, level: 1),
+        StructuredDocumentLine(text: "Frontier AI Working Paper Series No. 2/2026", role: .frontMatter, pageIndex: 0),
+        StructuredDocumentLine(text: "September 2026", role: .frontMatter, pageIndex: 0),
+        StructuredDocumentLine(text: "What if automating AI R&D triggers an", role: .frontMatter, pageIndex: 1),
+        StructuredDocumentLine(text: "intelligence explosion?", role: .frontMatter, pageIndex: 1),
+        StructuredDocumentLine(text: "Alan Chan* GovAI", role: .authors, pageIndex: 1),
+        StructuredDocumentLine(text: "Christoph Winter CASP, University of Cambridge", role: .frontMatter, pageIndex: 1),
+        StructuredDocumentLine(text: "Jack Clark Anthropic", role: .authors, pageIndex: 1),
+    ]
+
+    private let paperTitle = "What if automating AI R&D triggers an intelligence explosion?"
+    private let paperSections = ["Introduction", "AI is rapidly automating AI R&D",
+                                 "Automating AI R&D could trigger an intelligence explosion", "Societal impacts", "Conclusion"]
+
+    private func abstract(_ label: String, role: StructuredDocument.Role = .body) -> [StructuredDocumentLine] {
+        [
+            StructuredDocumentLine(text: label, role: role, pageIndex: 1, level: role == .heading ? 3 : nil),
+            StructuredDocumentLine(text: "In contrast to even a year ago, AI systems now write most of the code inside the companies", role: .body, pageIndex: 1),
+            StructuredDocumentLine(text: "that build them.", role: .body, pageIndex: 1),
+        ]
+    }
+
+    func testTheRealPapersTitlePageIsPartOfAnAbstractChapter() throws {
+        // The Test Desk's chapter list on next 6a22bb8 began "Front Matter", which held the
+        // title, the series line, the repeated title, the authors and the abstract.
+        let doc = document(titlePage + abstract("Abstract") + sections(paperSections))
+        let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: doc, title: paperTitle, itemId: "item"))
+        XCTAssertEqual(map.chapters.map(\.title), ["Abstract"] + paperSections)
+        XCTAssertEqual(map.chapters.first?.startChar, 0, "the title page is heard at the start of the first chapter")
+        let characters = Array(doc.text)
+        let introduction = try XCTUnwrap(map.chapters.dropFirst().first)
+        XCTAssertEqual(String(characters[introduction.startChar...].prefix(12)), "Introduction")
+        XCTAssertEqual(map.chapters.first?.endChar, introduction.startChar)
+    }
+
+    func testNeighbouringTitlePagesBeforeTheFirstChapter() throws {
+        let numbered = sections(["1 Introduction", "2 Methods"], level: 2)
+        let rows: [(String, [StructuredDocumentLine], [String])] = [
+            ("no abstract label: the title page folds into the first chapter",
+             titlePage + numbered, ["1 Introduction", "2 Methods"]),
+            ("upper case label", titlePage + abstract("ABSTRACT") + numbered, ["ABSTRACT", "1 Introduction", "2 Methods"]),
+            ("letter-spaced label", titlePage + abstract("A B S T R A C T") + numbered, ["ABSTRACT", "1 Introduction", "2 Methods"]),
+            ("label with a colon", titlePage + abstract("Abstract:") + numbered, ["Abstract", "1 Introduction", "2 Methods"]),
+            ("label with spaces around it", titlePage + abstract("  Abstract  ") + numbered, ["Abstract", "1 Introduction", "2 Methods"]),
+            ("Summary label", titlePage + abstract("Summary") + numbered, ["Summary", "1 Introduction", "2 Methods"]),
+            ("the label is already a heading", titlePage + abstract("Abstract", role: .heading) + numbered,
+             ["Abstract", "1 Introduction", "2 Methods"]),
+            ("a sentence that starts with Summary is prose, not a label",
+             titlePage + abstract("Summary statistics are reported below for every cohort we studied.") + numbered,
+             ["Front Matter", "1 Introduction", "2 Methods"]),
+            ("a run-in label is prose too", titlePage + abstract("Abstract—We study how AI R&D is automated.") + numbered,
+             ["Front Matter", "1 Introduction", "2 Methods"]),
+            ("an unlabelled abstract stays Front Matter", titlePage + abstract("We study how AI R&D is automated and what follows.") + numbered,
+             ["Front Matter", "1 Introduction", "2 Methods"]),
+            ("text before the label stays Front Matter",
+             titlePage + [StructuredDocumentLine(text: "Highlights of this working paper for busy readers.", role: .body, pageIndex: 1)]
+                + abstract("Abstract") + numbered,
+             ["Front Matter", "1 Introduction", "2 Methods"]),
+            ("an Abstract line after the first chapter is not a chapter",
+             titlePage + sections(["1 Introduction"], level: 2) + abstract("Abstract") + sections(["2 Methods"], level: 2),
+             ["1 Introduction", "2 Methods"]),
+            ("no title page: the first heading starts at zero",
+             sections(["1 Introduction", "2 Methods"], level: 2), ["1 Introduction", "2 Methods"]),
+        ]
+        for (name, lines, expected) in rows {
+            let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: document(lines), title: paperTitle, itemId: "item"), name)
+            XCTAssertEqual(map.chapters.map(\.title), expected, name)
+            XCTAssertEqual(map.chapters.first?.startChar, 0, name)
+        }
+    }
+
+    func testAbstractChapterTakesTheShallowestHeadingLevel() throws {
+        // Five level-2 sections make level 2 the chapter level; an Abstract at a deeper level
+        // would be left out, and the abstract would be heard as part of the title page again.
+        let five = sections(["1 Introduction", "2 Background", "3 Methods", "4 Results", "5 Discussion"], level: 2)
+        let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(
+            for: document(titlePage + abstract("Abstract") + sections(["Notation"], level: 3, page: 1) + five),
+            title: paperTitle, itemId: "item"))
+        XCTAssertEqual(map.chapters.first?.title, "Abstract")
+        XCTAssertEqual(map.chapters.count, 6)
+    }
+
+    func testTheAbstractChapterNeverChangesTheChapterDepth() throws {
+        // Review of the first fix: counting the Abstract as a heading tipped four level-2
+        // sections over the five-chapter depth rule, and their subsections were dropped.
+        let nested = (1...4).flatMap { n in
+            sections(["\(n) Section"], level: 2) + sections(["\(n).1 Part", "\(n).2 Part"], level: 3)
+        }
+        let nestedTitles = (1...4).flatMap { ["\($0) Section", "\($0).1 Part", "\($0).2 Part"] }
+        let five = sections(["1 Introduction", "2 Background", "3 Methods", "4 Results", "5 Discussion"], level: 2)
+        let contents = ["Contents", "1 Introduction ..... 2", "2 Methods ..... 3"].map {
+            StructuredDocumentLine(text: $0, role: .frontMatter, pageIndex: 1)
+        }
+        let numbered = sections(["1 Introduction", "2 Methods"], level: 2)
+        let rows: [(String, [StructuredDocumentLine], [String])] = [
+            ("four sections with subsections keep their subsections",
+             titlePage + abstract("Abstract") + nested, ["Abstract"] + nestedTitles),
+            ("an Abstract heading deeper than the chapter level still starts the chapters",
+             titlePage + abstract("Abstract", role: .heading) + five,
+             ["Abstract", "1 Introduction", "2 Background", "3 Methods", "4 Results", "5 Discussion"]),
+            ("a contents page is front matter, not title page",
+             contents + numbered, ["Front Matter", "1 Introduction", "2 Methods"]),
+            ("a contents page after the title page is front matter too",
+             titlePage + contents + numbered, ["Front Matter", "1 Introduction", "2 Methods"]),
+            ("TABLE OF CONTENTS in capitals",
+             titlePage + [StructuredDocumentLine(text: "TABLE OF CONTENTS", role: .frontMatter, pageIndex: 1)] + Array(contents.dropFirst()) + numbered,
+             ["Front Matter", "1 Introduction", "2 Methods"]),
+        ]
+        for (name, lines, expected) in rows {
+            let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: document(lines), title: paperTitle, itemId: "item"), name)
+            XCTAssertEqual(map.chapters.map(\.title), expected, name)
+            XCTAssertEqual(map.chapters.first?.startChar, 0, name)
+        }
     }
 }

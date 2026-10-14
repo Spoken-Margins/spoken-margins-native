@@ -23,59 +23,75 @@ struct ExperienceSourcesScreen: View {
     @State private var focusFeedURLOnManage = false
     /// Each followed show's artwork (#773), read from the coordinator's side file.
     @State private var artwork = FollowingArtworkCache()
+    /// The swipe hint shows once, ever (#478); a per-viewer flag. It stays up for the rest of that visit.
+    @AppStorage("following.swipeHintSeen") private var swipeHintSeen = false
+    @State private var swipeHintShownThisVisit = false
+    /// The place in the list, kept by the root view because opening an entry destroys this screen (#479).
+    @Binding var scrollMemory: FollowingScrollMemory
+    /// Follows the top entry without redrawing the screen on every row that scrolls by (#479).
+    @State private var scrollTracker = FollowingScrollTracker()
+    @State private var restoredScroll = false
 
     var body: some View {
         NavigationStack {
-            List {
-                // An item's Follow can find several feeds; the choice shows here too, not only on Manage Feeds.
-                if !model.followedSourceCandidates.isEmpty {
-                    VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
-                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
-                }
-                manageFeedsRow
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                filterBar
-                    .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
-                inbox
-            }
-            .background(AppColors.bone)
-            .scrollContentBackground(.hidden)
-            .listStyle(.plain)
-            .animation(.smooth(duration: 0.24), value: filteredCandidates.map(\.id))
-            .accessibilityIdentifier("sources.screen")
-            .navigationTitle("Following")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openSettings) {
-                        Image(systemName: "gearshape").frame(width: 44, height: 44)
+            ScrollViewReader { proxy in
+                List {
+                    // An item's Follow can find several feeds; the choice shows here too, not only on Manage Feeds.
+                    if !model.followedSourceCandidates.isEmpty {
+                        VStack(alignment: .leading, spacing: 10) { FollowCandidateChoices() }
+                            .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
                     }
-                    .accessibilityLabel("Settings")
+                    manageFeedsRow
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    filterBar
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                    inbox
                 }
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button(action: { model.refreshQuickAddFeed() }) {
-                        if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                .onChange(of: candidateIDs, initial: true) { _, ids in
+                    scrollTracker.order = ids
+                    restoreScroll(in: ids, using: proxy)
+                }
+                .onAppear { if restoredScroll { scrollTracker.thaw() } }
+                .onDisappear { rememberScroll() }
+                .background(AppColors.bone)
+                .scrollContentBackground(.hidden)
+                .listStyle(.plain)
+                .animation(.smooth(duration: 0.24), value: orderedCandidates.map(\.id))
+                .accessibilityIdentifier("sources.screen")
+                .navigationTitle("Following")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: model.openSettings) {
+                            Image(systemName: "gearshape").frame(width: 44, height: 44)
+                        }
+                        .accessibilityLabel("Settings")
                     }
-                    .frame(minWidth: 44, minHeight: 44)
-                    .disabled(model.isRefreshingQuickAddFeed)
-                    .accessibilityLabel("Refresh Sources")
-                    .accessibilityIdentifier("quickAdd.refresh.button")
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button(action: { model.refreshQuickAddFeed() }) {
+                            if model.isRefreshingQuickAddFeed { ProgressView() } else { Image(systemName: "arrow.clockwise") }
+                        }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .disabled(model.isRefreshingQuickAddFeed)
+                        .accessibilityLabel("Refresh Sources")
+                        .accessibilityIdentifier("quickAdd.refresh.button")
+                    }
                 }
-            }
-            .navigationDestination(isPresented: $isManagingFeeds) {
-                ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
-            }
-            .task { model.refreshQuickAddFeed(force: false) }
-            // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
-            .task { await catalogDrawer.loadSnapshot() }
-            // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
-            .task(id: ArtworkKey(
-                subscriptionIDs: model.feedSubscriptions.map(\.id),
-                hasCatalog: catalogDrawer.catalog != nil,
-                isRefreshing: model.isRefreshingFollowedSources
-            )) {
-                guard let coordinator = model.followedSourceCoordinator else { return }
-                artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
+                .navigationDestination(isPresented: $isManagingFeeds) {
+                    ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
+                }
+                .task { model.refreshQuickAddFeed(force: false) }
+                // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
+                .task { await catalogDrawer.loadSnapshot() }
+                // Re-read the artwork when the shows, the catalog or a refresh changes it (#773).
+                .task(id: ArtworkKey(
+                    subscriptionIDs: model.feedSubscriptions.map(\.id),
+                    hasCatalog: catalogDrawer.catalog != nil,
+                    isRefreshing: model.isRefreshingFollowedSources
+                )) {
+                    guard let coordinator = model.followedSourceCoordinator else { return }
+                    artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
+                }
             }
         }
     }
@@ -182,7 +198,7 @@ struct ExperienceSourcesScreen: View {
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
             }
 
-            if filteredCandidates.isEmpty {
+            if orderedCandidates.isEmpty {
                 SMExperienceEmptyState(
                     systemImage: "tray",
                     title: "You’re caught up",
@@ -194,16 +210,22 @@ struct ExperienceSourcesScreen: View {
                 }
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)
             } else {
-                ForEach(filteredCandidates) { candidate in
-                    SourceInboxRow(candidate: candidate, artwork: artwork)
-                        .listRowInsets(EdgeInsets(
-                            top: 0,
-                            leading: horizontalSizeClass == .regular ? 28 : 16,
-                            bottom: 0,
-                            trailing: horizontalSizeClass == .regular ? 28 : 16
-                        ))
-                        .listRowSeparator(.hidden)
-                        .listRowBackground(AppColors.bone)
+                if showsSwipeHint {
+                    swipeHint
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
+                ForEach(orderedCandidates) { row in
+                    SourceInboxRow(candidate: row.candidate, artwork: artwork)
+                    .listRowInsets(EdgeInsets(
+                        top: 0,
+                        leading: horizontalSizeClass == .regular ? 28 : 16,
+                        bottom: 0,
+                        trailing: horizontalSizeClass == .regular ? 28 : 16
+                    ))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(AppColors.bone)
+                    .onAppear { scrollTracker.rowChanged(row.id, isVisible: true) }
+                    .onDisappear { scrollTracker.rowChanged(row.id, isVisible: false) }
                 }
             }
         } header: {
@@ -212,13 +234,24 @@ struct ExperienceSourcesScreen: View {
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
                 Spacer()
-                Text("\(filteredCandidates.count)")
+                Text("\(orderedCandidates.count)")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(AppColors.secondaryText)
             }
             .textCase(nil)
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
         }
+    }
+
+    private struct OrderedCandidate: Identifiable {
+        var candidate: QuickAddCandidate
+        var id: String { candidate.id }
+    }
+
+    /// The filtered inbox, newest first as the model lists it. The Top order (#484) is off until it
+    /// picks entries worth listening to (#1440); `FollowingRanker` stays in SessionKit for it.
+    private var orderedCandidates: [OrderedCandidate] {
+        filteredCandidates.map { OrderedCandidate(candidate: $0) }
     }
 
     private var filteredCandidates: [QuickAddCandidate] {
@@ -232,7 +265,50 @@ struct ExperienceSourcesScreen: View {
         }
     }
 
+    /// Shown the first time Following lists entries, and for the rest of that visit (#478).
+    private var showsSwipeHint: Bool { !swipeHintSeen || swipeHintShownThisVisit }
+
+    private var swipeHint: some View {
+        Label(FollowingRowActions.swipeHint, systemImage: "hand.draw")
+            .font(.footnote)
+            .foregroundStyle(AppColors.secondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("sources.swipeHint")
+            .onAppear {
+                swipeHintShownThisVisit = true
+                swipeHintSeen = true
+            }
+    }
+
     private var isNarrowed: Bool { kind != nil || subject != nil }
+
+    private var candidateIDs: [String] { orderedCandidates.map(\.id) }
+
+    /// Hands the place to the root view, which outlives this screen.
+    private func rememberScroll() {
+        scrollTracker.freeze()
+        guard let top = scrollTracker.topEntryID else { return }
+        scrollMemory = FollowingScrollMemory(topEntryId: top, order: candidateIDs)
+    }
+
+    /// Scrolls back to the remembered entry once, the first time the list has entries. The tracker
+    /// stays frozen until then, so the rows that appear at the top first don't overwrite the place.
+    private func restoreScroll(in ids: [String], using proxy: ScrollViewProxy) {
+        guard !restoredScroll, !ids.isEmpty else { return }
+        restoredScroll = true
+        guard let target = scrollMemory.restoreTarget(in: ids) else {
+            scrollTracker.thaw()
+            return
+        }
+        Task { @MainActor in
+            // After the list's first layout, or the scroll finds nothing to move.
+            try? await Task.sleep(for: .milliseconds(150))
+            // Not at the very top: the pinned "New" header covers the first row there.
+            proxy.scrollTo(target, anchor: UnitPoint(x: 0.5, y: 0.06))
+            try? await Task.sleep(for: .milliseconds(150))
+            scrollTracker.thaw()
+        }
+    }
 
     private struct ArtworkKey: Equatable {
         var subscriptionIDs: [String]
@@ -303,6 +379,9 @@ private struct ManageFeedsScreen: View {
     /// Following's empty state found no link on the clipboard, so the field opens ready for typing.
     let focusFeedURLOnAppear: Bool
     @State private var pendingUnfollowID: String?
+    private var pendingUnfollowTitle: String? {
+        model.feedSubscriptions.first { $0.id == pendingUnfollowID }.map { $0.source.title ?? $0.source.host }
+    }
     @State private var didFocusOnAppear = false
     @FocusState private var feedURLIsFocused: Bool
 
@@ -339,13 +418,13 @@ private struct ManageFeedsScreen: View {
         .accessibilityIdentifier("sources.manageFeeds.screen")
         .navigationTitle("Manage Feeds")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Unfollow this feed?", isPresented: Binding(
+        .confirmationDialog(FollowingRowActions.unfollowQuestion(showTitle: pendingUnfollowTitle), isPresented: Binding(
             get: { pendingUnfollowID != nil },
             set: { if !$0 { pendingUnfollowID = nil } }
         ), titleVisibility: .visible) {
             Button("Unfollow", role: .destructive) {
+                // The dialog clears pendingUnfollowID as it closes, so its title keeps the show's name.
                 if let id = pendingUnfollowID { model.unfollowSource(id: id) }
-                pendingUnfollowID = nil
             }
         } message: {
             Text("Items already in your Library will be kept.")
@@ -475,26 +554,25 @@ private struct SourceInboxRow: View {
     @EnvironmentObject private var model: Gate1AppModel
     let candidate: QuickAddCandidate
     let artwork: FollowingArtworkCache
+    @State private var confirmsUnfollow = false
 
     var body: some View {
         Button(action: addAndOpen) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 leadingImage
-                VStack(alignment: .leading, spacing: 5) {
+                // About the artwork's height (#884): two title lines and one line of show and length. A long
+                // title or show name truncates; it does not make the row taller.
+                VStack(alignment: .leading, spacing: 4) {
                     Text(title)
                         .font(.headline)
                         .foregroundStyle(AppColors.text)
                         .multilineTextAlignment(.leading)
+                        .lineLimit(2)
                     Text(provenance)
                         .font(.caption)
                         .foregroundStyle(AppColors.secondaryText)
-                    if let summary, !summary.isEmpty {
-                        Text(summary)
-                            .font(.subheadline)
-                            .foregroundStyle(AppColors.secondaryText)
-                            .multilineTextAlignment(.leading)
-                            .lineLimit(2)
-                    }
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 if isImporting {
@@ -510,7 +588,8 @@ private struct SourceInboxRow: View {
         }
         .buttonStyle(.plain)
         .disabled(isImporting)
-        .padding(14)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
         .background(AppColors.panel)
         .accessibilityIdentifier(identifier)
         .accessibilityLabel(accessibilityLabel)
@@ -526,9 +605,64 @@ private struct SourceInboxRow: View {
                 Label("Dismiss", systemImage: "xmark")
             }
             .tint(AppColors.plum)
+            // Second and not a full swipe: the first button above is the one a long swipe takes.
+            if subscription != nil {
+                Button { confirmsUnfollow = true } label: {
+                    Label("Unfollow", systemImage: "minus.circle")
+                }
+                .tint(AppColors.secondaryText)
+            }
+        }
+        .contextMenu {
+            Button(action: addInPlace) { Label("Add to Library", systemImage: "plus.circle") }
+            if isFeedEntry {
+                Button(action: playNow) { Label("Play now", systemImage: "play.fill") }
+            }
+            Button(action: dismiss) { Label("Dismiss", systemImage: "xmark") }
+            if let subscription {
+                Button { model.toggleMuteSource(id: subscription.id) } label: {
+                    Label(FollowingRowActions.muteTitle(showTitle: subscriptionTitle), systemImage: "speaker.slash")
+                }
+                Button(role: .destructive) { confirmsUnfollow = true } label: {
+                    Label(FollowingRowActions.unfollowTitle(showTitle: subscriptionTitle), systemImage: "minus.circle")
+                }
+            }
+        }
+        .confirmationDialog(
+            FollowingRowActions.unfollowQuestion(showTitle: subscriptionTitle),
+            isPresented: $confirmsUnfollow,
+            titleVisibility: .visible
+        ) {
+            Button("Unfollow", role: .destructive) {
+                if let subscription { model.unfollowSource(id: subscription.id) }
+            }
+        } message: {
+            Text("Items already in your Library will be kept.")
         }
         .accessibilityAction(named: "Add to Library", addAndOpen)
         .accessibilityAction(named: "Dismiss", dismiss)
+        .accessibilityActions {
+            // A Quick Folder file has no show to play from, mute or unfollow.
+            if let subscription {
+                Button("Play now", action: playNow)
+                Button("Mute this show") { model.toggleMuteSource(id: subscription.id) }
+                Button("Unfollow this show") { confirmsUnfollow = true }
+            }
+        }
+    }
+
+    /// The followed show this entry came from; nil for a Quick Folder file.
+    private var subscription: FeedSubscription? {
+        guard case .followedSource(let entry) = candidate else { return nil }
+        return model.feedSubscriptions.first { $0.id == entry.subscriptionId }
+    }
+
+    private var subscriptionTitle: String? {
+        subscription.map { $0.source.title ?? $0.source.host }
+    }
+
+    private var isFeedEntry: Bool {
+        if case .followedSource = candidate { true } else { false }
     }
 
     private var title: String {
@@ -536,11 +670,6 @@ private struct SourceInboxRow: View {
         case .localFile(let file): file.name
         case .followedSource(let entry): entry.title
         }
-    }
-
-    private var summary: String? {
-        if case .followedSource(let entry) = candidate { return entry.summary }
-        return nil
     }
 
     private var provenance: String {
@@ -635,6 +764,12 @@ private struct SourceInboxRow: View {
         }
     }
 
+    /// Adds the entry and starts it, landing on the playback screen (#478).
+    private func playNow() {
+        guard case .followedSource(let entry) = candidate else { return }
+        model.importFollowedSourceEntry(entry, playWhenFinished: true)
+    }
+
     private func addInPlace() {
         switch candidate {
         case .localFile(let file): model.importQuickAccessFile(file)
@@ -644,8 +779,81 @@ private struct SourceInboxRow: View {
 
     private func dismiss() {
         switch candidate {
-        case .localFile(let file): model.dismissQuickAccessFile(file)
+        case .localFile(let file): model.dismissQuickAccessFileWithUndo(file)
         case .followedSource(let entry): model.dismissFollowedSourceEntry(id: entry.id)
         }
+    }
+}
+
+/// Follows the entry at the top of Following's list as rows scroll by (#479). It is a class that no
+/// view observes, so a row coming and going costs a set update, not a redraw.
+///
+/// A change settles for a moment before it counts. The rows also disappear all at once when the
+/// screen goes away (opening an entry, another tab, the feed manager), and those disappearances
+/// must not slide the saved place down the list: `freeze` runs when the list disappears and drops
+/// what hasn't settled. It starts frozen, until the saved place has been restored.
+@MainActor
+private final class FollowingScrollTracker {
+    var order: [String] = []
+    private(set) var topEntryID: String?
+    private var visible = Set<String>()
+    private var isFrozen = true
+    private var settling: Task<Void, Never>?
+
+    func rowChanged(_ id: String, isVisible: Bool) {
+        if isVisible { visible.insert(id) } else { visible.remove(id) }
+        settling?.cancel()
+        settling = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            guard !Task.isCancelled, let self, !isFrozen,
+                  let top = FollowingScrollMemory.topEntry(visible: visible, order: order) else { return }
+            topEntryID = top
+        }
+    }
+
+    func freeze() {
+        isFrozen = true
+        settling?.cancel()
+    }
+
+    func thaw() { isFrozen = false }
+}
+
+/// Not used while the Top order is off (#1440). Pin, "Less of this show" and the I4 signals behind Following's Top order (#484). The log is
+/// read off the main thread; the preferences file is a few hundred bytes, read once when
+/// Following first appears and written on each change.
+@MainActor
+final class FollowingRankingModel: ObservableObject {
+    @Published private(set) var preferences = FollowingRankingModel.preferencesURL.map(FollowingPreferences.load(from:)) ?? FollowingPreferences()
+    @Published private(set) var signals: [String: FollowingSourceSignals] = [:]
+
+    /// The I4 log's directory: `ListeningSignalRecorder.defaultFileURL` (#483, PR #567) puts it
+    /// in Application Support/SpokenMargins/ListeningSignals. Pin and Less sit next to it.
+    nonisolated static var directory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appending(path: "SpokenMargins/ListeningSignals", directoryHint: .isDirectory)
+    }
+
+    nonisolated static var preferencesURL: URL? {
+        directory?.appending(path: FollowingPreferences.fileName, directoryHint: .notDirectory)
+    }
+
+    /// The I4 engagement log. Until #483's recorder writes it, there is no file, and Top is
+    /// newest-first plus Pin and Less.
+    nonisolated static var signalLogURL: URL? {
+        directory?.appending(path: "i4-engagement.jsonl", directoryHint: .notDirectory)
+    }
+
+    /// Each time Following appears, since the log keeps growing.
+    func load() async {
+        signals = await Task.detached(priority: .utility) {
+            Self.signalLogURL.map(FollowingSignalLog.signals(contentsOf:)) ?? [:]
+        }.value
+    }
+
+    func setMark(_ mark: FollowingPreferences.Mark?, for sourceID: String) {
+        preferences.setMark(mark, for: sourceID)
+        guard let url = Self.preferencesURL else { return }
+        try? preferences.save(to: url)
     }
 }

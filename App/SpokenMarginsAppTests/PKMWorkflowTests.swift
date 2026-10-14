@@ -2,6 +2,7 @@ import XCTest
 import SessionKit
 import SessionKitPersistence
 import AppIntents
+import SQLite3
 @testable import SpokenMarginsApp
 
 @MainActor
@@ -29,6 +30,36 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: files[0], encoding: .utf8), "My Obsidian edit")
         let delivered = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
         XCTAssertEqual(delivered.count, 2, "One conflict must not prevent independent delivery")
+    }
+
+    /// #587: an item note asks for its own file name and keeps the first one when the item is renamed, so completing
+    /// again rewrites the same file. A Margin note still gets `Margin-<digest>.md`, and a journal from an earlier build
+    /// (no file name in its entries) still decodes.
+    func testItemNotesKeepTheirFirstFileNameAndMarginNotesAreNamedAsBefore() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let folder = root.appendingPathComponent("vault")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let journal = root.appendingPathComponent("journal.json")
+        try Data(#"{"old:entry": {"previous": null, "intended": "abc"}}"#.utf8).write(to: journal)
+        let writer = AutomaticMarginWriter(journalURL: journal)
+        func names() throws -> [String] {
+            try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted()
+        }
+
+        _ = try await writer.deliver([
+            .init(id: "item:item-1", markdown: "First", fileName: "Old title — Margins 1a2b3c.md"),
+            .init(id: "session-a:margin-1", markdown: "A Margin"),
+        ], to: folder, destinationID: "vault")
+        XCTAssertEqual(try names(), ["Margin-\(ListeningEdition.digest("session-a:margin-1")).md", "Old title — Margins 1a2b3c.md"])
+
+        // The item was renamed and completed again, in a new app launch.
+        let restarted = AutomaticMarginWriter(journalURL: journal)
+        _ = try await restarted.deliver([
+            .init(id: "item:item-1", markdown: "Second", fileName: "New title — Margins 1a2b3c.md"),
+        ], to: folder, destinationID: "vault")
+        XCTAssertEqual(try names().count, 2, "no second copy under the new title")
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("Old title — Margins 1a2b3c.md"), encoding: .utf8), "Second")
     }
 
     /// Build 29 wrote Margin notes without a properties block (#491). The writer must rewrite its
@@ -115,6 +146,26 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(model.libraryItems.filter { $0.id == edition.itemID }.count, 1)
     }
 
+    func testShortcutIntentImportsFromJSONTextWithNoFile() async throws {
+        // #574: the share-sheet shortcut passes the edition's JSON, with no file picker.
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        let priorModel = ListeningEditionShortcutBridge.model
+        ListeningEditionShortcutBridge.model = model
+        defer { ListeningEditionShortcutBridge.model = priorModel }
+        let edition = ListeningEdition(title: "Shortcut text article", text: "Source " + UUID().uuidString,
+            generator: "Ask ChatGPT", overview: "Overview", scenes: [.init(title: "One", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        defer { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(edition.itemID)) }
+        let intent = ImportListeningEditionIntent()
+        intent.json = String(decoding: try edition.encoded(), as: UTF8.self)
+        _ = try await intent.perform()
+        XCTAssertEqual(model.selectedItem.id, edition.itemID)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID), edition)
+        let empty = ImportListeningEditionIntent()
+        do { _ = try await empty.perform(); XCTFail("an import with no file and no text must fail") }
+        catch { XCTAssertTrue((error as? EditionError)?.errorDescription?.contains("Assemble Listening Edition") == true) }
+    }
+
     // MARK: - Every spoken Margin reaches the notes folder (#171)
 
     private func spokenMargin(id: String, sessionId: String, itemId: String, transcript: String?) -> Interjection {
@@ -171,12 +222,20 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertFalse(written[0].contains("Transcript not available yet."))
     }
 
-    private func delivery(_ fixture: (root: URL, store: SQLiteSessionStore, folder: URL), statuses: @escaping @MainActor (MarginOutputStatus) -> Void = { _ in }) -> MarginNotesDelivery {
-        MarginNotesDelivery(
-            isEnabled: { true },
+    /// The one notes folder of Build 29, as a destination whose id is `vault`.
+    private func delivery(
+        _ fixture: (root: URL, store: SQLiteSessionStore, folder: URL),
+        recordGather: @escaping @MainActor (Int, Int, Int) -> Void = { _, _, _ in }
+    ) throws -> MarginOutputCoordinator {
+        let destinations = MarginOutputDestinationStore(fileURL: fixture.root.appendingPathComponent("destinations.json"))
+        if try destinations.load() == nil {
+            try destinations.save([MarginOutputDestination(id: "vault", name: "Vault", bookmark: try MarginOutputCoordinator.FolderAccess.live.makeBookmark(fixture.folder))])
+        }
+        return MarginOutputCoordinator(
+            store: { fixture.store },
             isRecording: { false },
-            target: { .init(store: fixture.store, folder: fixture.folder, destinationID: "vault") },
-            report: statuses,
+            recordGather: recordGather,
+            destinationStore: destinations,
             journalURL: { fixture.root.appendingPathComponent("journal.json") }
         )
     }
@@ -184,27 +243,57 @@ final class PKMWorkflowTests: XCTestCase {
     func testAMarginSavedJustBeforeBackgroundingIsWrittenExactlyOnce() async throws {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        var statuses: [String] = []
-        let delivery = delivery(fixture) { statuses.append($0.message) }
+        let delivery = try delivery(fixture)
         try fixture.store.saveInterjection(spokenMargin(id: "ij-001", sessionId: "session-episode", itemId: "item-episode", transcript: "Said just before switching apps."))
 
         try await XCTUnwrap(delivery.finishBeforeBackground()).value
 
-        XCTAssertEqual(try notes(in: fixture.folder).count, 1, statuses.joined(separator: "\n"))
+        XCTAssertEqual(try notes(in: fixture.folder).count, 1, delivery.statuses["vault"]?.message ?? "no status")
         // More passes, backgrounding again, and a relaunch with a fresh writer add nothing.
         await delivery.pass()
         try await XCTUnwrap(delivery.finishBeforeBackground()).value
-        await self.delivery(fixture).pass()
+        let relaunched = try self.delivery(fixture)
+        await relaunched.pass()
         let written = try notes(in: fixture.folder)
         XCTAssertEqual(written.count, 1)
         XCTAssertTrue(written[0].contains("Said just before switching apps."))
-        XCTAssertFalse(statuses.contains { $0.hasPrefix("Delivery needs attention") }, statuses.joined(separator: "\n"))
+        XCTAssertFalse(delivery.statuses["vault"]?.message.hasPrefix("Delivery needs attention") == true, delivery.statuses["vault"]?.message ?? "")
+        XCTAssertFalse(relaunched.statuses["vault"]?.message.hasPrefix("Delivery needs attention") == true)
+    }
+
+    /// #1192: a pass every minute used to rebuild every note, changed or not (37 passes, 142 s in 18 minutes).
+    func testAPassWithNothingNewBuildsNothingAndANewMarginBuildsOnlyItsNote() async throws {
+        let fixture = try notesFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        var gathers: [(sessions: Int, notes: Int)] = []
+        let delivery = try delivery(fixture) { _, sessions, notes in gathers.append((sessions, notes)) }
+        func ageEverything() {
+            var raw: OpaquePointer?
+            XCTAssertEqual(sqlite3_open(fixture.root.appendingPathComponent("library.sqlite").path, &raw), SQLITE_OK)
+            defer { sqlite3_close(raw) }
+            XCTAssertEqual(sqlite3_exec(raw, "UPDATE records SET updated_at = '2020-01-01 00:00:00';", nil, nil, nil), SQLITE_OK)
+        }
+        try fixture.store.saveInterjection(spokenMargin(id: "ij-001", sessionId: "session-episode", itemId: "item-episode", transcript: "First."))
+        await delivery.pass()
+        XCTAssertEqual(gathers.count, 1)
+        XCTAssertEqual(try notes(in: fixture.folder).count, 1)
+        ageEverything()
+
+        await delivery.pass()
+        await delivery.pass()
+        XCTAssertEqual(gathers.count, 1, "nothing changed, so no pass read any session")
+
+        try fixture.store.saveInterjection(spokenMargin(id: "ij-002", sessionId: "session-episode", itemId: "item-episode", transcript: "Second."))
+        await delivery.pass()
+        XCTAssertEqual(gathers.count, 2)
+        XCTAssertEqual(gathers.last?.sessions, 1)
+        XCTAssertEqual(try notes(in: fixture.folder).count, 2)
     }
 
     func testSavingAMarginStartsAPassWithinFiveSeconds() async throws {
         let fixture = try notesFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
-        let delivery = delivery(fixture)
+        let delivery = try delivery(fixture)
         try fixture.store.saveInterjection(spokenMargin(id: "ij-002", sessionId: "session-episode", itemId: "item-episode", transcript: "Quick."))
 
         let started = Date()
@@ -247,11 +336,20 @@ final class PKMWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("library.sqlite")
+        // Declining the Terms choice writes the voice into the app's shared preferences; put them back afterwards (#1448).
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
         let firstLaunch = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
-        firstLaunch.resetAndSeed()
+        firstLaunch.resetAndSeed(); firstLaunch.declineCurrentTerms()
         firstLaunch.startItem(id: "item-pill")
         firstLaunch.pause()
-        let restoredSessionID = try XCTUnwrap(firstLaunch.snapshot.sessionId)
+        // A start that stopped early leaves no session id (#1198: the Terms sheet held it on a fresh simulator); say why.
+        let restoredSessionID = try XCTUnwrap(
+            firstLaunch.snapshot.sessionId,
+            "no session after start and pause: terms gate \(firstLaunch.diagnostics["termsGate"] ?? "none"), "
+                + "Terms sheet shown \(firstLaunch.isTermsOfUsePresented), status \"\(firstLaunch.statusMessage)\", "
+                + "error \(firstLaunch.lastError ?? "none")"
+        )
         let store = try SQLiteSessionStore(path: url.path)
         let restoredPosition = try XCTUnwrap(store.loadSession(id: restoredSessionID)).position
         try store.saveItem(Item(id: "item-linked", title: "An older article", mediaType: "text",

@@ -102,7 +102,7 @@ extension Gate2LiveActivityAttributes.ContentState {
 
     /// The status in words. A Margin whose microphone is not capturing never reads "Recording".
     var statusLabel: String {
-        guard isRecording else { return status.capitalized }
+        guard isRecording else { return isLoadingAudio ? "Loading…" : status.capitalized }
         switch microphone {
         case .capturing: return status.capitalized
         case .starting: return "Starting mic"
@@ -112,7 +112,15 @@ extension Gate2LiveActivityAttributes.ContentState {
 
     func surfaceSymbol(isStale: Bool) -> String {
         if isRecording { return recordingSymbol }
-        return offersResume(isStale: isStale) ? "pause.fill" : "waveform"
+        if offersResume(isStale: isStale) { return "pause.fill" }
+        // Accepted but not yet heard: an hourglass, not a waveform that claims sound (#943).
+        return isLoadingAudio ? "hourglass" : "waveform"
+    }
+
+    /// The one-word state on the card: "LOADING" until audio is confirmed, never "STARTING" or "PLAY".
+    var headlineWord: String {
+        if isRecording { return recordingWord }
+        return isLoadingAudio ? "LOADING" : status.uppercased()
     }
 }
 
@@ -139,18 +147,19 @@ private struct Gate2LiveActivitySmallView: View {
     let isStale: Bool
 
     private var isPlaying: Bool {
-        !isStale && (state.status == "playing" || state.status == "starting")
+        !isStale && state.isAudioRunning
     }
 
     private var stateText: String {
         if state.isRecording { return state.recordingWord }
         if state.offersResume(isStale: isStale) { return "TAP TO RESUME" }
         if isPlaying { return "PLAY" }
-        return state.status.uppercased()
+        return state.headlineWord
     }
 
     private var stateImage: String {
         if state.isRecording { return state.recordingSymbol }
+        if state.isLoadingAudio { return "hourglass" }
         return isPlaying ? "waveform" : "pause.fill"
     }
 
@@ -219,7 +228,7 @@ private struct Gate2LiveActivityView: View {
                         .minimumScaleFactor(0.82)
                 }
                 Spacer()
-                Text(state.isRecording ? state.recordingWord : state.status.uppercased())
+                Text(state.headlineWord)
                     .font(.caption.weight(.bold).monospaced())
                     .foregroundStyle(state.isRecording ? state.recordingTint : .white)
             }
@@ -277,7 +286,10 @@ private struct Gate2LiveActivityView: View {
                         command: "skimBackward",
                         systemImage: "backward.end.alt.fill",
                         size: 50,
-                        accessibilityLabel: "Skim backward by scene summary"
+                        accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
+                            destinationMs: state.skimBackwardDestinationMs, backward: true
+                        ),
+                        caption: state.skimBackwardDestinationMs.map(SkimDestinationLabel.time)
                     )
                 }
                 if state.canRun("skipBack") {
@@ -297,7 +309,10 @@ private struct Gate2LiveActivityView: View {
                         command: "skimForward",
                         systemImage: "forward.end.alt.fill",
                         size: 50,
-                        accessibilityLabel: "Skim forward by scene summary"
+                        accessibilityLabel: SkimDestinationLabel.accessibilityLabel(
+                            destinationMs: state.skimForwardDestinationMs, backward: false
+                        ),
+                        caption: state.skimForwardDestinationMs.map(SkimDestinationLabel.time)
                     )
                 }
                 if let nextChapterTitle = state.nextChapterTitle,
@@ -400,15 +415,31 @@ private struct CompactRoundIntentButton: View {
     let systemImage: String
     let size: CGFloat
     var accessibilityLabel: String? = nil
+    /// Skim's destination time, drawn under the icon inside the circle so the row keeps its height (#115).
+    var caption: String? = nil
 
     var body: some View {
         Button(intent: Gate2CompactPlaybackIntent(command: command)) {
-            Image(systemName: systemImage)
-                .font(.title2.weight(.semibold))
-                .frame(width: size, height: size)
-                .foregroundStyle(.white)
-                .background(Color.white.opacity(0.16))
-                .clipShape(Circle())
+            Group {
+                if let caption {
+                    VStack(spacing: 1) {
+                        Image(systemName: systemImage)
+                            .font(.body.weight(.semibold))
+                        Text(caption)
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .padding(.horizontal, 4)
+                    }
+                } else {
+                    Image(systemName: systemImage)
+                        .font(.title2.weight(.semibold))
+                }
+            }
+            .frame(width: size, height: size)
+            .foregroundStyle(.white)
+            .background(Color.white.opacity(0.16))
+            .clipShape(Circle())
         }
         .frame(width: size, height: size)
         .contentShape(Circle())

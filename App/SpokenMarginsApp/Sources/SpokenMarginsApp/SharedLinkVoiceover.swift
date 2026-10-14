@@ -14,6 +14,8 @@ final class SharedLinkVoiceover {
 
     /// Tests replace it, since the share path's page fetch is otherwise the network.
     var fetchPage: FetchPage
+    /// Each recently shared item's latest outcome, so a later share doesn't hide an earlier post's.
+    private var log = SharedPostVoiceoverLog()
 
     init(fetchPage: @escaping FetchPage = SharedLinkVoiceover.fetchFromNetwork) {
         self.fetchPage = fetchPage
@@ -21,8 +23,10 @@ final class SharedLinkVoiceover {
 
     /// Looks for the voiceover of the post at `sharedURL` (or the address the article was read from) and
     /// saves it for `itemId`. `fetched` holds the pages the link resolver read for this import. `report` gets
-    /// one diagnostic: `saved`, `none`, `not_substack`, `item removed` or `failed:<reason>`, and the text
-    /// map's progress after a save.
+    /// the log's summary, one `<itemId>: <status>` line per recently shared item, after each change. The
+    /// status is `saved`, `none:<reason>` (the page was read and has no voiceover; `generated_voice_only` is a
+    /// post with only Substack's automatic narration), `not_substack`, `item removed` or `failed:<reason>`,
+    /// then the text map's progress after a save.
     func remember(
         sharedURL: URL,
         article: BrowserTextHandoff,
@@ -32,6 +36,11 @@ final class SharedLinkVoiceover {
         transcriber: any SourceTranscriptionClient,
         report: @escaping @MainActor (String) -> Void
     ) async {
+        let note: @MainActor (String) -> Void = { [weak self] status in
+            guard let self else { return }
+            log.record(status, for: itemId)
+            report(log.summary)
+        }
         let fetchPage = fetchPage
         let articleURL = article.source.url
         // Off the main thread: a post page can run to a few hundred KB.
@@ -42,20 +51,20 @@ final class SharedLinkVoiceover {
         }.value
         let found: PublisherAudio
         switch outcome {
-        case .notSubstack: return report("\(itemId): not_substack")
-        case .failed(let reason): return report("\(itemId): failed:\(reason)")
-        case .none: return report("\(itemId): none")
+        case .notSubstack: return note("not_substack")
+        case .failed(let reason): return note("failed:\(reason)")
+        case .noVoiceover(let reason): return note("none:\(reason)")
         case .found(let audio): found = audio
         }
         do {
             // The listener may have removed the article while the page loaded.
-            guard (try? store.loadItem(id: itemId)) != nil else { return report("\(itemId): item removed") }
+            guard (try? store.loadItem(id: itemId)) != nil else { return note("item removed") }
             let audio = found.keepingTextMap(of: try store.loadPublisherAudio(itemId: itemId))
             try store.savePublisherAudio(audio)
-            report("\(itemId): saved")
-            PublisherAudioTextMapper.start(audio, store: store, transcriber: transcriber) { report("\(itemId): \($0)") }
+            note("saved")
+            PublisherAudioTextMapper.start(audio, store: store, transcriber: transcriber) { note($0) }
         } catch {
-            report("\(itemId): failed:\(String(describing: error))")
+            note("failed:\(String(describing: error))")
         }
     }
 

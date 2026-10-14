@@ -9,6 +9,8 @@ struct WrittenMarginDraft: Equatable {
     let itemTitle: String
     let targetDescription: String
     let progressPercent: Int
+    /// The shared Margin this note answers (#473).
+    var reply: MarginReplyDraft? = nil
 
     var captureID: String { capture.id }
     var priorWasPlaying: Bool { capture.wasPlaying }
@@ -84,6 +86,8 @@ enum TimelineTextPresentation {
 
         let boundary = normalized.index(normalized.startIndex, offsetBy: characterLimit)
         let prefix = normalized[..<boundary]
+        // The limit lands exactly after a word: it fits whole, so keep it.
+        if normalized[boundary] == " " { return String(prefix) + "…" }
         if let wordBoundary = prefix.lastIndex(of: " ") {
             return String(prefix[..<wordBoundary]) + "…"
         }
@@ -151,6 +155,8 @@ struct AppNavigationState: Equatable, Sendable {
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?
+    /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
+    var followingScroll = FollowingScrollMemory()
 
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
@@ -201,11 +207,6 @@ enum LibraryPresentation {
             }
             .first
     }
-
-    static func compactItems(_ rows: [LibraryItemRow], excluding continueItem: LibraryItemRow?) -> [LibraryItemRow] {
-        guard let continueItem else { return rows }
-        return rows.filter { $0.id != continueItem.id }
-    }
 }
 
 enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
@@ -242,11 +243,14 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
 struct TimelineRailSortKey: Comparable, Equatable, Sendable {
     let position: Int
     let rank: Int
+    /// Orders a conversation at one place on the rail, parent first (#473). 0 for everything else.
+    var threadOrder = 0
     let id: String
 
     static func < (lhs: TimelineRailSortKey, rhs: TimelineRailSortKey) -> Bool {
         if lhs.position != rhs.position { return lhs.position < rhs.position }
         if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+        if lhs.threadOrder != rhs.threadOrder { return lhs.threadOrder < rhs.threadOrder }
         return lhs.id < rhs.id
     }
 }
@@ -255,6 +259,9 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     let interjection: Interjection
     let itemTitle: String
     let sessionDate: Date?
+    /// The chapter the Margin was made in and, for text, its paragraph number (#777). nil when the item has no
+    /// chapters or the position isn't a paragraph.
+    var place: MarginPlaces.Place? = nil
 
     var id: String { "\(interjection.sessionId)::\(interjection.id)" }
     var isWritten: Bool { interjection.captureKind == .written }
@@ -293,6 +300,15 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             contextUnavailable: interjection.anchorContextStatus == .unavailable,
             recordingMissing: interjection.audioStatus == "missing"
         )
+    }
+
+    /// The row's second line: where the Margin was made, then the day (#777). Responses and summaries keep their label.
+    func placeDescription(now: Date = Date()) -> String {
+        guard interjection.targetType == .item else { return "\(targetDescription) · \(interjection.roughPercent)%" }
+        return MarginRowWording.placeLine(
+            placeName: place?.chapterName, mediaTimeMs: interjection.anchor.mediaTimeMs,
+            paragraph: place?.paragraph, roughPercent: interjection.roughPercent,
+            createdAt: interjection.createdAt, now: now)
     }
 
     var targetDescription: String {
@@ -401,11 +417,4 @@ struct OfflineStorageSnapshot: Equatable, Sendable {
             categories: categories
         )
     }
-}
-
-struct RecordingPresentationContext: Equatable, Sendable {
-    let itemTitle: String
-    let locationTitle: String
-    let progressPercent: Int
-    let startedAt: Date
 }

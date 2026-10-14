@@ -1,0 +1,344 @@
+{
+ "check_runs": [
+  {
+   "conclusion": "success",
+   "id": 116048870965,
+   "name": "lane-open-lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116046150088,
+   "name": "lane-open-automerge",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116046149544,
+   "name": "automerge",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116046146636,
+   "name": "lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116046055272,
+   "name": "release",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116046053085,
+   "name": "route",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116045859835,
+   "name": "lane-open-lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116036354197,
+   "name": "automerge",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116036353953,
+   "name": "lane-open-automerge",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116036352750,
+   "name": "lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116036256306,
+   "name": "lane-open-lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116036256228,
+   "name": "lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": null,
+   "id": 116036254505,
+   "name": "automerge",
+   "status": "in_progress"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116036241233,
+   "name": "release",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116036240183,
+   "name": "route",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116036161143,
+   "name": "release",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116036158822,
+   "name": "route",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116036158255,
+   "name": "sessionkit-core",
+   "status": "completed"
+  }
+ ],
+ "comments": [
+  {
+   "body": "/lane T3\ncommit: 9ca5436\nchanged: while a voice Margin records, a Now Playing play/pause/skip-forward/stop command ends and saves it\ntests: SpokenMarginsAppTests/Gate2CompactControlTests",
+   "created_at": "2026-10-14T18:30:50Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175469936",
+   "id": 6175469936,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "uncomposed"
+   }
+  },
+  {
+   "body": "Lane report pr1596-r38615805313 \u2014 FAIL\ncommit 9ca5436 (tested merged with next at 5c615e7) \u00b7 tier auto \u00b7 no build \u00b7 5s\nran: hot-file ratchet: failed\nran beside a simulator job (trial): memory pressure normal, 36 GiB free\n<!-- lane-request: {\"commit\": \"9ca54362dde08b722e9aa8081d3780c6c757f473\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"tests\": [], \"tier\": \"auto\"} -->",
+   "created_at": "2026-10-14T18:41:56Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175676749",
+   "id": 6175676749,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "github-actions[bot]"
+   }
+  },
+  {
+   "body": "Hot-file ratchet FAIL fixed in c7c6de0: the mapping moved out of `Gate1AppModel.swift` (now unchanged, 4554 lines) into `dispatchGate2CompactCommand` in `Gate1AppModel+CompactCommands.swift`, and the podcast Now Playing route calls dispatch instead of perform.\n\n/lane T3\ncommit: c7c6de0\nchanged: whil",
+   "created_at": "2026-10-14T18:42:52Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175694317",
+   "id": 6175694317,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "uncomposed"
+   }
+  },
+  {
+   "body": "Lane report pr1596-r38615805925 \u2014 PASS\ncommit 9ca5436 (tested merged with next at e55e639) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 7m20s\nran: Gate2CompactControlTests, Gate1AppModelWorkflowTests (234 passed; app plan, build and tests, 2m49s)\nbuild folders: cold, new cache (SessionKit c8223991e725-31a6df51)\n<!-- lane-request: {\"commit\": \"9ca54362dde08b722e9aa8081d3780c6c757f473\", \"next\": \"e55e6398c753c410655ef1620c97618930b5825b\", \"tests\": [\"SpokenMarginsAppTests/Gate2CompactControlTests\"], \"tier\": \"T3\"} -->",
+   "created_at": "2026-10-14T18:43:52Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6175713262",
+   "id": 6175713262,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "github-actions[bot]"
+   }
+  },
+  {
+   "body": "Lane: lane:queued is set, but there is no `/lane T2` or `/lane T3` request comment newer than the last lane report, so nothing ran. Comment the request (format in docs/workstreams/test-lane.md), then add lane:queued.\n<!-- lane-note -->",
+   "created_at": "2026-10-14T19:02:36Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6176071280",
+   "id": 6176071280,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "github-actions[bot]"
+   }
+  },
+  {
+   "body": "/lane T3\ncommit: c7c6de0\nchanged: while a voice Margin records, a Now Playing play/pause/skip-forward/stop command ends and saves it (the earlier PASS was for 9ca5436; this head moves the mapping into dispatchGate2CompactCommand)\ntests: SpokenMarginsAppTests/Gate2CompactControlTests",
+   "created_at": "2026-10-14T19:02:56Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6176077731",
+   "id": 6176077731,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "uncomposed"
+   }
+  },
+  {
+   "body": "Lane report pr1596-r38620380556 \u2014 PASS\ncommit c7c6de0 (tested merged with next at de750f8) \u00b7 tier T3 \u00b7 cloned iPhone 17, iOS 26.5 \u00b7 5m14s\nran: Gate2CompactControlTests (51 passed; app plan, build and tests, 34s)\nbuild folders: cold, new cache (SessionKit bb3f5e023819-31a6df51)\n<!-- lane-request: {\"commit\": \"c7c6de0ef7d9120a1897e4084b57080571561a01\", \"next\": \"de750f8822a9de969e3a1847e431e3e72dd82191\", \"tests\": [\"SpokenMarginsAppTests/Gate2CompactControlTests\"], \"tier\": \"T3\"} -->",
+   "created_at": "2026-10-14T19:08:44Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596#issuecomment-6176186981",
+   "id": 6176186981,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1596",
+   "user": {
+    "login": "github-actions[bot]"
+   }
+  }
+ ],
+ "errors": {},
+ "events": [
+  {
+   "created_at": "2026-10-14T18:30:52Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:queued"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:30:52Z",
+   "event": "labeled",
+   "label": {
+    "name": "automerge"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:36:29Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:queued"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:36:30Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:running"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:42:00Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:done"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:42:54Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:queued"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:43:55Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:running"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:43:57Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:done"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:43:58Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:done"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:02:37Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:queued"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:03:01Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:queued"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:03:26Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:done"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:03:28Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:queued"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:03:29Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:running"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:08:46Z",
+   "event": "unlabeled",
+   "label": {
+    "name": "lane:running"
+   }
+  },
+  {
+   "created_at": "2026-10-14T19:08:49Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:done"
+   }
+  }
+ ],
+ "files": [
+  {
+   "filename": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+AudioClients.swift"
+  },
+  {
+   "filename": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+CompactCommands.swift"
+  },
+  {
+   "filename": "App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate2CompactControlController.swift"
+  },
+  {
+   "filename": "App/SpokenMarginsAppTests/Gate2CompactControlTests.swift"
+  },
+  {
+   "filename": "Packages/SessionKit/Sources/SessionKit/CompactControls.swift"
+  },
+  {
+   "filename": "Packages/SessionKit/Tests/SessionKitCoreTests/RecordingTransportCommandTests.swift"
+  },
+  {
+   "filename": "Packages/SessionKit/Tests/SessionKitTests/SessionKitCoreTests.swift"
+  }
+ ],
+ "pull": {
+  "body": "<!-- claude-projects-attribution: {\"github_login\":\"uncomposed\"} -->\n_Requested by **Cole** \u00b7 [project thread](https://claude.ai/code/project/chan_01UBdF2E351rapQhVv1irt5B?thread=cmsg_01UBdF2E351rapQhVv1irt5BNrXdw7PWXAnH3i88JaC6rs)_\n\nCloses #1030\n\nBefore: with an Article Margin recording on AirPods, ",
+  "draft": false,
+  "head": {
+   "ref": "ws/1030-headphone-click-recording",
+   "sha": "c7c6de0ef7d9120a1897e4084b57080571561a01"
+  },
+  "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1596",
+  "labels": [
+   {
+    "name": "lane:done"
+   },
+   {
+    "name": "automerge"
+   }
+  ],
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "number": 1596,
+  "state": "open",
+  "title": "A headphone click ends a Margin that is recording (#1030)"
+ }
+}

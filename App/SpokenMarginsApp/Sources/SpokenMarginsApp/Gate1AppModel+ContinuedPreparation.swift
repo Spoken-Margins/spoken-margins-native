@@ -3,57 +3,76 @@ import SessionKit
 import SessionKitPersistence
 
 /// What keeps a Make available offline run going when the listener puts the phone down (#905): a
-/// system progress task while the app is away, and a wait that ends a heat pause by itself.
+/// system progress task while the app is away, and a wait that ends a heat pause or a memory backoff by itself.
 extension Gate1AppModel {
     // Read and driven by the continued-processing task and the heat wait.
-    var isForegroundAudioPreparationRunning: Bool { foregroundAudioPreparationTask != nil }
+    var isForegroundAudioPreparationRunning: Bool { libraryAudioLoop.isRunning }
 
     /// Ends the loop without the restart a plain cancel gets: iOS or the listener ended its background time.
     func stopForegroundAudioPreparation() {
-        foregroundAudioPreparationTask?.cancel()
-        foregroundAudioPreparationGeneration += 1
-        foregroundAudioPreparationTask = nil
+        libraryAudioLoop.stopAndInvalidate()
     }
 
-    func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
+    /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
+    /// memory warning cancelled restarts and waits the backoff out (#1107).
+    var playbackAllowsLibraryAudioPreparation: Bool {
+        !snapshot.status.isPlaybackActive || isMediaPlaybackSnapshot
+            || snapshot.preparedTextAudioStatus == "ready"
+            || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
+    }
+
+    func idleForegroundPreparationTurn() { libraryAudioLoop.turns.stopped(.foreground) }
 
     /// The foreground preparation loop: runs passes while they have work, and after a pass that
-    /// rendered nothing waits out a heat pause and goes on. `pass` returns whether it has more work.
+    /// rendered nothing waits out a heat pause or a memory backoff and goes on. `pass` returns
+    /// whether it has more work.
     func runForegroundPreparationLoop(pass: () async -> Bool) async {
         while !Task.isCancelled {
             if await pass() {
                 await Task.yield()
-            } else if await waitOutPreparationHeat() {
-                continue // the phone cooled: a heat pause no longer ends the run (#905)
+            } else if await waitOutPreparationPause() {
+                continue // the phone cooled or the backoff ended: a pause no longer ends the run (#905, #1107)
             } else {
                 break
             }
         }
     }
 
-    /// After a pass rendered nothing, waits out a heat pause so the run carries on once the phone
-    /// cools. True: it cooled and queued work is waiting, so run the pass again. False: nothing is
-    /// waiting, the pass stopped for a reason other than heat, the wait ran out, or the loop was
-    /// cancelled. Before this a heat pause ended the loop and nothing started it again, so a run
-    /// stopped for heat stayed stopped while the phone read nominal.
-    func waitOutPreparationHeat() async -> Bool {
+    /// After a pass rendered nothing, waits out a heat pause or the backoff a memory warning
+    /// starts, so the run carries on once the phone cools or the backoff is over. True: the pause
+    /// ended and queued work is waiting, so run the pass again. False: nothing is waiting, the pass
+    /// stopped for another reason, the wait ran out, or the loop was cancelled. Before this a
+    /// pause ended the loop and nothing started it again, so a run stopped for heat or memory
+    /// stayed stopped while the phone read nominal.
+    func waitOutPreparationPause() async -> Bool {
         var waited = 0
+        var heldByHeat = false
+        var banner = false
         defer { isWaitingOutPreparationHeat = false }
         while !Task.isCancelled {
-            let step = OfflinePreparationRun.heatWaitStep(
-                thermal: preparationSeams.deviceConditions().thermal,
+            let thermal = preparationSeams.deviceConditions().thermal
+            heldByHeat = heldByHeat || PreparationChunkGate.isTooWarm(thermal)
+            let step = OfflinePreparationRun.pauseWaitStep(
+                thermal: thermal,
+                memoryBackoffActive: preparationSeams.memoryBackoffActive(),
                 waitedSeconds: waited,
                 foregroundWorkWaiting: foregroundPreparationWorkIsWaiting()
             )
+            let key = heldByHeat ? "preparationHeatWait" : "preparationMemoryWait"
             switch step {
             case .resume:
-                diagnostics["preparationHeatWait"] = "resumed_after_\(waited)s"
+                diagnostics[key] = "resumed_after_\(waited)s"
                 return true
             case .stop(let reason):
-                if waited > 0 { diagnostics["preparationHeatWait"] = "stopped_\(reason.rawValue)_after_\(waited)s" }
+                if waited > 0 { diagnostics[key] = "stopped_\(reason.rawValue)_after_\(waited)s" }
                 return false
             case .wait(let seconds):
-                if !isWaitingOutPreparationHeat { beginWaitingOutPreparationHeat() }
+                // The banner says the phone is cooling only while heat is what holds the run.
+                isWaitingOutPreparationHeat = PreparationChunkGate.isTooWarm(thermal)
+                if !banner {
+                    banner = true
+                    beginWaitingOutPreparationPause(key: key)
+                }
                 do {
                     try await preparationSeams.pause(seconds)
                 } catch {
@@ -65,11 +84,10 @@ extension Gate1AppModel {
         return false
     }
 
-    private func beginWaitingOutPreparationHeat() {
-        isWaitingOutPreparationHeat = true
+    private func beginWaitingOutPreparationPause(key: String) {
         idleForegroundPreparationTurn() // the item stops showing as rendering while it waits
         if let store { try? refreshLibraryRows(store: store) }
-        diagnostics["preparationHeatWait"] = "waiting"
+        diagnostics[key] = "waiting"
     }
 
     private func foregroundPreparationWorkIsWaiting() -> Bool {
@@ -77,17 +95,40 @@ extension Gate1AppModel {
         return !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
     }
 
-    func explicitPreparationJobs() -> [OfflinePreparationRun.Job] {
-        audioPreparationQueue.map {
-            OfflinePreparationRun.Job(
-                id: $0.id,
-                requestedAt: $0.requestedAt,
-                policy: $0.policy,
-                state: $0.state,
-                completedChunks: $0.completedChunkCount,
-                plannedChunks: $0.plannedChunkCount
+    func explicitPreparationJobs(including previous: [OfflinePreparationRun.Job] = []) -> [OfflinePreparationRun.Job] {
+        guard let store, let stored = try? store.loadAudioPreparationJobs() else { return previous }
+        let allJobs = stored.filter { !$0.isCancelled && $0.policy == .explicit }.map { job in
+            let manifest = try? store.loadPreparedAudioManifest(id: job.manifestId)
+            return OfflinePreparationRun.Job(
+                id: job.id, manifestId: job.manifestId,
+                requestedAt: job.requestedAt, policy: job.policy,
+                state: manifest?.state ?? .failed,
+                completedChunks: manifest?.committedChunkCount ?? job.nextChunkIndex,
+                plannedChunks: manifest?.plannedChunkCount ?? 0
             )
         }
+        // Old failures aren't part of a new run. A failure this banner saw happen stays in it.
+        let tracked = OfflinePreparationRun.openExplicitRequests(allJobs).union(previous.map {
+            OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt)
+        })
+        let jobs = allJobs.filter { tracked.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt)) }
+        let current = Set(jobs.map { OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt) })
+        return jobs + previous.filter {
+            !current.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt))
+        }.map { job in
+            OfflinePreparationRun.resolvingRemovedJob(job, manifest: try? store.loadPreparedAudioManifest(id: job.manifestId))
+        }
+    }
+
+    /// Also covers expiry during a heat wait, when no renderer is there to record cancellation.
+    func deferExplicitPreparation(_ requests: Set<OfflinePreparationRun.RequestKey>) {
+        if let store, let jobs = try? store.loadAudioPreparationJobs() {
+            for job in OfflinePreparationRecovery.interruptedJobs(jobs, requests: requests) {
+                try? store.saveAudioPreparationJob(job)
+            }
+            try? refreshAudioPreparationPresentation(store: store)
+        }
+        scheduleAudioPreparationBackgroundTask()
     }
 
     /// Asks iOS to keep the app running for a long run the listener just started. A no-op where
@@ -103,10 +144,11 @@ extension Gate1AppModel {
     private func installContinuedAudioPreparation() {
         ContinuedAudioPreparationController.shared.install(
             ContinuedAudioPreparationController.Hooks(
-                jobs: { [weak self] in self?.explicitPreparationJobs() ?? [] },
+                jobs: { [weak self] previous in self?.explicitPreparationJobs(including: previous) ?? [] },
                 isRunning: { [weak self] in self?.isForegroundAudioPreparationRunning ?? false },
                 isCoolingDown: { [weak self] in self?.isWaitingOutPreparationHeat ?? false },
                 stop: { [weak self] in self?.stopForegroundAudioPreparation() },
+                deferRemaining: { [weak self] requests in self?.deferExplicitPreparation(requests) },
                 report: { [weak self] event in
                     guard let self else { return }
                     diagnostics["continuedAudioPreparation"] = event

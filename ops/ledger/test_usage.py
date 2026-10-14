@@ -29,6 +29,43 @@ class UsageTests(unittest.TestCase):
         self.assertEqual([result[k] for k in usage.TOKEN_FIELDS], [20154, 13184, 5])
         self.assertIsNone(result['usage_missing_reason'])
 
+    def test_headless_claude_result_counts_cache_as_part_of_input(self):
+        # Shape of `claude -p --output-format json`, probed 2026-10-09 (usage fields only).
+        self.transcript.write_text(json.dumps({
+            'type': 'result', 'subtype': 'success', 'is_error': False, 'total_cost_usd': 0.0095,
+            'usage': {'input_tokens': 2, 'cache_creation_input_tokens': 2298,
+                      'cache_read_input_tokens': 1556, 'output_tokens': 4}}) + '\n')
+        result = usage.read_usage(self.transcript)
+        self.assertEqual([result[k] for k in usage.TOKEN_FIELDS], [3856, 1556, 4])
+        self.assertTrue(result['usage_complete'])
+        self.assertIsNone(result['usage_missing_reason'])
+
+    def test_headless_claude_result_keeps_its_session_id(self):
+        # The transcript collector skips a session a wrapper row already counted (#899).
+        self.transcript.write_text(json.dumps({
+            'type': 'result', 'is_error': False, 'session_id': '164d7593-486e-4475-8464-6fe99e9300fc',
+            'usage': {'input_tokens': 22, 'cache_creation_input_tokens': 69519,
+                      'cache_read_input_tokens': 564700, 'output_tokens': 12944}}) + '\n')
+        self.assertEqual(usage.read_usage(self.transcript)['session_ids'],
+                         ['164d7593-486e-4475-8464-6fe99e9300fc'])
+        self.transcript.write_text(RECORDED)
+        self.assertNotIn('session_ids', usage.read_usage(self.transcript))
+
+    def test_failed_or_partial_claude_result_is_not_complete(self):
+        base = {'type': 'result', 'is_error': True, 'subtype': 'error_max_budget_usd',
+                'usage': {'input_tokens': 1, 'cache_creation_input_tokens': 2,
+                          'cache_read_input_tokens': 3, 'output_tokens': 4}}
+        self.transcript.write_text(json.dumps(base))
+        result = usage.read_usage(self.transcript)
+        self.assertEqual(result['input_tokens'], 6)
+        self.assertFalse(result['usage_complete'])
+        partial = dict(base, is_error=False, usage={'input_tokens': 1, 'output_tokens': 4})
+        self.transcript.write_text(json.dumps(partial))
+        result = usage.read_usage(self.transcript)
+        self.assertIsNone(result['input_tokens'])
+        self.assertEqual(result['output_tokens'], 4)
+        self.assertFalse(result['usage_complete'])
+
     def test_multiple_turns_sum_usage_but_items_are_not_counted(self):
         self.transcript.write_text(RECORDED * 2 + 'warning: ignored stderr\n')
         result = usage.read_usage(self.transcript)

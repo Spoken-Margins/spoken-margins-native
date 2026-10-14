@@ -1,5 +1,6 @@
 import Foundation
 import OnnxRuntimeBindings
+import SessionKit
 
 public enum SupertonicVoiceID: String, CaseIterable, Codable, Sendable {
     case f1 = "F1"
@@ -55,6 +56,7 @@ public struct SupertonicAssetLocation: Equatable, Sendable {
 
 public struct SupertonicNarrationResult: Equatable, Sendable {
     public let audioURL: URL
+    /// Length of the audio file: the speech and its pads, with the model's extra silence cut (#586).
     public let duration: TimeInterval
     public let sampleRate: Int
     public let renderDuration: TimeInterval
@@ -62,9 +64,15 @@ public struct SupertonicNarrationResult: Equatable, Sendable {
     /// Which engine made the audio. The narration guard can substitute the iOS voice for a chunk
     /// Supertonic garbled (#240), and that audio must not pass for Supertonic's (#311).
     public let engine: String
+    /// Silence `SpeechSilenceTrim` cut from the model's audio before it was written (#586).
+    public let trimmedSilence: TimeInterval
 
     public static let supertonicEngine = "supertonic"
     public static let systemVoiceEngine = "system_voice"
+
+    /// How long the model made the chunk, silence included. The output check was tuned on this, so
+    /// it judges this and not the shorter `duration`.
+    public var modelDuration: TimeInterval { duration + trimmedSilence }
 
     public init(
         audioURL: URL,
@@ -72,7 +80,8 @@ public struct SupertonicNarrationResult: Equatable, Sendable {
         sampleRate: Int,
         renderDuration: TimeInterval,
         sessionLoadCount: Int,
-        engine: String = SupertonicNarrationResult.supertonicEngine
+        engine: String = SupertonicNarrationResult.supertonicEngine,
+        trimmedSilence: TimeInterval = 0
     ) {
         self.audioURL = audioURL
         self.duration = duration
@@ -80,6 +89,7 @@ public struct SupertonicNarrationResult: Equatable, Sendable {
         self.renderDuration = renderDuration
         self.sessionLoadCount = sessionLoadCount
         self.engine = engine
+        self.trimmedSilence = trimmedSilence
     }
 }
 
@@ -243,15 +253,22 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                             guard samples.lazy.map({ abs($0) }).max() ?? 0 > 0.000_001 else {
                                 throw SupertonicNarrationError.unsafeAudio("silent_output")
                             }
+                            // The model leaves about 0.6 s before the speech and 0.8 s after it, which
+                            // made every chunk seam a stall (#586). Keep the speech and a short pad.
+                            let sampleRate = runtime.textToSpeech.sampleRate
+                            let kept = SpeechSilenceTrim.speechRange(in: samples, sampleRate: sampleRate)
+                                .map { Array(samples[$0]) } ?? samples
+                            let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(sampleRate)
                             let audioURL = outputDirectory.appending(path: "supertonic-\(UUID().uuidString).wav")
-                            try writeWavFile(audioURL.path, samples, runtime.textToSpeech.sampleRate)
+                            try writeWavFile(audioURL.path, kept, sampleRate)
                             generatedAudioURLs.insert(audioURL)
                             continuation.resume(returning: SupertonicNarrationResult(
                                 audioURL: audioURL,
-                                duration: TimeInterval(generated.duration),
-                                sampleRate: runtime.textToSpeech.sampleRate,
+                                duration: TimeInterval(generated.duration) - trimmedSilence,
+                                sampleRate: sampleRate,
                                 renderDuration: Date().timeIntervalSince(startedAt),
-                                sessionLoadCount: sessionLoadCount
+                                sessionLoadCount: sessionLoadCount,
+                                trimmedSilence: trimmedSilence
                             ))
                         } catch {
                             continuation.resume(throwing: error)

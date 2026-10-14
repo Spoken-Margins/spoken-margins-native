@@ -188,7 +188,8 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.status, "ready")
         XCTAssertEqual(
             model.selectedItem.chapters.map(\.title),
-            EmojiArticleRegressionFixture.sectionHeadings
+            // The article's opening paragraphs, under its `#` title, are a chapter before the first section (#1435).
+            [EmojiArticleRegressionFixture.title] + EmojiArticleRegressionFixture.sectionHeadings
         )
     }
 
@@ -299,7 +300,18 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Imported browser text from Route Page.")
     }
 
+    /// #1437: with something paused in the mini player, a share opens its item as it does with nothing loaded,
+    /// and the paused item keeps its place.
     func testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot() throws {
+        try checkIncomingBrowserPayloadDuringPlayback(pausing: true)
+    }
+
+    /// The same share while the item plays: it shows the shared item and the audio carries on.
+    func testIncomingBrowserPayloadShowsItsItemWhileSomethingPlays() throws {
+        try checkIncomingBrowserPayloadDuringPlayback(pausing: false)
+    }
+
+    private func checkIncomingBrowserPayloadDuringPlayback(pausing: Bool) throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-browser-route-\(UUID().uuidString)", isDirectory: true)
         temporaryDirectories.append(directory)
@@ -322,21 +334,75 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
         model.startItem(id: activeItemID)
         let sessionID = model.snapshot.sessionId
+        if pausing { model.pause() }
+        let statusBefore = model.snapshot.status
+        XCTAssertEqual(statusBefore.isPlaybackActive, !pausing)
+        let positionBefore = model.snapshot.currentTextStart
         model.openHome()
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
 
-        XCTAssertEqual(model.screen, .home)
+        // #1437: the shared item opens as it does with nothing loaded; the paused item keeps its session.
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, "item-browser-during-playback")
         XCTAssertEqual(model.snapshot.sessionId, sessionID)
         XCTAssertEqual(model.snapshot.itemId, activeItemID)
+        XCTAssertEqual(model.snapshot.status, statusBefore, "the share starts and stops nothing")
+        XCTAssertEqual(model.snapshot.currentTextStart, positionBefore)
         XCTAssertTrue(model.libraryItems.contains { $0.id == "item-browser-during-playback" })
+        XCTAssertEqual(model.statusMessage, "Added Shared During Playback to Library without changing Now Playing.")
         XCTAssertEqual(model.diagnostics["lastBrowserTextPayloadCleanup"], "imported_without_session_replacement")
         XCTAssertThrowsError(try browserStore.handoff(payloadID: payloadID))
     }
 
+    /// Drives the app's own route for a shared payload (#1049, LNK-04): the model, not the test, deletes the
+    /// payload once the import succeeds, so the launch sweep can't import it again.
     func testPayloadIsDeletedAfterSuccessfulImport() throws {
         let payloadID = "payload-delete"
-        let store = try makePayloadStore(payloadID: payloadID, payload: [
+        let store = try makePayloadStore(payloadID: payloadID, payload: deletablePayload(payloadID: payloadID))
+        let model = Gate1AppModel(
+            browserTextHandoffStore: store,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        XCTAssertFalse(model.hasActiveSession)
+        XCTAssertFalse(model.libraryItems.contains { $0.id == "item-payload-delete" })
+
+        model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+
+        XCTAssertTrue(model.libraryItems.contains { $0.id == "item-payload-delete" })
+        XCTAssertEqual(model.diagnostics["lastBrowserTextImport"], "item-payload-delete")
+        XCTAssertThrowsError(try store.handoff(payloadID: payloadID)) { error in
+            XCTAssertEqual(error as? Gate5BrowserTextHandoffStoreError, .missingPayload(payloadID))
+        }
+        XCTAssertEqual(try store.pendingPayloadIDs(), [])
+    }
+
+    /// The failure twin: when the import fails (here the Library database can't be opened), the shared text
+    /// stays in the store for the next launch instead of being lost.
+    func testPayloadIsKeptWhenImportFails() throws {
+        let payloadID = "payload-keep"
+        let store = try makePayloadStore(payloadID: payloadID, payload: deletablePayload(payloadID: payloadID))
+        let blocker = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spoken-margins-gate5-blocked-\(UUID().uuidString)")
+        temporaryDirectories.append(blocker)
+        try Data("not a folder".utf8).write(to: blocker)
+        let model = Gate1AppModel(
+            browserTextHandoffStore: store,
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            databaseURLOverride: blocker.appendingPathComponent("Library.sqlite")
+        )
+        XCTAssertFalse(model.hasActiveSession)
+
+        model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
+
+        XCTAssertNil(model.diagnostics["lastBrowserTextImport"])
+        XCTAssertEqual(try store.handoff(payloadID: payloadID).itemId, "item-payload-delete")
+        XCTAssertEqual(try store.pendingPayloadIDs(), [payloadID])
+    }
+
+    private func deletablePayload(payloadID: String) -> [String: Any] {
+        [
             "id": payloadID,
             "schemaVersion": "browser-text-handoff.v1",
             "itemId": "item-payload-delete",
@@ -350,20 +416,7 @@ final class Gate5BrowserTextImportTests: XCTestCase {
                 "startSession": true,
                 "preferredPlaybackOwner": "app"
             ]
-        ])
-        let handoff = try store.handoff(payloadID: payloadID)
-        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
-        model.resetAndSeed()
-
-        let success = model.importBrowserText(handoff)
-        if success {
-            try store.deletePayload(payloadID: payloadID)
-        }
-
-        XCTAssertTrue(success)
-        XCTAssertThrowsError(try store.handoff(payloadID: payloadID)) { error in
-            XCTAssertEqual(error as? Gate5BrowserTextHandoffStoreError, .missingPayload(payloadID))
-        }
+        ]
     }
 
     func testPendingMarkdownShareImportsMapWithoutReplacingPlayback() async throws {
@@ -415,6 +468,50 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         model.openItem(id: "item-shared-markdown")
         XCTAssertEqual(model.selectedItem.title, "HSA Guide")
         XCTAssertFalse(model.selectedItem.chapters.isEmpty)
+    }
+
+    /// #662: the handoff the share extension writes for a ChatGPT response shared as plain text,
+    /// key for key, reaches the Library with its whole text and leaves playback alone.
+    func testPendingSharedTextFromAnotherAppImportsWithoutReplacingPlayback() async throws {
+        let response = """
+        Here's the completed review. My recommendation is to ship the fix first.
+
+        ## What changed
+        The share extension keeps the whole response. See https://example.com/notes for more.
+        """
+        let browserStore = try makePayloadStore(payloadID: "browser-text-shared-662", payload: [
+            "id": "browser-text-shared-662",
+            "itemId": "item-shared-text-662",
+            "schemaVersion": "browser-text-handoff.v1",
+            "captureMode": "plain_text_file",
+            "contentFormat": "markdown",
+            "source": ["url": "shared-text://share-sheet", "title": "Here's the completed review. My recommendation is to"],
+            "text": response,
+            "requestedContinuation": ["startSession": false, "preferredPlaybackOwner": "app"],
+            "createdAt": "2026-10-10T03:00:00Z"
+        ])
+        let directory = try XCTUnwrap(temporaryDirectories.last)
+        let model = Gate1AppModel(
+            sourceLinkHandoffStore: SourceLinkHandoffStore(baseDirectory: directory),
+            browserTextHandoffStore: browserStore,
+            audioPlaybackClient: NoopAudioPlaybackClient()
+        )
+        model.resetAndSeed()
+        let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
+        model.startItem(id: activeItemID)
+        let snapshotBeforeImport = model.snapshot
+
+        model.importPendingSourceLinkHandoffs()
+        try await waitFor("Shared text import") {
+            model.libraryItems.contains { $0.id == "item-shared-text-662" }
+        }
+
+        XCTAssertEqual(model.snapshot, snapshotBeforeImport)
+        XCTAssertThrowsError(try browserStore.handoff(payloadID: "browser-text-shared-662"))
+        model.openItem(id: "item-shared-text-662")
+        XCTAssertEqual(model.selectedItem.title, "Here's the completed review. My recommendation is to")
+        XCTAssertTrue(model.selectedItem.text.contains("ship the fix first"))
+        XCTAssertTrue(model.selectedItem.text.contains("keeps the whole response"))
     }
 
     private func makePayloadStore(payloadID: String, payload: [String: Any]) throws -> Gate5BrowserTextHandoffStore {

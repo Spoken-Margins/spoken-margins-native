@@ -20,8 +20,18 @@ final class CatalogDrawerModel: ObservableObject {
     @Published private(set) var entries: [SourceCatalogEntry] = []
     @Published private(set) var loadError: String?
     @Published private(set) var followStates: [String: FollowState] = [:]
+    /// What the drawer's search field is typed (#471). Two or more characters search by name.
+    @Published var searchText = "" { didSet { searchTextChanged(from: oldValue) } }
+    /// The shows found for the latest answered search. Kept while the next search runs, so typing on
+    /// doesn't flash the list empty; nil before the first answer and after a failure or a clear.
+    @Published private(set) var searchResults: [SourceCandidate]?
+    /// Why the last search failed, in words. The subject list stays usable underneath it.
+    @Published private(set) var searchError: String?
+    @Published private(set) var isSearchPending = false
 
     private let store: SourceCatalogStore?
+    private let searcher: PodcastNameSearch?
+    private var searchTask: Task<Void, Never>?
     private let follow: @MainActor (String) async throws -> String
     private let subscriptions: @MainActor () -> [FeedSubscription]
     private let defaults: UserDefaults
@@ -34,8 +44,10 @@ final class CatalogDrawerModel: ObservableObject {
         defaults: UserDefaults = .standard,
         subscriptions: @escaping @MainActor () -> [FeedSubscription],
         follow: @escaping @MainActor (String) async throws -> String,
-        makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil
+        makeOPMLImport: (@MainActor () -> OPMLImportModel)? = nil,
+        searcher: PodcastNameSearch? = nil
     ) {
+        self.searcher = searcher
         self.store = store
         self.defaults = defaults
         self.subscriptions = subscriptions
@@ -63,6 +75,21 @@ final class CatalogDrawerModel: ObservableObject {
             guard data.count <= maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
             return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
         }
+    }
+
+    /// The app's podcast-name search: Apple's public iTunes Search API, one request at a time.
+    static func makeSearcher() -> PodcastNameSearch {
+        let session = URLSession(configuration: {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.urlCache = nil
+            configuration.timeoutIntervalForRequest = 15
+            return configuration
+        }())
+        return PodcastNameSearch(resolver: ITunesSearchSourceResolver { url, maximumBytes in
+            let (data, response) = try await session.data(from: url)
+            guard data.count <= maximumBytes else { throw URLError(.dataLengthExceedsMaximum) }
+            return ((response as? HTTPURLResponse)?.statusCode ?? 0, data)
+        })
     }
 
     var subjects: [SourceCatalogSubject] { catalog?.visibleSubjects ?? [] }
@@ -119,6 +146,70 @@ final class CatalogDrawerModel: ObservableObject {
         if catalog == nil { catalog = snapshot }
     }
 
+    var supportsSearch: Bool { searcher != nil }
+    /// Whether the field holds enough to search for.
+    var isSearching: Bool { searcher != nil && PodcastNameSearch.isSearchable(searchText) }
+    /// Search results (or the wait for them) replace the subject list while a search is active. A failed
+    /// search leaves the subject list in place under the error.
+    var showsSearchResults: Bool { isSearching && (searchResults != nil || isSearchPending) }
+
+    private func searchTextChanged(from previous: String) {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        // A space typed or removed at the end is not a new search.
+        guard query != previous.trimmingCharacters(in: .whitespacesAndNewlines), let searcher else { return }
+        searchTask?.cancel()
+        searchError = nil
+        guard PodcastNameSearch.isSearchable(query) else {
+            searchResults = nil
+            isSearchPending = false
+            return
+        }
+        isSearchPending = true
+        searchTask = Task { [weak self] in
+            let outcome = await searcher.search(query)
+            guard let self, !Task.isCancelled, self.searchText.trimmingCharacters(in: .whitespacesAndNewlines) == query else { return }
+            // No outcome while this is still the latest text means nothing will answer it: stop waiting.
+            guard let outcome else { self.isSearchPending = false; return }
+            self.isSearchPending = false
+            switch outcome {
+            case .results(let shows):
+                self.searchResults = shows
+            case .failed(let message):
+                self.searchResults = nil
+                self.searchError = message
+            }
+        }
+    }
+
+    /// A search result's follow state: the drawer's own, else Following when a subscription has its feed.
+    func state(for show: SourceCandidate) -> FollowState? {
+        if let state = followStates[show.id] { return state }
+        guard let feed = show.feed?.url else { return nil }
+        return subscriptions().contains { $0.source.canonicalURL == feed } ? .followed : nil
+    }
+
+    /// Follows a search result through the same `follow` the catalog rows use. A show with no public feed
+    /// can't be followed; its row says why.
+    func followSearchResult(_ show: SourceCandidate) {
+        guard let feedURL = show.feed?.url else { return }
+        switch state(for: show) {
+        case .following, .followed:
+            return
+        case .failed, nil:
+            break
+        }
+        followStates[show.id] = .following
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.follow(feedURL)
+                self.followStates[show.id] = .followed
+            } catch {
+                self.followStates[show.id] = .failed(error.localizedDescription)
+            }
+        }
+    }
+
     private func refreshEntries() {
         entries = catalog?.entries(forSubject: selectedSubject) ?? []
     }
@@ -173,11 +264,17 @@ struct CatalogDrawerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                subjectBar
-                importLink
-                list
+                searchFailure
+                if drawer.showsSearchResults {
+                    searchResults
+                } else {
+                    subjectBar
+                    importLink
+                    list
+                }
             }
             .background(AppColors.bone)
+            .modifier(DrawerSearchField())
             .navigationTitle("Follow a few favourites")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -189,6 +286,37 @@ struct CatalogDrawerView: View {
             .task { await drawer.load() }
         }
         .accessibilityIdentifier("catalog.drawer")
+    }
+
+    @ViewBuilder
+    private var searchFailure: some View {
+        if drawer.isSearching, let message = drawer.searchError {
+            Label(message, systemImage: "wifi.exclamationmark")
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("catalog.search.error")
+        }
+    }
+
+    @ViewBuilder
+    private var searchResults: some View {
+        if let shows = drawer.searchResults {
+            if shows.isEmpty {
+                ContentUnavailableView.search(text: drawer.searchText)
+            } else {
+                List(shows) { show in
+                    CatalogSearchResultRow(show: show, state: drawer.state(for: show)) { drawer.followSearchResult(show) }
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .accessibilityIdentifier("catalog.search.results")
+            }
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     /// Shown whether or not the podcast list loaded: importing matters most when it didn't (#463).
@@ -326,6 +454,78 @@ private struct CatalogDrawerRow: View, Equatable {
                 .frame(minWidth: 96, minHeight: 44)
                 .accessibilityLabel("Follow \(entry.title)")
                 .accessibilityIdentifier("catalog.follow.\(entry.id)")
+        }
+    }
+}
+
+/// The drawer's search field, only when the app gave the drawer a search (#471). Clearing it returns to
+/// the subject the listener was on, because the subject is never touched.
+private struct DrawerSearchField: ViewModifier {
+    @EnvironmentObject private var drawer: CatalogDrawerModel
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if drawer.supportsSearch {
+            content.searchable(text: $drawer.searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search for a podcast")
+        } else {
+            content
+        }
+    }
+}
+
+/// One search result. A show with no public feed has no Follow button; the row says why instead.
+private struct CatalogSearchResultRow: View {
+    let show: SourceCandidate
+    let state: CatalogDrawerModel.FollowState?
+    let toggleFollow: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ArtworkThumbnail(url: show.artworkURL.flatMap(URL.init(string:)))
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(show.title).font(.headline).lineLimit(2)
+                if let author = show.author {
+                    Text(author).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(1)
+                }
+                if show.feed == nil {
+                    Text(show.reason).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(3)
+                        .accessibilityIdentifier("catalog.search.unfollowable.\(show.id)")
+                } else if case .failed(let message) = state {
+                    Text(message).font(.caption).foregroundStyle(AppColors.secondaryText).lineLimit(2)
+                }
+            }
+            Spacer(minLength: 8)
+            if show.feed != nil { followButton }
+        }
+        .padding(.vertical, 4)
+        .listRowBackground(Color.clear)
+    }
+
+    @ViewBuilder
+    private var followButton: some View {
+        switch state {
+        case .following:
+            ProgressView().frame(minWidth: 96, minHeight: 44)
+        case .followed:
+            Label("Following", systemImage: "checkmark")
+                .font(.subheadline.weight(.semibold))
+                .frame(minWidth: 96, minHeight: 44)
+                .accessibilityIdentifier("catalog.search.followed.\(show.id)")
+        case .failed:
+            Button("Retry", action: toggleFollow)
+                .buttonStyle(.bordered)
+                .frame(minWidth: 96, minHeight: 44)
+                .accessibilityIdentifier("catalog.search.follow.\(show.id)")
+        case nil:
+            Button("Follow", action: toggleFollow)
+                .filledActionButton()
+                .frame(minWidth: 96, minHeight: 44)
+                .accessibilityLabel("Follow \(show.title)")
+                .accessibilityIdentifier("catalog.search.follow.\(show.id)")
         }
     }
 }

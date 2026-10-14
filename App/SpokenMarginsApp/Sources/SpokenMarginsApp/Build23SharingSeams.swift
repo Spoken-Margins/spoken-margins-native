@@ -2,6 +2,7 @@ import Combine
 import CryptoKit
 import Foundation
 import SessionKit
+import SessionKitFeeds
 import SessionKitSharing
 
 /// The canonical sender progression for Build 23. Presentation code may move
@@ -65,6 +66,18 @@ struct Build23SharingMarginSnapshot: Identifiable, Equatable {
     let cleanedVoiceURL: URL?
 }
 
+extension Build23SharingMarginSnapshot {
+    /// Included, but with no reviewed words, so the packet can't carry it (#1185).
+    var isLeftOutForMissingText: Bool {
+        isIncluded && !SharedMarginTextRequirement.hasReviewedText(reviewedText)
+    }
+
+    /// What VoiceOver says about the Margin's place in the packet; matches the visible status.
+    var shareStatusDescription: String {
+        isLeftOutForMissingText ? "left out, no transcript yet" : (isIncluded ? "included" : "not included")
+    }
+}
+
 struct Build23RecipientPreviewMargin: Identifiable, Equatable, Sendable {
     let id: String
     let reviewedText: String
@@ -114,6 +127,13 @@ struct Build23SharingSnapshot: Equatable {
     let canShareVerifiedFile: Bool
 }
 
+extension Build23SharingSnapshot {
+    /// What the packet will hold. The Review and Share buttons count this, not the include flags.
+    var selectionSummary: SharedMarginSelectionSummary {
+        SharedMarginSelectionSummary(margins, isIncluded: { $0.isIncluded }, text: { $0.reviewedText })
+    }
+}
+
 struct Build23RecipientImportSnapshot: Equatable {
     let itemTitle: String
     let senderLabel: String
@@ -124,6 +144,9 @@ struct Build23RecipientImportSnapshot: Equatable {
     let isImporting: Bool
     let errorMessage: String?
     let canImport: Bool
+    /// A podcast packet whose source was private: the sender's links were dropped (#168), so the
+    /// recipient can recover the episode from their own feed (#454).
+    var isPrivatePodcastSource = false
 }
 
 struct Build23RecipientSourceRequest: Identifiable, Equatable {
@@ -225,6 +248,8 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
     @Published private(set) var pendingRecipientSourceRequest: Build23RecipientSourceRequest?
 
     private let model: Gate1AppModel
+    /// Recovers a private-feed packet's episode from the recipient's own feed (#454).
+    let episodeRecovery: SharedEpisodeRecovery
     private var previewFingerprint: String?
     private var previewGeneration = 0
     private var previewTask: Task<Void, Never>?
@@ -234,12 +259,19 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
 
     init(model: Gate1AppModel) {
         self.model = model
+        episodeRecovery = SharedEpisodeRecovery(services: SharedEpisodeRecovery.services(model: model))
         importedLayers = makeImportedLayers(from: model.selectedItem)
         model.$selectedItem.sink { [weak self] item in
             guard let self else { return }
             let layers = self.makeImportedLayers(from: item)
             if self.importedLayers != layers { self.importedLayers = layers }
         }.store(in: &modelChangeCancellables)
+        // A different package (or none) starts the episode recovery over.
+        model.$spokenMarginsPackageImportReview
+            .map { $0?.contents.manifest.packageId }
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.episodeRecovery.reset() }
+            .store(in: &modelChangeCancellables)
         // Playback position and diagnostics are not sharing inputs. Observe the
         // relevant publishers and coalesce their willSet notifications.
         model.$sharingState.map { _ in () }
@@ -343,8 +375,19 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
             requiresRecipientSource: review.requiresRecipientItem,
             isImporting: model.isImportingSpokenMarginsPackage,
             errorMessage: model.spokenMarginsPackageImportError,
-            canImport: !review.requiresRecipientItem && !model.isImportingSpokenMarginsPackage
+            canImport: !review.requiresRecipientItem && !model.isImportingSpokenMarginsPackage,
+            isPrivatePodcastSource: SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest)
         )
+    }
+
+    /// Reads the feed the recipient pasted and adds the episode this package's Margins belong to.
+    func recoverSharedEpisode(feedLink: String) {
+        guard let item = model.spokenMarginsPackageImportReview?.contents.manifest.item else { return }
+        Task { await episodeRecovery.recover(item, feedLink: feedLink) }
+    }
+
+    func chooseRecoveredEpisode(_ candidateID: String) {
+        Task { await episodeRecovery.choose(candidateID) }
     }
 
     var verifiedShareFileURL: URL? {
@@ -390,7 +433,11 @@ final class Build23SharingCoordinator: ObservableObject, Build23SharingCoordinat
         switch action {
         case .begin:
             discardPreview(resetTo: .select)
-            model.prepareShareInterjections()
+            if model.sharingState.draftsPreparedForExport && model.isSharingInterjectionsPresented {
+                model.sharingState.draftsPreparedForExport = false
+            } else {
+                model.prepareShareInterjections()
+            }
             selectedMarginID = model.sharingState.drafts.first(where: \.isIncluded)?.id
             model.prepareAutomaticallyCleanedShareDraftsIfEnabled()
         case .setFilter(let filter):

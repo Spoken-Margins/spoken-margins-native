@@ -964,11 +964,19 @@ protocol LocalFoundationModelClient: Sendable {
     func summarizeInterjections(context: String) async throws -> String
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String
+    /// "Where people reacted" (#476): the reply to `MarginLayerSynthesis.prompt`, one cited sentence per line.
+    func summarizeReactions(prompt: String) async throws -> String
 }
 
-/// Deterministic model seam for end-to-end UI tests. Production construction
-/// never selects this client because it requires both `--ui-testing` and an
-/// explicit launch environment value.
+extension LocalFoundationModelClient {
+    func summarizeReactions(prompt: String) async throws -> String {
+        throw LocalFoundationModelError.unavailable(availability().description)
+    }
+}
+
+#if DEBUG
+/// Deterministic model seam for end-to-end UI tests. Release builds do not
+/// compile it (#517); `UITestingHooks` is the only code that creates one.
 final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @unchecked Sendable {
     enum Mode: String {
         case succeed
@@ -1004,7 +1012,13 @@ final class UITestingLocalFoundationModelClient: LocalFoundationModelClient, @un
     func summarizeListeningMap(labels: [LocalListeningMapLabel]) async throws -> String {
         "A UI testing listening map."
     }
+
+    func summarizeReactions(prompt: String) async throws -> String {
+        if mode == .fail { throw LocalFoundationModelError.emptyResponse }
+        return "People reacted near the start. [m1]"
+    }
 }
+#endif
 
 struct AppleFoundationModelClient: LocalFoundationModelClient {
     func availability() -> LocalFoundationModelAvailability {
@@ -1098,6 +1112,11 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         """
         return try await respond(to: prompt, maximumResponseTokens: 100)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func summarizeReactions(prompt: String) async throws -> String {
+        try requireAvailability()
+        return try await respond(to: prompt, maximumResponseTokens: 400)
     }
 
     private func requireAvailability() throws {

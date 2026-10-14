@@ -43,8 +43,10 @@ public enum MarginNoteDelivery {
 
     /// The calm status after a pass with no failures, e.g.
     /// "1 Margin saved to Vault. 1 note you edited was left as is. Last checked 3:04 PM."
-    public static func statusLine(_ summary: Summary, folderName: String, checkedAt: String) -> String {
-        "\(count(summary.saved, "Margin", "Margins")) saved to \(folderName).\(keptEditsSentence(summary)) Last checked \(checkedAt)."
+    public static func statusLine(
+        _ summary: Summary, folderName: String, checkedAt: String, noun: (one: String, many: String) = ("Margin", "Margins")
+    ) -> String {
+        "\(count(summary.saved, noun.one, noun.many)) saved to \(folderName).\(keptEditsSentence(summary)) Last checked \(checkedAt)."
     }
 
     /// The message for a pass where some notes could not be written; nil when none failed.

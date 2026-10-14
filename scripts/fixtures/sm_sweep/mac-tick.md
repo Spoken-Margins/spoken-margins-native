@@ -1,0 +1,14 @@
+**14:15 CDT (Mac tick)** · next `de750f8`
+- pace: Claude 52% used, about 62% of the week gone (10 under the line); five-hour 15%. Codex 19% used, about 23% gone; it retires after 10-15.
+- runner: 2 running, 3 queued, 0 pending, oldest wait about 9 min, busy all 60 of the last 60.
+- simulator slot: free. Disk 35 GB free (+3 GB since last tick). Memory normal. Keep-awake: Amphetamine (no caffeinate). Main checkout fast-forwarded 32 commits, now up to date. No crash floods.
+- queue: 9 ready, 13 in progress.
+- merged by the runner since the last tick: #1575, #1581, #1583, #1584, #1587, #1588, #1591, #1592. Waiting to merge:
+  - #1590 and #1596: lane PASS on the current head (#1590 also has audit "No blocking findings"); a fresh run is queued or running, then the runner merges.
+  - #1602: lane running (first run queued).
+  - #1595: touches `.github/` and `scripts/lane-runner.py`. The audit on `094206d` blocked it for a missing "Cost and catch" section; a new head `48b346e` is in the lane now. Needs the owner's click once clean.
+  - #1568: touches `scripts/lane*`. Lane PASS on the current head `eccda27`; the re-audit it asked for hasn't posted yet. Owner's click once the audit is clean.
+  - #1585: conflicts with next (and its last T3 on `be77e06` was FAIL).
+  - No STUCK PRs, no `needs-mac` PRs. Mac finisher last active 25 min ago.
+- removed worktrees: none. Thirteen merged ones each still hold a session's folder (two of them archived sessions); disk is above 20 GB, so no build caches cleared. Renamed "archive later": previous Mac tick, three idle "SM integration run" sessions, "Fix Kitten PR 1575 test failures", both "KittenTTS fallback" sessions (#1575 merged).
+- advice for dispatch: Claude is 10 under the line and the runner queue is short: start more threads.

@@ -1,6 +1,7 @@
 import AVFoundation
 import SessionKit
 import SessionKitAudio
+import SessionKitFeeds
 import SessionKitSharing
 import SwiftUI
 import UIKit
@@ -49,6 +50,9 @@ struct InterjectionSharingState {
     var autoCleanSelectedEnabled = ShareAutoCleanPreference.isEnabled
     var needsAutoCleanDecision = !ShareAutoCleanPreference.hasRecordedDecision
     var automaticallyCleanedDraftIDs: Set<String> = []
+    /// Set by the export screen, which prepares drafts from the session picked there. The
+    /// sheet's `begin` keeps them once instead of rebuilding from the open item's session.
+    var draftsPreparedForExport = false
 }
 
 struct SpokenMarginsPackageImportReview: Identifiable {
@@ -194,6 +198,9 @@ struct SpokenMarginsPackageImportView: View {
         case .reference:
             return "Spoken Margins will reconstruct this linked item and then resolve the shared anchors. Nothing will play automatically."
         case .recipientSupplied:
+            if SharedEpisodeFeedMatcher.isPrivatePodcastSource(review.contents.manifest) {
+                return "These Margins came from a private podcast feed, so the episode is not included. Add the same episode to your library, for example by pasting your own feed link in the import screen, then reopen this .spokenmargins file."
+            }
             return "The item is not included. Add the same text, PDF, or EPUB to your library, then reopen this .spokenmargins file so its Margins can be attached safely."
         }
     }
@@ -873,16 +880,10 @@ struct SharedSpokenMarginsPackageReadyView: View {
                         Text(packageURL.lastPathComponent)
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
-                        Text("Use the recipient test path to import this exact package back onto this device and experience it in a separate listening session.")
-                            .font(.callout)
                     }
                 }
                 Button("Share File") { isActivityPresented = true }
                     .buttonStyle(PrimaryButtonStyle())
-                Button("Create Recipient Test Session") {
-                    model.createRecipientTestSessionFromLastSharedPackage()
-                }
-                .buttonStyle(SecondaryButtonStyle())
                 Button("Done") { model.isSharedSpokenMarginsPackagePresented = false }
                     .buttonStyle(SecondaryButtonStyle())
                 Spacer()

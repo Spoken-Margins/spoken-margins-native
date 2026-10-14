@@ -15,7 +15,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
-    func testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline() throws {
+    func testMarginsItemShareOpensShareSheetAndChapterJumpUpdatesTimeline() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
@@ -39,10 +39,30 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(share.waitForExistence(timeout: 5))
         captureScreen(named: "qol-item-share-action")
         share.tap()
-        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("export.session.picker").exists)
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Share Margins (")).firstMatch.isEnabled)
-        captureScreen(named: "qol-item-export")
+        // #147: straight to the Share Margins sheet, with Review pinned at the bottom.
+        XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5))
+        let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+        if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
+        let review = element("build23.sender.select.continue")
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(review.isHittable)
+        captureScreen(named: "qol-item-share-sheet")
+        review.tap()
+        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
+        let shareAction = element("build23.sender.review.share")
+        XCTAssertTrue(shareAction.waitForExistence(timeout: 5))
+        XCTAssertTrue(shareAction.isHittable)
+        captureScreen(named: "qol-item-share-review")
+        // Third tap: Share is pinned at the bottom of Review and builds, verifies and presents the iOS share sheet.
+        shareAction.tap()
+        let nativeShareSurface = element("ActivityListView")
+        XCTAssertTrue(
+            nativeShareSurface.waitForExistence(timeout: 8),
+            "Share, Review, Share did not reach the iOS share sheet from the Margins tab."
+        )
+        captureScreen(named: "qol-item-share-ios-sheet")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(nativeShareSurface, timeout: 5))
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {
@@ -183,15 +203,27 @@ final class Gate1FlowUITests: XCTestCase {
         let row = app.buttons["library.row.item-pill"]
         XCTAssertTrue(row.waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
+        let search = app.textFields["library.search.field"]
+        XCTAssertTrue(search.waitForExistence(timeout: 4))
+        let searchTop = search.frame.minY
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
+        // #1149: the completion banner is the app's shared one and floats over the list.
         XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        XCTAssertTrue(element("app.feedback.banner").exists)
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "The banner must not push the Library down")
         XCTAssertFalse(row.exists)
         element("completion.undo.button").tap()
         XCTAssertTrue(row.waitForExistence(timeout: 4))
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "Undo must not move the Library")
         row.press(forDuration: 0.8)
         app.buttons["Mark Complete"].tap()
-        let search = app.textFields["library.search.field"]
+        XCTAssertTrue(element("completion.undo.button").waitForExistence(timeout: 4))
+        captureScreen(named: "library-completion-banner")
+        // The banner dismisses itself (#123); it also covers the top of the list while it shows.
+        XCTAssertTrue(element("app.feedback.banner").waitForNonExistence(timeout: 12))
+        XCTAssertEqual(search.frame.minY, searchTop, accuracy: 1, "The Library must not move when the banner goes")
+        captureScreen(named: "library-completion-notice-expired")
         search.tap()
         search.typeText("pill")
         XCTAssertFalse(row.exists)
@@ -199,9 +231,6 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 4))
         XCTAssertTrue(app.staticTexts["All items"].exists)
         captureScreen(named: "library-completed-search-and-undo")
-        XCTAssertTrue(element("completion.undo.banner").waitForNonExistence(timeout: 12))
-        XCTAssertTrue(row.exists)
-        captureScreen(named: "library-completion-notice-expired")
         app.buttons["Clear search"].tap()
         element("library.filters.reset").tap()
         XCTAssertTrue(app.staticTexts["Completed items hidden"].exists)
@@ -529,8 +558,8 @@ final class Gate1FlowUITests: XCTestCase {
 
         let failure = element("app.feedback.banner")
         XCTAssertTrue(failure.waitForExistence(timeout: 8))
-        XCTAssertTrue(failure.label.contains("On-device summary failed"))
-        XCTAssertTrue(failure.label.contains("Retry Summary"))
+        XCTAssertTrue(failure.label.contains("Summary couldn’t finish."))
+        XCTAssertTrue(app.buttons["app.feedback.retry"].isEnabled)
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
         XCTAssertTrue(summarize.label.contains("Retry summary"))
@@ -658,6 +687,25 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
+    /// #1436: only the words of the row were tappable. A tap beside them, at the row's right edge,
+    /// starts it too.
+    func testShareDiagnosticsRowTakesATapBesideTheWords() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        openLibrarySettings()
+        let share = scrollToElement("settings.shareDiagnostics.button")
+        XCTAssertGreaterThan(
+            share.frame.width, app.windows.firstMatch.frame.width * 0.55,
+            "The Share Diagnostics button is only as wide as its words."
+        )
+
+        share.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+
+        let shareSheet = element("ActivityListView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "A tap beside the words did not open the share sheet.")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
+    }
+
     func testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries() throws {
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let seededStart = app.buttons["queue.start.item-pill"]
@@ -722,7 +770,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Margins"].exists)
 
         let finish = element("recording.finish.button")
-        XCTAssertLessThan(finish.frame.maxY, app.frame.midY, "Finish must stay away from the bottom capture control")
+        XCTAssertGreaterThan(finish.frame.minY, app.frame.midY, "Save & resume sits in the bottom row, where Add a Margin was (#148)")
+        XCTAssertLessThan(element("recording.cancel.button").frame.maxX, finish.frame.minX, "Cancel is the small button to the left of Save")
         // Save ignores taps for 0.5 s after the recording screen appears (#148), so wait past that window.
         _ = XCTWaiter.wait(for: [XCTestExpectation(description: "recording save guard window")], timeout: 0.6)
         finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()
@@ -779,7 +828,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 4))
         editor.tap()
         editor.typeText("Remember the amber doorway.")
-        XCTAssertTrue(element("writtenMargin.save.button").isHittable, "The keyboard hides Save")
+        // #1184: a button under the keyboard can still report isHittable, so compare frames.
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 4))
+        let save = element("writtenMargin.save.button")
+        XCTAssertTrue(save.isHittable, "The keyboard hides Save")
+        XCTAssertLessThanOrEqual(save.frame.maxY, keyboard.frame.minY, "Save sits under the keyboard")
         captureScreen(named: "second-edition-written-capture-keyboard")
         element("writtenMargin.save.button").tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5))

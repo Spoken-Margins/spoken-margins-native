@@ -31,6 +31,77 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(row.interjection.approvedTranscript, "Someone else's thought")
     }
 
+    /// #473: a reply sits directly under the Margin it answers at that Margin's place, indented, and says what it answers.
+    @MainActor
+    func testTimelineThreadsRepliesUnderTheSharedMarginTheyAnswer() throws {
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Episode"
+        item.mediaDurationMs = 100_000
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: item.id, packageDigest: "digest-a", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"), displayLabel: "Ana", importedAt: Date(),
+            sourceResolutionStatus: .resolved, isEnabled: true)
+        func shared(_ id: String, scoped: String, at ms: Int, offset: TimeInterval) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(id: id, layerId: layer.id, packageScopedId: scoped, createdAt: Date(timeIntervalSince1970: offset),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: ms), approvedTranscript: "Ana says \(id)",
+                resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: ms, confidence: 1))
+        }
+        let parent = shared("parent", scoped: "m-1", at: 30_000, offset: 10)
+        let elsewhere = shared("elsewhere", scoped: "m-2", at: 30_500, offset: 11)
+        var reply = interjection(id: "my-reply", transcript: "My reply")
+        reply.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 34_000)
+        reply.createdAt = Date(timeIntervalSince1970: 20)
+        reply.replyTo = parent.replyLink(in: layer)
+        item.interjections = [reply]
+        item.importedCommentaryLayers = [layer]
+        item.importedCommentaryInterjections = [layer.id: [elsewhere, parent]]
+
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+            .filter { $0.reference != nil }
+
+        XCTAssertEqual(entries.map(\.reference), [.imported("parent"), .local("my-reply"), .imported("elsewhere")],
+                       "the reply follows its parent even though it was made later and the other Margin is closer in time")
+        XCTAssertEqual(entries.map(\.depth), [0, 1, 0])
+        XCTAssertEqual(entries[1].position, entries[0].position, "a reply sits at the place it answers")
+        XCTAssertTrue(entries[1].detail.hasPrefix("Reply to Ana · "), entries[1].detail)
+        XCTAssertFalse(entries[0].detail.contains("Reply to"))
+    }
+
+    /// The audit of #1570: the rail shows one session's Margins, so a reply to a Margin from an earlier session has
+    /// nothing to indent under. It must stand at its own place and say what it answers, not hang under whatever
+    /// entry happens to come before it.
+    @MainActor
+    func testTimelineShowsAReplyOnItsOwnWhenItsParentIsFromAnEarlierSession() throws {
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Episode"
+        item.mediaDurationMs = 100_000
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: item.id, packageDigest: "digest-a", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"), displayLabel: "Ana", importedAt: Date(),
+            sourceResolutionStatus: .resolved, isEnabled: true)
+        let sharedIdentity = MarginPacketIdentity(packageDigest: "digest-mine", packageScopedId: "mine-1")
+        var earlier = interjection(id: "earlier", sessionId: "old-session", transcript: "From last week")
+        earlier.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 10_000)
+        earlier = earlier.recordingShare(as: sharedIdentity)
+        var current = interjection(id: "current", transcript: "Today")
+        current.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 20_000)
+        let reply = ImportedCommentaryInterjection(id: "ana-reply", layerId: layer.id, packageScopedId: "a-1",
+            createdAt: Date(timeIntervalSince1970: 30), anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: 50_000),
+            approvedTranscript: "Ana answers last week", resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: 50_000, confidence: 1),
+            replyLinks: [MarginReplyLink.replying(to: sharedIdentity, parentConversationId: nil)])
+        item.interjections = [earlier, current]
+        item.importedCommentaryLayers = [layer]
+        item.importedCommentaryInterjections = [layer.id: [reply]]
+
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session").filter { $0.reference != nil }
+
+        XCTAssertEqual(entries.map(\.reference), [.local("current"), .imported("ana-reply")], "the earlier session's Margin is not on this rail")
+        let shown = try XCTUnwrap(entries.last)
+        XCTAssertEqual(shown.depth, 0, "nothing on the rail to indent under")
+        XCTAssertEqual(shown.position, 50, "it stays at its own place")
+        XCTAssertTrue(shown.detail.hasPrefix("Reply to you · "), shown.detail)
+    }
+
     @MainActor
     func testTimelineIncludesAllGeneratedScenesWithDistinctProvenanceAndSeekTargets() throws {
         var item = ItemDetailState()
@@ -181,6 +252,30 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertFalse(excerpt.contains("\n"))
         XCTAssertFalse(excerpt.contains("\t"))
         XCTAssertFalse(excerpt.hasSuffix(" margin…"), "The excerpt should use the last complete word inside its limit.")
+
+        // A hard cut at 80 characters ends mid-word and also avoids " margin…", so check where the excerpt stops.
+        let normalized = longMargin.split(whereSeparator: \Character.isWhitespace).joined(separator: " ")
+        let kept = String(excerpt.dropLast())
+        XCTAssertTrue(normalized.hasPrefix(kept), "The excerpt is the start of the Margin, whitespace collapsed.")
+        XCTAssertEqual(normalized[normalized.index(normalized.startIndex, offsetBy: kept.count)], " ", "The excerpt ends where a word ends, not inside one.")
+    }
+
+    func testTimelineTextExcerptCutsAtWordBoundariesForNeighbouringInputs() {
+        let cases: [(text: String, limit: Int, expected: String)] = [
+            ("", 10, ""),
+            ("short", 10, "short"),
+            ("exactly ten", 11, "exactly ten"),
+            ("aaaa bbbb cccc", 9, "aaaa bbbb…"),
+            ("aaaa bbbb cccc", 10, "aaaa bbbb…"),
+            ("aaaa bbbb cccc", 11, "aaaa bbbb…"),
+            ("supercalifragilistic", 8, "supercal…"),
+            ("  leading   and\ttrailing  ", 100, "leading and trailing"),
+            ("caf\u{E9} \u{FC}ni\u{EF}code w\u{F6}rds", 9, "caf\u{E9}…"),
+            ("cafe\u{301} \u{FC}ni\u{EF}code w\u{F6}rds", 9, "cafe\u{301}…")
+        ]
+        for (text, limit, expected) in cases {
+            XCTAssertEqual(TimelineTextPresentation.excerpt(text, characterLimit: limit), expected, "\(text.debugDescription) at \(limit)")
+        }
     }
 
     @MainActor
@@ -361,19 +456,6 @@ final class ExperiencePresentationTests: XCTestCase {
         )
     }
 
-    func testCompactItemsRemoveOnlyTheContinueItemIdentity() {
-        let hero = libraryRow(id: "hero", title: "Shared Title", progress: 30)
-        let sameTitle = libraryRow(id: "same-title", title: "Shared Title", progress: 20)
-        let other = libraryRow(id: "other", title: "Other", progress: nil)
-
-        let compact = LibraryPresentation.compactItems(
-            [hero, sameTitle, hero, other],
-            excluding: hero
-        )
-
-        XCTAssertEqual(compact.map(\.id), [sameTitle.id, other.id])
-    }
-
     func testMarkedCompleteItemIsExcludedEvenWhenActiveSessionStillHasProgress() {
         let completed = LibraryItemRow(id: "done", title: "Done", status: "Ready", canDelete: true, hasContinuationSession: true, continuationProgressPercent: 35, isCompleted: true)
         XCTAssertNil(LibraryPresentation.continueItem(in: [completed], activeItemId: completed.id))
@@ -473,7 +555,7 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertFalse(ready.needsAttention)
         XCTAssertEqual(ready.preview, "Audio Margin")
         XCTAssertTrue(pending.needsAttention)
-        XCTAssertEqual(pending.preview, "Transcription is pending")
+        XCTAssertEqual(pending.preview, "Transcribing…")
         XCTAssertTrue(unavailableContext.needsAttention)
         XCTAssertEqual(unavailableContext.attentionDescription, "Context needs retry")
         XCTAssertTrue(missingRecording.needsAttention)

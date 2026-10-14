@@ -1,4 +1,5 @@
 import Foundation
+import SessionKitSharing
 import SwiftUI
 
 @MainActor
@@ -28,10 +29,6 @@ struct Build23SenderSharingExperience: View {
                     }
                     .accessibilityIdentifier("build23.sender.cancel")
                 }
-                HStack {
-                    Spacer()
-                    topPrimaryAction(snapshot)
-                }
                 if let error = shareError(snapshot) {
                     FailureMessageLabel(error)
                         .accessibilityIdentifier("build23.sender.share.error")
@@ -52,12 +49,30 @@ struct Build23SenderSharingExperience: View {
                         .accessibilityIdentifier("build23.sender.share.without-matching")
                     }
                 }
+                if snapshot.stage == .select || snapshot.stage == .review, let notice = snapshot.selectionSummary.notice {
+                    Label(notice, systemImage: "info.circle")
+                        .font(.subheadline)
+                        .foregroundStyle(AppColors.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("build23.sender.left-out-notice")
+                }
                 stageContent(snapshot)
             }
             .frame(maxWidth: 960, alignment: .leading)
             .padding(.horizontal, 20)
             .padding(.vertical, 24)
             .frame(maxWidth: .infinity, alignment: .top)
+        }
+        // Review and Share stay pinned at the bottom, within thumb reach, rather than scrolling away (#147).
+        .safeAreaInset(edge: .bottom) {
+            if snapshot.stage != .share {
+                primaryAction(snapshot)
+                    .controlSize(.large)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(AppColors.bone)
+            }
         }
         .background(AppColors.bone.ignoresSafeArea())
         .accessibilityElement(children: .contain)
@@ -111,8 +126,8 @@ struct Build23SenderSharingExperience: View {
     }
 
     @ViewBuilder
-    private func topPrimaryAction(_ snapshot: Build23SharingSnapshot) -> some View {
-        let includedCount = snapshot.margins.filter(\.isIncluded).count
+    private func primaryAction(_ snapshot: Build23SharingSnapshot) -> some View {
+        let includedCount = snapshot.selectionSummary.packetCount
         switch snapshot.stage {
         case .select:
             Button("Review \(includedCount)") {

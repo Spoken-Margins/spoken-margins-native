@@ -9,7 +9,7 @@
 ## Starting points
 
 - `docs/repo-review-2026-09-24.md` §8 lists probable duplicates (#133/#136, #64/#73/#74, #70/#82, #88/#89, #48/#51, #117/#118, #75/#96/#121, #93/#97/#131, #132/#141/#143, #129/#142, #105/#124/#138), closable issues, and issues implemented but awaiting validation.
-- Issues labeled `status: needs-human-validation` belong to the owner's next device pass, not to a stream.
+- Issues labeled `status: needs-human-validation` belong to the owner's next device pass, not to a stream. The label is only for changes the owner would see or hear; internal work is closed when it merges into `next`.
 - The stream briefs in `docs/workstreams/streams/` list the issues they already know about. Start from those.
 
 ## Milestones

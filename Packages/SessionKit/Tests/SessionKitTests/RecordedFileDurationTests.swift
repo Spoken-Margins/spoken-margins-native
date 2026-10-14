@@ -1,5 +1,6 @@
 #if canImport(AVFoundation)
 import XCTest
+import SessionKit
 @testable import SessionKitAudio
 
 /// #937: a stopped recorder reads 0 and a poll can be old, so the length of a finished recording is read
@@ -57,6 +58,44 @@ final class RecordedFileDurationTests: XCTestCase {
         XCTAssertEqual(RecordedFileDuration.measure(damaged), .unreadable)
     }
 
+    /// #951: files left by a writer that was SIGKILLed 0.7 s into recording (AVAudioFile, the container the recorder
+    /// makes, run in a child process on macOS 26). The AAC .m4a has bytes but no closing index, so it never opens;
+    /// the PCM .caf opens with the audio written so far. Cutting a finished file short is not the same damage,
+    /// which is why these are real kills. Whether the phone's AVAudioRecorder does the same is a phone check.
+    func testARecordingKilledMidWriteIsNotDecodableAsAAC() throws {
+        let fixtures = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures")
+        let killedAAC = fixtures.appending(path: "killed-while-recording-aac.m4a")
+        XCTAssertGreaterThan((try killedAAC.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0, 10_000, "the file has bytes")
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(killedAAC))
+        XCTAssertEqual(RecordedFileDuration.measure(killedAAC), .unreadable, "unknown, so it is kept, never read as empty")
+
+        let killedPCM = fixtures.appending(path: "killed-while-recording-pcm.caf")
+        XCTAssertTrue(RecordingDraftProbe.isDecodable(killedPCM))
+        guard case .milliseconds(let ms) = RecordedFileDuration.measure(killedPCM) else { return XCTFail("the PCM file must measure") }
+        XCTAssertGreaterThan(ms, 300)
+    }
+
+    func testAFinishedRecordingIsDecodable() throws {
+        let finished = temporaryURL()
+        defer { try? FileManager.default.removeItem(at: finished) }
+        try SeededNoiseAudio.write(to: finished, seconds: 3)
+        XCTAssertTrue(RecordingDraftProbe.isDecodable(finished))
+    }
+
+    func testAMissingEmptyOrDamagedFileIsNotDecodable() throws {
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(temporaryURL()))
+        let empty = temporaryURL()
+        let damaged = temporaryURL()
+        defer {
+            try? FileManager.default.removeItem(at: empty)
+            try? FileManager.default.removeItem(at: damaged)
+        }
+        try Data().write(to: empty)
+        try Data(repeating: 0x5A, count: 4_096).write(to: damaged)
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(empty))
+        XCTAssertFalse(RecordingDraftProbe.isDecodable(damaged))
+    }
+
     func testTheMeasurementRunsOffTheMainThreadAndTheOutcomeAppearsWithoutWaiting() throws {
         let url = temporaryURL()
         defer { try? FileManager.default.removeItem(at: url) }
@@ -70,6 +109,28 @@ final class RecordedFileDurationTests: XCTestCase {
             return XCTFail("the measurement did not finish")
         }
         XCTAssertEqual(Double(milliseconds), 2_000, accuracy: 250)
+    }
+
+    /// #1041: a restart never reads the file on the main thread. A recorder that had already stopped is
+    /// restarted only once the poll's background measurement has landed and shows nothing worth keeping.
+    func testARestartOverAnUnfinishedOrUnreadableMeasurementKeepsTheFile() {
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: nil), .keepUnknown)
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: .unreadable), .keepUnknown)
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: .milliseconds(22)), .restart)
+        XCTAssertEqual(
+            CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: true, measurement: .milliseconds(MarginCaptureTimings.keepAudioMs)),
+            .keepAudio,
+            "the file holds more than the polls saw"
+        )
+    }
+
+    func testARunningRecorderIsJudgedByWhatItHasTakenIn() {
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 22, recorderHadStopped: false, measurement: nil), .restart)
+        XCTAssertEqual(
+            CaptureRestartGuard.verdict(capturedMs: MarginCaptureTimings.keepAudioMs, recorderHadStopped: false, measurement: nil),
+            .keepAudio
+        )
+        XCTAssertEqual(CaptureRestartGuard.verdict(capturedMs: 249, recorderHadStopped: false, measurement: .unreadable), .restart)
     }
 }
 #endif

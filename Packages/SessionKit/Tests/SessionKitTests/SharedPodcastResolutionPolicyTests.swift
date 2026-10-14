@@ -144,8 +144,8 @@ final class SharedPodcastResolutionPolicyTests: XCTestCase {
         // These remain app-owned. Pin their bytes at the call site without pretending to run the app.
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift"), encoding: .utf8)
-        let start = try XCTUnwrap(source.range(of: "private func acquirePodcastForImportedPackage("))
+        let source = try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift"), encoding: .utf8)
+        let start = try XCTUnwrap(source.range(of: "func acquirePodcastForImportedPackage("))
         let end = try XCTUnwrap(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])
         XCTAssertTrue(body.contains("diagnostics[\"lastSharedPodcastAcquisition\"] = \"package_reference_after_resolution_failure\""))

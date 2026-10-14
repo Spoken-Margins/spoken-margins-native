@@ -1,0 +1,11 @@
+Bundled fallback voice: sources and licenses
+
+When the main on-device voice can't run (heat, Low Power Mode, memory pressure), Spoken Margins reads with this bundled voice. No GPL code or data is included; espeak-ng is not used.
+
+KittenTTS nano 0.8 (fp32 speech model) and the "Jasper" voice style: Apache-2.0. Source: Hugging Face KittenML/kitten-tts-nano-0.8-fp32, revision 7a1db645b1f3ab9420761d87428e042b9cec3f26, sha256 of the model 320564d2615f235de972ca27a7f39551c94185cfa24ca85b07a29084135f1e5e.
+
+Pronunciation lexicon: misaki 0.9.4 us_gold.json (hexgrad), Apache-2.0, plus the CMU Pronouncing Dictionary (Carnegie Mellon University), under the license in "CMU Pronouncing Dictionary" in this list.
+
+Letter-to-sound network weights: g2p_en 2.1.0 checkpoint20.npz (Kyubyong Park, Jongseok Kim), Apache-2.0.
+
+Derived files are regenerated with research/C2/frontend/export_for_swift.py.

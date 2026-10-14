@@ -298,6 +298,7 @@ enum PDFStructuredTextExtractor {
         let firstContentsPage = pages.firstIndex { $0.contains { isTableOfContentsTitle($0.text) } }
         let bodySize = inferredBodyPointSize(from: allLines)
         let layout = BodyLayout(lines: allLines, bodySize: bodySize)
+        let cover = titleOnlyCover(pages: pages, bodySize: bodySize)
         var result: [StructuredDocumentLine] = []
         // Outline entries on a page with no text start their chapter on the next page.
         var carriedOutline: [StructuredDocumentLine.OutlineEntry] = []
@@ -333,7 +334,22 @@ enum PDFStructuredTextExtractor {
                     pages[neighbour].contains { isFigureCaption($0.text) }
                 }
             )
-            let titlePage = pageIndex < 2 ? titlePageRoles(in: pageLines, isFirstPage: pageIndex == 0, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox)) : [:]
+            let titlePage: [Int: StructuredDocument.Role]
+            if let cover, pageIndex == 0 {
+                titlePage = cover.roles
+            } else if pageIndex < 2 {
+                // The page after a title-only cover carries the abstract, so it is read as the
+                // first page, and its repeat of the cover's title is not read again (#1144).
+                titlePage = titlePageRoles(
+                    in: pageLines,
+                    isFirstPage: pageIndex == 0 || (pageIndex == 1 && cover != nil),
+                    bodySize: bodySize,
+                    pageBox: page.bounds(for: .mediaBox),
+                    coverTitleKey: pageIndex == 1 ? cover?.titleKey : nil
+                )
+            } else {
+                titlePage = [:]
+            }
             let footnotes = footnoteLineIndices(in: pageLines, bodySize: bodySize, pageBox: page.bounds(for: .mediaBox))
             // The line each outline entry names on its page is a heading, even where a
             // running head would sit (#347): one line, or two when the heading wraps
@@ -368,9 +384,19 @@ enum PDFStructuredTextExtractor {
                 anchors[0, default: []].insert(contentsOf: carriedOutline, at: 0)
                 carriedOutline = []
             }
+            // A line read as a heading by its type alone, with no other role that comes first.
+            func isTypeOnlyHeading(_ index: Int) -> Bool {
+                let line = pageLines[index]
+                return outlineLines[index] == nil && furnitureRole(line, page: page) == nil
+                    && !tableOfContentsLines.contains(index) && titlePage[index] == nil && !footnotes.contains(index)
+                    && !tableLines.contains(index) && !figureLines.contains(index) && !layout.looksLikeDisplayMath(line)
+                    && outline.isEmpty && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
+                    && isVisualHeading(line, bodySize: bodySize)
+            }
+            var wrappedHeadingLines = Set<Int>()
             var resultIndex: [Int: Int] = [:]
             for (lineIndex, line) in pageLines.enumerated() {
-                if lineIndex > 0, outlineLines[lineIndex - 1]?.span == 2 {
+                if lineIndex > 0, outlineLines[lineIndex - 1]?.span == 2 || wrappedHeadingLines.contains(lineIndex) {
                     resultIndex[lineIndex] = result.count - 1
                     continue
                 }
@@ -400,7 +426,24 @@ enum PDFStructuredTextExtractor {
                 } else if outline.isEmpty
                     && (firstContentsPage.map({ pageIndex > $0 }) ?? true)
                     && isVisualHeading(line, bodySize: bodySize) {
-                    result.append(StructuredDocumentLine(text: line.text, role: .heading, pageIndex: pageIndex, level: visualHeadingLevel(line, bodySize: bodySize)))
+                    // A heading printed over two or three lines is one heading (#1144). Not the
+                    // first level-1 heading: its first line is the item title v1 gave the PDF,
+                    // and so its item id (`itemTitle`).
+                    let level = visualHeadingLevel(line, bodySize: bodySize)
+                    let mayJoin = level != 1 || result.contains { ($0.role == .heading || $0.role == .title) && $0.level == 1 }
+                    var run = [lineIndex]
+                    while mayJoin, run.count < PDFWrappedHeading.maximumLines, let last = run.last, last + 1 < pageLines.count,
+                          isTypeOnlyHeading(last + 1),
+                          let upper = wrappedHeadingLine(pageLines[last], pageIndex: pageIndex),
+                          let lower = wrappedHeadingLine(pageLines[last + 1], pageIndex: pageIndex),
+                          PDFWrappedHeading.continues(upper, with: lower),
+                          PDFWrappedHeading.joined((run + [last + 1]).map { pageLines[$0].text }).count
+                            <= PDFWrappedHeading.maximumJoinedLength {
+                        run.append(last + 1)
+                    }
+                    wrappedHeadingLines.formUnion(run.dropFirst())
+                    let text = run.count == 1 ? line.text : PDFWrappedHeading.joined(run.map { pageLines[$0].text })
+                    result.append(StructuredDocumentLine(text: text, role: .heading, pageIndex: pageIndex, level: level))
                 } else {
                     result.append(StructuredDocumentLine(text: line.text, role: .body, pageIndex: pageIndex, superscripts: line.superscripts))
                 }
@@ -439,6 +482,14 @@ enum PDFStructuredTextExtractor {
         for candidate in candidates where words.contains(candidate.word) {
             lines[candidate.index].endsWithSoftHyphen = true
         }
+    }
+
+    private static func wrappedHeadingLine(_ line: TextLine, pageIndex: Int) -> PDFWrappedHeading.Line? {
+        guard let bounds = line.bounds, !bounds.isNull else { return nil }
+        return PDFWrappedHeading.Line(
+            text: line.text, pageIndex: pageIndex, pointSize: Double(line.pointSize), isBold: line.isBold,
+            minX: Double(bounds.minX), maxX: Double(bounds.maxX), minY: Double(bounds.minY), maxY: Double(bounds.maxY)
+        )
     }
 
     /// The system spell checker's English dictionary. UITextChecker is UIKit, so the
@@ -673,7 +724,7 @@ enum PDFStructuredTextExtractor {
     /// - On the first page, the block between the title and an explicit
     ///   "Abstract" or "Summary" line is authors and affiliations. Without that
     ///   line nothing is guessed, so an unlabelled abstract is never skipped.
-    private static func titlePageRoles(in lines: [TextLine], isFirstPage: Bool, bodySize: CGFloat, pageBox: CGRect) -> [Int: StructuredDocument.Role] {
+    private static func titlePageRoles(in lines: [TextLine], isFirstPage: Bool, bodySize: CGFloat, pageBox: CGRect, coverTitleKey: String? = nil) -> [Int: StructuredDocument.Role] {
         var roles: [Int: StructuredDocument.Role] = [:]
         if isFirstPage {
             // Author notes set as a footnote block at the bottom of page 1 ("• Corresponding
@@ -720,9 +771,7 @@ enum PDFStructuredTextExtractor {
             }
         }
         guard isFirstPage,
-              let abstract = lines.firstIndex(where: {
-                  $0.text.range(of: #"^(?:abstract|summary|a b s t r a c t)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
-              }), abstract > 0 else { return roles }
+              let abstract = lines.firstIndex(where: { isAbstractLabel($0.text) }), abstract > 0 else { return roles }
         // Display type before the abstract is the title page, not section headings
         // (#272): the largest run of real lines is the title, read once as one segment;
         // display-size author lines are authors; affiliations and short badges ("v1",
@@ -735,10 +784,15 @@ enum PDFStructuredTextExtractor {
         let titleCandidates = display.contains(where: { wordCount($0) >= 4 }) ? display.filter { wordCount($0) >= 4 } : display
         if let titleSize = titleCandidates.map({ lines[$0].pointSize }).max(),
            let first = titleCandidates.first(where: { abs(lines[$0].pointSize - titleSize) < 0.3 }) {
-            var index = first
+            var index = titleRunStart(in: lines, from: first, titleSize: titleSize, display: Set(display))
+            let runStart = index
             while index < abstract, roles[index] == nil, abs(lines[index].pointSize - titleSize) < 0.3 {
                 roles[index] = .title
                 index += 1
+            }
+            // The title again, after a cover that already printed it (#1144).
+            if let coverTitleKey, normalized((runStart..<index).map { lines[$0].text }.joined(separator: " ")) == coverTitleKey {
+                for repeated in runStart..<index { roles[repeated] = .frontMatter }
             }
         }
         for index in display where roles[index] == nil {
@@ -761,6 +815,61 @@ enum PDFStructuredTextExtractor {
             }
         }
         return roles
+    }
+
+    static func isAbstractLabel(_ text: String) -> Bool {
+        text.range(of: #"^(?:abstract|summary|a b s t r a c t)\b"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    /// A cover page that prints only the title (and a series line or date), with the
+    /// authors and "Abstract" on the next page, which repeats the title (#1144,
+    /// Cambridge CASP working paper: a 35 pt three-line title, then the same title in
+    /// two lines). The cover's largest-type run is the title, read once; its other
+    /// lines are front matter. Nil unless page 1 has the abstract, so a cover that
+    /// holds real text, or a first page with its own abstract, is read as before.
+    private static func titleOnlyCover(pages: [[TextLine]], bodySize: CGFloat) -> (roles: [Int: StructuredDocument.Role], titleKey: String)? {
+        // A label is a line of its own ("Abstract"), not a sentence that starts "Summary statistics are".
+        func isLabel(_ line: TextLine) -> Bool { isAbstractLabel(line.text) && line.text.split(separator: " ").count <= 3 }
+        guard pages.count >= 2, let cover = pages.first, !cover.isEmpty, cover.count <= 12,
+              !cover.contains(where: { isAbstractLabel($0.text) || looksLikeProse($0.text) }),
+              // Text in body type, however short its lines, means the page is not only a cover.
+              !cover.contains(where: { $0.pointSize < bodySize + 1.5 && $0.text.count >= 30 }),
+              pages[1].firstIndex(where: isLabel).map({ $0 > 0 }) == true else { return nil }
+        let display = cover.indices.filter { cover[$0].pointSize >= bodySize + 1.5 && !looksLikeSectionHeading(cover[$0].text) }
+        guard let titleSize = display.map({ cover[$0].pointSize }).max(),
+              let first = display.first(where: { abs(cover[$0].pointSize - titleSize) < 0.3 }) else { return nil }
+        var roles: [Int: StructuredDocument.Role] = [:]
+        var end = first
+        while end < cover.count, abs(cover[end].pointSize - titleSize) < 0.3 {
+            roles[end] = .title
+            end += 1
+        }
+        let words = (first..<end).flatMap { cover[$0].text.split(separator: " ") }
+        guard words.count >= 3 else { return nil }
+        // The authors are on the next page, so a series line or imprint here is not a name list.
+        for index in cover.indices where roles[index] == nil { roles[index] = .frontMatter }
+        return (roles, normalized((first..<end).map { cover[$0].text }.joined(separator: " ")))
+    }
+
+    /// Where the title starts, given the first title line of four or more words (#692).
+    /// A short opening line ("Understanding uncertainty" above "in modern machine
+    /// learning systems") isn't a candidate, so the title also takes the display lines
+    /// directly above it in the same type: same size and weight, and no more than a
+    /// line of that type above. A badge set apart from the title, or an article-type
+    /// label ("Research Article"), stays out.
+    private static func titleRunStart(in lines: [TextLine], from first: Int, titleSize: CGFloat, display: Set<Int>) -> Int {
+        let articleType = #"(?i)^(?:(?:original|research|review|brief|short|mini|technical|full|regular|invited|systematic)\s+)*(?:article|paper|report|communication|letter|review|note|perspective|commentary|editorial|preprint|research|opinion|methods?)$"#
+        var start = first
+        while start > 0, display.contains(start - 1) {
+            let above = lines[start - 1], line = lines[start]
+            // Against the title size, as the forward run checks, so the run still starts there.
+            guard abs(above.pointSize - titleSize) < 0.3, above.isBold == line.isBold,
+                  let upper = above.bounds, let lower = line.bounds,
+                  upper.minY >= lower.midY, upper.minY - lower.maxY <= line.pointSize,
+                  above.text.range(of: articleType, options: .regularExpression) == nil else { break }
+            start -= 1
+        }
+        return start
     }
 
     /// "1 Introduction", "2.1 Methods", "Background": a section heading that can sit

@@ -126,6 +126,62 @@ class ParseUsage(unittest.TestCase):
         self.assertFalse(g.parse_usage(comments)['halted'])
 
 
+class UsageBreakerPerProvider(unittest.TestCase):
+    """Owner, 2026-10-09: a provider over its line halts only the work that runs on it."""
+
+    def comments(self, *bodies):
+        return [{'body': b, 'created_at': ts(NOW - dt.timedelta(hours=len(bodies) - i))}
+                for i, b in enumerate(bodies)]
+
+    def advice_tick(self, advice):
+        return (f'**02:16 CDT (Mac tick)** · next x\n- pace: Claude 80% used, 83% of the week gone '
+                f'(3 under the line). Codex 85% used, 30% gone (far over its line).\n'
+                f'- advice for dispatch: {advice}\n')
+
+    def test_codex_halt_leaves_claude_running(self):
+        u = g.parse_usage(self.comments(self.advice_tick('HALT (usage breaker: Codex): Codex tasks pause.')))
+        self.assertFalse(u['halted'])
+        self.assertEqual(u['halted_by'], ['codex'])
+        self.assertTrue(g.decide(NOW, g.parse_dial(BODY), dict(u, usage={'percent': 82, 'at': NOW}),
+                                 10, None, {}, 0)['fire'])
+
+    def test_claude_halt_holds_claude(self):
+        u = g.parse_usage(self.comments(self.advice_tick('HALT (usage breaker: Claude): no new threads.')))
+        self.assertTrue(u['halted'])
+        self.assertEqual(u['halted_by'], ['claude'])
+
+    def test_both_named_then_one_resumed(self):
+        u = g.parse_usage(self.comments(
+            self.advice_tick('HALT (usage breaker: Claude, Codex): start nothing.'),
+            '**RESUMED (usage breaker: Claude)** · under the line again'))
+        self.assertFalse(u['halted'])
+        self.assertEqual(u['halted_by'], ['codex'])
+
+    def test_unscoped_resumed_clears_every_provider(self):
+        u = g.parse_usage(self.comments(
+            '**HALT (usage breaker: Claude, Codex)** (Mac tick) at 81',
+            '**RESUMED (usage breaker)** · owner override'))
+        self.assertEqual(u['halted_by'], [])
+
+    def test_unscoped_halt_in_first_line_still_halts_claude(self):
+        u = g.parse_usage(self.comments('**HALT (usage breaker)** (Mac tick) at 81'))
+        self.assertTrue(u['halted'])
+        self.assertEqual(u['halted_by'], ['claude', 'codex'])
+
+    def test_unscoped_halt_in_advice_line_is_ignored(self):
+        # The old tick wording; it can't tell which provider is over, so the gate leaves it.
+        u = g.parse_usage(self.comments(self.advice_tick('HALT (usage breaker): start no new threads.')))
+        self.assertFalse(u['halted'])
+
+    def test_quoted_marker_in_a_plain_comment_is_ignored(self):
+        u = g.parse_usage(self.comments('Please do not post HALT (usage breaker: Claude) yet'))
+        self.assertFalse(u['halted'])
+
+    def test_provider_names_ignore_case_and_spacing(self):
+        u = g.parse_usage(self.comments('**HALT (usage breaker:  codex ,CLAUDE )** (Mac tick)'))
+        self.assertEqual(u['halted_by'], ['claude', 'codex'])
+
+
 class Decide(unittest.TestCase):
     def setUp(self):
         self.dial = g.parse_dial(BODY)
@@ -341,6 +397,24 @@ class Durations(unittest.TestCase):
         self.assertIn('Thread runs ended in the last 24 h: 2 with a stop note, median 90 min', text)
 
 
+class StatusBreaker(unittest.TestCase):
+    def status(self, halt):
+        dial = g.parse_dial(BODY)
+        usage = g.parse_usage([tick(82, NOW - dt.timedelta(minutes=30)),
+                               {'body': f'**{halt}** (Mac tick)', 'created_at': ts(NOW)}])
+        decision = g.decide(NOW, dial, usage, 10, None, {}, 0)
+        return g.status_text(NOW, dial, usage, 10, None, {}, decision, [])
+
+    def test_codex_halt_is_named_and_does_not_hold(self):
+        text = self.status('HALT (usage breaker: Codex)')
+        self.assertIn('Usage breaker: Codex halted (not Claude, so this gate is unaffected)', text)
+
+    def test_claude_halt_is_named_and_holds(self):
+        text = self.status('HALT (usage breaker: Claude)')
+        self.assertIn('Usage breaker: Claude halted (Claude, so this gate holds)', text)
+        self.assertIn('HALT (usage breaker: Claude)', text)
+
+
 class Status(unittest.TestCase):
     def test_lists_active_threads_by_title_and_quiet_ones_separately(self):
         threads = g.parse_threads([claim('Podcast anchors', 592, ago(minutes=30)),
@@ -355,6 +429,68 @@ class Status(unittest.TestCase):
         self.assertIn('Gone quiet with no stop note', text)
         self.assertIn('"Zotero export"', text)
         self.assertNotIn('Old one', text)  # quiet for more than 6 hours: dropped
+
+
+class PerProviderSlots(unittest.TestCase):
+    """2026-10-14: the Dial gave Claude 2 slots and Codex 3, but Codex workers were counted
+    against Claude's 2, so the gate read "2 of 2" with only Codex workers running."""
+    DIAL = BODY.replace('- [x] 3\n- [ ] 4', '- [ ] 3\n- [x] 2').replace('- [ ] Any slot opens', '- [x] Any slot opens')
+    COMMENTS = [claim('Codex worker 1', 1577, ago(minutes=20)), claim('Codex worker 2', 861, ago(minutes=10))]
+
+    def setUp(self):
+        self.dial = g.parse_dial(self.DIAL)
+        self.threads = g.parse_threads(self.COMMENTS, [], NOW)
+        self.usage = g.parse_usage([tick(40, ago(minutes=30))])
+
+    def test_fixture_reads_two_claude_threads(self):
+        self.assertEqual(self.dial['threads'], 2)
+
+    def test_codex_workers_are_not_claude_threads(self):
+        self.assertEqual({t['title']: t['provider'] for t in self.threads},
+                         {'Codex worker 1': 'codex', 'Codex worker 2': 'codex'})
+        self.assertEqual(g.active_count(self.threads), 0)
+        self.assertEqual(g.active_count(self.threads, 'codex'), 2)
+
+    def test_only_codex_workers_running_leaves_both_claude_slots_open(self):
+        decision = g.decide(NOW, self.dial, self.usage, 10, None, {}, g.active_count(self.threads))
+        self.assertTrue(decision['fire'], decision['why'])
+        self.assertIn('0 of 2', decision['why'])
+
+    def test_claude_threads_still_fill_claude_slots_beside_codex_workers(self):
+        threads = g.parse_threads(self.COMMENTS + [claim('Podcast anchors', 592, ago(minutes=5)),
+                                                   claim('Zotero export', 588, ago(minutes=4))], [], NOW)
+        self.assertEqual(g.active_count(threads), 2)
+        self.assertEqual(g.active_count(threads, 'codex'), 2)
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(ago(hours=1))}
+        ack = {'fire': 'fire-x', 'running': None, 'at': NOW}
+        decision = g.decide(NOW, self.dial, self.usage, 10, ack, state, g.active_count(threads))
+        self.assertFalse(decision['fire'])
+        self.assertIn('2 of 2 threads are active', decision['why'])
+
+    def test_a_codex_claim_does_not_acknowledge_a_claude_fire(self):
+        self.assertEqual(g.claims_since(self.threads, ago(hours=1)), 0)
+        self.assertEqual(g.claims_since(self.threads, ago(hours=1), 'codex'), 2)
+
+    def test_title_matching_is_exact_to_the_worker_format(self):
+        for title in ('Codex worker 3', 'codex worker 12', ' Codex worker 1 '):
+            self.assertEqual(g.thread_provider(title), 'codex', title)
+        for title in ('Codex worker', 'Codex workers 1', 'Fix Codex worker 1 crash', 'Mac finisher', 'Podcast anchors'):
+            self.assertEqual(g.thread_provider(title), 'claude', title)
+
+    def test_fire_payload_states_claudes_number_and_claudes_count(self):
+        threads = g.parse_threads(self.COMMENTS + [claim('Podcast anchors', 592, ago(minutes=5))], [], NOW)
+        active = [t for t in g.of_provider(threads) if t['state'] == 'active']
+        text = g.fire_text('fire-1', self.dial['threads'], active)
+        self.assertIn('allows up to 2 Claude threads', text)
+        self.assertIn('1 Claude threads look active', text)
+        self.assertIn('"Podcast anchors"', text)
+        self.assertNotIn('Codex worker 1"', text)
+
+    def test_status_counts_claude_and_names_codex_separately(self):
+        decision = g.decide(NOW, self.dial, self.usage, 10, None, {}, 0)
+        text = g.status_text(NOW, self.dial, self.usage, 10, None, {}, decision, self.threads)
+        self.assertIn('Active threads: 0 of 2 (Claude).', text)
+        self.assertIn('Codex workers active: 2', text)
 
 
 if __name__ == '__main__':

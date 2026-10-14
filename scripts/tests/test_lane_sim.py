@@ -12,6 +12,7 @@ from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import lane_audio  # noqa: E402
 import lane_sim  # noqa: E402
 import lane_slots  # noqa: E402
 
@@ -71,6 +72,128 @@ def sequence(*states):
 UDID = '11111111-2222-3333-4444-555555555555'
 
 
+class TemplateTests(unittest.TestCase):
+    def test_failed_template_is_deleted_without_clone_or_completion_marker(self):
+        commands = []
+
+        def command(args, **kw):
+            commands.append(args)
+            if args == ['xcodebuild', '-version']:
+                return 'Xcode test'
+            if args[2] == 'list':
+                return '{"devices": {}}'
+            return 'T'
+
+        def boot(udid, label, **kw):
+            kw['info']['boot_window'] = (1, 2)
+
+        for stage in ('boot', 'watcher'):
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as temporary, \
+                    mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                    mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                    mock.patch.object(lane_sim, 'boot', side_effect=lane_sim.BootError('flood') if stage == 'boot' else boot) as guarded, \
+                    mock.patch.object(lane_sim, 'unsafe_devices', return_value={'T': {'reason': 'flood'}}), \
+                    mock.patch.object(lane_sim, 'start_watcher'), \
+                    mock.patch.object(lane_sim, 'late_report', return_value=None), \
+                    mock.patch.object(lane_sim.time, 'sleep'), \
+                    mock.patch.object(lane_sim, 'release') as release:
+                with self.assertRaisesRegex(lane_sim.BootError, 'flood' if stage == 'boot' else 'unsafe'):
+                    lane_sim.clone_temporary('job', 'runtime')
+                self.assertFalse((Path(temporary) / 't3-template.json').exists())
+                guarded.assert_called_once()
+                release.assert_called_once_with('T', keep=False)
+        self.assertFalse(any('clone' in args for args in commands))
+
+    def test_unsafe_missing_or_incompatible_templates_are_never_cloned(self):
+        runtime = 'runtime'
+        for reason in ('unsafe', 'missing', 'runtime', 'toolchain', 'unfinished'):
+            with self.subTest(reason=reason), tempfile.TemporaryDirectory() as temporary:
+                marker = Path(temporary) / 't3-template.json'
+                marker.write_text(json.dumps({'udid': 'OLD', 'boot_window': [1, 2],
+                                             'key': [runtime, lane_sim.DEVICE_TYPE,
+                                                     'old-Xcode' if reason == 'toolchain' else 'Xcode test']}))
+                devices = {} if reason == 'missing' else {'OLD': {
+                    'udid': 'OLD', 'name': 'SM Lane T3 template', 'state': 'Shutdown',
+                    'deviceTypeIdentifier': lane_sim.DEVICE_TYPE}}
+                if reason == 'unfinished':
+                    marker.unlink()
+                cloned = []
+
+                def command(args, **kw):
+                    if args == ['xcodebuild', '-version']:
+                        return 'Xcode test'
+                    if args[2] == 'list':
+                        return json.dumps({'devices': {runtime: list(devices.values())}})
+                    if args[2] == 'create':
+                        devices['NEW'] = {'udid': 'NEW', 'name': args[3], 'state': 'Shutdown',
+                                          'deviceTypeIdentifier': lane_sim.DEVICE_TYPE}
+                        return 'NEW'
+                    cloned.append(args[3])
+                    return 'CLONE'
+
+                def boot(udid, label, **kw):
+                    kw['info']['boot_window'] = (1, 2)
+
+                with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                        mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                        mock.patch.object(lane_sim, 'boot', side_effect=boot), \
+                        mock.patch.object(lane_sim, 'start_watcher'), \
+                        mock.patch.object(lane_sim, 'release'), \
+                        mock.patch.object(lane_sim, 'late_report', return_value=None), \
+                        mock.patch.object(lane_sim, 'unsafe_devices', return_value={'OLD': {}} if reason == 'unsafe' else {}), \
+                        mock.patch.object(lane_sim.time, 'sleep'):
+                    self.assertEqual(lane_sim.clone_temporary('job', 'new-runtime' if reason == 'runtime' else runtime),
+                                     'CLONE')
+                self.assertEqual(cloned, ['NEW'])
+
+    def test_two_jobs_clone_one_template_after_guarded_first_boot_and_shutdown(self):
+        events = []
+        runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-26-5'
+        devices = {}
+
+        def command(args, **kw):
+            if args == ['xcodebuild', '-version']:
+                return 'Xcode test'
+            action = args[2]
+            if action == 'list':
+                return json.dumps({'devices': {runtime: list(devices.values())}})
+            if action == 'create':
+                events.append('create')
+                devices['T'] = {'udid': 'T', 'name': args[3], 'state': 'Shutdown',
+                                'deviceTypeIdentifier': lane_sim.DEVICE_TYPE}
+                return 'T\n'
+            if action == 'clone':
+                self.assertEqual(devices['T']['state'], 'Shutdown')
+                events.append('clone')
+                return f'C{events.count("clone")}\n'
+            self.fail(args)
+
+        def boot(udid, label, **kw):
+            self.assertTrue(kw['first_boot'])
+            devices[udid]['state'] = 'Booted'
+            kw['info']['boot_window'] = (1, 2)
+            events.append('boot')
+
+        def release(udid, **kw):
+            self.assertTrue(kw['keep'])
+            devices[udid]['state'] = 'Shutdown'
+            events.append('shutdown')
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'boot', side_effect=boot), \
+                mock.patch.object(lane_sim, 'start_watcher') as watcher, \
+                mock.patch.object(lane_sim, 'release', side_effect=release), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'late_report', return_value=None), \
+                mock.patch.object(lane_sim.time, 'sleep'):
+            self.assertEqual(lane_sim.clone_temporary('job1', runtime), 'C1')
+            self.assertEqual(lane_sim.clone_temporary('job2', runtime), 'C2')
+            watcher.assert_called_once()
+        self.assertEqual(events, ['create', 'boot', 'shutdown', 'clone', 'clone'])
+
+
 class LaneSimTests(unittest.TestCase):
     """Boot rules from two crash floods (#184): one at a time, quiet Mac, no retry, stop at first crash."""
 
@@ -89,8 +212,7 @@ class LaneSimTests(unittest.TestCase):
         gh.chmod(0o755)
         self.env = {'SM_LANE_STATE_DIR': str(folder / 'state'), 'SM_LANE_SIMCTL': str(fake),
                     'SM_LANE_CRASH_REPORTS': str(folder / 'reports'), 'FAKE_RECORD': str(self.record),
-                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh),
-                    'SM_LANE_BUILD_NEEDS_ROOM': ''}  # not the build runner's slot rules (#656)
+                    'SM_LANE_MEMORY_PRESSURE': '1', 'SM_LANE_GH': str(gh)}
         patches = [mock.patch.dict(os.environ, self.env), mock.patch.object(lane_sim, 'CRASH_POLL_SECONDS', 0.05),
                    mock.patch.object(lane_slots, 'POLL_SECONDS', 0.05)]
         for patch in patches:
@@ -132,6 +254,17 @@ class LaneSimTests(unittest.TestCase):
         self.assertGreaterEqual(lane_sim.boot(UDID, 'test', out=self.quiet), 0)
         self.assertEqual([r.get('boot') for r in self.records() if 'boot' in r], [UDID])
         self.assertEqual(lane_sim.unsafe_devices(), {})
+
+    def test_the_boot_pins_the_audio_first_and_each_shutdown_settles_it(self):
+        events = []
+        with mock.patch.object(lane_audio, 'pin', side_effect=lambda udid, **kw: events.append(('pin', udid))), \
+                mock.patch.object(lane_audio, 'settle', side_effect=lambda **kw: events.append(('settle',))):
+            lane_sim.boot(UDID, 'test', out=self.quiet)
+            self.assertEqual(events, [('pin', UDID)])
+            self.assertEqual([r['boot'] for r in self.records() if 'boot' in r], [UDID])
+            lane_sim.release(UDID)
+            lane_sim.stop(UDID, 'test')
+        self.assertEqual(events, [('pin', UDID), ('settle',), ('settle',)])
 
     def test_a_failed_boot_stops_marks_the_device_and_is_never_retried(self):
         with mock.patch.dict(os.environ, {'FAKE_BOOT': 'invalid'}):
@@ -393,8 +526,9 @@ class LaneSimTests(unittest.TestCase):
         runner = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(runner)
         with mock.patch.object(runner, 'RUNNER_SLOT_WAIT', 0.2), \
+                mock.patch.object(runner, 'prepare_t3_build', return_value=('PASS', ['prepared'])), \
                 mock.patch.dict(os.environ, {'SM_LANE_MEMORY_PRESSURE': '2'}), \
-                mock.patch.object(lane_sim, 'create_temporary', side_effect=AssertionError('made a simulator')), \
+                mock.patch.object(lane_sim, 'clone_temporary', side_effect=AssertionError('made a simulator')), \
                 lane_slots.simulator_slot('the Test Desk', out=self.quiet), mock.patch('sys.stdout', self.quiet):
             verdict, _, _, details, _, _ = runner.run_t3(['AppNavigationStateTests'], 'r1', Path(self.temporary.name))
         self.assertEqual(verdict, 'INCONCLUSIVE')
@@ -461,6 +595,13 @@ class LaneSimTests(unittest.TestCase):
         self.assertIn('switched off', lane_slots.second_slot_status()[1])
         self.assertEqual(len(announced), 1)
         self.assertIn('back to one simulator', announced[0])
+
+    def test_the_watcher_refreshes_audio_on_each_live_tick_but_not_after_shutdown(self):
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, 20), (None, None)))
+        with mock.patch.object(lane_audio, 'pin') as pin, \
+                mock.patch.object(lane_sim, 'simulator_jobs_running', return_value=1):
+            self.assertEqual(lane_sim.watch(UDID, poll=0, monitor=monitor), 'shut down')
+        self.assertEqual(pin.call_args_list, [mock.call(UDID, refresh=True), mock.call(UDID, refresh=True)])
 
     def test_the_switch_on_the_command_line(self):
         helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot'), '--second-slot']
@@ -634,7 +775,7 @@ class LaneSimTests(unittest.TestCase):
         spec.loader.exec_module(runner)
         with mock.patch.object(lane_sim, 'LOCK_WAIT', 0.2), \
                 lane_slots.simulator_boot_lock('the Test Desk', out=self.quiet):
-            problem, _ = runner.first_boot(UDID, self.quiet)
+            problem, _ = runner.boot_t3_device(UDID, self.quiet)
         self.assertIn('the lane stayed busy', problem)
         self.assertEqual(self.records(), [])
 

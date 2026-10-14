@@ -1,6 +1,6 @@
 import Foundation
 import XCTest
-import SessionKit
+@testable import SessionKit
 import SessionKitFeeds
 import SessionKitPersistence
 
@@ -69,5 +69,71 @@ final class FollowedArticleImportedEntryTests: XCTestCase {
         let rows = try collector.exportCopy(to: root.appendingPathComponent("export")).map(ListeningSignalRecorder.read) ?? []
         XCTAssertEqual(rows.map { $0.item?.id }, [fromTopic.id], "the row is kept and credited to the feed it was picked from")
         XCTAssertEqual(rows.map { $0.source.id }, [topic.source.id])
+    }
+
+    /// #865: the URL record belongs to whichever import came last, so a second edition imported from
+    /// the other feed used to take over the first edition's rows. Each Library item keeps its own entry.
+    func testSecondEditionFromAnotherFeedDoesNotTakeOverTheFirstEditionsEntry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appendingPathComponent("library.sqlite").path)
+        let feedA = FeedSubscription(id: "a", source: SourceIdentity(id: "feed-a", kind: .articleFeed,
+            canonicalURL: "https://news.example/feed", host: "news.example", title: "News"))
+        let feedB = FeedSubscription(id: "b", source: SourceIdentity(id: "feed-b", kind: .articleFeed,
+            canonicalURL: "https://news.example/topic/feed", host: "news.example", title: "News: Science"))
+        let entryA = FeedEntry(id: "entry-a", subscriptionId: feedA.id,
+            canonicalURL: "https://news.example/article", title: "Article", state: .imported)
+        let entryB = FeedEntry(id: "entry-b", subscriptionId: feedB.id,
+            canonicalURL: "https://news.example/article", title: "Article", state: .imported)
+        for subscription in [feedA, feedB] { try store.saveFeedSubscription(subscription) }
+        for entry in [entryA, entryB] { try store.saveFeedEntry(entry) }
+        let recorder = ListeningSignalRecorder(fileURL: root.appendingPathComponent("signals.jsonl"), flushDelay: 60)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "test", displayName: "Test",
+            capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        func importEdition(text: String, from entry: FeedEntry) throws -> Item {
+            let importedEntries = ListeningSignalCollector(recorder: recorder).importedEntries
+            let handoff = importedEntries.note(BrowserTextHandoff(captureMode: .readablePage,
+                source: BrowserTextSource(url: "https://news.example/article", title: "Article", author: "Writer"),
+                text: text), for: entry)
+            let item = try store.loadItem(id: try engine.importBrowserTextInBackground(handoff).id)
+            importedEntries.note(itemId: item.id, for: entry)
+            return item
+        }
+        let first = try importEdition(text: "The first edition of the article.", from: entryA)
+        let second = try importEdition(text: "The article changed, so this is a second edition.", from: entryB)
+        XCTAssertNotEqual(first.id, second.id, "the text changed, so the engine keeps two Library editions")
+
+        // A fresh collector, as after a relaunch, reads the records back from beside the log.
+        let collector = ListeningSignalCollector(recorder: recorder)
+        collector.record(.margin(kind: .written, length: 12), itemId: first.id, repository: store)
+        collector.record(.margin(kind: .written, length: 7), itemId: second.id, repository: store)
+        let rows = try collector.exportCopy(to: root.appendingPathComponent("export")).map(ListeningSignalRecorder.read) ?? []
+        XCTAssertEqual(rows.map(\.event), [.margin(kind: .written, length: 12), .margin(kind: .written, length: 7)])
+        XCTAssertEqual(rows.map { $0.item?.id }, [entryA.id, entryB.id])
+        XCTAssertEqual(rows.map { $0.source.id }, [feedA.source.id, feedB.source.id])
+    }
+
+    /// Neighbouring cases for the item-id record: an item imported before it existed, and a record
+    /// naming an entry that is no longer on a followed feed, both fall back to the URL record.
+    func testItemRecordFallsBackToTheURLRecordWhenItHasNothingBetter() throws {
+        let feed = FeedSubscription(id: "a", source: SourceIdentity(id: "feed-a", kind: .articleFeed,
+            canonicalURL: "https://news.example/feed", host: "news.example", title: "News"))
+        let entry = FeedEntry(id: "entry-a", subscriptionId: feed.id,
+            canonicalURL: "https://news.example/article", title: "Article", state: .imported)
+        let item = Item(id: "item-1", title: "Article", mediaType: "article", text: "Words",
+                        externalReference: "https://news.example/article", status: "ready")
+        let url = try XCTUnwrap(FollowedSourceMatching.normalizedFollowSourceURL("https://news.example/article"))
+        func entryId(_ records: [String: String]) -> String? {
+            ListeningSignalContext.context(for: item, subscriptions: [feed], entries: [entry],
+                                           importedEntryIds: records)?.item.id
+        }
+        XCTAssertEqual(entryId([url: entry.id]), entry.id, "no item record: the URL record decides, as before")
+        XCTAssertEqual(entryId([ListeningSignalImportedEntries.itemKey(item.id): entry.id]), entry.id)
+        XCTAssertEqual(entryId([url: entry.id, ListeningSignalImportedEntries.itemKey(item.id): "gone"]), entry.id,
+                       "an item record naming an unknown entry is ignored")
+        XCTAssertEqual(entryId([url: "other", ListeningSignalImportedEntries.itemKey("item-2"): "other"]), entry.id,
+                       "another item's record is not this item's")
+        XCTAssertEqual(entryId([:]), entry.id, "a unique page match still joins the entry with no records at all")
     }
 }

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,7 @@ import subprocess
 import sys
 import time
 
+import lane_audio
 from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
@@ -96,8 +98,9 @@ def mark_unsafe(udid: str, reason: str) -> None:
     unsafe_path().write_text(json.dumps(devices, indent=2, sort_keys=True) + '\n')
 
 
-def booted_udids() -> set:
-    listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'booted', '--json'], text=True))
+def booted_udids(timeout: float | None = None) -> set:
+    listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'booted', '--json'], text=True,
+                                                 timeout=timeout))
     return {d['udid'] for group in listing.get('devices', {}).values() for d in group}
 
 
@@ -124,6 +127,76 @@ def create_temporary(name: str) -> str:
     if not runtime:
         raise BootError(f'No iOS {IOS_MAJOR} simulator runtime is installed.')
     return subprocess.check_output(simctl() + ['create', name, DEVICE_TYPE, runtime], text=True).strip()
+
+
+def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
+    """Clone the lane's clean, first-booted template. The caller holds a simulator slot.
+
+    Only this function creates/boots the template; tests never install anything into it. The
+    state file is a completion marker, written after shutdown and the late-report check. A lock
+    prevents two jobs warming or cloning a half-prepared template. Runtime and Xcode changes
+    invalidate it. An unsafe or missing template is replaced, never booted again.
+    """
+    directory = state_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    marker = directory / 't3-template.json'
+    template_name = 'SM Lane T3 template'
+    toolchain = subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30).strip()
+    key = [runtime, DEVICE_TYPE, toolchain]
+    with (directory / 't3-template.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            saved = json.loads(marker.read_text())
+        except (OSError, ValueError):
+            saved = {}
+        if not isinstance(saved, dict):
+            saved = {}
+
+        def owned_devices():
+            listed = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'],
+                                                        text=True, timeout=120))['devices']
+            return {d['udid']: (r, d) for r, group in listed.items() for d in group
+                    if d.get('name') == template_name and d.get('deviceTypeIdentifier') == DEVICE_TYPE}
+
+        owned = owned_devices()
+        udid = saved.get('udid')
+        ready = (bool(saved.get('boot_window')) and saved.get('key') == key and udid in owned and owned[udid][0] == runtime
+                 and owned[udid][1].get('state') == 'Shutdown' and udid not in unsafe_devices())
+        if ready:
+            report = late_report(crash_reports_dir(), udid, saved['boot_window'])
+            if report:
+                mark_unsafe(udid, f'late crash report for template boot: {report.name}')
+                ready = False
+        if not ready:
+            marker.unlink(missing_ok=True)
+            # Only retire devices this function owns, never an arbitrary UDID from a state file.
+            for old in owned:
+                release(old)
+            udid = subprocess.check_output(simctl() + ['create', template_name, DEVICE_TYPE, runtime],
+                                           text=True, timeout=120).strip()
+            info = {}
+            completed = False
+            try:
+                boot(udid, 'T3 template first boot', out=out, info=info, first_boot=True)
+                start_watcher(udid, Path(__file__).resolve().with_name('lane-sim-boot'),
+                              crash_window=info.get('boot_window'))
+                # Once per template: give delayed boot crash reports time to reach the watcher.
+                # A failed template is deleted; no clone inherits its state and no boot is retried.
+                time.sleep(LATE_REPORT_WAIT)
+                completed = udid not in unsafe_devices()
+            finally:
+                release(udid, keep=completed)
+            report = late_report(crash_reports_dir(), udid, info['boot_window'])
+            stopped = owned_devices().get(udid)
+            if udid in unsafe_devices() or report or not stopped or stopped[1].get('state') != 'Shutdown':
+                if report:
+                    mark_unsafe(udid, f'late crash report for template boot: {report.name}')
+                if completed:
+                    release(udid)
+                raise BootError('The T3 template was unsafe or did not shut down; it was deleted and no clone was made.')
+            marker.write_text(json.dumps({'udid': udid, 'key': key, 'boot_window': info['boot_window']}) + '\n')
+        print(f'[lane] cloning first-booted template {udid} for {name}', file=out, flush=True)
+        return subprocess.check_output(simctl() + ['clone', udid, name], text=True, timeout=120).strip()
 
 
 def crash_reports(reports: Path):
@@ -306,6 +379,7 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
         if seen:
             stop(udid, f'{seen} after boot')
             return f'crash: {seen}; shut down and marked unsafe'
+        lane_audio.pin(udid, refresh=True)
         time.sleep(poll)
 
 
@@ -333,7 +407,10 @@ def release(udid: str, wait: float = RELEASE_WAIT, keep: bool = False) -> None:
     stop_flag, _, pid_file = watch_files(udid)
     stop_flag.parent.mkdir(parents=True, exist_ok=True)
     stop_flag.write_text('released\n')
-    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    try:
+        subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    finally:
+        lane_audio.settle(drop=udid)
     if not keep:
         subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
     try:
@@ -398,7 +475,10 @@ def wait_until_ready(udid: str, is_ready, monitor, find_crash, timeout: float, c
             raise BootError(f'{crash.name} while booting. The device is shut down and marked '
                             'unsafe. Delete it and use a fresh device.')
         if clock() - started > timeout:
-            subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+            try:
+                subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+            finally:
+                lane_audio.settle(drop=udid)
             raise BootError(f'not ready after {timeout:.0f}s; shut down (not marked unsafe).')
         sleep(CRASH_POLL_SECONDS if poll is None else poll)
     return tolerated
@@ -456,6 +536,7 @@ def back_to_one_simulator(reason: str) -> bool:
 
 def stop(udid: str, reason: str) -> None:
     subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    lane_audio.settle(drop=udid)
     mark_unsafe(udid, reason)
 
 
@@ -489,6 +570,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 record_event(udid, f'boot started ({"first boot" if first_boot else "existing device"}, '
                                    f'memory pressure {pressure}, {period} period)')
                 baseline = crash_snapshot(reports)
+                lane_audio.pin(udid, out=out)  # the simulator plays and records through the Mac's defaults (#1556)
                 try:
                     booted = subprocess.run(simctl() + ['boot', udid], capture_output=True, text=True, timeout=120)
                 except subprocess.TimeoutExpired:

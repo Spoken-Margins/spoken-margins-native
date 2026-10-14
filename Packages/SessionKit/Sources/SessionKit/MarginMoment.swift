@@ -103,7 +103,28 @@ public struct MarginMomentSequence: Sendable, Equatable {
         ).sourceStartPosition
         startMediaTimeMs = start
         let others = otherMargins.filter { $0.marginId != target.marginId && $0.mediaTimeMs >= start }
-        unplayed = ([target] + others).sorted { lhs, rhs in
+        unplayed = Self.inPlaybackOrder([target] + others)
+    }
+
+    /// The listener heard one of their own Margins from its detail and the source is coming back where it was (#1538).
+    /// There is no lead-in and nothing to seek to: the item keeps playing from `position`, and its spoken Margins
+    /// after that play as playback reaches them. `playedMargin` is the one just heard, so it never plays again.
+    public init(
+        itemId: String,
+        resumingAtMediaTimeMs position: Int,
+        playedMargin: MarginMomentAnchor,
+        otherMargins: [MarginMomentAnchor]
+    ) {
+        self.itemId = itemId
+        target = playedMargin
+        review = nil
+        startMediaTimeMs = position
+        phase = .listening
+        unplayed = Self.inPlaybackOrder(otherMargins.filter { $0.marginId != playedMargin.marginId && $0.mediaTimeMs > position })
+    }
+
+    private static func inPlaybackOrder(_ margins: [MarginMomentAnchor]) -> [MarginMomentAnchor] {
+        margins.sorted { lhs, rhs in
             lhs.mediaTimeMs == rhs.mediaTimeMs ? lhs.marginId < rhs.marginId : lhs.mediaTimeMs < rhs.mediaTimeMs
         }
     }
@@ -148,6 +169,14 @@ public struct MarginMomentSequence: Sendable, Equatable {
     public func msUntilTarget(currentMediaTimeMs: Int?) -> Int? {
         guard phase == .leadIn, let current = currentMediaTimeMs, current <= target.mediaTimeMs else { return nil }
         return target.mediaTimeMs - current
+    }
+
+    /// The coming-up card's source-time countdown, rounded up to avoid promising an early arrival.
+    /// Before the first progress reading, show the planned lead-in rather than hiding the cue.
+    public func targetCountdown(currentMediaTimeMs: Int?) -> String? {
+        guard let ms = msUntilTarget(currentMediaTimeMs: currentMediaTimeMs ?? startMediaTimeMs) else { return nil }
+        let seconds = ms / 1_000 + (ms % 1_000 == 0 ? 0 : 1)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// Call on each progress tick while the source plays. Returns the Margin to play now, if playback just

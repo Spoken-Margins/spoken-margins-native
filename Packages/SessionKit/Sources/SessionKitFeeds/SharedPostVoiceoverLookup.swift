@@ -29,8 +29,9 @@ public final class FetchedPageMemo: @unchecked Sendable {
 }
 
 /// Finds the voiceover of a Substack post shared as a link, or pasted into the Link field (#810). The post page
-/// is read from what the link resolver already fetched; only when it fetched nothing for that address (the
-/// address is the article's, not the shared one) is the page fetched, once. Substack addresses only.
+/// is read from what the link resolver already fetched, when that page is at a Substack or `/p/<slug>` address or
+/// declares Substack's `_preloads`. Only when the resolver read no such page is the page fetched, once, and only
+/// for a Substack or `/p/<slug>` address (`PublisherNarrationEvidence.mayHaveVoiceover`).
 public enum SharedPostVoiceoverLookup {
     /// Fetches a page and returns its HTML and the address it ended at after redirects.
     public typealias FetchPage = @Sendable (URL) async throws -> (html: String, finalURL: URL)
@@ -38,7 +39,9 @@ public enum SharedPostVoiceoverLookup {
     public enum Outcome: Equatable, Sendable {
         case notSubstack
         case failed(String)
-        case none
+        /// The page was read and has no voiceover for this post. `reason` is a short token
+        /// (`PublisherNarrationEvidence.absence`), so diagnostics say why.
+        case noVoiceover(reason: String)
         case found(PublisherAudio)
     }
 
@@ -52,21 +55,51 @@ public enum SharedPostVoiceoverLookup {
         fetchPage: FetchPage
     ) async -> Outcome {
         let candidates = [sharedURL, URL(string: articleURL)].compactMap { $0 }
-        guard let pageURL = candidates.first(where: PublisherNarrationEvidence.mayHaveVoiceover) else { return .notSubstack }
+        let remembered = candidates.lazy.compactMap { url in
+            fetched?.page(for: url).flatMap { page in
+                PublisherNarrationEvidence.mayHaveVoiceover(url) || PublisherNarrationEvidence.declaresPreloads(page.data) ? page : nil
+            }
+        }.first
         let html: String
         let finalURL: URL
-        if let page = fetched?.page(for: pageURL) {
+        if let page = remembered {
             guard page.finalURL.scheme?.lowercased() == "https" else { return .failed(URLError(.secureConnectionFailed).localizedDescription) }
             guard page.data.count <= maximumPageBytes else { return .failed(URLError(.dataLengthExceedsMaximum).localizedDescription) }
             (html, finalURL) = (String(decoding: page.data, as: UTF8.self), page.finalURL)
         } else {
+            guard let pageURL = candidates.first(where: PublisherNarrationEvidence.mayHaveVoiceover) else { return .notSubstack }
             do {
                 (html, finalURL) = try await fetchPage(pageURL)
             } catch {
                 return .failed(error.localizedDescription)
             }
         }
-        guard let audio = PublisherNarrationEvidence.publisherAudio(postPage: html, finalURL: finalURL, itemId: itemId) else { return .none }
+        guard let audio = PublisherNarrationEvidence.publisherAudio(postPage: html, finalURL: finalURL, itemId: itemId) else {
+            return .noVoiceover(reason: PublisherNarrationEvidence.absence(postPage: html, finalURL: finalURL))
+        }
         return .found(audio)
+    }
+}
+
+/// The latest voiceover outcome of each recently shared post, newest last (#810). A single diagnostic line kept
+/// only the last share, so a later link (an openai.com page, `not_substack`) hid what happened to the post the
+/// listener asked about.
+public struct SharedPostVoiceoverLog: Sendable {
+    public static let capacity = 8
+
+    private var entries: [(itemId: String, status: String)] = []
+
+    public init() {}
+
+    /// Keeps `status` as `itemId`'s latest and moves that item to the end. The oldest item drops off past `capacity`.
+    public mutating func record(_ status: String, for itemId: String) {
+        entries.removeAll { $0.itemId == itemId }
+        entries.append((itemId, status))
+        if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+    }
+
+    /// One line per item, `<itemId>: <status>`, joined by `"; "`, newest last.
+    public var summary: String {
+        entries.map { "\($0.itemId): \($0.status)" }.joined(separator: "; ")
     }
 }
