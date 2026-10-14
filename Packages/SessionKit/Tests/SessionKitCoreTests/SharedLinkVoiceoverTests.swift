@@ -281,6 +281,14 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: page, finalURL: URL(string: "https://captured.example/p/another")!, itemId: "item"))
         let processing = try Self.page(editingPost: { Self.editFirstAudioItem(&$0) { $0["status"] = "processing" } }, from: page)
         XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: processing, finalURL: post, itemId: "item"))
+        for (name, edit) in [
+            ("not https", { (item: inout [String: Any]) in item["audio_url"] = "http://recordings.example/a.mp3" }),
+            ("no audio address", { (item: inout [String: Any]) in item["audio_url"] = NSNull() }),
+            ("another post's audio", { (item: inout [String: Any]) in item["post_id"] = 99 })
+        ] as [(String, (inout [String: Any]) -> Void)] {
+            let edited = try Self.page(editingPost: { Self.editFirstAudioItem(&$0, edit) }, from: page)
+            XCTAssertNil(PublisherNarrationEvidence.publisherAudio(postPage: edited, finalURL: post, itemId: "item"), name)
+        }
     }
 
     /// A paid post read without a subscription says `has_voiceover` true but lists only a paywalled automatic
@@ -307,10 +315,9 @@ final class SharedLinkVoiceoverTests: XCTestCase {
         let reversed = Self.page(withAudioItems: [generated, voiceover], from: page)
         XCTAssertEqual(PublisherNarrationEvidence.publisherAudio(postPage: reversed, finalURL: post, itemId: "item"), expected)
         let generatedOnly = Self.page(withAudioItems: [generated], from: page)
-        XCTAssertEqual(
-            PublisherNarrationEvidence.publisherAudio(postPage: generatedOnly, finalURL: post, itemId: "item")?.detectedFrom,
-            "substack_post_generated_voice"
-        )
+        let kept = PublisherNarrationEvidence.publisherAudio(postPage: generatedOnly, finalURL: post, itemId: "item")
+        XCTAssertEqual(kept?.detectedFrom, "substack_post_generated_voice")
+        XCTAssertEqual(kept?.audioURL, "https://recordings.example/tts/en-US-OnyxTurboMultilingualNeural.mp3")
     }
 
     /// Why a page gives no voiceover, one row per neighbouring page shape.
