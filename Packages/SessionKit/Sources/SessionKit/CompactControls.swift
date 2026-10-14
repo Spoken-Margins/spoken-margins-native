@@ -120,6 +120,30 @@ public struct CompactControlSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+extension CompactControlCommand {
+    /// The commands a headphone click, a car button or the Lock Screen sends. While a Margin records,
+    /// the listener's hands are busy and any of them means "that's the Margin" (#1030).
+    public var endsRecordingMargin: Bool {
+        switch self {
+        case .play, .pause, .togglePlayPause, .skipForward:
+            return true
+        case .skipBack, .skimBackward, .skimForward, .seekToMediaTime, .setPlaybackRate, .jumpToChapter,
+             .beginInterjection, .finishInterjection, .cancelInterjection, .generateInterjectionSummary,
+             .submitFollowup:
+            return false
+        }
+    }
+}
+
+extension CompactControlSnapshot {
+    /// A Margin is recording and this surface may finish it, so the system transport commands must reach
+    /// the app and end the Margin. Now Playing keeps them enabled for that; disabled, iOS never delivers
+    /// the headphone click and the Margin can't be ended without touching the screen (#1030).
+    public var transportCommandsEndMargin: Bool {
+        isRecording && availableCommands.contains(.finishInterjection)
+    }
+}
+
 public struct CompactTimelineEntry: Codable, Equatable, Sendable, Identifiable {
     public var id: String
     public var kind: String

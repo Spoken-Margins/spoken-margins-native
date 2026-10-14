@@ -2595,6 +2595,14 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
+        // A headphone click, car button or Lock Screen play/pause while a Margin records ends it (#1030).
+        // A save already under way from the screen is not asked twice.
+        if snapshot.isRecording, command.endsRecordingMargin {
+            guard !isFinishingInterjection else { return }
+            recordDeveloperDiagnostic("transport.ends_margin", ["command": command.rawValue, "origin": origin])
+            performGate2CompactCommand(.finishInterjection, origin: origin)
+            return
+        }
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
         if playingImportedCommentary != nil {

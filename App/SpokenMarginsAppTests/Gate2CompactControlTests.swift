@@ -221,6 +221,77 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertTrue(availability.canSkipForward)
     }
 
+    /// #1030: with a Margin recording every transport command was disabled, so iOS never delivered the AirPods
+    /// click (no `transport.request` in the owner's diagnostics). They stay enabled while a Margin records.
+    func testNowPlayingKeepsTransportEnabledWhileAMarginRecords() {
+        var recording = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.finishInterjection, .cancelInterjection],
+            durationMs: nil
+        )
+        recording.isRecording = true
+        recording.status = .recording
+        recording.phase = .recordingInterjection
+
+        let availability = Gate2NowPlayingCommandAvailability(snapshot: recording)
+
+        XCTAssertTrue(availability.canPlay)
+        XCTAssertTrue(availability.canPause)
+        XCTAssertTrue(availability.canTogglePlayPause)
+        XCTAssertTrue(availability.canSkipForward)
+        XCTAssertFalse(availability.canSkipBack, "back isn't an end command")
+        XCTAssertFalse(availability.canSeek)
+        XCTAssertFalse(availability.canNextTrack)
+        XCTAssertFalse(availability.canPreviousTrack)
+    }
+
+    func testNowPlayingTransportStaysOffWhileRecordingIfTheSurfaceCannotFinish() {
+        var recording = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [],
+            durationMs: nil
+        )
+        recording.isRecording = true
+
+        let availability = Gate2NowPlayingCommandAvailability(snapshot: recording)
+
+        XCTAssertFalse(availability.canTogglePlayPause)
+        XCTAssertFalse(availability.canSkipForward)
+    }
+
+    func testHeadphoneTransportCommandEndsARecordingMarginAndKeepsIt() {
+        for command in [CompactControlCommand.togglePlayPause, .play, .pause, .skipForward] {
+            let model = Gate1AppModel(
+                audioPlaybackClient: NoopAudioPlaybackClient(),
+                recordingClient: NoopRecordingClient()
+            )
+            model.resetAndSeed()
+            model.startItem(id: "item-pill")
+            model.dispatchGate2CompactCommand(.beginInterjection)
+            XCTAssertTrue(model.snapshot.isRecording, "\(command.rawValue): the Margin records")
+
+            model.dispatchGate2CompactCommand(command, origin: "now_playing_live_speech")
+
+            XCTAssertFalse(model.snapshot.isRecording, "\(command.rawValue) from the headphones ends the Margin")
+            XCTAssertEqual(model.diagnostics["gate2LastCommand"], "finishInterjection", command.rawValue)
+        }
+    }
+
+    func testSkipBackWhileRecordingStillDoesNotEndTheMargin() {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+
+        model.dispatchGate2CompactCommand(.skipBack, origin: "now_playing_live_speech")
+
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(model.diagnostics["recordingNavigationGuard"], "blocked_compact_skipBack")
+    }
+
     func testQueuedNextChapterPreservesItsBoundedIntentArgument() throws {
         let suiteName = "Gate2CompactControlTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

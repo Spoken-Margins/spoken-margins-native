@@ -50,6 +50,14 @@ struct Gate2NowPlayingCommandAvailability: Equatable {
         // own.
         canPreviousTrack = false
         canNextTrack = false
+        // While a Margin records these commands end it. Disabled, iOS drops the headphone click before it
+        // reaches the app (#1030).
+        if snapshot.transportCommandsEndMargin {
+            canPlay = true
+            canPause = true
+            canTogglePlayPause = true
+            canSkipForward = true
+        }
     }
 }
 
