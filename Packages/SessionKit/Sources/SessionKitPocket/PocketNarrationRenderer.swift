@@ -118,7 +118,7 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
     }
 
     /// Drops the loaded networks, which hold most of the renderer's memory.
-    public func unload(removingGeneratedAudio: Bool = true) async {
+    public func unload(removingGeneratedAudio: Bool = false) async {
         await withCheckedContinuation { continuation in
             renderQueue.async { [self] in
                 runtime = nil

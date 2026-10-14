@@ -91,7 +91,7 @@ struct SplitMix64: RandomNumberGenerator {
     }
 }
 
-/// The five networks and the state they pass along. Not thread-safe: the renderer calls it from
+/// The four networks and the state they pass along. Not thread-safe: the renderer calls it from
 /// one serial queue.
 final class PocketRuntime: @unchecked Sendable {
     /// The model's temperature: the noise that starts each frame has this variance.
@@ -133,7 +133,7 @@ final class PocketRuntime: @unchecked Sendable {
         flowFlow = try ORTSession(env: environment, modelPath: assets.url("flow_lm_flow_int8.onnx").path, sessionOptions: options)
         mimiDecoder = try ORTSession(env: environment, modelPath: assets.url("mimi_decoder_int8.onnx").path, sessionOptions: options)
 
-        trueValue = try Self.makeTrueValue(environment: environment, scratch: assets.rootURL)
+        trueValue = try Self.makeTrueValue(environment: environment)
         emptySequence = try Self.value(PocketTensor.filled(.float32, shape: [1, 0, bundle.latentDim], fill: .zeros), trueValue: trueValue)
         emptyText = try Self.value(PocketTensor.filled(.float32, shape: [1, 0, bundle.conditioningDim], fill: .zeros), trueValue: trueValue)
 
@@ -299,8 +299,8 @@ final class PocketRuntime: @unchecked Sendable {
 
     /// A boolean `true` tensor, made by running a tiny model that holds one. The bindings can't
     /// build a boolean tensor from bytes, and the decoder's streaming state wants a few.
-    private static func makeTrueValue(environment: ORTEnv, scratch: URL) throws -> ORTValue {
-        let modelURL = scratch.appending(path: ".bool-true-\(UUID().uuidString).onnx")
+    private static func makeTrueValue(environment: ORTEnv) throws -> ORTValue {
+        let modelURL = FileManager.default.temporaryDirectory.appending(path: "pocket-bool-true-\(UUID().uuidString).onnx")
         try Data(PocketBoolModel.trueConstantModel).write(to: modelURL)
         defer { try? FileManager.default.removeItem(at: modelURL) }
         let session = try ORTSession(env: environment, modelPath: modelURL.path, sessionOptions: nil)

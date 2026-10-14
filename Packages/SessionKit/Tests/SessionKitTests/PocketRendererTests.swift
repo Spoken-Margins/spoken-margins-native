@@ -130,7 +130,10 @@ final class PocketRendererTests: XCTestCase {
             XCTFail("empty text should throw")
         } catch { XCTAssertEqual(error as? PocketNarrationError, .emptyText) }
 
-        let task = Task { try await renderer.render(text: "This sentence will be cancelled before it finishes, because the task is cancelled right away.") }
+        // Cancel while frames are being made, so the per-frame check and the handler run.
+        try await renderer.preload()
+        let task = Task { try await renderer.render(text: "This sentence will be cancelled before it finishes. It is long enough that the model is still working when the cancel arrives.") }
+        try await Task.sleep(nanoseconds: 300_000_000)
         task.cancel()
         do { _ = try await task.value; XCTFail("cancelled render should throw") } catch { XCTAssertTrue(error is CancellationError, "\(error)") }
 
@@ -216,10 +219,14 @@ final class PocketRendererTests: XCTestCase {
                              Self.repoRoot.appending(path: "research/C2/passages.json").path, clipsURL.path]
         let output = Pipe()
         process.standardOutput = output
+        let errors = Pipe()
+        process.standardError = errors
         try process.run()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { throw XCTSkip("skipped: whisper run failed (is faster-whisper installed?)") }
+        let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        XCTAssertEqual(process.terminationStatus, 0, "wer.py failed (faster-whisper and jiwer installed? try pip install 'av<16'): \(errorText.suffix(600))")
+        guard process.terminationStatus == 0 else { return }
 
         struct Score: Decodable { var wer: Double; var heard: String }
         let scores = try JSONDecoder().decode([String: Score].self, from: data)
