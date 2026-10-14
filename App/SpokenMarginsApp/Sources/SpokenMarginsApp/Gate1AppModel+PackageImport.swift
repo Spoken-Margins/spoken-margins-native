@@ -45,6 +45,29 @@ extension Gate1AppModel {
         }
     }
 
+    var shareLinkOpener: ShareLinkOpener { packageImport.shareLinkOpener }
+
+    /// A tapped share link (https on the share host): download, unseal, then the usual import review (#488).
+    func openShareLink(_ url: URL) {
+        guard let link = ShareLinkURL(url: url) else {
+            reportFailure("This isn't a Spoken Margins share link.")
+            return
+        }
+        diagnostics["lastShareLink"] = link.key == nil ? "opening:no_key" : "opening"
+        shareLinkOpener.open(
+            link,
+            stage: { [weak self] file in
+                guard let self else { return }
+                let opened = self.stageSpokenMarginsPackageImport(from: file)
+                self.diagnostics["lastShareLink"] = opened ? "opened" : "rejected"
+            },
+            fail: { [weak self] message in
+                self?.diagnostics["lastShareLink"] = "failed"
+                self?.reportFailure(message)
+            }
+        )
+    }
+
     func createRecipientTestSessionFromLastSharedPackage() {
         guard let packageURL = sharedSpokenMarginsPackageURL else {
             reportFailure("The last shared package is unavailable.")

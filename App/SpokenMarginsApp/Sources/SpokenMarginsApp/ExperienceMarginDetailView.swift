@@ -33,6 +33,17 @@ struct ExperienceMarginDetailView: View {
                             .foregroundStyle(AppColors.coral)
                     }
                 }
+                if current.interjection.replyTo != nil {
+                    Section("Replying to") {
+                        if let context = model.marginParentContext(of: .local(current.interjection.id), itemId: current.interjection.itemId) {
+                            MarginParentContextView(context: context)
+                        } else {
+                            Text(MarginThreadPresentation.missingParentNote)
+                                .foregroundStyle(AppColors.secondaryText)
+                                .accessibilityIdentifier("marginDetail.replyMissingParent.label")
+                        }
+                    }
+                }
                 Section {
                     if let context = model.marginSourceContext(current) {
                         DisclosureGroup("Context from \(current.targetDescription.lowercased())") {

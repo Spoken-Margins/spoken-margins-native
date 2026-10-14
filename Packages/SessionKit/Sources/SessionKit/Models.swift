@@ -1362,6 +1362,8 @@ public struct WrittenInterjectionCapture: Equatable, Sendable {
     public let anchor: Anchor
     public let roughPercent: Int
     public let wasPlaying: Bool
+    /// The shared Margin this note answers (#473).
+    public let replyTo: MarginReplyLink?
 
     public init(
         id: String,
@@ -1371,7 +1373,8 @@ public struct WrittenInterjectionCapture: Equatable, Sendable {
         targetId: String,
         anchor: Anchor,
         roughPercent: Int,
-        wasPlaying: Bool
+        wasPlaying: Bool,
+        replyTo: MarginReplyLink? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -1381,6 +1384,7 @@ public struct WrittenInterjectionCapture: Equatable, Sendable {
         self.anchor = anchor
         self.roughPercent = roughPercent
         self.wasPlaying = wasPlaying
+        self.replyTo = replyTo
     }
 }
 

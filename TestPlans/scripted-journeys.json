@@ -17,6 +17,10 @@
     {
       "test": "SpokenMarginsAppUITests/J7PDFJourneyUITests",
       "journey": "J7"
+    },
+    {
+      "test": "SpokenMarginsAppUITests/J8CollectionsJourneyUITests",
+      "journey": "J8"
     }
   ]
 }

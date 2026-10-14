@@ -36,6 +36,7 @@ struct ExperienceRecordingView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     status
+                    replyCaption
                     recordingTime
                     if !showsMicrophonePrimer { anchor }
                     feedback
@@ -63,6 +64,18 @@ struct ExperienceRecordingView: View {
             } else {
                 model.cancelInterjection()
             }
+        }
+    }
+
+    /// The shared Margin this recording answers (#473).
+    @ViewBuilder
+    private var replyCaption: some View {
+        if let reply = model.pendingMarginReply {
+            Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
+                .font(.subheadline)
+                .foregroundStyle(.white)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recording.replyCaption.label")
         }
     }
 

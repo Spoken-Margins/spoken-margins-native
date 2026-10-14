@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -188,6 +189,13 @@ class ParallelCoreTests(unittest.TestCase):
             self.assertEqual(args[-1], '--rest')
             self.assertEqual((kw['expected'], kw['tests']), (REST, True))
             self.assertIn('SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus', kw['allowed_skips'])
+            # Every PocketRendererTests case that calls fetchedWeights() skips on the lane Mac, which has no weights.
+            source = (SCRIPTS.parent / 'Packages/SessionKit/Tests/SessionKitTests/PocketRendererTests.swift').read_text()
+            needing = {name for name, body in re.findall(r'func (test\w+)\(\)[^{]*\{(.*?)(?=\n    func |\Z)', source, re.S)
+                       if 'fetchedWeights()' in body}
+            self.assertGreaterEqual(len(needing), 4)
+            for test in needing:
+                self.assertIn(f'SessionKitTests/PocketRendererTests/{test}', kw['allowed_skips'])
             # Together they are the same tests the one step expected before.
             self.assertEqual(CORE | REST, host.step('package-core')[1]['expected'] | kw['expected'])
 

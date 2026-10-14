@@ -167,9 +167,7 @@ extension Gate1AppModel {
         pendingHandoffNetworkRetry.update(waitingCount: report.waitingCount, connectivity: connectivity) { [weak self] in
             self?.importPendingSourceLinkHandoffs()
         }
-        let failures = report.outcomes.compactMap { entry -> String? in
-            if case .quarantined(let reason) = entry.outcome { return reason } else { return nil }
-        }
+        let failures = report.announcedFailures
         guard let first = failures.first else { return }
         let lead = failures.count == 1 ? "A shared link couldn't be imported" : "\(failures.count) shared links couldn't be imported"
         let reason = first.hasSuffix(".") ? first : first + "."

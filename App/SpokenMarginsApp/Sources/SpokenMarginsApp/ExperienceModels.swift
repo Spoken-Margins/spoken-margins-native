@@ -9,6 +9,8 @@ struct WrittenMarginDraft: Equatable {
     let itemTitle: String
     let targetDescription: String
     let progressPercent: Int
+    /// The shared Margin this note answers (#473).
+    var reply: MarginReplyDraft? = nil
 
     var captureID: String { capture.id }
     var priorWasPlaying: Bool { capture.wasPlaying }

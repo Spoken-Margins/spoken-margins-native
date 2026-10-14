@@ -93,6 +93,7 @@ private struct TimelineRailRow: View, Equatable {
                 }
             }
             .buttonStyle(.plain)
+            .padding(.leading, CGFloat(min(entry.depth, 3)) * 20)
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)

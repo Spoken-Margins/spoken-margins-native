@@ -2382,9 +2382,8 @@ final class Gate1AppModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) {
         if let marginLink = MarginDeepLink(url: url) { openMargin(marginLink); return }
-        if url.isFileURL, url.pathExtension.lowercased() == "json" {
-            importListeningEditionFile(url); return
-        }
+        if ShareLinkURL.isOnShareHost(url) { openShareLink(url); return }
+        if url.isFileURL, url.pathExtension.lowercased() == "json" { importListeningEditionFile(url); return }
         if url.scheme == "spokenmargins", url.host == "listening-edition" {
             do {
                 let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value ?? ""
@@ -3521,8 +3520,8 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_export") else { return }
         do {
             selectedItem = try loadItemDetail(id: itemID, store: requireStore())
-            let sessionID = selectedItem.sessionRows.first { $0.interjectionCount > 0 }?.id
-            openExport(sessionId: sessionID)
+            guard let sessionId = try ItemShareSessionSelection.sessionId(newestFirst: selectedItem.sessionRows.map(\.id), margins: { try requireStore().loadInterjections(sessionId: $0) }) else { return reportFailure("Record at least one Margin on this item before sharing.") }
+            exportSessionId = sessionId; prepareExportShareInterjections() // #147: straight to the Share Margins sheet, not the Share/Export screen.
         } catch { reportFailure(error, context: "Open item export failed") }
     }
 

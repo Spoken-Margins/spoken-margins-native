@@ -59,6 +59,8 @@ public final class SessionEngine {
     private var playbackRequestedAt: Date?
     private(set) var recordingAnchor: Anchor?
     private var recordingTargetType: InterjectionTargetType?
+    /// The shared Margin the recording being made answers, carried from the begin request to the saved Margin (#473).
+    private var recordingReplyTo: MarginReplyLink?
     /// The file the recorder closed for a Margin that isn't saved yet. The recorder forgets it once finished and
     /// Save passes no path, so a Save that failed once could never be tried again (#911).
     private var closedRecordingRef: String?
@@ -1450,6 +1452,7 @@ public final class SessionEngine {
         let target = currentInterjectionTarget(for: session)
         recordingTargetType = target.type
         recordingTargetId = target.id
+        recordingReplyTo = request.replyTo
         recordingAnchor = buildAnchor(for: session, targetType: target.type, targetId: target.id)
         closedRecordingRef = nil
         storedMarginFinish = nil
@@ -1479,6 +1482,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        recordingReplyTo = nil
         priorPhase = nil
         recordingOnFinishedSource = false
         guard resumes else {
@@ -1528,7 +1532,8 @@ public final class SessionEngine {
             createdAt: now(),
             roughPercent: interjectionPercent(for: session, targetType: targetType, targetId: targetId, anchor: anchor),
             anchor: anchor,
-            audioRef: recorder.recordingInProgressRef()
+            audioRef: recorder.recordingInProgressRef(),
+            replyTo: recordingReplyTo
         )
         activeRecordingDraft = draft
         recordingDraftFailure = nil
@@ -1554,7 +1559,7 @@ public final class SessionEngine {
     }
 
     @discardableResult
-    public func beginWrittenInterjection() throws -> WrittenInterjectionCapture {
+    public func beginWrittenInterjection(replyTo: MarginReplyLink? = nil) throws -> WrittenInterjectionCapture {
         try requireNavigationAllowed("beginWrittenInterjection")
         guard let originalSession = currentSession else {
             throw SessionKitError.invalidCommandForState("beginWrittenInterjection")
@@ -1596,7 +1601,8 @@ public final class SessionEngine {
                     targetId: target.id,
                     anchor: anchor
                 ),
-                wasPlaying: wasPlaying
+                wasPlaying: wasPlaying,
+                replyTo: replyTo
             )
             pendingWrittenInterjection = capture
             publish(status: .paused, phase: session.phase)
@@ -1649,7 +1655,8 @@ public final class SessionEngine {
             anchorContextStatus: capture.anchor.mediaTimeMs == nil
                 || !capture.anchor.anchorBefore.isEmpty
                 || !capture.anchor.anchorAfter.isEmpty ? .ready : .unavailable,
-            captureKind: .written
+            captureKind: .written,
+            replyTo: capture.replyTo
         )
         try repository.saveInterjection(interjection)
         lastMediaPercentageRepair = nil
@@ -1920,7 +1927,8 @@ public final class SessionEngine {
             anchorContextStatus: Interjection.contextStatus(for: anchor),
             podcastAnchorEvidenceCaptureStatus: shouldCapturePostResumePodcastEvidence
                 ? .pendingPostResumeSample
-                : nil
+                : nil,
+            replyTo: recordingReplyTo
         )
         try repository.saveInterjection(interjection)
         removeRecordingDraft()
@@ -2028,6 +2036,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        recordingReplyTo = nil
         closedRecordingRef = nil
         storedMarginFinish = nil
         if returnsToFinished {
@@ -2753,6 +2762,7 @@ public final class SessionEngine {
         recordingAnchor = nil
         recordingTargetType = nil
         recordingTargetId = nil
+        recordingReplyTo = nil
         closedRecordingRef = nil
         storedMarginFinish = nil
         priorPhase = nil

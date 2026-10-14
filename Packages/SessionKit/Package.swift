@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "SessionKitSharing", targets: ["SessionKitSharing"]),
         .library(name: "SessionKitAI", targets: ["SessionKitAI"]),
         .library(name: "SessionKitSupertonic", targets: ["SessionKitSupertonic"]),
+        .library(name: "SessionKitPocket", targets: ["SessionKitPocket"]),
         .library(name: "SessionKitEPUB", targets: ["SessionKitEPUB"]),
         .library(name: "SessionKitFeeds", targets: ["SessionKitFeeds"]),
         // Mac tool for co-op test packets (#856). The app never links it.
@@ -59,6 +60,16 @@ let package = Package(
             name: "SessionKitSupertonic",
             dependencies: [
                 "SessionKit",
+                .product(
+                    name: "onnxruntime",
+                    package: "onnxruntime-swift-package-manager"
+                )
+            ]
+        ),
+        // Kyutai Pocket TTS on the same onnxruntime (#459). Nothing in the app links it yet.
+        .target(
+            name: "SessionKitPocket",
+            dependencies: [
                 .product(
                     name: "onnxruntime",
                     package: "onnxruntime-swift-package-manager"
@@ -119,6 +130,7 @@ let package = Package(
                 "SessionKitSharing",
                 "SessionKitAI",
                 "SessionKitSupertonic",
+                "SessionKitPocket",
                 "SessionKitEPUB",
                 "SessionKitFeeds",
                 "ShippedPacketReader",
