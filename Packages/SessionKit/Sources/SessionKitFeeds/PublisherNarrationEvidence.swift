@@ -50,12 +50,13 @@ public enum PublisherNarrationEvidence {
     public static func absence(inPostPage html: String) -> String {
         guard let root = preloads(in: html) else { return "no_preloads" }
         guard let post = root["post"] as? [String: Any] else { return "no_post" }
-        guard let type = post["type"] as? String else { return "no_post" }
+        guard let type = post["type"] as? String else { return "not_a_newsletter_post" }
         guard type == "newsletter" else { return type == "podcast" ? "podcast_post" : "not_a_newsletter_post" }
         let recordings = post["audio_items"] as? [[String: Any]] ?? []
         let postID = post["id"] as? Int
         func status(_ item: [String: Any]) -> String {
-            let token = (item["status"] as? String ?? "unknown").filter { $0.isLetter || $0.isNumber || $0 == "_" }
+            // Page text goes into a diagnostic: keep it short and plain.
+            let token = String((item["status"] as? String ?? "").filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }.prefix(32))
             return token.isEmpty ? "unknown" : token
         }
         let voiceovers = recordings.filter { $0["type"] as? String == "voiceover" && $0["post_id"] as? Int == postID }
