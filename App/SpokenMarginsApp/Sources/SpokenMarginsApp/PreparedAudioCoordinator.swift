@@ -268,6 +268,7 @@ actor PreparedAudioCoordinator {
         let directory = rootDirectory
             .appending(path: safePath(itemId), directoryHint: .isDirectory)
             .appending(path: signature.digest, directoryHint: .isDirectory)
+            .appending(path: NarrationChunkPlanner.identity(ofArticle: sourceText), directoryHint: .isDirectory)
             .appending(path: "chunks", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let name = String(format: "%05d.wav", plan.index)
@@ -276,8 +277,6 @@ actor PreparedAudioCoordinator {
         defer { try? fileManager.removeItem(at: temporary) }
         try fileManager.copyItem(at: audioURL, to: temporary)
         let data = try Data(contentsOf: temporary, options: [.mappedIfSafe])
-        if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
-        try fileManager.moveItem(at: temporary, to: destination)
         manifest.chunks.append(PreparedAudioChunk(
             id: "\(manifestId)-chunk-\(plan.index)",
             index: plan.index,
@@ -290,10 +289,11 @@ actor PreparedAudioCoordinator {
         ))
         manifest.chunks.sort { $0.index < $1.index }
         manifest.updatedAt = Date()
-        guard try saveUnlessRetired(manifest, stillCurrent: { (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) == sourceText }) else {
-            try? fileManager.removeItem(at: destination)
-            return
-        }
+        _ = try saveUnlessRetired(manifest, stillCurrent: { (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) == sourceText }, commitFile: {
+            // Copy/hash outside the transaction; publish the file only while its preparation is current.
+            if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
+            try fileManager.moveItem(at: temporary, to: destination)
+        })
     }
 
     /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
@@ -322,9 +322,10 @@ actor PreparedAudioCoordinator {
 
     /// Saves progress/completion and its job atomically with the retirement check.
     /// File copying and hashing happen before entering this short transaction.
-    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool) throws -> Bool {
+    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool, commitFile: (() throws -> Void)? = nil) throws -> Bool {
         try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, item in
             guard stillCurrent(item) else { return false }
+            try commitFile?()
             try repository.savePreparedAudioManifest(manifest)
             if manifest.state == .readyOffline {
                 try repository.deleteAudioPreparationJob(id: "job-\(manifest.id)")

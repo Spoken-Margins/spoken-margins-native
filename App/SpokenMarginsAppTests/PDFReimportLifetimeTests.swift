@@ -34,13 +34,13 @@ final class PDFReimportLifetimeTests: XCTestCase {
     private func signature() -> TTSRenderSignature {
         TTSRenderSignature(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v", synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "experiment-signature")
     }
-    private func writeWAV(_ url: URL) throws {
+    private func writeWAV(_ url: URL, frequency: Double = 440) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
         let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 4_410))
         buffer.frameLength = 4_410
         let samples = try XCTUnwrap(buffer.floatChannelData)[0]
-        for i in 0..<4_410 { samples[i] = Float(sin(Double(i) * 2 * .pi * 440 / 44_100)) * 0.1 }
+        for i in 0..<4_410 { samples[i] = Float(sin(Double(i) * 2 * .pi * frequency / 44_100)) * 0.1 }
         let file = try AVAudioFile(forWriting: url, settings: format.settings)
         try file.write(from: buffer)
     }
@@ -244,6 +244,46 @@ final class PDFReimportLifetimeTests: XCTestCase {
         XCTAssertEqual(saved.committedChunkCount, 1)
         XCTAssertEqual(saved.articleIdentity, NarrationChunkPlanner.identity(ofArticle: speech.text))
         XCTAssertEqual(try store.loadItem(id: item.id).text, document.text)
+    }
+
+    func testNewReaderPreparationNeverOverwritesAnOldChunkAnotherItemPlays() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "pdf-shared-chunk-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        let engine = SessionEngine(profile: .init(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let source = BrowserTextSource(url: "shared-file://Paper.pdf", title: "Paper")
+        let old = try engine.importBrowserTextInBackground(.init(captureMode: .markdownFile, source: source, text: "First original body.", contentFormat: .plainText))
+        let preparedRoot = root.appending(path: "PreparedAudio")
+        let coordinator = PreparedAudioCoordinator(repository: store, rootDirectory: preparedRoot)
+        let ledger = OfflineStorageLedger(repository: store, rootDirectory: root)
+        let oldText = try XCTUnwrap(old.text)
+        let oldPlan = try XCTUnwrap(PreparedChunkPlan.articlePlan(oldText).first)
+        let oldManifest = try await coordinator.begin(itemId: old.id, sourceText: oldText, signature: signature(), plan: [oldPlan])
+        let original = root.appending(path: "original.wav")
+        try writeWAV(original)
+        try await coordinator.commit(itemId: old.id, signature: signature(), plan: oldPlan, sourceText: oldText, audioURL: original, durationMs: 100)
+        let oldChunk = try XCTUnwrap(store.loadPreparedAudioManifest(id: oldManifest.id)?.chunks.first)
+        let shared = preparedRoot.appending(path: oldChunk.relativePath)
+        let originalBytes = try Data(contentsOf: shared)
+        try addAsset(store, root: root, url: shared, id: oldChunk.id, itemId: old.id, category: .preparedChunk)
+        try store.saveItem(.init(id: "other", title: "Other", mediaType: "podcast", text: nil, externalReference: nil,
+                                media: .init(sourceType: .nativeMediaFile, url: shared.absoluteString, durationMs: 100), status: "ready"))
+        let document = StructuredDocumentBuilder.build(lines: [.init(text: "First revised body.", role: .body, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let item = try engine.importBrowserTextInBackground(.init(captureMode: .markdownFile, source: source, text: document.text, contentFormat: .plainText), structuredDocument: document)
+        XCTAssertEqual(item.id, old.id)
+        await ledger.removeRetiredPreparedAudio(itemId: item.id)
+        XCTAssertEqual(try Data(contentsOf: shared), originalBytes)
+        let text = try XCTUnwrap(PreparedSpeechText(item: item, document: document)?.text)
+        let plan = try XCTUnwrap(PreparedChunkPlan.articlePlan(text).first)
+        let manifest = try await coordinator.begin(itemId: item.id, sourceText: text, signature: signature(), plan: [plan])
+        let revised = root.appending(path: "revised.wav")
+        try writeWAV(revised, frequency: 660)
+        try await coordinator.commit(itemId: item.id, signature: signature(), plan: plan, sourceText: text, audioURL: revised, durationMs: 100)
+        let newChunk = try XCTUnwrap(store.loadPreparedAudioManifest(id: manifest.id)?.chunks.first)
+        XCTAssertNotEqual(newChunk.relativePath, oldChunk.relativePath)
+        XCTAssertEqual(try Data(contentsOf: shared), originalBytes, "the other item must keep its original audio bytes")
+        XCTAssertEqual(try AVAudioFile(forReading: shared).length, 4_410)
     }
 
 }
