@@ -5,7 +5,7 @@ After 2026-10-15 Claude is the only model on this project. Each job Codex did ha
 | Codex role | After 2026-10-15 | Where |
 |---|---|---|
 | Audit of risky and lane PRs (the merge gate) | **Headless Claude**, read-only, same script and launchd job, posts `**Claude audit on `<sha7>`**` | "Audit" below |
-| Taking `ready` issues (Codex worker) | The owner's Claude Code project threads, one per `ready` issue (AGENTS.md). **Retired.** | "Retired: Codex worker" below |
+| Taking `ready` issues (Codex worker) | The owner's Claude Code project threads, one per `ready` issue (AGENTS.md), and for `where:mac` issues and stalled PRs the **Claude Mac worker** (headless Claude, #1599). **Retired.** | "Retired: Codex worker" below; `ops/claude/README.md` |
 | Finishing stalled PRs (lane FAIL on the head, `needs-mac`, audit findings) | The Mac finisher for Mac-side fixes, and the project's hourly dispatch, which gives a conflict, a failing cloud test or confirmed audit findings to a free thread. **Retired on the Codex side.** | project instructions; `.claude/skills/lane-request/SKILL.md` |
 | Test Desk (`--plan app` plus scripted journeys on each new tip of `next`) | The integration script, `ops/testdesk/` (#1178), with culprit and revert in #1180. **Retired** (the launchd job was never loaded; its script and plist are deleted). | `ops/testdesk/README.md` |
 | Journey desk (a Codex app automation with computer use, #693) | Agent-driven journeys stay with the standing Claude Test Desk. **Retired** (owner, 2026-10-09). | `.claude/skills/journey/SKILL.md` |
