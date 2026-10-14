@@ -255,6 +255,50 @@ final class SharedMarginReturnAppTests: XCTestCase {
         XCTAssertNil(model.marginMoment)
     }
 
+    // #1538 audit: the listener resumed the source over their Margin (Lock Screen, headphones) and then paused it
+    // again, so the Margin ending must not start it.
+    func testASourceTheListenerResumedAndPausedOverAnOwnMarginStaysPausedWhenItEnds() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 100, voiceSeconds: 2)
+
+        model.toggleInterjectionAudioPlayback(heard)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.resumePlayback()
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive)
+        model.pause()
+        XCTAssertEqual(model.snapshot.status, .paused)
+
+        try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNil(model.marginMoment)
+    }
+
+    // #1538 audit: a sleep timer that runs out while the Margin plays is the end of listening, so the Margin
+    // ending must not start the source with no timer left.
+    func testASleepTimerThatRunsOutDuringAnOwnMarginLeavesTheSourcePausedWhenItEnds() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 100, voiceSeconds: 2)
+
+        model.armSleepTimer(.minutes15)
+        defer { model.cancelSleepTimer() }
+        guard case .armed(_, let deadline?, _) = model.sleepTimerState else {
+            return XCTFail("Expected armed sleep timer")
+        }
+        model.toggleInterjectionAudioPlayback(heard)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.reconcileSleepTimer(now: deadline.addingTimeInterval(1))
+        XCTAssertEqual(model.sleepTimerState, .inactive)
+
+        try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(model.snapshot.status, .paused)
+    }
+
     // #1538: an article has no media clock for later Margins to wait on, so the source resumes and nothing more starts.
     func testAnOwnMarginOnAnArticleBringsTheSourceBackWithoutAMarginMoment() async throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-article-\(UUID().uuidString)")

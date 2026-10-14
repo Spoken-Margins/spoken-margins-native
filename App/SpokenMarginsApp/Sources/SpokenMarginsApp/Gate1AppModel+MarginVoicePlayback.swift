@@ -62,6 +62,13 @@ extension Gate1AppModel {
         #endif
     }
 
+    /// While your own Margin plays, the source is the Margin's to bring back only if it stays paused. The listener
+    /// resuming it (Lock Screen, headphones) or a sleep timer ending the listening takes it out of the voice's hands (#1538).
+    func releaseOwnMarginReturn() {
+        guard playingInterjectionAudioId != nil else { return }
+        sharedMarginReturn.voiceStopped()
+    }
+
     func stopInterjectionAudioPlayback() {
         let hadImportedMargin = playingImportedCommentary != nil
         marginVoicePlayer.resetSharedState()

@@ -88,6 +88,7 @@ final class Gate1AppModel: ObservableObject {
                 || oldValue.targetId != snapshot.targetId || snapshot.status.isPlaybackActive {
                 stopImportedCommentaryPlayback(resumeSource: false)
             }
+            if snapshot.status.isPlaybackActive { releaseOwnMarginReturn() }
             preparedTextAudioStatus = snapshot.preparedTextAudioStatus ?? preparedTextAudioStatus
             if let snapshotSourceTranscriptStatus = snapshot.sourceTranscriptStatus,
                !(sourceTranscriptStatus == "transcribing" && snapshotSourceTranscriptStatus == "not_started") {
@@ -1693,6 +1694,7 @@ final class Gate1AppModel: ObservableObject {
             currentMediaTimeMs: snapshot.currentMediaTimeMs, chapters: selectedItem.mediaChapters
         ) {
             if snapshot.status.isPlaybackActive { pause() }
+            releaseOwnMarginReturn()
             cancelSleepTimer()
             reportConfirmation(SleepTimerPolicy.expiryConfirmation(mode: mode))
         }
