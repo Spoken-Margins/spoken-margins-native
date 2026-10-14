@@ -253,7 +253,8 @@ jobs:
         run: |
           echo "GIT_LFS_SKIP_SMUDGE=1" >> "$GITHUB_ENV"
           echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence" >> "$GITHUB_ENV"
-          echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-evidence/state" >> "$GITHUB_ENV"
+          # Kept between runs on this one runner, so the step ledger (lane_ledger.py, #1200) sees hosted runs too.
+          echo "SM_LANE_STATE_DIR=$HOME/.cache/sm-lane-hosted" >> "$GITHUB_ENV"
       - name: Take the lane runner from the base branch
         run: git show "origin/$BASE_REF:scripts/lane-runner.py" > "$RUNNER_TEMP/lane-runner.py"
       - name: Run the request
