@@ -22,6 +22,7 @@ extension Gate1AppModel {
             return
         }
         endMarginMoment()
+        if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
         guard snapshot.itemId == itemID, seekMedia(toMediaTimeMs: position.mediaTimeMs) else { return }
         screen = .playback

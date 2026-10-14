@@ -427,7 +427,7 @@ struct SharedMarginDetailView: View {
                             .accessibilityIdentifier("sharedMargin.replyMissingParent.label")
                     }
                 }
-                if row.layer.itemId != nil, SharedMarginPlaybackPosition(row.interjection) != nil {
+                if current.layer.itemId != nil, SharedMarginPlaybackPosition(current.interjection) != nil {
                     Section {
                         Button("Reply", systemImage: "arrowshape.turn.up.left.fill") { reply(inWriting: false) }
                             .accessibilityIdentifier("sharedMargin.reply.button")
@@ -463,7 +463,7 @@ struct SharedMarginDetailView: View {
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
                 if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
-                if let pendingReply { model.replyToSharedMargin(row, inWriting: pendingReply == .written) }
+                if let pendingReply { model.replyToSharedMargin(current, inWriting: pendingReply == .written) }
                 pendingReply = nil
             }
         }
