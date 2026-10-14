@@ -5,7 +5,7 @@ import SessionKitPersistence
 
 @MainActor
 final class PlaybackTimelineTests: XCTestCase {
-    func testOpeningAnItemRetainsAuthoredSourceRolesWithoutMakingThemNavigationRows() throws {
+    func testOpeningAnItemRetainsRichSourceRolesInTimelineAndNow() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -40,7 +40,11 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertEqual(source.map(\.role), [.caption, .table, .footnote])
         XCTAssertEqual(source.map(\.pageIndex), [0, 0, 1])
         XCTAssertEqual(source.first?.label, "Figure 1: authored label")
-        XCTAssertEqual(entries.map(\.id), ["source.beginning"], "Source segments are reader content, not scenes")
+        let richSource = entries.compactMap { entry -> TimelineSourceContent.Entry? in
+            guard case .sourceText(let source) = entry.action else { return nil }
+            return source
+        }
+        XCTAssertEqual(richSource, source, "Retained captions, tables and footnotes stay in Timeline")
         let index = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource)
         let sentence = PlaybackLivePassage.Sentence(start: 0, end: 7, text: "Caption", isCurrent: true, diamonds: [])
         XCTAssertEqual(index.fragments(for: sentence).first?.label, "Figure 1: authored label",
@@ -50,6 +54,28 @@ final class PlaybackTimelineTests: XCTestCase {
         XCTAssertTrue(model.selectedItem.isNativeAudio)
         XCTAssertTrue(model.selectedItem.timelineSource.entries.isEmpty,
                       "An audio transcript must not become source text without time mapping")
+    }
+
+    func testTimelineKeepsTypedSourceElementsAndOmitsOnlyGenericPassages() {
+        let roles = StructuredDocument.Role.allCases
+        let text = roles.map { $0.rawValue + "." }.joined(separator: "\n\n")
+        var start = 0
+        let segments = roles.enumerated().map { index, role -> StructuredDocument.Segment in
+            let length = role.rawValue.count + 1
+            defer { start += length + 2 }
+            return .init(id: "segment-\(index)", role: role, range: .init(start: start, length: length))
+        }
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 1, textSHA256: nil),
+            text: text, segments: segments, markers: [])
+        let item = ItemDetailState(id: "rich-source", title: "Document", text: text).includingTimelineSource(document)
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let displayed = entries.compactMap { entry -> StructuredDocument.Role? in
+            guard case .sourceText(let source) = entry.action else { return nil }
+            return source.role
+        }
+        XCTAssertEqual(displayed, roles.filter { $0 != .body && $0 != .unknown })
+        XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
     func testParagraphsDoNotInventNavigationWhenAnArticleHasNoScenes() {
