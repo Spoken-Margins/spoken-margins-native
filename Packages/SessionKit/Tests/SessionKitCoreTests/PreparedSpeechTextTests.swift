@@ -103,7 +103,7 @@ final class PreparedSpeechTextTests: XCTestCase {
         XCTAssertEqual(reference.text, body.text)
         XCTAssertEqual(cache.resolve(item: item, documents: store)?.text, body.text, "negative control: text equality retains the old entry")
         cache.invalidate(itemId: item.id)
-        XCTAssertEqual(cache.resolve(item: item, documents: store)?.text, "", "references must leave the speech projection")
+        XCTAssertEqual(cache.resolve(item: item, documents: store)?.text, "References skipped.", "reference content must leave the speech projection")
     }
 
 }

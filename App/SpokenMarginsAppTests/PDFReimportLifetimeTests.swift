@@ -313,7 +313,7 @@ final class PDFReimportLifetimeTests: XCTestCase {
         XCTAssertEqual(imported, id)
         let current = try store.loadItem(id: id)
         XCTAssertEqual(current.text, original.text)
-        XCTAssertEqual(PreparedSpeechHooks.preparedText(of: current, in: store), "",
+        XCTAssertEqual(PreparedSpeechHooks.preparedText(of: current, in: store), "References skipped.",
                        "the actual app importer must invalidate the cached old body projection")
     }
 
