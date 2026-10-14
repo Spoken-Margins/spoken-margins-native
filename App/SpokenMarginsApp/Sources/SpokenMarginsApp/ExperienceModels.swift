@@ -9,6 +9,8 @@ struct WrittenMarginDraft: Equatable {
     let itemTitle: String
     let targetDescription: String
     let progressPercent: Int
+    /// The shared Margin this note answers (#473).
+    var reply: MarginReplyDraft? = nil
 
     var captureID: String { capture.id }
     var priorWasPlaying: Bool { capture.wasPlaying }
@@ -241,11 +243,14 @@ enum TimelineProvenance: String, CaseIterable, Hashable, Sendable {
 struct TimelineRailSortKey: Comparable, Equatable, Sendable {
     let position: Int
     let rank: Int
+    /// Orders a conversation at one place on the rail, parent first (#473). 0 for everything else.
+    var threadOrder = 0
     let id: String
 
     static func < (lhs: TimelineRailSortKey, rhs: TimelineRailSortKey) -> Bool {
         if lhs.position != rhs.position { return lhs.position < rhs.position }
         if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+        if lhs.threadOrder != rhs.threadOrder { return lhs.threadOrder < rhs.threadOrder }
         return lhs.id < rhs.id
     }
 }

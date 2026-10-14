@@ -20,6 +20,18 @@ struct OpenSourceLicensesView: View {
             subdirectory: "Legal"
         ),
         Document(
+            title: "Fallback voice",
+            detail: "Apache-2.0 · the bundled backup voice",
+            resourceName: "NOTICES",
+            subdirectory: "Kitten"
+        ),
+        Document(
+            title: "CMU Pronouncing Dictionary",
+            detail: "BSD-style · the backup voice's pronunciations",
+            resourceName: "CMUdict-LICENSE",
+            subdirectory: "Kitten"
+        ),
+        Document(
             title: "Defuddle",
             detail: "MIT · reading web pages",
             resourceName: "Defuddle-LICENSE",

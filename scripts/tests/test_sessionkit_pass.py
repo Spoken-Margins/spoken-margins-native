@@ -21,6 +21,8 @@ NOT_REPOSITORY_READS = {
     'references': 'a heading word the Obsidian parser drops',
     'Site': 'a source title in a library-row test; the catalog reads are Site/onboarding/catalog/, which READS covers',
     'scripts/run.sh': 'a zip entry name in a packet-rejection test',
+    'research/C2/models/pocket': 'git-ignored weights that research/C2/pocket/fetch_weights.sh (a read) pins by sha256',
+    'research/C2/.venv/bin/python': 'git-ignored local Python for the scoring script (a read); POCKET_TTS_PYTHON overrides it',
 }
 
 

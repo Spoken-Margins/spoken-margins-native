@@ -31,8 +31,16 @@ READS = (
     'App/SpokenMarginsAppTests/',
     # Supertonic's narration tests read the bundled voice resources.
     'App/SpokenMarginsApp/Resources/Supertonic/',
+    # The Kitten fallback voice's tests read the bundled model and the front end's test vectors (#849).
+    'App/SpokenMarginsApp/Resources/Kitten/',
+    'research/C2/frontend/',
     'research/B2/',
     'research/B4/',
+    # Pocket's renderer tests read the committed passages, the PyTorch reference results, and the scoring script
+    # (the weights and the Python environment they also use are git-ignored; see NOT_REPOSITORY_READS).
+    'research/C2/pocket/',
+    'research/C2/passages.json',
+    'research/C2/results/darwin/',
     # The published source catalog the catalog tests decode.
     'Site/onboarding/catalog/',
     # The trace tests find the repository root by its README.md and traces/ folder.

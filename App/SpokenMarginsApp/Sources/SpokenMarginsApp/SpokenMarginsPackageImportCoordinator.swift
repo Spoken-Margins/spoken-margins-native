@@ -16,6 +16,8 @@ import SessionKitSharing
 /// - Staging never clears or cleans up a review that is already showing.
 @MainActor
 final class SpokenMarginsPackageImportCoordinator {
+    /// Opens tapped share links into this flow (#488); the model reaches it as `shareLinkOpener`.
+    let shareLinkOpener = ShareLinkOpener()
     /// What the flow needs from the app. The live one is `Environment.live(model:)`.
     struct Environment {
         var requireStore: @MainActor () throws -> SQLiteSessionStore

@@ -21,6 +21,9 @@ spokenmargins.proximitytoprogress.com {
 		}
 		handle {
 			root * /srv/www/spokenmargins
+			# Apple fetches this extensionless file and wants application/json (#488).
+			@aasa path /.well-known/apple-app-site-association
+			header @aasa Content-Type application/json
 			file_server
 		}
 	}

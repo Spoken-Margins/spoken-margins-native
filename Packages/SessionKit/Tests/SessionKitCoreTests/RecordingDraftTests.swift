@@ -196,6 +196,41 @@ final class RecordingDraftTests: XCTestCase {
         XCTAssertEqual(try margins(session.id).count, 1)
     }
 
+    /// The audit of #1570: a reply recovered after a kill came back as a plain Margin, unthreaded and exported
+    /// without its link.
+    func testKilledWhileRecordingAReplyRecoversTheMarginWithItsReplyLink() throws {
+        let (engine, _) = try recordingEngine()
+        let session = try XCTUnwrap(engine.currentSession)
+        let link = MarginReplyLink(conversationId: "conversation-1", parentPackageDigest: "digest-a", parentPackageScopedId: "margin-1")
+        _ = try engine.beginInterjection(request: MarginCaptureRequest(replyTo: link))
+        XCTAssertEqual(try journal.load().drafts.first?.replyTo, link, "the note carries the link")
+
+        _ = try reconcile()
+        XCTAssertEqual(try margins(session.id).first?.replyTo, link, "the recovered Margin is still a reply")
+    }
+
+    func testAMarginThatIsNotAReplyRecoversWithoutALink() throws {
+        let (engine, _) = try recordingEngine()
+        let session = try XCTUnwrap(engine.currentSession)
+        _ = try engine.beginInterjection()
+        XCTAssertNil(try journal.load().drafts.first?.replyTo)
+
+        _ = try reconcile()
+        XCTAssertNil(try margins(session.id).first?.replyTo)
+    }
+
+    func testANoteWrittenBeforeRepliesExistedStillDecodes() throws {
+        let (engine, _) = try recordingEngine()
+        _ = try engine.beginInterjection()
+        let draft = try XCTUnwrap(try journal.load().drafts.first)
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(draft)) as? [String: Any])
+        json.removeValue(forKey: "replyTo")
+        XCTAssertNil(json["replyTo"])
+        let decoded = try JSONDecoder().decode(RecordingDraft.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(decoded.replyTo)
+        XCTAssertEqual(decoded.id, draft.id)
+    }
+
     func testRecoveryDoesNotTouchTheSession() throws {
         let (engine, _) = try recordingEngine()
         let sessionId = try XCTUnwrap(engine.currentSession?.id)

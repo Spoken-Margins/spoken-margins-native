@@ -185,6 +185,11 @@ struct ExperienceMarginsScreen: View {
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.text)
                                         .multilineTextAlignment(.leading)
+                                    if row.interjection.replyTo != nil {
+                                        Label("Reply to a shared Margin", systemImage: "arrowshape.turn.up.left")
+                                            .font(.caption)
+                                            .foregroundStyle(AppColors.secondaryText)
+                                    }
                                     if !row.needsAttention || row.preview != row.attentionDescription {
                                         Text(row.preview)
                                             .font(.system(.body, design: .serif))
@@ -203,7 +208,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("My Margin. \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
+                        .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
@@ -230,32 +235,128 @@ struct ExperienceMarginsScreen: View {
                 description: Text("Imported Margins appear here separately from your own notes.")
             )
         } else {
-            ForEach(model.visibleSharedMarginRows) { row in
-                Button { selectedSharedMargin = row } label: {
-                    VStack(alignment: .leading, spacing: 7) {
-                        HStack(spacing: 8) {
-                            Label("Shared · \(row.collectionLabel)", systemImage: "person.2")
-                                .font(.caption)
-                                .foregroundStyle(AppColors.secondaryText)
-                            if row.isNew { NewMarginBadge() }
-                        }
-                        Text(row.interjection.approvedTranscript)
-                            .font(.system(.body, design: .serif))
-                            .foregroundStyle(AppColors.text)
-                            .lineLimit(3)
-                        Text("\(row.itemTitle) · \(row.positionDescription)")
+            ForEach(sharedEntries) { entry in
+                if let row = entry.shared {
+                    sharedRowButton(row, depth: entry.depth, note: entry.note)
+                } else if let own = entry.own {
+                    ownReplyRowButton(own, depth: entry.depth, note: entry.note)
+                }
+            }
+        }
+    }
+
+    /// One row of the Shared list: a friend's Margin, or the listener's own Margin in a conversation with it.
+    private struct SharedListEntry: Identifiable {
+        let id: String
+        let depth: Int
+        let note: String?
+        var shared: SharedMarginRow?
+        var own: MarginRow?
+    }
+
+    /// The shared Margins the filters keep, in conversations: replies indented under the Margin they answer, the
+    /// listener's own replies among them, and every conversation kept whole when one of its Margins matches (#473).
+    private var sharedEntries: [SharedListEntry] {
+        let visible = model.visibleSharedMarginRows
+        let visibleIDs = Set(visible.map(\.interjection.id))
+        let sharedByID = Dictionary(model.sharedMarginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let ownByID = Dictionary(model.marginRows.map { ($0.interjection.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var itemIDs: [String] = []
+        for itemID in visible.compactMap(\.layer.itemId) where !itemIDs.contains(itemID) { itemIDs.append(itemID) }
+        var entries: [SharedListEntry] = []
+        var placed = Set<String>()
+        for itemID in itemIDs {
+            let rows = model.marginThreadRows(itemId: itemID)
+            let kept = MarginThreadPresentation.threads(in: rows) {
+                if case .imported(let id) = $0.reference { return visibleIDs.contains(id) }
+                return false
+            }
+            for threadRow in kept {
+                switch threadRow.reference {
+                case .imported(let id):
+                    guard let row = sharedByID[id] else { continue }
+                    placed.insert(id)
+                    entries.append(SharedListEntry(id: threadRow.id, depth: threadRow.depth, note: threadRow.note, shared: row))
+                case .local(let id):
+                    guard let row = ownByID[id] else { continue }
+                    entries.append(SharedListEntry(id: threadRow.id, depth: threadRow.depth, note: threadRow.note, own: row))
+                }
+            }
+        }
+        // A shared Margin whose source isn't in the Library has no conversation to sit in.
+        for row in visible where !placed.contains(row.interjection.id) {
+            entries.append(SharedListEntry(id: "unplaced-\(row.id)", depth: 0, note: nil, shared: row))
+        }
+        return entries
+    }
+
+    private func threadIndent(_ depth: Int) -> CGFloat { CGFloat(min(depth, 3)) * 20 }
+
+    private func sharedRowButton(_ row: SharedMarginRow, depth: Int, note: String?) -> some View {
+        VStack(spacing: 0) {
+            Button { selectedSharedMargin = row } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 8) {
+                        Label(depth > 0 ? "Reply · \(row.collectionLabel)" : "Shared · \(row.collectionLabel)", systemImage: depth > 0 ? "arrowshape.turn.up.left" : "person.2")
                             .font(.caption)
                             .foregroundStyle(AppColors.secondaryText)
+                        if row.isNew { NewMarginBadge() }
                     }
-                    .multilineTextAlignment(.leading)
-                    .padding(.vertical, 14)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
+                    if let note {
+                        Text(note)
+                            .font(.caption.italic())
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    Text(row.interjection.approvedTranscript)
+                        .font(.system(.body, design: .serif))
+                        .foregroundStyle(AppColors.text)
+                        .lineLimit(3)
+                    Text("\(row.itemTitle) · \(row.positionDescription)")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("margins.shared.row.\(row.id)")
-                Divider()
+                .multilineTextAlignment(.leading)
+                .padding(.vertical, 14)
+                .padding(.leading, threadIndent(depth))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("margins.shared.row.\(row.id)")
+            Divider()
+        }
+    }
+
+    /// The listener's own reply, shown in the conversation it belongs to.
+    private func ownReplyRowButton(_ row: MarginRow, depth: Int, note: String?) -> some View {
+        VStack(spacing: 0) {
+            Button { selectedMargin = row } label: {
+                VStack(alignment: .leading, spacing: 7) {
+                    Label(depth > 0 ? "Your reply" : "Your Margin", systemImage: depth > 0 ? "arrowshape.turn.up.left.fill" : "quote.bubble")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.evergreen)
+                    if let note {
+                        Text(note)
+                            .font(.caption.italic())
+                            .foregroundStyle(AppColors.secondaryText)
+                    }
+                    Text(row.preview)
+                        .font(.system(.body, design: .serif))
+                        .foregroundStyle(AppColors.text)
+                        .lineLimit(3)
+                    Text("\(row.itemTitle) · \(row.placeDescription())")
+                        .font(.caption)
+                        .foregroundStyle(AppColors.secondaryText)
+                }
+                .multilineTextAlignment(.leading)
+                .padding(.vertical, 14)
+                .padding(.leading, threadIndent(depth))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("margins.shared.ownRow.\(row.id)")
+            Divider()
         }
     }
 
@@ -280,9 +381,28 @@ struct SharedMarginDetailView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var shouldOpenItem = false
+    @State private var pendingReply: ReplyKind?
     let row: SharedMarginRow
     /// The model's current copy, so placement progress updates while the sheet is open (#872).
     private var current: SharedMarginRow { model.sharedMarginRows.first { $0.id == row.id } ?? row }
+
+    private enum ReplyKind { case voice, written }
+
+    /// The Margin this one answers, when this Margin is itself a reply and the parent is in the Library (#473).
+    private var parentContext: MarginThreadPresentation.ParentContext? {
+        guard let itemId = row.layer.itemId, row.interjection.replyLinks?.isEmpty == false else { return nil }
+        return model.marginParentContext(of: .imported(row.interjection.id), itemId: itemId)
+    }
+
+    private var isReplyWithoutParent: Bool {
+        row.interjection.replyLinks?.isEmpty == false && parentContext == nil
+    }
+
+    /// The sheet closes first and the recorder opens when it has gone, as Open Item does.
+    private func reply(inWriting: Bool) {
+        pendingReply = inWriting ? .written : .voice
+        dismiss()
+    }
 
     var body: some View {
         NavigationStack {
@@ -294,6 +414,28 @@ struct SharedMarginDetailView: View {
                         .font(.system(.title3, design: .serif))
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let context = parentContext {
+                    Section("Replying to") {
+                        MarginParentContextView(context: context)
+                    }
+                } else if isReplyWithoutParent {
+                    Section {
+                        Label(MarginThreadPresentation.missingParentNote, systemImage: "arrowshape.turn.up.left")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .accessibilityIdentifier("sharedMargin.replyMissingParent.label")
+                    }
+                }
+                if current.layer.itemId != nil, SharedMarginReplyPlace(current.interjection) != nil {
+                    Section {
+                        Button("Reply", systemImage: "arrowshape.turn.up.left.fill") { reply(inWriting: false) }
+                            .accessibilityIdentifier("sharedMargin.reply.button")
+                        Button("Reply in writing", systemImage: "square.and.pencil") { reply(inWriting: true) }
+                            .accessibilityIdentifier("sharedMargin.replyWritten.button")
+                    } footer: {
+                        Text("Your reply is saved at this moment and goes out with the item. Their recording is not sent again.")
+                    }
                 }
                 Section("Source & position") {
                     Text(row.itemTitle)
@@ -321,7 +463,32 @@ struct SharedMarginDetailView: View {
             .toolbar { Button("Done") { dismiss() } }
             .onDisappear {
                 if shouldOpenItem, let itemID = row.layer.itemId { model.openItem(id: itemID) }
+                if let pendingReply { model.replyToSharedMargin(current, inWriting: pendingReply == .written) }
+                pendingReply = nil
             }
         }
+    }
+}
+
+/// The Margin a reply answers, named with its sender and words, and a way to hear it first (#473).
+struct MarginParentContextView: View {
+    @EnvironmentObject private var model: Gate1AppModel
+    let context: MarginThreadPresentation.ParentContext
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(context.senderLabel)
+                .font(.subheadline.weight(.semibold))
+            if !context.text.isEmpty {
+                Text(context.text)
+                    .font(.system(.body, design: .serif))
+                    .foregroundStyle(AppColors.secondaryText)
+                    .lineLimit(6)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("margin.parentContext.text")
+        Button("Hear what it answers", systemImage: "play.fill") { model.playMarginParent(context) }
+            .accessibilityIdentifier("margin.parentContext.play.button")
     }
 }

@@ -23,6 +23,9 @@ public struct RecordingDraft: Codable, Equatable, Sendable {
     /// The recording as the Margin will name it, or nil when the recorder couldn't say where it writes.
     public var audioRef: String?
     public var state: State
+    /// The Margin this recording answers, so a recovered reply is still threaded under its parent. Optional, so
+    /// draft files written before replies existed still decode.
+    public var replyTo: MarginReplyLink?
 
     public init(
         id: String = UUID().uuidString,
@@ -34,7 +37,8 @@ public struct RecordingDraft: Codable, Equatable, Sendable {
         roughPercent: Int,
         anchor: Anchor,
         audioRef: String?,
-        state: State = .recording
+        state: State = .recording,
+        replyTo: MarginReplyLink? = nil
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -46,6 +50,7 @@ public struct RecordingDraft: Codable, Equatable, Sendable {
         self.anchor = anchor
         self.audioRef = audioRef
         self.state = state
+        self.replyTo = replyTo
     }
 }
 
@@ -228,7 +233,8 @@ public struct RecordingDraftReconciler {
             cleanedTranscript: nil,
             displayText: nil,
             status: "active",
-            anchorContextStatus: Interjection.contextStatus(for: draft.anchor)
+            anchorContextStatus: Interjection.contextStatus(for: draft.anchor),
+            replyTo: draft.replyTo
         )
         try repository.saveInterjection(margin)
         try journal.remove(id: draft.id)

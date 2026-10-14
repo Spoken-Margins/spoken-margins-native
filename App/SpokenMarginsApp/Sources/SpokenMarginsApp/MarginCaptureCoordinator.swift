@@ -26,6 +26,9 @@ final class MarginCaptureCoordinator: ObservableObject {
     @Published private(set) var restartShield = MarginRestartShield()
     @Published private(set) var writtenDraft: WrittenMarginDraft?
     private(set) var pendingVoiceRequestID: UUID?
+    /// The shared Margin the spoken Margin being started answers (#473). Not published, like the request ID: the
+    /// recording screen is redrawn by `presentationContext`, which is always set after this. It goes with the context.
+    private(set) var pendingReply: MarginReplyDraft?
 
     // MARK: A spoken Margin's microphone request
 
@@ -58,6 +61,7 @@ final class MarginCaptureCoordinator: ObservableObject {
         guard granted else {
             isRequestingPermission = false
             presentationContext = nil
+            pendingReply = nil
             pendingVoiceRequestID = nil
             permissionDenied = true
             return .denied
@@ -83,6 +87,7 @@ final class MarginCaptureCoordinator: ObservableObject {
         pendingVoiceRequestID = nil
         isRequestingPermission = false
         presentationContext = nil
+        pendingReply = nil
     }
 
     // MARK: A compact control's request (no request ID, no fence, as before)
@@ -104,6 +109,11 @@ final class MarginCaptureCoordinator: ObservableObject {
     /// Always writes, and so always notifies, even when there is no context.
     func clearPresentationContext() {
         presentationContext = nil
+        pendingReply = nil
+    }
+
+    func setPendingReply(_ reply: MarginReplyDraft?) {
+        pendingReply = reply
     }
 
     // MARK: Finishing, and the shield that follows
