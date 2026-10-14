@@ -7,7 +7,10 @@ final class OpenSourceLicensesTests: XCTestCase {
         for document in OpenSourceLicensesView.documents {
             let text = OpenSourceLicensesView.bundledText(for: document)
             XCTAssertNotEqual(text, "Bundled notice unavailable.", document.resourceName)
-            XCTAssertTrue(text.contains("Permission is hereby granted"), document.resourceName)
+            // The bundled backup voice (#849) carries Apache-2.0 notices and CMU's BSD-style license, not MIT text.
+            let required = ["NOTICES": "Apache-2.0", "CMUdict-LICENSE": "Carnegie Mellon University"][document.resourceName]
+                ?? "Permission is hereby granted"
+            XCTAssertTrue(text.contains(required), document.resourceName)
         }
     }
 

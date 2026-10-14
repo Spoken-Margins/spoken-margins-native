@@ -1,0 +1,105 @@
+[
+ {
+  "name": "enc_emb",
+  "shape": [
+   29,
+   256
+  ],
+  "offset": 0,
+  "bytes": 29696
+ },
+ {
+  "name": "enc_w_ih",
+  "shape": [
+   768,
+   256
+  ],
+  "offset": 29696,
+  "bytes": 786432
+ },
+ {
+  "name": "enc_w_hh",
+  "shape": [
+   768,
+   256
+  ],
+  "offset": 816128,
+  "bytes": 786432
+ },
+ {
+  "name": "enc_b_ih",
+  "shape": [
+   768
+  ],
+  "offset": 1602560,
+  "bytes": 3072
+ },
+ {
+  "name": "enc_b_hh",
+  "shape": [
+   768
+  ],
+  "offset": 1605632,
+  "bytes": 3072
+ },
+ {
+  "name": "dec_emb",
+  "shape": [
+   74,
+   256
+  ],
+  "offset": 1608704,
+  "bytes": 75776
+ },
+ {
+  "name": "dec_w_ih",
+  "shape": [
+   768,
+   256
+  ],
+  "offset": 1684480,
+  "bytes": 786432
+ },
+ {
+  "name": "dec_w_hh",
+  "shape": [
+   768,
+   256
+  ],
+  "offset": 2470912,
+  "bytes": 786432
+ },
+ {
+  "name": "dec_b_ih",
+  "shape": [
+   768
+  ],
+  "offset": 3257344,
+  "bytes": 3072
+ },
+ {
+  "name": "dec_b_hh",
+  "shape": [
+   768
+  ],
+  "offset": 3260416,
+  "bytes": 3072
+ },
+ {
+  "name": "fc_w",
+  "shape": [
+   74,
+   256
+  ],
+  "offset": 3263488,
+  "bytes": 75776
+ },
+ {
+  "name": "fc_b",
+  "shape": [
+   74
+  ],
+  "offset": 3339264,
+  "bytes": 296
+ }
+]
