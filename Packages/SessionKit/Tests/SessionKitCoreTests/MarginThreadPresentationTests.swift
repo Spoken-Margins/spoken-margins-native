@@ -156,6 +156,34 @@ final class MarginThreadPresentationTests: XCTestCase {
         )
     }
 
+    func testAListFilteredToOneSendersMarginKeepsTheWholeConversation() {
+        let a1 = MarginPacketIdentity(packageDigest: digestA, packageScopedId: "a-1")
+        let toA1 = MarginReplyLink.replying(to: a1, parentConversationId: nil)
+        let rows = MarginThreadPresentation.rows(
+            itemId: "item", localMargins: [local("mine", at: 5_000, offset: 6)], layers: [layerA, layerB],
+            importedMargins: [
+                imported("a1", layer: "layer-a", scoped: "a-1", time: 20_000, offset: 1),
+                imported("b1", layer: "layer-b", scoped: "b-1", time: nil, offset: 4, links: [toA1]),
+                imported("b9", layer: "layer-b", scoped: "b-9", time: 90_000, offset: 3),
+            ]
+        )
+        let kept = MarginThreadPresentation.threads(in: rows) { $0.reference == .imported("b1") }
+        XCTAssertEqual(kept.map(\.reference), [.imported("a1"), .imported("b1")], "the reply keeps its parent; the other threads go")
+        XCTAssertEqual(MarginThreadPresentation.threads(in: rows) { _ in false }, [])
+        XCTAssertEqual(MarginThreadPresentation.threads(in: [], containing: { _ in true }), [])
+    }
+
+    func testTheReplyDraftNamesTheMarginItAnswers() {
+        let parent = imported("a1", layer: "layer-a", scoped: "a-1", time: 20_000, offset: 1, text: "The author never says why.")
+        let draft = MarginReplyDraft(parent: parent, in: layerA)
+        XCTAssertEqual(draft.link, parent.replyLink(in: layerA))
+        XCTAssertEqual(draft.caption, "Replying to Ana: \u{201C}The author never says why.\u{201D}")
+        let long = imported("a2", layer: "layer-a", scoped: "a-2", time: nil, offset: 2, text: String(repeating: "word ", count: 60))
+        XCTAssertTrue(MarginReplyDraft(parent: long, in: layerA).caption.hasSuffix("…\u{201D}"))
+        let blank = imported("a3", layer: "layer-a", scoped: "a-3", time: nil, offset: 3, text: "  ")
+        XCTAssertEqual(MarginReplyDraft(parent: blank, in: layerA).caption, "Replying to Ana")
+    }
+
     private func imported(
         _ id: String, layer: String, scoped: String, time: Int?, offset: TimeInterval,
         links: [MarginReplyLink]? = nil, text: String? = nil
