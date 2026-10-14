@@ -68,7 +68,7 @@ struct ItemCollectionSheet: View {
             .background(AppColors.bone)
             .navigationTitle("Add to Collection")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Done") { dismiss() } }
+            .toolbar { Button("Done") { dismiss() }.accessibilityIdentifier("collection.done.button") }
             .task { load() }
             .alert("Rename Collection", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
                 TextField("Name", text: $renameText)

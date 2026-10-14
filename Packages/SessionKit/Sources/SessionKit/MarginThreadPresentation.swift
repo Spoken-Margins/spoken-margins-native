@@ -139,6 +139,23 @@ public enum MarginThreadPresentation {
         return ParentContext(parent: parent, senderLabel: node.senderLabel, text: node.text)
     }
 
+    /// The threads (a row at depth 0 and every row under it) that hold at least one row `matching` accepts.
+    /// A list filtered by search or scope uses this to keep a conversation whole.
+    public static func threads(in rows: [Row], containing matching: (Row) -> Bool) -> [Row] {
+        var kept: [Row] = []
+        var thread: [Row] = []
+        func flush() {
+            if thread.contains(where: matching) { kept.append(contentsOf: thread) }
+            thread = []
+        }
+        for row in rows {
+            if row.depth == 0 { flush() }
+            thread.append(row)
+        }
+        flush()
+        return kept
+    }
+
     private struct Node {
         let reference: MarginReference
         let senderLabel: String
@@ -196,5 +213,26 @@ extension Interjection {
         var copy = self
         copy.replyTo = parent.replyLink(in: layer)
         return copy
+    }
+}
+
+/// What the listener is answering while a reply is being recorded or written (#473): the link the saved
+/// Margin carries, and the words to show them so they know which Margin they are answering.
+public struct MarginReplyDraft: Equatable, Sendable {
+    public let link: MarginReplyLink
+    public let parentSenderLabel: String
+    public let parentText: String
+
+    public init(parent: ImportedCommentaryInterjection, in layer: ImportedCommentaryLayer) {
+        link = parent.replyLink(in: layer)
+        parentSenderLabel = MarginLayerSynthesis.label(layer.displayLabel)
+        parentText = parent.approvedTranscript
+    }
+
+    /// One line for the recording and writing screens.
+    public var caption: String {
+        let words = parentText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let excerpt = words.count > 90 ? String(words.prefix(90)) + "…" : words
+        return excerpt.isEmpty ? "Replying to \(parentSenderLabel)" : "Replying to \(parentSenderLabel): \u{201C}\(excerpt)\u{201D}"
     }
 }

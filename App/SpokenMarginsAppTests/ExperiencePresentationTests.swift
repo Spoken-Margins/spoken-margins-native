@@ -31,6 +31,42 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(row.interjection.approvedTranscript, "Someone else's thought")
     }
 
+    /// #473: a reply sits directly under the Margin it answers at that Margin's place, indented, and says what it answers.
+    @MainActor
+    func testTimelineThreadsRepliesUnderTheSharedMarginTheyAnswer() throws {
+        var item = ItemDetailState()
+        item.id = "item"
+        item.title = "Episode"
+        item.mediaDurationMs = 100_000
+        let layer = ImportedCommentaryLayer(id: "layer", itemId: item.id, packageDigest: "digest-a", packageId: "package",
+            itemIdentity: SharedItemIdentity(itemType: .podcast, title: "Episode"), displayLabel: "Ana", importedAt: Date(),
+            sourceResolutionStatus: .resolved, isEnabled: true)
+        func shared(_ id: String, scoped: String, at ms: Int, offset: TimeInterval) -> ImportedCommentaryInterjection {
+            ImportedCommentaryInterjection(id: id, layerId: layer.id, packageScopedId: scoped, createdAt: Date(timeIntervalSince1970: offset),
+                anchorEvidence: PortableAnchorEvidence(anchorType: .media, mediaTimeMs: ms), approvedTranscript: "Ana says \(id)",
+                resolution: ImportedAnchorResolution(evidenceClass: .exactEdition, localMediaTimeMs: ms, confidence: 1))
+        }
+        let parent = shared("parent", scoped: "m-1", at: 30_000, offset: 10)
+        let elsewhere = shared("elsewhere", scoped: "m-2", at: 30_500, offset: 11)
+        var reply = interjection(id: "my-reply", transcript: "My reply")
+        reply.anchor = Anchor(anchorType: .media, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 34_000)
+        reply.createdAt = Date(timeIntervalSince1970: 20)
+        reply.replyTo = parent.replyLink(in: layer)
+        item.interjections = [reply]
+        item.importedCommentaryLayers = [layer]
+        item.importedCommentaryInterjections = [layer.id: [elsewhere, parent]]
+
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: "session")
+            .filter { $0.reference != nil }
+
+        XCTAssertEqual(entries.map(\.reference), [.imported("parent"), .local("my-reply"), .imported("elsewhere")],
+                       "the reply follows its parent even though it was made later and the other Margin is closer in time")
+        XCTAssertEqual(entries.map(\.depth), [0, 1, 0])
+        XCTAssertEqual(entries[1].position, entries[0].position, "a reply sits at the place it answers")
+        XCTAssertTrue(entries[1].detail.hasPrefix("Reply to Ana · "), entries[1].detail)
+        XCTAssertFalse(entries[0].detail.contains("Reply to"))
+    }
+
     @MainActor
     func testTimelineIncludesAllGeneratedScenesWithDistinctProvenanceAndSeekTargets() throws {
         var item = ItemDetailState()

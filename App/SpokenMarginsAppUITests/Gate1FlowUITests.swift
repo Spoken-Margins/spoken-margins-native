@@ -15,7 +15,7 @@ final class Gate1FlowUITests: XCTestCase {
         app.launch()
     }
 
-    func testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline() throws {
+    func testMarginsItemShareOpensShareSheetAndChapterJumpUpdatesTimeline() throws {
         app.buttons["queue.start.item-pill"].tap()
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8))
         pausePlaybackIfNeeded()
@@ -39,10 +39,30 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(share.waitForExistence(timeout: 5))
         captureScreen(named: "qol-item-share-action")
         share.tap()
-        XCTAssertTrue(element("export.screen").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("export.session.picker").exists)
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Share Margins (")).firstMatch.isEnabled)
-        captureScreen(named: "qol-item-export")
+        // #147: straight to the Share Margins sheet, with Review pinned at the bottom.
+        XCTAssertTrue(element("build23.sender.experience").waitForExistence(timeout: 5))
+        let cleanUpQuestion = app.alerts["Clean selected Margins automatically?"]
+        if cleanUpQuestion.waitForExistence(timeout: 2) { cleanUpQuestion.buttons["Not now"].tap() } // first share only
+        let review = element("build23.sender.select.continue")
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        XCTAssertTrue(review.isHittable)
+        captureScreen(named: "qol-item-share-sheet")
+        review.tap()
+        XCTAssertTrue(element("build23.sender.stage.review").waitForExistence(timeout: 5))
+        let shareAction = element("build23.sender.review.share")
+        XCTAssertTrue(shareAction.waitForExistence(timeout: 5))
+        XCTAssertTrue(shareAction.isHittable)
+        captureScreen(named: "qol-item-share-review")
+        // Third tap: Share is pinned at the bottom of Review and builds, verifies and presents the iOS share sheet.
+        shareAction.tap()
+        let nativeShareSurface = element("ActivityListView")
+        XCTAssertTrue(
+            nativeShareSurface.waitForExistence(timeout: 8),
+            "Share, Review, Share did not reach the iOS share sheet from the Margins tab."
+        )
+        captureScreen(named: "qol-item-share-ios-sheet")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(nativeShareSurface, timeout: 5))
     }
 
     func testListeningEditionPreviewShowsSuppliedScenesBeforeImport() throws {

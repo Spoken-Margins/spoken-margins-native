@@ -201,7 +201,7 @@ extension Gate1AppModel {
         synchronizeStreamingSpeechAnchorIfNeeded()
         streamingSpeechQueue.pauseForInterjection()
         run { engine in
-            snapshot = try engine.beginInterjection(request: .tapped(at: requestedAt))
+            snapshot = try engine.beginInterjection(request: .tapped(at: requestedAt).replying(to: marginCapture.pendingReply?.link))
             if snapshot.isRecording {
                 marginCapture.setPresentationContext(RecordingPresentationContext(
                     snapshot: snapshot,
@@ -276,7 +276,10 @@ extension Gate1AppModel {
         streamingSpeechQueue.resumeAfterInterjection()
     }
 
-    func beginWrittenMargin() {
+    func beginWrittenMargin() { beginWrittenMargin(answering: nil) }
+
+    /// A written Margin that answers a shared one when `reply` is set (#473).
+    func beginWrittenMargin(answering reply: MarginReplyDraft?) {
         guard !recordingNavigationIsLocked, !isMarginCaptureCoolingDown else { return } // the pencil sits beside Add a Margin (#148)
         guard snapshot.skimBridgeState == nil, playingImportedCommentary == nil else {
             reportFailure("Return to the source before writing a Margin.")
@@ -288,7 +291,7 @@ extension Gate1AppModel {
             guard let engine else { return }
             synchronizeStreamingSpeechAnchorIfNeeded()
             streamingSpeechQueue.pauseForInterjection()
-            let capture = try engine.beginWrittenInterjection()
+            let capture = try engine.beginWrittenInterjection(replyTo: reply?.link)
             lastError = nil
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
@@ -297,7 +300,8 @@ extension Gate1AppModel {
                 text: "",
                 itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
                 targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
-                progressPercent: capture.roughPercent
+                progressPercent: capture.roughPercent,
+                reply: reply
             ))
             marginCapture.clearPresentationContext()
         } catch {
