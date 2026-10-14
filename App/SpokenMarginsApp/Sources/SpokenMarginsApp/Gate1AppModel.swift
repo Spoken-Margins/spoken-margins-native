@@ -1526,6 +1526,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             if hasActiveSession || (!opensItem && !handoff.requestedContinuation.startSession) {
                 let itemId = try importBrowserTextInBackground(handoff)
+                if opensItem { openItem(id: itemId) } // #1437: a share shows its item whatever is in Now Playing; playback is untouched
                 reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
                 return itemId
             }
@@ -2425,12 +2426,11 @@ final class Gate1AppModel: ObservableObject {
                 if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
                     let handoffStore = try resolvedBrowserTextHandoffStore()
                     let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
-                    if hasActiveSession {
-                        try importBrowserTextInBackground(handoff)
+                    // With something in Now Playing the import still shows its item and never touches playback (#1437).
+                    let hadSession = hasActiveSession
+                    if importBrowserText(handoff) {
                         try? handoffStore.deletePayload(payloadID: payloadID)
-                        diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement"
-                    } else if importBrowserText(handoff) {
-                        try? handoffStore.deletePayload(payloadID: payloadID)
+                        if hadSession { diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement" }
                     }
                 } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
                     importBrowserText(handoff)
