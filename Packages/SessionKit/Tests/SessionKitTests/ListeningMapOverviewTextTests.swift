@@ -85,4 +85,82 @@ final class ListeningMapOverviewTextTests: XCTestCase {
             "Evaluation Agents.\n\n"
         )
     }
+
+    /// #1144: the owner heard the title twice at the start of every PDF, once in the preface and
+    /// once as the printed title. The preface drops the title when the text opens with it.
+    func testThePrefaceLeavesOutTheTitleWhenTheTextOpensWithIt() {
+        let title = "Evaluation Agents"
+        let opensWithTitle = [
+            "Evaluation Agents\n\nAbstract. We study …",
+            "evaluation agents. We study …",
+            "EVALUATION AGENTS",
+            "  \n Evaluation   Agents\nAbstract",
+            "Evaluation\nAgents\nAbstract",
+            "# Evaluation Agents\n\n## Context",
+            "Evaluation Agents: a field guide",
+            "Ｅｖａｌｕａｔｉｏｎ Agents. Wide letters from a PDF text layer.",
+        ]
+        for opening in opensWithTitle {
+            XCTAssertEqual(
+                ListeningMapOverviewText.spokenPreface(overview: "Evaluation Agents. 8 chapters.", title: title, chapterCount: 8, textOpening: opening),
+                "8 chapters.\n\n",
+                opening
+            )
+        }
+        let doesNotOpenWithTitle = [
+            "",
+            "Abstract. Evaluation Agents are …",
+            "Evaluation of agents",
+            "Evaluation Agentsia",
+            "Evaluation",
+            "The Evaluation Agents",
+            String(repeating: "word ", count: 5_000),
+        ]
+        for opening in doesNotOpenWithTitle {
+            XCTAssertEqual(
+                ListeningMapOverviewText.spokenPreface(overview: "Evaluation Agents. 8 chapters.", title: title, chapterCount: 8, textOpening: opening),
+                "Evaluation Agents. 8 chapters.\n\n",
+                String(opening.prefix(40))
+            )
+        }
+    }
+
+    func testAccentsAndPunctuationInTheTitleStillMatch() {
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(overview: "Café Société? 2 chapters.", title: "Café Société?", chapterCount: 2, textOpening: "CAFE\u{301} SOCIETE — a history"),
+            "2 chapters.\n\n"
+        )
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(overview: "Why? 1 chapter.", title: "Why?", chapterCount: 1, textOpening: "Why. Because."),
+            "1 chapter.\n\n"
+        )
+    }
+
+    func testAMapWithNoChaptersSaysNothingWhenTheTextOpensWithTheTitle() {
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(overview: "Untitled.", title: "Untitled", chapterCount: 0, textOpening: "Untitled\nBody"),
+            ""
+        )
+    }
+
+    func testStoredLegacyOverviewsAlsoDropTheRepeatedTitle() {
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(
+                overview: "Generated Listening Map with 8 chapters for Evaluation Agents.",
+                title: "Evaluation Agents",
+                chapterCount: 8,
+                textOpening: "Evaluation Agents\nAbstract"
+            ),
+            "8 chapters.\n\n"
+        )
+    }
+
+    func testRealSummariesAndTitlelessItemsAreUnchanged() {
+        XCTAssertEqual(
+            ListeningMapOverviewText.spokenPreface(overview: "This item contrasts one with two.", title: "Evaluation Agents", chapterCount: 2, textOpening: "Evaluation Agents\nBody"),
+            "Overview. This item contrasts one with two.\n\n"
+        )
+        XCTAssertFalse(ListeningMapOverviewText.textOpens("Anything", with: ""))
+        XCTAssertFalse(ListeningMapOverviewText.textOpens("— …", with: "?!"))
+    }
 }
