@@ -4,17 +4,18 @@
 Usage:
   scripts/phone-build                 build origin/next's tip now
   scripts/phone-build --commit <sha>  build that commit instead
-  scripts/phone-build --if-changed    build only if next's tip differs from `latest` (for launchd or a tick)
+  scripts/phone-build --if-changed    coalesce changed tips to hourly (or sooner after integration PASS)
   scripts/phone-build --plan-only     rewrite latest's test-plan.md against the build installed now
 
 What it does:
-- Builds a signed Release app for a physical iPhone in a temporary detached worktree, through
-  scripts/xcodebuild-lane (so it waits for a Mac-wide build slot), with its own DerivedData,
+- Builds a signed Release app for a physical iPhone in a persistent detached worktree, through
+  scripts/xcodebuild-lane (so it waits for a Mac-wide build slot), with persistent Release DerivedData,
   automatic signing and -allowProvisioningUpdates. SM_BUILD_COMMIT puts the commit in the app's
   Info.plist, so Settings > Version names it once that key is on next.
 - Output: ~/SpokenMargins-phone/<date-time>-<sha7>/ with the .app, build.json, build.log and
   test-plan.md, and a `latest` symlink to the newest good build. Keeps the three newest builds;
-  older ones, the temporary worktree and its DerivedData are deleted.
+  older ones and temporary logs are deleted. .cache/src and .cache/dd-release stay at stable paths
+  so unchanged source files and compiled intermediates can be reused by the next build.
 - test-plan.md lists the listener-facing PRs merged since the build the owner last installed
   (~/SpokenMargins-phone/installed.txt, written by scripts/install-phone-build.command; a commit built
   on the Mac before it reached next still counts), each with
@@ -25,23 +26,38 @@ What it does:
   carries the check's own numbered steps, its URLs as links, and the repo files it names (copied to
   files/ and to iCloud Drive as "Test plan <sha7> files", beside the plan the installer puts there).
   A check that asks for a PDF, EPUB, audiobook or packet with no link and no repo file to attach waits
-  with the run naming its issue (#1038); test PDFs live in TestPlans/phone-files/.
+  with the run naming its issue (#1038); test PDFs live in TestPlans/phone-files/. So does a check that
+  names a document with no link ("the arXiv paper") (#1476).
+  A check the owner can't run isn't a check (#1476): one that names a script, simulator, commit to run at
+  or log file (lane and agent procedures), reads a diagnostics field, or says to read an export or log without
+  saying what it should show. The run names the issue whose "Owner check:" line needs rewriting, and a usable
+  check elsewhere (the PR body) stands in. Three or more PRs changing the playback screen's view files are
+  one item at the top of the ten minutes ("The playback screen changed"), each PR listed under its own title;
+  PRs that share an issue keep their own titles in every list.
   After those, "Still waiting on your check" lists open issues labelled `status: needs-human-validation` whose
   fix is in this build but wasn't in the changes above, for as long as nobody has checked them (#927). A check
   is read from the issue body or the PR as "Owner check", "Phone check" or a "## Steps" heading, and the newest
   one in the issue's comments wins; a comment saying "Owner check: none" or "leave this off the owner's plans"
   keeps the issue out. They share the ten minutes with the new changes; the rest are listed with links.
 
-Gates (the owner's rule, 2026-09-30: rebuild whenever next's tip changes and the automated checks
-pass; bugs are fine, crashes the runners would catch are not):
+Gates (hourly coalescing, #1329; bugs are fine, crashes the runners would catch are not):
 - One phone build at a time (a lock in ~/SpokenMargins-phone). A second run exits at once.
+- --if-changed starts at most once an hour, unless the current tip has an integration PASS on #184.
+  Explicit builds without --if-changed bypass that delay. Deferred tips do not reset the hour.
 - Memory pressure must be normal, and free disk at least 10 GB plus 4 GB per running build
   (counting this one). Otherwise it skips and exits 75; the next trigger tries again.
-- Checks on the exact commit: a tip the lane runner pushed after testing it (its "Merge check"
-  comment says so) has passed host tests; its author built both targets, and the iPhone build
+- Checks: a tip the lane runner pushed after testing it, or a safe re-merge of a tested PR (its
+  "Merge check" names the resulting commit), has passed the lane's host-test gate; its author built
+  both targets, and the iPhone build
   below compiles it again (the lane builds no app per PR since 2026-10-09). Any other commit (a
   merge by hand) gets `verify-tests.py --plan fast` and a simulator build-for-testing here first.
 - A commit that failed once isn't retried by --if-changed; a newer tip is.
+- The test plan has one record for the exact commit: app tests, Release device build, scripted journeys,
+  attended journeys, upgrade and phone checks, each pass, fail or not run, plus every failure and
+  exclusion the reports on #184 name (#1465).
+- A failed Release build (the signed iPhone build or its checks) opens one item, "Release phone build is
+  failing on next", naming the failed commit and the last good binary; another failing commit updates
+  it, and the next Release success closes it. GitHub unreachable only skips the report.
 
 The owner gets a macOS notification when a new build is ready, and when signing needs him (#500).
 
@@ -79,6 +95,7 @@ DISK_PER_BUILD_GB = 4
 PLAN_CHECKS = 8          # about a minute each, plus the install: roughly ten minutes
 EXIT_SKIPPED = 75        # EX_TEMPFAIL: a guard said not now
 APP_NAME = 'SpokenMarginsApp.app'
+BUILD_INTERVAL_SECONDS = 3600
 SIGNING_HINTS = [
     ('errSecInternalComponent', 'The keychain is locked or asked for permission. Unlock the Mac, run '
      'scripts/phone-build once from Terminal, and click "Always Allow" when macOS asks for the keychain.'),
@@ -139,6 +156,39 @@ ATTACH_LIMIT = 50_000_000
 MATERIAL = re.compile(r'\b(PDF|EPUB|audiobook|packet)s?\b|\.spokenmargins\b', re.I)
 # A link that supplies the file: any URL except an issue or PR, which is a prerequisite, not content.
 SUPPLIED_URL = re.compile(r'https?://(?!(?:www\.)?github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/)\S+')
+# A document the check names but doesn't link: "the arXiv paper" (#1476: #586). A link or repo file supplies it.
+NAMED_DOCUMENT = re.compile(r'\b(?:[Tt]he|[Tt]his|[Tt]hat)\s+(?:[\w.-]+\s+){0,2}(?:paper|whitepaper|thesis)\b')  # not "Paper theme"
+# A check the owner can't run (#1476): lane and agent procedures belong to the lane and the Test Desk, not to
+# his ten minutes on the phone. A script, a build or lane tool, a simulator or its id, a commit to run at, a log.
+HEX = r'`?(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b'   # a commit: digits and a-f letters, so not "deadbeef"
+LANE_PROCEDURE = re.compile(
+    r'\bscripts/[\w.-]+|\bxcodebuild\b|\bxcodegen\b|\bxcrun\b|\bsimctl\b|\bbuild-for-testing\b|\bverify-tests\b'
+    r'|\bswift (?:test|build)\b|\bpytest\b|\bmake test\b'
+    r'|(?<![\w-])--plan\b|/lane\s+T\d|\bT[2-5]\s+(?:lane|run|build|test)|\bsimulators?\b|\bcomputer use\b'
+    r'|\bartifacts/|\b[\w./-]+\.log\b|\b(?:crash|build|test|lane|system) logs?\b'
+    r'|\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b'
+    # a commit to run something at: "Run --plan app at 929b5ce", "Check out 929b5ce", "Test with build 929b5ce".
+    # "Settings > Version is at 929b5ce" is the owner's own check and has no run verb.
+    r'|\bcheck ?out\s+' + HEX +
+    r'|\b(?:run|re-?run|running|boot|install|test|build)\b[^.\n]{0,60}\b(?:at|on|against|from|with|commit|sha|build)\s+' + HEX,
+    re.I)
+# Reading a diagnostics field is the agent's job, not his (#1476: #586); so is judging an export or a log, unless
+# the check at least says what the result should be (#1439: "read the AI Handoff export of the next test plan").
+DIAGNOSTICS_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
+                                 r'\bdiagnostics?\b', re.I)
+EXPORT_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
+                            r'\b(?:AI Handoff|export(?:ed|s)?|logs?|console)\b', re.I)
+EXPECTED_RESULT = re.compile(
+    r"\b(?:should|expect(?:s|ed)?|must|so that|matches|in the order|exactly|see|lists?|includes?|contains?|shows?"
+    r"|says?|appears?|prints?|printed|tell me|whether)\b", re.I)
+# Several merges to one screen are one thing to try, at the top (#1476: the playback redesign was split across
+# four titles that named other things). Listener-facing PRs are matched by the view files they change.
+SCREEN_FILES = {'playback screen': re.compile(r'^App/[^/]+/Sources/.*/Playback\w*(?:Screen|View|Slider|Renderer|Icon)\.swift$')}
+SCREEN_MERGES = 3
+SCREEN_CHECKS = {'playback screen': 'Open an article and a podcast and say if the playback screen is usable: '
+                                    'play, pause, skip, drag the bar, and open More.'}
+RELEASE_ISSUE_TITLE = 'Release phone build is failing on next'  # one owned item, updated and closed here (#1465)
+RELEASE_ISSUE_LABELS = 'bug,regression,where:mac'
 MERGED_ON_NEXT = 'status: needs-human-validation'  # dispatch adds it when a PR for the issue merges into next
 
 
@@ -218,10 +268,13 @@ def guard_reason() -> str | None:
 
 
 def runner_tested(sha: str) -> str | None:
-    """How the lane runner tested this exact commit before pushing it to next, or None.
+    """Evidence that the lane's host-test gate covers this commit, or None.
 
     The runner merges a PR as "Merge pull request #N: ..." and first posts a "Merge check (triage
     desk)" comment on it that says "Pushing `<sha7>` to next" (scripts/lane-runner.py merge_check).
+    It can also safely re-merge an already-tested PR when next hasn't moved or its changes touch
+    neither the PR's files nor build inputs. That report explicitly names the resulting re-merge;
+    it is sufficient here too. The Test Desk checks interactions on next's merged tip.
     """
     subject = git('log', '-1', '--format=%s', sha)
     found = re.match(r'Merge pull request #(\d+): ', subject)
@@ -236,7 +289,32 @@ def runner_tested(sha: str) -> str | None:
             ran = re.search(r'- Ran: (.+?)\.?\n', body)
             return f'the lane runner tested this merge commit before pushing it (PR #{found.group(1)}' + \
                 (f'; ran {ran.group(1)})' if ran else ')')
+        if (': PASS, re-merged onto the newest next without re-testing.' in body.split('\n', 1)[0]
+                and f'- So the re-merge `{sha[:7]}` goes to next not re-tested.' in body):
+            return (f'the lane runner tested PR #{found.group(1)} and safely re-merged it without '
+                    'repeating host tests; the Test Desk tests next\'s merged tip end to end')
     return None
+
+
+def coalesce_reason(sha: str) -> str | None:
+    """Hold automatic builds until an hour after the last start, without delaying an integration PASS.
+
+    Fall back to last-attempt for existing installations that have not recorded a start yet.
+    Timestamps without a zone are the old script's local times; timestamp() handles both formats.
+    """
+    previous = read_json(phone_dir() / 'last-start.json') or read_json(phone_dir() / 'last-attempt.json')
+    try:
+        started = datetime.datetime.fromisoformat(previous['at']).timestamp()
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        return None
+    elapsed = datetime.datetime.now(datetime.timezone.utc).timestamp() - started
+    if not 0 <= elapsed < BUILD_INTERVAL_SECONDS:
+        return None
+    verdict = latest_verdict(sha)
+    if verdict and re.search(r' — PASS\b', verdict):
+        return None
+    minutes = int((BUILD_INTERVAL_SECONDS - elapsed + 59) // 60)
+    return f'coalescing next\'s changes; next phone build in about {minutes} min, or after integration PASS'
 
 
 # ---- test plan -----------------------------------------------------------------------------------
@@ -274,11 +352,74 @@ def merged_prs(base: str | None, target: str) -> dict[int, str]:
     """{PR number: merge subject} for PRs merged into next between base and target, newest first."""
     span = f'{base}..{target}' if base else target
     merged: dict[int, str] = {}
+    reverted = reverted_prs(target)  # merged and reverted since: not in this build (#1545)
     for subject in git('log', '--first-parent', '--format=%s', span, '-n', '400').splitlines():
         found = re.match(r'Merge pull request #(\d+)\b', subject)
-        if found:
+        if found and int(found.group(1)) not in reverted:
             merged.setdefault(int(found.group(1)), subject)
     return merged
+
+
+MERGE_SUBJECT = re.compile(r'Merge pull request #(\d+)\b')
+REVERT_SUBJECT = re.compile(r'Revert #(\d+)\b')                 # ours and the lane runner's: "Revert #1371: ..."
+REVERTS_BODY = re.compile(r'\bThis reverts (?:commit|merge) ([0-9a-f]{7,40})\b')
+# A re-land lands every #N its subject names: "Re-land #1407 and ... (#1413)", "re-land episode map pins (#1183)".
+RE_LAND = re.compile(r'\bre-?land(?:s|ed|ing)?\b', re.I)
+_reverted: dict[str, set[int]] = {}
+
+
+def reverted_prs(sha: str) -> set[int]:
+    """The PRs merged into the build and then reverted, and not landed again (#1545: #1371 and #1404 were
+    reverted inside #1482, so off the first-parent line, and the notes still asked for their checks).
+
+    Every commit the build holds counts, oldest first. A revert is "Revert #N: ...", git's own
+    'Revert "Merge pull request #N ..."', or a body "This reverts merge <sha>" naming a PR's merge. A
+    revert of that revert, a "Re-land #N", or a later merge of #N lands it again.
+    """
+    if sha in _reverted:
+        return _reverted[sha]
+    # NUL and \x01 as separators: str.strip() treats \x1c-\x1f as whitespace and would eat an empty last body.
+    log = git('log', '--topo-order', '--reverse', '--format=%H%x00%s%x00%b%x01', sha, check=False)
+    merge_of: dict[str, int] = {}   # a PR's merge commit -> its number
+    revert_of: dict[str, int] = {}  # a commit that reverted #N -> N
+    state: dict[int, bool] = {}     # N -> reverted now
+
+    def lookup(table: dict[str, int], short: str) -> int | None:
+        return next((number for full, number in table.items() if full.startswith(short)), None)
+
+    for record in log.split('\x01'):
+        fields = record.strip('\n').split('\x00')
+        if len(fields) < 3:
+            continue
+        commit, subject, body = fields[:3]
+        rest, depth = subject, 0
+        while rest.startswith('Revert "'):
+            rest, depth = rest[len('Revert "'):], depth + 1
+        merged, ours = MERGE_SUBJECT.match(rest), REVERT_SUBJECT.match(rest)
+        number = None
+        if ours:
+            number, depth = int(ours.group(1)), depth + 1
+        elif merged and depth:
+            number = int(merged.group(1))
+        elif REVERTS_BODY.search(body):
+            short = REVERTS_BODY.search(body).group(1)
+            if lookup(merge_of, short) is not None:
+                number, depth = lookup(merge_of, short), 1
+            elif lookup(revert_of, short) is not None:
+                number, depth = lookup(revert_of, short), 2
+        if number is not None:
+            state[number] = depth % 2 == 1
+            if state[number]:
+                revert_of[commit] = number
+            continue
+        if merged:
+            merge_of[commit] = int(merged.group(1))
+            state[int(merged.group(1))] = False  # merged, or merged again
+        if RE_LAND.search(subject):
+            for again in re.findall(r'#(\d+)', subject):
+                state[int(again)] = False
+    _reverted[sha] = {number for number, now in state.items() if now}
+    return _reverted[sha]
 
 
 COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
@@ -385,13 +526,13 @@ def fetch_waiting() -> list[dict] | None:
 
 
 def build_prs(sha: str) -> set[int]:
-    """The PRs merged into the build: its first-parent "Merge pull request #N" subjects."""
+    """The PRs merged into the build: its first-parent "Merge pull request #N" subjects, less those reverted."""
     subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
-    return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)}
+    return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)} - reverted_prs(sha)
 
 
-def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset()) \
-        -> list[dict]:
+def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset(),
+                  reverted: set[int] = frozenset()) -> list[dict]:
     """The issues still waiting on the owner's check whose fix is in this build, in plan order: the current
     build milestone first, then found on the phone, then oldest (#927). `shown` holds the issue and PR
     numbers the plan already lists. Each is {'issue', 'prs': its fixing PRs in the build, 'check': the
@@ -402,6 +543,10 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     comments name one ("Merged in #907", "PR #257"), or a merge names the issue ("Merge play-this-moment
     into next (#156, #158)"). The label alone isn't enough: the fix may have merged after this build
     (#927: the label had been read as "waiting on your phone").
+
+    An issue is left out when any of its fixing PRs is in `reverted`: merged, then reverted and not landed
+    again (#1545: #447's logic PR #1356 stayed but its screen PR #1371 was reverted, and the notes asked the
+    owner to check a screen that wasn't there).
     """
     def build_number(issue):
         milestone = issue.get('milestone') or {}
@@ -415,6 +560,9 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
         sources = [(node or {}).get('source') or {} for node in (issue.get('timelineItems') or {}).get('nodes') or []]
         prs = {pr['number']: pr for pr in sources if pr.get('number') in built and pr.get('merged')
                and (issue['number'] in linked_numbers(pr) or pr['number'] in named)}
+        if named & set(reverted) or any(pr.get('number') in reverted and pr.get('merged')
+                                        and issue['number'] in linked_numbers(pr) for pr in sources):
+            continue
         for number in sorted(named & built - set(prs)):
             prs[number] = {'number': number, 'title': '', 'body': '', 'url': f'https://github.com/{REPO}/pull/{number}'}
         if not (prs or issue['number'] in named_in_build) or issue['number'] in shown or shown & set(prs):
@@ -423,7 +571,8 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
         alone = {'issues': [issue], 'body': body}
         none = says_no_check(alone)
         check = None if none else owner_check(alone)
-        fixes.append({'issue': issue, 'prs': list(prs.values()), 'check': check, 'none': none})
+        fixes.append({'issue': issue, 'prs': list(prs.values()), 'check': check, 'none': none,
+                      'refused': [] if check or none else refused_in(alone)})
     fixes.sort(key=lambda fix: (0 if current and build_number(fix['issue']) == current else 1,
                                 0 if FIRST_ON_PHONE & labels(fix['issue']) else 1,
                                 fix['issue'].get('createdAt') or ''))
@@ -431,9 +580,16 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
 
 
 def built_numbers(sha: str) -> set[int]:
-    """Every #N in the build's merge subjects: the PRs merged into it and the issues their titles name."""
-    subjects = git('log', '--first-parent', '--format=%s', sha, check=False)
-    return {int(n) for n in re.findall(r'#(\d+)', subjects)}
+    """Every #N in the build's merge subjects: the PRs merged into it and the issues their titles name.
+    A reverted PR's merge, and a revert, name nothing built (#1545)."""
+    reverted = reverted_prs(sha)
+    numbers: set[int] = set()
+    for subject in git('log', '--first-parent', '--format=%s', sha, check=False).splitlines():
+        merged = MERGE_SUBJECT.match(subject)
+        if merged and int(merged.group(1)) in reverted or re.match(r'(?:Merge pull request #\d+: )?Revert\b', subject):
+            continue
+        numbers |= {int(n) for n in re.findall(r'#(\d+)', subject)}
+    return numbers - reverted
 
 
 def references(check: str) -> list[int]:
@@ -590,23 +746,50 @@ def says_no_check(pr: dict) -> bool:
     return taken_off(pr) or bool(checks) and all(NO_CHECK.match(check) for check in checks)
 
 
+def unusable_check(check: str) -> str | None:
+    """Why the owner can't use a check in his ten minutes on the phone (#1476), or None when he can.
+
+    A lane or agent procedure (a script, a simulator, a commit to run at, a log file), or a reading of
+    diagnostics, an export or a log, which an agent judges unless the check says what the result should be.
+    """
+    if LANE_PROCEDURE.search(check):
+        return 'it names a script, simulator, commit to run at or log file, which the lane and the Test Desk run'
+    if DIAGNOSTICS_READING.search(check):
+        return 'it asks him to read a diagnostics field, which an agent does'
+    if EXPORT_READING.search(check) and not EXPECTED_RESULT.search(check):
+        return 'it says to read an export or log but not what it should show: write the expected result, or let an agent judge it'
+    return None
+
+
+def refused_in(pr: dict) -> list[str]:
+    """The written checks of a PR's issues and its own body that unusable_check refuses, as
+    "#N (why)" so the run can name which "Owner check:" line to rewrite (#1476)."""
+    named = [(f'#{issue["number"]}', issue_check(issue)) for issue in pr['issues']]
+    named.append((f'PR #{pr["number"]}' if pr.get('number') else 'the PR', check_field(pr.get('body') or '')))
+    return [f'{who} ({unusable_check(check)})' for who, check in named
+            if check and not NO_CHECK.match(check) and unusable_check(check)]
+
+
 def owner_check(pr: dict) -> str | None:
     """The issue's "Owner check" line; else a bug report's Steps and Expected; else the PR's own.
 
     "Owner check: none" counts as no check, so it never reaches the plan as a thing to try; said in an
-    issue's newest comment, it holds even when the PR's body has one (#927).
+    issue's newest comment, it holds even when the PR's body has one (#927). A check he can't run is no
+    check (#1476): the next one that he can wins.
     """
     if taken_off(pr):
         return None
     for check in written_checks(pr):
-        if not NO_CHECK.match(check):
+        if not NO_CHECK.match(check) and not unusable_check(check):
             return check
     texts = [issue.get('body') or '' for issue in pr['issues']] + [pr.get('body') or '']
     for text in texts:
         steps, expected = check_field(text, STEPS_FIELD), check_field(text, EXPECTED_FIELD)
         if steps and expected:  # numbered Steps keep every step (#847: #585 lost the swipe in step 2)
             numbered = chr(10) in steps or STEP_LINE.match(steps)
-            return f'{steps}{chr(10) if numbered else " "}Expected: {expected}'
+            found = f'{steps}{chr(10) if numbered else " "}Expected: {expected}'
+            if not unusable_check(found):
+                return found
     return None
 
 
@@ -631,6 +814,31 @@ def plan_entries(facing: list[dict]) -> list[list[dict]]:
         for key in keys:
             by_key.setdefault(key, entry)
     return entries
+
+
+def screens_of(entry: list[dict]) -> set[str]:
+    """The screens an entry's PRs change: those whose view files they touch (SCREEN_FILES)."""
+    return {name for pr in entry for node in pr['files']['nodes'] for name, pattern in SCREEN_FILES.items()
+            if pattern.match(node['path'])}
+
+
+def screen_changes(entries: list[list[dict]]) -> tuple[list[dict], list[list[dict]]]:
+    """Pull out of the entries the screens that several merges changed (#1476). Returns
+    ([{'screen': name, 'prs': [...]}], the entries that stay), the screens in SCREEN_FILES order.
+
+    A screen counts when SCREEN_MERGES or more PRs touch its view files. Those PRs leave their entries (a PR
+    that only shares an issue with them stays, with its own title and check), so no PR's title hides behind
+    another's and the owner meets the whole redesign as one item.
+    """
+    groups = []
+    stay = [list(entry) for entry in entries]
+    for name in SCREEN_FILES:
+        touching = [pr for entry in stay for pr in entry if name in screens_of([pr])]
+        if len(touching) >= SCREEN_MERGES:
+            groups.append({'screen': name, 'prs': touching})
+            stay = [kept for kept in ([pr for pr in entry if not any(pr is gone for gone in touching)]
+                                      for entry in stay) if kept]
+    return groups, stay
 
 
 def found_on_phone(entry: list[dict]) -> bool:
@@ -700,6 +908,96 @@ def integration_skip(bodies: list[str], sha: str) -> str | None:
     return None
 
 
+# Lines of a lane report that say something was left out, failed or went wrong: the plan carries them
+# whole, not just the report's first line (#1465).
+CARRIED_LINES = re.compile(r'(failing|flaky|crashes|why inconclusive|merges since the last PASS|not run|not verified'
+                           r'|integration: skipped)\b', re.I)
+QUIET_LINE = re.compile(r':\s*(none( this run| recorded)?|n/a)?\.?$', re.I)  # "failing:", "flaky: none this run"
+OUTCOME_WORDS = {'PASS': 'pass', 'FAIL': 'fail', 'INCONCLUSIVE': 'not run (inconclusive)'}
+
+
+def report_body(bodies: list[str], kind: str, sha: str) -> list[str]:
+    """The lines of a `Lane report <kind>-<sha7>` report up to its closing fence, or []."""
+    body = []
+    for line in report_lines(bodies, kind, sha) or []:
+        if line.startswith('```'):
+            break
+        body.append(line)
+    return body
+
+
+def report_verdict(lines: list[str]) -> str | None:
+    match = re.search(r'\u2014 (PASS|FAIL|INCONCLUSIVE)\b', lines[0]) if lines else None
+    return match.group(1) if match else None
+
+
+def scripted_journeys_outcome(lines: list[str]) -> tuple[str, str]:
+    line = next((l for l in lines if l.startswith('scripted journeys')), None)
+    if line is None:
+        return 'not run', 'the integration report lists no scripted journeys'
+    detail = line.split(':', 1)[-1].strip()
+    if re.search(r'\b(failed|missing)\b', detail):
+        return 'fail', detail
+    # Only an all-passed line is a pass: a journey that was skipped or never ran leaves the rest unproven.
+    unproven = re.search(r'\b(not_run|skipped)\b', detail)
+    return ('pass' if re.search(r'\bpassed\b', detail) and not unproven else 'not run'), detail
+
+
+def commit_record(reports: list[str] | None, sha: str) -> list[tuple[str, str, str]]:
+    """One record per exact commit: (what, pass | fail | not run, detail) for each kind of check, the
+    integration run and the journeys report read for this commit only (#1465). A kind nobody reported on
+    is `not run`, never left out."""
+    if reports is None:
+        unknown = f'GitHub could not be reached, so #{REPORTS_ISSUE} is unread'
+        return [('App tests', 'unknown', unknown), ('Release device build', 'pass', 'this build, signed'),
+                ('Scripted journeys', 'unknown', unknown), ('Attended journeys', 'unknown', unknown),
+                ('Upgrade from the last shipped build', 'unknown', unknown),
+                ('Phone checks', 'not run', 'yours: the checks below')]
+    integration = report_body(reports, 'integration', sha)
+    journeys = report_body(reports, 'journeys', sha)
+    verdict = report_verdict(integration)
+    ran = next((l for l in integration if re.match(r'(\d+\. )?(ran: )?--plan app', l)), '')
+    skip = integration_skip(reports, sha)
+    app = (OUTCOME_WORDS[verdict], ran or integration[0]) if verdict else \
+        ('not run', f'skipped by the Test Desk: {skip}' if skip else 'no integration report for this commit')
+    scripted = scripted_journeys_outcome(integration) if verdict in ('PASS', 'FAIL') else \
+        ('not run', 'the integration run did not finish' if verdict else 'no integration run')
+    attended_verdict = report_verdict(journeys)
+    attended = (OUTCOME_WORDS[attended_verdict], journeys[0]) if attended_verdict else \
+        ('not run', 'agent-driven journeys need an attended session')
+    upgrade_line = next((l for l in [*integration, *journeys] if re.match(r'upgrade\b', l, re.I)), None)
+    # Pass or fail only when the line says so; "skipped", "blocked", "not run" and the rest are not run.
+    if upgrade_line is None:
+        upgrade = ('not run', 'no upgrade check was reported for this commit')
+    elif re.search(r'\b(not run|skipped|blocked|inconclusive)\b|\b0 failed\b', upgrade_line, re.I) is None \
+            and re.search(r'\bfail', upgrade_line, re.I):
+        upgrade = ('fail', upgrade_line)
+    elif re.search(r'\b(not run|skipped|blocked|inconclusive|fail\w*)\b', upgrade_line, re.I) is None \
+            and re.search(r'\bpass', upgrade_line, re.I):
+        upgrade = ('pass', upgrade_line)
+    else:
+        upgrade = ('not run', upgrade_line)
+    return [('App tests', *app), ('Release device build', 'pass', 'this build, signed'),
+            ('Scripted journeys', *scripted), ('Attended journeys', *attended),
+            ('Upgrade from the last shipped build', *upgrade), ('Phone checks', 'not run', 'yours: the checks below')]
+
+
+def outcome_lines(reports: list[str] | None, sha: str) -> list[str]:
+    """The plan's section on what was and wasn't tested on this commit, with every exclusion and failure the
+    reports name, not only their first lines (#1465)."""
+    lines = ['## What was tested on this commit', '']
+    lines += [f'- {what}: **{status}**' + (f' ({detail})' if detail else '')
+              for what, status, detail in commit_record(reports, sha)]
+    carried = []
+    for kind in ('integration', 'journeys') if reports is not None else ():
+        for line in report_body(reports, kind, sha)[1:]:
+            if CARRIED_LINES.match(line) and not QUIET_LINE.search(line) and line not in carried:
+                carried.append(line)
+    if carried:
+        lines += ['', 'The reports also say:', ''] + [f'- {line}' for line in carried]
+    return lines + ['']
+
+
 def latest_verdict(sha: str, bodies: list[str] | None = None) -> str | None:
     """The newest integration report on #184 for this commit, whoever ran it (#444)."""
     bodies = report_comments() if bodies is None else bodies
@@ -736,6 +1034,8 @@ def missing_material(check: str, sha: str) -> str | None:
     """The kind of test file a check asks for ("PDF", "packet") when it carries no link and names no repo
     file to attach, so the owner would have nothing to test with (#1038); None when it needs none."""
     found = MATERIAL.search(check)
+    if not found and NAMED_DOCUMENT.search(check) and not (SUPPLIED_URL.search(check) or repo_files(check, sha)):
+        return 'document'  # "the arXiv paper" with no link (#1476)
     if not found or SUPPLIED_URL.search(check) or repo_files(check, sha):
         return None
     kind = (found.group(1) or 'packet').lower()
@@ -807,7 +1107,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     journeys = report_line(reports, 'journeys', sha) if reports is not None else None
     if journeys:
         lines.append(f'Latest journeys run for this commit: {journeys}.')
-    lines.append('')
+    lines += ['', *outcome_lines(reports, sha)]
     path = folder / 'test-plan.md'
     shutil.rmtree(str(folder / 'files'), ignore_errors=True)  # --plan-only rewrites: only this plan's files
     if prs is None:
@@ -824,6 +1124,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     entries = plan_entries(facing)
     passed = [entry for entry in entries if passed_on_phone(entry)]
     entries = [entry for entry in entries if not any(entry is gone for gone in passed)]
+    # Several merges to one screen are one item at the top of the ten minutes (#1476).
+    screens, entries = screen_changes(entries)
     # Only what the owner can check goes in the ten minutes: a written check (#504). A bug his phone found
     # with none goes with the unchecked changes, and the run names its issues so one gets written (#847);
     # "repeat what you did" sent him back to the issue for his own steps and content.
@@ -835,18 +1137,28 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if needs_check:
         say('found on the phone but no "Owner check:" line, so not in the ten minutes; add one to: '
             + ', '.join(f'#{n}' for n in dict.fromkeys(needs_check)))
+    refused = [who for entry in [*entries, *([pr] for screen in screens for pr in screen['prs'])]
+               for pr in entry for who in refused_in(pr)]
+    if refused:
+        say("a check can't be run on the phone, so it was skipped; rewrite its \"Owner check:\" line: "
+            + '; '.join(dict.fromkeys(refused)))
     # A check that needs another change still open waits for it (#847: step 2 needed #547).
     checkable = [entry for entry in entries if check_of[id(entry)]]
     # Fixes from earlier builds still waiting on his check go after these (#927: the 887c560 plan had
     # none while ten Build 30 fixes on the phone waited on him).
     pending = fetch_waiting()
-    shown = {number for entry in entries for pr in entry
+    shown = {number for entry in [*entries, *([pr] for screen in screens for pr in screen['prs'])] for pr in entry
              for number in [pr['number'], *pr.get('linked', ()), *(issue['number'] for issue in pr['issues'])]}
-    fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha)) if pending else []
-    unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']]
+    fixes = waiting_fixes(pending, build_prs(sha), shown, built_numbers(sha), reverted_prs(sha)) if pending else []
+    unwritten = [fix['issue']['number'] for fix in fixes if not fix['check'] and not fix['none']
+                 and not fix['refused']]
     if unwritten:
         say('waiting on the owner\'s check but no "Owner check:" written, so not in the plan; add one to: '
             + ', '.join(f'#{n}' for n in unwritten))
+    cannot_run = [who for fix in fixes for who in fix['refused']]
+    if cannot_run:
+        say("waiting on the owner's check but it can't be run on the phone, so not in the plan; rewrite its "
+            '"Owner check:" line: ' + '; '.join(dict.fromkeys(cannot_run)))
     fixes = [fix for fix in fixes if fix['check']]
     named = [n for entry in checkable for n in references(check_of[id(entry)])]
     named += [n for fix in fixes for n in references(fix['check'])]
@@ -872,31 +1184,47 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
             + ', '.join(f'#{n}' for n in dict.fromkeys(unsupplied)))
     waiting = [entry for entry in checkable if waits[id(entry)] or lacks[id(entry)]]
     checkable = [entry for entry in checkable if not (waits[id(entry)] or lacks[id(entry)])]
-    budget = checkable[:PLAN_CHECKS]
-    rest = checkable[PLAN_CHECKS:]
+    room = max(0, PLAN_CHECKS - len(screens))
+    budget = checkable[:room]
+    rest = checkable[room:]
     # They share the ten minutes, new changes first; the rest are listed with their links.
-    still = [fix for fix in fixes if not fix['needs'] and not fix['lacks']][:PLAN_CHECKS - len(budget)]
+    still = [fix for fix in fixes if not fix['needs'] and not fix['lacks']][:max(0, room - len(budget))]
     also_waiting = [fix for fix in fixes if fix not in still]
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     left_out = f' {len(passed)} changes whose issues are already closed are left out.' if passed else ''
     lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.{left_out}', '',
               '## Try these (about ten minutes)', '']
-    if not budget and still:
+    if not (screens or budget) and still:
         lines += ['No change new in this build has a phone check. The fixes below, from earlier builds, '
                   'still wait on yours.', '']
-    elif not budget:
+    elif not (screens or budget):
         lines += ['Nothing is ready to check on the phone yet; the changes you might notice are listed below.'
                   if waiting and not unchecked else
                   'No phone checks were written for this build; the changes you might notice are listed below.'
                   if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
-    for index, entry in enumerate(budget, 1):
+    for index, screen in enumerate(screens, 1):
+        lines += [f'{index}. **The {screen["screen"]} changed** ({len(screen["prs"])} changes)',
+                  f'   - Check: {SCREEN_CHECKS.get(screen["screen"], "Use it and say if it is usable.")}',
+                  '   - What changed:']
+        for pr in screen['prs']:  # each keeps its title, issue links and own check (#1476)
+            found = owner_check(pr)
+            links = [f'[PR #{pr["number"]}]({pr["url"]})'] + [f'[issue #{issue["number"]}]({issue["url"]})'
+                                                              for issue in pr['issues']]
+            tag = ' (found on your phone)' if found_on_phone([pr]) else ''
+            lines.append(f'     - {pr["title"]}{tag} ({", ".join(links)})'
+                         + (f': {found.splitlines()[0]}' if found else ''))
+        lines.append('')
+    for index, entry in enumerate(budget, len(screens) + 1):
         pr = entry[0]
         issues = list({issue['number']: issue for member in entry for issue in member['issues']}.values())
         tag = ' (found on your phone)' if found_on_phone(entry) else ''
         links = [f'[PR #{member["number"]}]({member["url"]})' for member in entry]
         links += [f'[issue #{issue["number"]}]({issue["url"]})' for issue in issues]
-        lines += [f'{index}. **{pr["title"]}**{tag}', *step_lines(check_of[id(entry)], sha, folder),
+        # A PR keeps its own title even when it shares an issue with another (#1476).
+        others = [f'   - Also in this change: {member["title"]} ([PR #{member["number"]}]({member["url"]}))'
+                  for member in entry[1:] if member['title'] != pr['title']]
+        lines += [f'{index}. **{pr["title"]}**{tag}', *step_lines(check_of[id(entry)], sha, folder), *others,
                   f'   - Links: {", ".join(links)}', '']
 
     def fix_links(fix, label=True):
@@ -909,7 +1237,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if still:
         lines += ['## Still waiting on your check', '',
                   'Fixed in an earlier build and on your phone now, but nobody has checked them yet.', '']
-        for index, fix in enumerate(still, len(budget) + 1):
+        for index, fix in enumerate(still, len(screens) + len(budget) + 1):
             lines += [f'{index}. **{fix["issue"]["title"]}**{fix_tag(fix)}', *step_lines(fix['check'], sha, folder),
                       f'   - Links: {", ".join(fix_links(fix))}', '']
     if also_waiting:
@@ -927,19 +1255,27 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if pending is None:
         lines += ["GitHub could not be reached, so earlier fixes still waiting on your check aren't listed.", '']
 
+    def bullets(entry):
+        """One bullet per title in the entry: a PR that shares an issue keeps its own title (#1476)."""
+        by_title: dict[str, list[dict]] = {}
+        for pr in entry:
+            by_title.setdefault(pr['title'], []).append(pr)
+        return [f'- {title}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
+                + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in members) + ')'
+                for title, members in by_title.items()]
+
     def titles(group):
-        return [f'- {entry[0]["title"]}' + (' (found on your phone)' if found_on_phone(entry) else '') + ' ('
-                + ', '.join(f'[#{pr["number"]}]({pr["url"]})' for pr in entry) + ')' for entry in group]
+        return [bullet for entry in group for bullet in bullets(entry)]
     if rest:
         lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
     if waiting:
         lines += ['## Waiting on another change or a test file (not in the ten minutes)', '',
                   'Their checks need something that is not on your phone yet.', '']
-        for entry, title in zip(waiting, titles(waiting)):
+        for entry in waiting:
             needed = [f'[#{item["number"]}]({item["url"]}) ({item["title"]})' for item in waits[id(entry)]]
             if lacks[id(entry)]:
                 needed.append(f'a test {lacks[id(entry)]}, not supplied yet')
-            lines.append(f'{title}: needs {", ".join(needed)}')
+            lines += [f'{bullet}: needs {", ".join(needed)}' for bullet in bullets(entry)]
         lines.append('')
     if unchecked:
         lines += ['## Also changed (no phone check written)', '',
@@ -1038,6 +1374,74 @@ def notify_ready(sha: str, plan: Path) -> None:
            '"Install Spoken Margins on iPhone" on the Desktop.')
 
 
+def release_issue() -> tuple[bool, dict | None]:
+    """(known, the open item this script owns): `known` is False when gh failed, so nobody files twice."""
+    # A plain list, not --search: GitHub's search index lags a created or closed issue by minutes.
+    raw = gh('issue', 'list', '--repo', REPO, '--state', 'open', *[a for label in RELEASE_ISSUE_LABELS.split(',')
+                                                                    for a in ('--label', label)],
+             '--json', 'number,title,body', '--limit', '100')
+    try:
+        found = json.loads(raw) if raw else None
+    except ValueError:
+        found = None
+    if not isinstance(found, list):
+        return False, None
+    return True, next((i for i in found if i.get('title') == RELEASE_ISSUE_TITLE), None)
+
+
+def release_failure_body(sha: str, failure: str, log_tail: str) -> str:
+    good = latest_build()
+    last_good = (f"`{good['sha7']}` ({good.get('subject', '')}), built {good.get('built_at', 'unknown')}; "
+                 'it is the build the Desktop installer still offers' if good.get('sha7') else
+                 'none on this Mac yet')
+    subject = git('log', '-1', '--format=%s', sha, check=False)
+    return '\n'.join([
+        f'The signed Release build for the iPhone of `{sha[:7]}` ({subject}) failed on the Mac, so no phone '
+        'build was made for it. Debug builds and the integration run can pass while this fails.', '',
+        f'- Failed commit: `{sha}`',
+        f'- When: {datetime.datetime.now().isoformat(timespec="seconds")} (Mac local time)',
+        f'- What failed: {failure[:400]}',
+        f'- Last good binary: {last_good}',
+        f'- Log: `{phone_dir() / "last-failure.log"}` on the Mac', '',
+        '```text', log_tail.strip().replace(str(Path.home()), '~')[-1500:], '```', '',
+        'This item is updated by `scripts/phone-build` when another commit fails the same way and is '
+        'closed by it when a Release build succeeds. Nothing else needs to open or close it.',
+        '', '---', '_Filed by scripts/phone-build (#1465)_', ''])
+
+
+def report_release_failure(sha: str, failure: str, log_tail: str) -> None:
+    """Open the one owned item for a failed Release build, or update it with the newer failed commit.
+    Never fails the build; says so when GitHub can't be reached."""
+    known, item = release_issue()
+    if not known:
+        say('could not reach GitHub to report the Release failure; the next failure will try again')
+        return
+    body = release_failure_body(sha, failure, log_tail)
+    if item is None:
+        made = gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--label', RELEASE_ISSUE_LABELS,
+                  '--body', body)
+        if made is None:  # a label missing here would otherwise hide the failure; file it without them
+            made = gh('issue', 'create', '--repo', REPO, '--title', RELEASE_ISSUE_TITLE, '--body', body)
+        if made is None:
+            say('could not file the Release failure on GitHub')
+        return
+    if sha[:7] in (item.get('body') or ''):
+        return
+    if gh('issue', 'edit', str(item['number']), '--repo', REPO, '--body', body) is None \
+            or gh('issue', 'comment', str(item['number']), '--repo', REPO,
+                  '--body', f'Another commit fails the Release build: `{sha[:7]}`. {failure[:300]}') is None:
+        say(f'could not update #{item["number"]} with the Release failure of {sha[:7]}')
+
+
+def close_release_failure(sha: str) -> None:
+    """A Release build succeeded: close the owned item, if one is open."""
+    known, item = release_issue()
+    if known and item:
+        if gh('issue', 'close', str(item['number']), '--repo', REPO, '--reason', 'completed', '--comment',
+              f'Fixed: the Release build of `{sha[:7]}` succeeded on the Mac. The phone build is current again.') is None:
+            say(f'could not close #{item["number"]}; close it by hand')
+
+
 def record_attempt(sha: str, result: str) -> None:
     (phone_dir() / 'last-attempt.json').write_text(json.dumps(
         {'sha': sha, 'result': result, 'at': datetime.datetime.now().isoformat(timespec='seconds')}) + '\n')
@@ -1046,11 +1450,17 @@ def record_attempt(sha: str, result: str) -> None:
 def build(sha: str) -> int:
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     work = phone_dir() / '.work' / f'{stamp}-{sha[:7]}'
-    src, derived, log = work / 'src', work / 'dd', work / 'build.log'
+    cache = phone_dir() / '.cache'
+    src, derived, log = cache / 'src', cache / 'dd-release', work / 'build.log'
+    release = 'not started'  # 'started' until the Release app is built and verified, then 'built' (#1465)
     work.mkdir(parents=True)
     try:
-        say(f'checking out {sha[:7]} in a temporary worktree')
-        git('worktree', 'add', '--detach', str(src), sha)
+        cache.mkdir(exist_ok=True)
+        say(f'checking out {sha[:7]} in the persistent phone-build worktree')
+        if src.exists():
+            git('checkout', '--detach', sha, cwd=src)
+        else:
+            git('worktree', 'add', '--detach', str(src), sha)
         pointers = [p for p in (src / 'App/SpokenMarginsApp/Resources/Supertonic/onnx').glob('*.onnx')
                     if p.stat().st_size < 1024 and p.read_bytes().startswith(b'version https://git-lfs')]
         if pointers:
@@ -1062,7 +1472,7 @@ def build(sha: str) -> int:
         project = ['-project', 'SpokenMarginsNative.xcodeproj', '-scheme', 'SpokenMarginsApp']
         checks = runner_tested(sha)
         if not checks:
-            say('the runner did not test this exact commit; running host tests and the simulator build here first')
+            say('no lane host-test evidence for this commit; running host tests and the simulator build here first')
             if run_logged([str(src / '.venv/bin/python'), 'scripts/verify-tests.py', '--plan', 'fast',
                            '--output', str(work / 'fast')], src, log) != 0:
                 raise BuildFailed('host tests (--plan fast) failed')
@@ -1073,6 +1483,7 @@ def build(sha: str) -> int:
             checks = 'host tests (--plan fast) and the simulator build passed here, on this exact commit'
         say(f'checks: {checks}')
         say('building the signed Release app for iPhone (waits for a build slot)')
+        release = 'started'
         started = datetime.datetime.now()
         if run_logged([*lane, *project, '-configuration', 'Release', '-destination', 'generic/platform=iOS',
                        '-derivedDataPath', str(derived), '-allowProvisioningUpdates',
@@ -1088,6 +1499,7 @@ def build(sha: str) -> int:
         info = plistlib.loads((app / 'Info.plist').read_bytes())
         if 'SMBuildCommit' in info and info['SMBuildCommit'] != sha:
             raise BuildFailed(f'the app says it was built from {info["SMBuildCommit"]!r}, not {sha}')
+        release = 'built'
         folder = phone_dir() / f'{stamp}-{sha[:7]}'
         folder.mkdir()
         subprocess.check_call(['ditto', str(app), str(folder / APP_NAME)])
@@ -1101,6 +1513,10 @@ def build(sha: str) -> int:
         plan = write_plan(folder, sha, checks, commit_in_app=bool(info.get('SMBuildCommit')))
         point_latest(folder)
         record_attempt(sha, 'built')
+        try:
+            close_release_failure(sha)  # only once the new build is the latest one
+        except Exception as failure:  # noqa: BLE001 - reporting never fails a build
+            say(f'could not close the Release failure item: {failure}')
         prune()
         share_files(folder, sha)
         say(f'done: {folder}')
@@ -1116,9 +1532,13 @@ def build(sha: str) -> int:
         if 'Signing needs the owner' in str(failure):
             # Only signing waits on the owner; other failures clear with the next change on next.
             notify('Spoken Margins: phone build needs you', str(failure).split('Signing needs the owner: ', 1)[-1])
+        elif release == 'started':  # signing already told the owner; any other Release failure is filed (#1465)
+            try:
+                report_release_failure(sha, str(failure), tail(log))
+            except Exception as reporting:  # noqa: BLE001 - reporting never fails a build
+                say(f'could not report the Release failure: {reporting}')
         return 1
     finally:
-        remove_worktree(src)
         shutil.rmtree(work, ignore_errors=True)
 
 
@@ -1129,7 +1549,7 @@ class BuildFailed(Exception):
 def main(argv) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--commit', help='build this commit instead of origin/next')
-    parser.add_argument('--if-changed', action='store_true', help='skip unless next moved since latest')
+    parser.add_argument('--if-changed', action='store_true', help='coalesce changed tips to hourly, or after integration PASS')
     parser.add_argument('--plan-only', action='store_true', help="rewrite latest's test-plan.md and stop")
     args = parser.parse_args(argv)
     phone_dir().mkdir(parents=True, exist_ok=True)
@@ -1142,29 +1562,35 @@ def main(argv) -> int:
         say(f'rewrote {write_plan(folder, info["sha"], info.get("checks", "unknown"), bool(info.get("commit_in_app")))}')
         share_files(folder, info['sha'])
         return 0
-    lock = open(phone_dir() / '.phone-build.lock', 'a+')
-    try:
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        say('another phone build is running; nothing to do')
-        return 0
-    if not os.environ.get('SM_PHONE_NO_FETCH'):
-        git('fetch', 'origin', BRANCH, '-q', check=False)
-    sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
-    if args.if_changed:
-        if latest_build().get('sha') == sha:
-            say(f'latest is already {sha[:7]}; nothing to do')
+    with open(phone_dir() / '.phone-build.lock', 'a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            say('another phone build is running; nothing to do')
             return 0
-        attempt = read_json(phone_dir() / 'last-attempt.json')
-        if attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
-            say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer next')
-            return 0
-    reason = guard_reason()
-    if reason:
-        say(f'skipped: {reason}')
-        return EXIT_SKIPPED
-    clear_work()
-    return build(sha)
+        if not os.environ.get('SM_PHONE_NO_FETCH'):
+            git('fetch', 'origin', BRANCH, '-q', check=False)
+        sha = git('rev-parse', f'{args.commit or "origin/" + BRANCH}^{{commit}}')
+        if args.if_changed:
+            if latest_build().get('sha') == sha:
+                say(f'latest is already {sha[:7]}; nothing to do')
+                return 0
+            attempt = read_json(phone_dir() / 'last-attempt.json')
+            if attempt.get('sha') == sha and str(attempt.get('result', '')).startswith('failed'):
+                say(f'{sha[:7]} already failed ({attempt["result"]}); waiting for a newer next')
+                return 0
+            reason = coalesce_reason(sha)
+            if reason:
+                say(reason)
+                return 0
+        reason = guard_reason()
+        if reason:
+            say(f'skipped: {reason}')
+            return EXIT_SKIPPED
+        clear_work()
+        (phone_dir() / 'last-start.json').write_text(json.dumps({
+            'sha': sha, 'at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds')}) + '\n')
+        return build(sha)
 
 
 if __name__ == '__main__':

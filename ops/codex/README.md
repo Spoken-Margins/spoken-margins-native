@@ -70,7 +70,51 @@ The repeated-outcome measure compares stable finding titles/files, clean
 verdicts, or stop reasons with the preceding result for each job/PR. A batch is
 repeated only if every target repeats. Repetition can be necessary verification,
 so this is an inspection signal. No percentage appears until ledger events span
-a week. Claude Code sessions and interactive Codex app sessions are outside this ledger.
+a week. Interactive Codex app sessions are outside this ledger.
+
+### Claude desktop sessions (#899)
+
+Claude Code sessions on this Mac are measured from their own transcripts, read-only:
+
+```zsh
+/usr/bin/python3 ops/ledger/claude_sessions.py --since 2026-10-05
+```
+
+This writes `~/SpokenMarginsOps/ledger/claude-usage.jsonl` (`--dry-run` only prints the
+summary). It writes one row per turn, and each turn is a new prompt: an owner message, a
+scheduled or `/loop` fire, or a task notification. Claude Code stamps these with
+`turnPosition`. Sub-agent requests join the turn their time falls in. Each request
+counts once. The transcript writes one line per content block, and an early streamed
+line can carry a partial output count, so each request keeps its largest count. Input and
+cached input follow the wrapper convention above. The raw counts are kept per row,
+including the cache-write split.
+
+The job comes from recorded fields only:
+- `scheduled:<task>` from the `<scheduled-task name=…>` tag that opens a scheduled run (the
+  Mac tick, the integration run);
+- `testdesk` and `finisher` from the folder the session was opened on;
+- `headless` for an `sdk-*` entrypoint. A headless session that a wrapper row already
+  counts (its `session_ids`) is skipped.
+
+Anything else is `desktop-other`. A turn's outcome links are the comment and PR URLs that
+`gh pr|issue create|comment` printed in that turn. The links are its only targets;
+otherwise the row says attribution is missing. A turn that was interrupted, failed on an
+API error, still running, or holds a compaction is marked incomplete with the reason.
+Unreadable lines and files are listed, never fatal. The collector is not part of any job,
+so it can't change what a job posts.
+
+Each session also gets a `session-check` row. It compares the transcript's totals with
+Claude Code's own running total, the last `cost-state` line. Claude Code also counts
+calls it never writes to the transcript: titles, side queries and compaction. On the
+first run (2026-10-12, turns since 10-05), the transcripts held 93% of Claude Code's own
+total over the 206 sessions whose total was final. In a separate check on 2026-10-12, 173
+of the 226 sessions active in the previous 7 days matched it exactly. The report shows this share
+as `claude.coverage`. It shows Claude turns under `claude`, by job, with outcome links,
+and keeps them apart from the wrapper totals. Not measured: project threads that run in
+the cloud, audit runs (they use `--no-session-persistence` and are counted by their
+wrapper), and other machines. The report reads `claude-usage.jsonl` by default
+(`--claude-ledger` for another file); `claude` is null until the collector has run.
+Scheduling the collector is an owner step.
 
 Host tests (Python 3.9, no simulator):
 
@@ -180,7 +224,7 @@ launchctl bootout gui/$(id -u)/com.spokenmargins.codex-worker
 
 ## Audit (headless Claude)
 
-`sm_codex_audit.py` is the mechanical audit of PRs into `next`. Since #1195 it runs on headless Claude (`claude -p`, model `opus`, effort `high`), read-only; before that it ran Codex (`gpt-6-astra`). launchd runs it every 20 minutes (`com.spokenmargins.codex-audit.plist`). The script, job label, log and lock keep their old names, so the loaded job picks the change up when the ops checkout pulls `next`, with nothing to reinstall. Its docstring has the full gating rules. In short, it audits an open PR when:
+`sm_codex_audit.py` is the mechanical audit of PRs into `next`. Since #1195 it runs on headless Claude (`claude -p`, model `opus`, effort `high`), read-only; before that it ran Codex (`gpt-6-astra`). launchd runs it every 5 minutes (`com.spokenmargins.codex-audit.plist`; 20 until #1456). An idle tick makes no model call. The script, job label, log and lock keep their old names, so the loaded job picks the change up when the ops checkout pulls `next`, with nothing to reinstall. Its docstring has the full gating rules. In short, it audits an open PR when:
 
 1. The PR has no Codex or Claude audit comment naming its head. Only comments the lane runner also counts are audits: legacy ones starting ``**Codex audit (Astra)`` or `## Codex audit`, or an exact first-line heading ``**Claude audit on `<sha7>`**`` (7–40 lowercase hex characters). A finisher's reply such as ``**Codex audit on `a919a79` (P2): fixed in `d00dd82` `` is not (#812).
 2. Its newest lane report is a PASS on the head.

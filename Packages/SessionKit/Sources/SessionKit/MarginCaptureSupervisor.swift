@@ -11,11 +11,17 @@ public struct RecordingCaptureReading: Equatable, Sendable {
     /// False while a stopped recorder's file is still being measured, or could not be read. `capturedMs` is
     /// then only a lower bound, and the recording may hold speech: it is kept, never restarted or discarded.
     public var durationKnown: Bool
+    /// Instantaneous input peak in dB, when available. Used only for startup diagnostics (#1506).
+    public var peakPowerDb: Float?
+    public var inputRoute: String?
 
-    public init(recorderRunning: Bool, capturedMs: Int, durationKnown: Bool = true) {
+    public init(recorderRunning: Bool, capturedMs: Int, durationKnown: Bool = true,
+                peakPowerDb: Float? = nil, inputRoute: String? = nil) {
         self.recorderRunning = recorderRunning
         self.capturedMs = max(0, capturedMs)
         self.durationKnown = durationKnown
+        self.peakPowerDb = peakPowerDb
+        self.inputRoute = inputRoute
     }
 }
 
@@ -90,6 +96,8 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
     /// The last reading could not say how much the recorder holds. Unknown is treated as worth keeping.
     private var durationUnknown = false
     private var restartAllowance = MarginCaptureTimings.automaticRestarts
+    /// The recorder has given at least one reading. A nil reading (a test double, the watch) says nothing about audio.
+    private var hasRecorderReadings = false
 
     /// `beganAtMs` is the clock reading when the recorder accepted its start.
     public init(beganAtMs: Int) {
@@ -104,6 +112,7 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
             health = .capturing
             return .none
         }
+        hasRecorderReadings = true
         durationUnknown = !reading.durationKnown
         if reading.capturedMs > lastCapturedMs {
             lastCapturedMs = reading.capturedMs
@@ -166,6 +175,21 @@ public struct MarginCaptureSupervisor: Equatable, Sendable {
         if capturedMs < MarginCaptureTimings.keepAudioMs { return .discardEmpty }
         if onClockMs >= MarginCaptureTimings.cutShortAfterMs, capturedMs * 2 < onClockMs { return .saveCutShort }
         return .save
+    }
+}
+
+extension MarginCaptureSupervisor {
+    /// Whether a recording that a call, Siri or lost headphones just stopped holds anything.
+    ///
+    /// Judged only on what the polls saw while the recorder ran. A fresh reading is no use here: iOS has
+    /// already stopped the recorder, so it reads 0, and its file is still being measured. That reading says
+    /// "length unknown, keep it", which would keep a recording that never took in any audio (#771 audit).
+    /// Anything kept is `saveCutShort`: the interruption cut it short.
+    public func interruptionVerdict(nowMs: Int) -> SaveVerdict {
+        guard hasRecorderReadings else { return .saveCutShort }
+        let onClockMs = max(0, nowMs - beganAtMs)
+        guard onClockMs >= MarginCaptureTimings.judgeAfterMs else { return .saveCutShort }
+        return lastCapturedMs < MarginCaptureTimings.keepAudioMs ? .discardEmpty : .saveCutShort
     }
 }
 

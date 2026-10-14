@@ -23,6 +23,14 @@ HOT_FILES = ('App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift'
 NEVER_REVERT = {'persistence': 'persistence', 'packet': 'a packet format'}
 MIGRATION = re.compile(r'migrat', re.I)
 LANE_EXTRA_PREFIXES = ('.github/', 'scripts/lane')
+# test-scope categories that never change the app's build or its tests, so a merge that touches only these
+# can't have broken an app test (#1417). The lane's own scripts are excluded by path: they run the tests.
+OFF_APP_CATEGORIES = frozenset({'docs', 'ops', 'scripts', 'guard', 'research'})
+# Even a 'docs' file under these ships in the app or its tests (Contracts/ docs are bundled, and so is the
+# onboarding catalog under Site/, which test-scope calls docs).
+APP_REACH_PREFIXES = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'Config/', 'SpokenMarginsNative.xcodeproj/',
+                      'Site/onboarding/')
+APP_REACH_FILES = frozenset({'project.yml'})
 
 
 def load_test_scope(root: Path):
@@ -110,22 +118,34 @@ def revert_blockers(commit: dict, paths: list[str], scope, root: Path, open_reve
     if open_reverts:
         reasons.append('another revert PR is open (' + ', '.join(open_reverts) + ')')
     kinds, unreadable = set(), []
+    build_scripts = getattr(scope, 'build_scripts', None)
+    build_paths = build_scripts(root) if build_scripts else None
+    reaches_app = build_paths is None   # without the build-script list, "can't reach the app" can't be shown
     for path in paths:
-        if path.startswith(LANE_EXTRA_PREFIXES) or scope.is_lane_path(path):
+        on_lane = path.startswith(LANE_EXTRA_PREFIXES) or scope.is_lane_path(path)
+        if on_lane:
             kinds.add('the lane')
         if MIGRATION.search(path):
             kinds.add('a migration')
         try:
-            category = scope.classify_path(root, path).category
+            category = scope.classify_path(root, path, '', build_paths or frozenset()).category
         except Exception:  # noqa: BLE001 - an unreadable file must not let a risky revert through
             unreadable.append(path)
+            reaches_app = True
             continue
         if category in NEVER_REVERT:
             kinds.add(NEVER_REVERT[category])
+        if (category not in OFF_APP_CATEGORIES or on_lane or path in APP_REACH_FILES
+                or path.startswith(APP_REACH_PREFIXES)):
+            reaches_app = True
     if kinds:
         reasons.append('the culprit changes ' + ', '.join(sorted(kinds)) + ', which are not reverted automatically')
     if unreadable:
         reasons.append('could not classify ' + ', '.join(unreadable[:3]) + ' to rule out persistence or a packet format')
+    if paths and not reaches_app:
+        reasons.append('the culprit changes only docs, ops or scripts outside the app build and its tests (' +
+                       ', '.join(paths[:3]) + (', ...' if len(paths) > 3 else '') +
+                       '), so it can\'t have changed an app test result; a person should look at the failure')
     return reasons
 
 

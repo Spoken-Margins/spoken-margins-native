@@ -13,8 +13,16 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     private let connectionLock = NSRecursiveLock()
     /// How many `withTransaction` calls are open on this connection. Guarded by `connectionLock`.
     private var transactionDepth = 0
+    /// `loadTranscriptTimelineChapters` answers by item, with the stamp of the record they were read from. Guarded by `connectionLock`.
+    private var transcriptChaptersByItem: [String: (stamp: String, chapters: [MediaTimelineChapter])] = [:]
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    /// How often each item was written or deleted through this connection, for `itemRevision(id:)`.
+    /// Its own lock, so a caller asking never waits behind a query holding `connectionLock`.
+    private let itemRevisionLock = NSLock()
+    private var itemRevisions: [String: Int] = [:]
+    /// Moved by `reset()`, which can remove any item.
+    private var itemRevisionBase = 0
 
     public init(path: String) throws {
         encoder.dateEncodingStrategy = .iso8601
@@ -31,6 +39,9 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         // Allow brief independent transactions to finish instead of dropping a save.
         sqlite3_busy_timeout(db, 1_000)
         try migrate()
+        // A record an older build couldn't read was set aside, not lost. If this build can read it, put it back (#1052).
+        // Best effort: a failure here leaves the rows quarantined and must not stop the Library opening.
+        try? restoreQuarantinedRecords()
     }
 
     deinit {
@@ -89,6 +100,7 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
             try execute("DELETE FROM records;")
             try execute("DELETE FROM quarantined_records;")
         }
+        itemRevisionLock.withLock { itemRevisionBase &+= 1 }
     }
 
     public func quarantinedRecordCount() throws -> Int {
@@ -105,12 +117,179 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
+    /// The `records` columns a restored row needs. `quarantined_records` doesn't keep them, so they are
+    /// read back off the decoded value, the way each kind's save path sets them.
+    private struct RestoredColumns {
+        var sessionId: String?
+        var itemId: String?
+    }
+
+    /// Moves every quarantined row this build can decode back into `records`, with the id, kind and bytes it
+    /// had when it was set aside (#1052). A row this build still can't decode stays in quarantine untouched,
+    /// as does one whose kind has no rule here, whose id a newer save has since taken in `records`, or whose
+    /// listening map or canonical source has a live replacement for the item. One
+    /// transaction: a failure puts everything back. No schema change, so an older build still opens the file.
+    private func restoreQuarantinedRecords() throws {
+        // Nearly every open has nothing set aside. Look first, so those opens never take the write lock.
+        guard try quarantinedRecordCount() > 0 else { return }
+        try withTransaction {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "SELECT kind, id, payload, quarantined_at FROM quarantined_records ORDER BY kind = 'imported_commentary_layer' DESC, kind, id;", -1, &statement, nil) == SQLITE_OK else {
+                // Layers first: an imported Margin takes its item from its layer.
+                throw SessionKitError.persistenceFailed("prepare_quarantine_restore_read")
+            }
+            var rows: [(kind: String, id: String, payload: String, quarantinedAt: String)] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let kind = sqlite3_column_text(statement, 0), let id = sqlite3_column_text(statement, 1),
+                      let payload = sqlite3_column_text(statement, 2), let at = sqlite3_column_text(statement, 3) else { continue }
+                rows.append((String(cString: kind), String(cString: id), String(cString: payload), String(cString: at)))
+            }
+            sqlite3_finalize(statement)
+            for row in rows {
+                guard let data = row.payload.data(using: .utf8),
+                      let columns = restoredColumns(kind: row.kind, from: data),
+                      try restoreRecord(row, columns: columns) else { continue }
+                try deleteQuarantinedRow(kind: row.kind, id: row.id)
+            }
+        }
+    }
+
+    /// Whether the row went back. A live row with the same kind and id wins: it was saved after this one was set aside.
+    private func restoreRecord(_ row: (kind: String, id: String, payload: String, quarantinedAt: String), columns: RestoredColumns) throws -> Bool {
+        // A session-scoped row with the old un-prefixed id would sit beside the `session::id` row later saves write.
+        if Self.sessionScopedRecordKinds.contains(row.kind), let sessionId = columns.sessionId,
+           !row.id.hasPrefix("\(sessionId)::") { return false }
+        switch row.kind {
+        case "listening_map", "canonical_source":
+            // Their save paths replace every row for the item, even when the id changes.
+            // Keep the listener's replacement live and the old bytes safely set aside.
+            if let itemId = columns.itemId,
+               try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = ? AND item_id = ? LIMIT 1;", values: [row.kind, itemId]) { return false }
+        case "imported_commentary_layer":
+            // The same packet imported again while this layer was set aside is already in the Library.
+            if try liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND json_extract(payload, '$.packageDigest') = (SELECT json_extract(?, '$.packageDigest')) LIMIT 1;", values: [row.payload]) { return false }
+        case "imported_commentary_interjection":
+            // Its layer is restored first. One that isn't in the Library leaves the Margin set aside.
+            if try !liveRecordExists(sql: "SELECT 1 FROM records WHERE kind = 'imported_commentary_layer' AND id = json_extract(?, '$.layerId') LIMIT 1;", values: [row.payload]) { return false }
+        default: break
+        }
+        var statement: OpaquePointer?
+        // `updated_at` isn't kept in quarantine; the time it was set aside is the closest, and keeps lists in order.
+        let sql = """
+        INSERT INTO records(kind, id, session_id, item_id, payload, updated_at)
+        VALUES(?, ?, ?, ?, ?, ?)
+        ON CONFLICT(kind, id) DO NOTHING;
+        """
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: row.kind)
+        bind(statement, index: 2, value: row.id)
+        bind(statement, index: 3, value: columns.sessionId)
+        bind(statement, index: 4, value: columns.itemId)
+        bind(statement, index: 5, value: row.payload)
+        bind(statement, index: 6, value: row.quarantinedAt)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_quarantine_restore")
+        }
+        guard sqlite3_changes(db) == 1 else { return false }
+        if row.kind == "imported_commentary_interjection" {
+            // Saved with the item of the layer it belongs to.
+            var itemStatement: OpaquePointer?
+            let itemSQL = """
+            UPDATE records SET item_id = (
+                SELECT layer.item_id FROM records AS layer
+                WHERE layer.kind = 'imported_commentary_layer' AND layer.id = json_extract(records.payload, '$.layerId')
+            ) WHERE kind = ? AND id = ?;
+            """
+            guard sqlite3_prepare_v2(db, itemSQL, -1, &itemStatement, nil) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_quarantine_restore_item")
+            }
+            defer { sqlite3_finalize(itemStatement) }
+            bind(itemStatement, index: 1, value: row.kind)
+            bind(itemStatement, index: 2, value: row.id)
+            guard sqlite3_step(itemStatement) == SQLITE_DONE else {
+                throw SessionKitError.persistenceFailed("step_quarantine_restore_item")
+            }
+        }
+        return true
+    }
+
+    private func liveRecordExists(sql: String, values: [String]) throws -> Bool {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore_check")
+        }
+        defer { sqlite3_finalize(statement) }
+        for (index, value) in values.enumerated() {
+            bind(statement, index: Int32(index + 1), value: value)
+        }
+        return sqlite3_step(statement) == SQLITE_ROW
+    }
+
+    private func deleteQuarantinedRow(kind: String, id: String) throws {
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "DELETE FROM quarantined_records WHERE kind = ? AND id = ?;", -1, &statement, nil) == SQLITE_OK else {
+            throw SessionKitError.persistenceFailed("prepare_quarantine_restore_delete")
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(statement, index: 1, value: kind)
+        bind(statement, index: 2, value: id)
+        guard sqlite3_step(statement) == SQLITE_DONE else {
+            throw SessionKitError.persistenceFailed("step_quarantine_restore_delete")
+        }
+    }
+
+    /// The columns for `kind`, or nil when this build can't decode `data` as that kind or has no rule for it.
+    /// Scope: the Margin and Library kinds below. Others (watch hand-offs, offline reservations, preparation jobs and manifests) stay
+    /// quarantined until they get a rule. A kind joins this list with its save path's `session_id` and `item_id`, copied exactly.
+    private func restoredColumns(kind: String, from data: Data) -> RestoredColumns? {
+        func columns<T: Decodable>(_ type: T.Type, session: (T) -> String? = { _ in nil }, item: (T) -> String?) -> RestoredColumns? {
+            guard let value = try? decoder.decode(T.self, from: data) else { return nil }
+            return RestoredColumns(sessionId: session(value), itemId: item(value))
+        }
+        switch kind {
+        case "item": return columns(Item.self, item: { $0.id })
+        case "listening_map": return columns(ListeningMap.self, item: { $0.itemId })
+        case "session": return columns(Session.self, session: { $0.id }, item: { $0.itemId })
+        case "interjection": return columns(Interjection.self, session: { $0.sessionId }, item: { $0.itemId })
+        case "turn": return columns(ConversationTurn.self, session: { $0.sessionId }, item: { _ in nil })
+        case "ai_job": return columns(AIJob.self, session: { $0.sessionId }, item: { $0.itemId })
+        case "interjection_share_revision": return columns(InterjectionShareRevision.self, session: { $0.sessionId }, item: { $0.itemId })
+        case "imported_commentary_layer": return columns(ImportedCommentaryLayer.self, item: { $0.itemId })
+        case "imported_commentary_interjection": return columns(ImportedCommentaryInterjection.self, item: { _ in nil })
+        case "canonical_source": return columns(CanonicalSourcePackage.self, item: { $0.itemId })
+        case "audio_asset": return columns(AudioAsset.self, item: { $0.itemId })
+        case "source_transcript_timeline": return columns(SourceTranscriptTimeline.self, item: { $0.itemId })
+        case "podcast_download": return columns(PodcastDownloadRecord.self, item: { $0.itemId })
+        case "owned_offline_asset": return columns(OwnedOfflineAsset.self, item: { $0.itemId })
+        case "feed_subscription": return columns(FeedSubscription.self, item: { _ in nil })
+        case "feed_entry": return columns(FeedEntry.self, item: { _ in nil })
+        case "item_collection": return columns(ItemCollection.self, item: { _ in nil })
+        default: return nil
+        }
+    }
+
     public func loadItem(id: String) throws -> Item {
         try load(kind: "item", id: id)
     }
 
     public func saveItem(_ item: Item) throws {
+        defer { noteItemWritten(item.id) }
         try save(kind: "item", id: item.id, sessionId: nil, itemId: item.id, value: item)
+    }
+
+    /// Moves whenever `saveItem`, `deleteItem(s)` or `reset` touched the item through this store, so
+    /// a caller that watches an item's fields can skip reading it while the number stands still.
+    /// It counts this connection's writes: another process writing the same file does not move it.
+    public func itemRevision(id: String) -> Int {
+        itemRevisionLock.withLock { itemRevisionBase &+ (itemRevisions[id] ?? 0) }
+    }
+
+    /// Called after the write, even a failed one, so a half-done write never hides a change.
+    private func noteItemWritten(_ id: String) {
+        itemRevisionLock.withLock { itemRevisions[id, default: 0] &+= 1 }
     }
 
     public func loadListeningMap(itemId: String) throws -> ListeningMap? {
@@ -157,6 +336,21 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
     /// The Margin rows `deleteItem(id:)` removes with the item: every row filed under it.
     public func loadInterjections(itemId: String) throws -> [Interjection] {
         try loadByItem(kind: "interjection", itemId: itemId)
+    }
+
+    /// Settles the voice Margins left "pending" by an earlier run of the app as "failed", so they offer Retry
+    /// instead of promising work no one will do (#942). Call it once at launch, before any transcription of
+    /// this run can start. Returns how many Margins it changed. Only the status of those Margins is written.
+    @discardableResult
+    public func settleOrphanedTranscriptions() throws -> Int {
+        // "pending" is also an AI-job and turn status, so a text match only narrows the rows to decode.
+        let candidates: [Interjection] = try query(
+            "SELECT kind, id, payload FROM records WHERE kind = ? AND payload LIKE '%\"pending\"%';",
+            ["interjection"]
+        )
+        let settled = candidates.compactMap(OrphanedTranscription.settled)
+        for margin in settled { try saveInterjection(margin) }
+        return settled.count
     }
 
     /// Every audio path any stored Margin names, read from the stored JSON itself: live rows, rows that no
@@ -241,13 +435,27 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         }
     }
 
-    private func marginAudioPaths(sql: String) throws -> [String] {
+    /// The audio paths of the Margins quarantined under `itemId` (#1466): the recordings of rows this build
+    /// can't decode, which `loadInterjections(itemId:)` doesn't return. Read them before `deleteItem(id:)`,
+    /// which takes the rows, so the files that only those rows named can be removed too.
+    ///
+    /// A row whose JSON or audio path can't be read is skipped, not fatal: it must not make the delete
+    /// impossible, and the recording it may name is then kept, never removed on a guess.
+    public func quarantinedMarginAudioPaths(itemId: String) throws -> [String] {
+        guard try quarantinedRecordCount() > 0 else { return [] }
+        return try marginAudioPaths(
+            sql: "SELECT payload FROM quarantined_records WHERE kind = 'interjection' AND (\(Self.quarantinedRowBelongsToItem));",
+            bindings: [itemId], skippingUnreadable: true)
+    }
+
+    private func marginAudioPaths(sql: String, bindings: [String] = [], skippingUnreadable: Bool = false) throws -> [String] {
         try withConnectionLock {
             var statement: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
                 throw SessionKitError.persistenceFailed("prepare_margin_audio_paths")
             }
             defer { sqlite3_finalize(statement) }
+            for (offset, value) in bindings.enumerated() { bind(statement, index: Int32(offset + 1), value: value) }
             var paths: [String] = []
             while true {
                 let step = sqlite3_step(statement)
@@ -257,12 +465,15 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
                 }
                 guard let raw = sqlite3_column_text(statement, 0),
                       let object = try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any] else {
+                    if skippingUnreadable { continue }
                     throw SessionKitError.persistenceFailed("margin_row_unreadable")
                 }
                 switch object["audioPath"] {
                 case nil, is NSNull: continue
                 case let path as String: paths.append(path)
-                default: throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
+                default:
+                    if skippingUnreadable { continue }
+                    throw SessionKitError.persistenceFailed("margin_audio_path_unreadable")
                 }
             }
         }
@@ -531,6 +742,31 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         return transcripts.last
     }
 
+    /// Only the chapters of an item's source transcript timeline (#777). A two-hour episode's timeline holds thousands
+    /// of segments and several megabytes of JSON, so the Margins tab reads just this slice: SQLite cuts it out and only
+    /// the small list is decoded. Even the cut has to parse the whole payload, so the answer is kept per timeline
+    /// record and only re-read when the record changes (its id, `updated_at` or length), not on every refresh.
+    /// Empty when the item has no timeline or the chapters can't be read.
+    public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
+        let newest = "FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;"
+        var stamp: String?
+        try readTexts(
+            "SELECT id || '|' || updated_at || '|' || length(payload) \(newest)", [itemId], name: "transcript_timeline_stamp"
+        ) { stamp = $0 }
+        guard let stamp else {
+            withConnectionLock { _ = transcriptChaptersByItem.removeValue(forKey: itemId) }
+            return []
+        }
+        if let cached = withConnectionLock({ transcriptChaptersByItem[itemId] }), cached.stamp == stamp { return cached.chapters }
+        var chaptersJSON: String?
+        try readTexts(
+            "SELECT json_extract(payload, '$.timeline.chapters') \(newest)", [itemId], name: "transcript_timeline_chapters"
+        ) { chaptersJSON = $0 }
+        let chapters = chaptersJSON?.data(using: .utf8).flatMap { try? decoder.decode([MediaTimelineChapter].self, from: $0) } ?? []
+        withConnectionLock { transcriptChaptersByItem[itemId] = (stamp: stamp, chapters: chapters) }
+        return chapters
+    }
+
     public func saveAudioAsset(_ asset: AudioAsset) throws {
         try save(kind: "audio_asset", id: asset.id, sessionId: nil, itemId: asset.itemId, value: asset)
     }
@@ -667,6 +903,39 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try withTransaction {
             try deleteRecords(kind: "resolved_listening_map_projection", itemId: projection.itemId)
             try save(kind: "resolved_listening_map_projection", id: projection.id, sessionId: nil, itemId: projection.itemId, value: projection)
+        }
+    }
+
+    /// Stores a community map's proposal and projection together, only if the item still has no
+    /// proposal and no projection (#553). Both records or neither: a proposal without its projection
+    /// would stop the episode asking again and give Skim nothing. Existing record kinds only.
+    /// Returns false, and writes nothing, when the item got a map of its own meanwhile.
+    public func saveCommunityMap(
+        proposal: PortableListeningMapProposalArtifact,
+        projection: ResolvedListeningMapProjection
+    ) throws -> Bool {
+        try withTransaction {
+            guard try loadPortableListeningMapProposals(itemId: projection.itemId).isEmpty,
+                  try loadResolvedListeningMapProjection(itemId: projection.itemId) == nil,
+                  // A friend's map not placed yet (its audio may still be downloading) comes first.
+                  try !loadImportedCommentaryLayers(itemId: projection.itemId).contains(where: \.holdsListeningMap)
+            else { return false }
+            try savePortableListeningMapProposal(proposal, itemId: projection.itemId)
+            try saveResolvedListeningMapProjection(projection)
+            return true
+        }
+    }
+
+    public func removeCommunityMap(itemId: String) throws {
+        try withTransaction {
+            for proposal in try loadPortableListeningMapProposals(itemId: itemId)
+            where CommunityMapConverter.isCommunityProposal(id: proposal.id) {
+                try deleteRecord(kind: "portable_listening_map_proposal", id: proposal.id)
+            }
+            if let projection = try loadResolvedListeningMapProjection(itemId: itemId),
+               CommunityMapConverter.isCommunityProjection(projection) {
+                try deleteRecords(kind: "resolved_listening_map_projection", itemId: itemId)
+            }
         }
     }
 
@@ -836,20 +1105,75 @@ public final class SQLiteSessionStore: SessionRepository, @unchecked Sendable {
         try saveItem(item)
     }
 
+    private static func quarantinedJSON(_ path: String) -> String {
+        "CASE WHEN json_valid(payload) THEN json_extract(payload, '\(path)') END"
+    }
+
+    /// A `quarantined_records` row (`?1` is the item id) that belongs to the item: the item itself, or any row
+    /// whose payload names it. The payload is read as JSON, not decoded, because these are the rows this build
+    /// can't decode. A payload that isn't JSON can't be tied to an item, so it isn't matched. Turns carry only
+    /// a session id and imported Margins only a layer id, so they go with the item's sessions and layers,
+    /// live or quarantined.
+    /// The kinds whose live save path files the row under the item named in its payload (`item_id`). A kind
+    /// that deliberately outlives its item, such as `community_map_upload`, is not here (#1466).
+    private static let itemScopedQuarantineKinds = """
+        'item', 'listening_map', 'session', 'interjection', 'ai_job', 'interjection_share_revision', \
+        'imported_commentary_layer', 'canonical_source', 'audio_asset', 'source_transcript_timeline', \
+        'podcast_download', 'owned_offline_asset', 'episode_map_preparation_job', 'audio_preparation_job', \
+        'prepared_audio_manifest', 'edition_fingerprint_spine', 'transcript_phrase_sketch', \
+        'resolved_listening_map_projection', 'watch_audio_package', 'watch_sync_event', 'watch_package_request'
+        """
+
+    private static let quarantinedRowBelongsToItem = """
+        (kind = 'item' AND id = ?1)
+        OR (kind = 'publisher_audio' AND id = ?1)
+        OR (kind IN (\(itemScopedQuarantineKinds)) AND \(quarantinedJSON("$.itemId")) = ?1)
+        OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v')
+        OR (kind = 'turn' AND \(quarantinedJSON("$.sessionId")) IN (\(quarantinedSessionIdsOfItem)))
+        OR (kind = 'imported_commentary_interjection' AND \(quarantinedJSON("$.layerId")) IN (\(quarantinedLayerIdsOfItem)))
+        """
+
+    private static let quarantinedSessionIdsOfItem = """
+        SELECT id FROM records WHERE kind = 'session' AND item_id = ?1
+        UNION SELECT id FROM quarantined_records WHERE kind = 'session' AND \(quarantinedJSON("$.itemId")) = ?1
+        """
+
+    private static let quarantinedLayerIdsOfItem = """
+        SELECT id FROM records WHERE kind = 'imported_commentary_layer' AND item_id = ?1
+        UNION SELECT id FROM quarantined_records WHERE kind = 'imported_commentary_layer' AND \(quarantinedJSON("$.itemId")) = ?1
+        """
+
+    /// Takes the item's quarantined rows with it (#1466). Turns and imported Margins go first, as their own
+    /// statements, while the sessions and layers they are tied through are still there to be found.
+    private func deleteQuarantinedRows(ofItem id: String) throws {
+        // Nearly every library has nothing set aside: skip the scans.
+        guard try quarantinedRecordCount() > 0 else { return }
+        try runDelete(
+            "DELETE FROM quarantined_records WHERE kind = 'turn' AND \(Self.quarantinedJSON("$.sessionId")) IN (\(Self.quarantinedSessionIdsOfItem));",
+            prepareError: "prepare_delete_item_quarantined_turns", stepError: "step_delete_item_quarantined_turns", ids: [id])
+        try runDelete(
+            "DELETE FROM quarantined_records WHERE kind = 'imported_commentary_interjection' AND \(Self.quarantinedJSON("$.layerId")) IN (\(Self.quarantinedLayerIdsOfItem));",
+            prepareError: "prepare_delete_item_quarantined_imports", stepError: "step_delete_item_quarantined_imports", ids: [id])
+        try runDelete(
+            "DELETE FROM quarantined_records WHERE (kind = 'item' AND id = ?1) OR (kind = 'publisher_audio' AND id = ?1) OR (kind IN (\(Self.itemScopedQuarantineKinds)) AND \(Self.quarantinedJSON("$.itemId")) = ?1) OR (kind = 'structured_document' AND substr(id, 1, length(?1) + 2) = ?1 || '#v');",
+            prepareError: "prepare_delete_item_quarantined", stepError: "step_delete_item_quarantined", ids: [id])
+    }
+
     public func deleteItem(id: String) throws {
+        defer { noteItemWritten(id) }
         // Turns are saved with a session id and no item id, so they are found through the item's
         // session rows. They go first, as their own statement: a single DELETE that also removed the
         // session rows could evaluate its subquery after those rows were gone and keep the turns
         // (SQLite 3.37 on Linux did, #1219). One transaction, so a failure leaves the item whole.
         try withTransaction {
             try withConnectionLock {
+                // The item's quarantined sessions count too: their live turns go, then the quarantined rows (#1466).
                 try runDelete(
                     """
                     DELETE FROM records
-                    WHERE kind = 'turn' AND session_id IN (
-                        SELECT id FROM records WHERE kind = 'session' AND item_id = ?
-                    );
+                    WHERE kind = 'turn' AND session_id IN (\(Self.quarantinedSessionIdsOfItem));
                     """, prepareError: "prepare_delete_item_turns", stepError: "step_delete_item_turns", ids: [id])
+                try deleteQuarantinedRows(ofItem: id)
                 try runDelete(
                     """
                     DELETE FROM records
@@ -1266,6 +1590,8 @@ private struct ImportedWatchSyncEvent: Codable {
     var importedAt: Date
 }
 
+extension SQLiteSessionStore: ItemRevisionReading {}
+
 /// I13 documents live in the existing records table as kind
 /// "structured_document", one row per item and extraction version. No table or
 /// column changes, and schema_version stays 5: Build 29 selects records by kind
@@ -1316,6 +1642,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {
+            try StructuredDocumentUpgrader.requireUnchangedSincePlanned(upgrade, repository: self)
             try saveItem(upgrade.item)
             try deleteRecords(kind: "listening_map", itemId: itemId)
             if let map = upgrade.listeningMap {

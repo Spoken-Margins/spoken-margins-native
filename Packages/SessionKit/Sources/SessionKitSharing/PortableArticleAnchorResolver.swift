@@ -276,16 +276,90 @@ public enum ImportedItemResolver {
            localItem.itemType == .podcast || (localItem.itemType == .other && localItem.episodeGUID != nil),
            let packageGUID = packageItem.episodeGUID,
            let localGUID = localItem.episodeGUID {
+            // Feeds reuse short GUIDs (#177), so another show's title rules the pair out unless the packet is
+            // linkless (a private feed, whose show each subscriber's feed can title for them) and the same title
+            // and the same publish day, both present, back the GUID.
             return packageGUID == localGUID
-                && guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
+                && (guidShowsAreCompatible(packageItem.showTitle, localItem.showTitle)
+                    || (privateFeedTitlesAgree(packageItem, localItem) && publishDaysMatch(packageItem, localItem)))
                 && guidDurationsAreCompatible(packageItem.durationMs, localItem.durationMs)
         }
         // A page link names an episode's audio only for a podcast packet; an article, PDF or EPUB that shares
         // the page is another work, so it never lands on the listener's audio file (#755).
         if localItem.itemType == .other, [.text, .pdf, .epub].contains(packageItem.itemType) { return false }
         guard let packageURL = packageItem.canonicalURL,
-              let localURL = localItem.canonicalURL else { return false }
+              let localURL = localItem.canonicalURL else {
+            return privateFeedEpisodesAgree(packageItem, localItem)
+        }
         return normalizedURL(packageURL) == normalizedURL(localURL)
+    }
+
+    /// A podcast packet from a private feed names its episode by nothing but words: #168 drops every
+    /// link, and a GUID that is itself a link. The listener who pastes their own feed adds that
+    /// episode (#454), so with no link or GUID on the packet, the same title backed by the same show
+    /// or the same publish day is the same episode. A day or a length that disagrees rules it out.
+    /// A show title that differs does not: subscribers' feeds can title the show for each of them.
+    static func privateFeedEpisodesAgree(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
+        guard hasNoLinks(packageItem), isBlank(packageItem.episodeGUID),
+              privateFeedTitlesAgree(packageItem, localItem) else { return false }
+        guard LinkedEpisode.lengthsAgree(packageItem.durationMs, localItem.durationMs) else { return false }
+        var corroborated = false
+        if let packageDay = publishDay(packageItem.publishedAt), let localDay = publishDay(localItem.publishedAt) {
+            guard packageDay == localDay else { return false }
+            corroborated = true
+        }
+        if let packageShow = foldedShowTitle(packageItem.showTitle), let localShow = foldedShowTitle(localItem.showTitle),
+           packageShow == localShow {
+            corroborated = true
+        }
+        return corroborated
+    }
+
+    /// A packet whose podcast had no link the recipient could open, and the same non-blank title on both sides.
+    private static func privateFeedTitlesAgree(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
+        guard packageItem.itemType == .podcast, localItem.itemType == .podcast, hasNoLinks(packageItem) else { return false }
+        let title = comparableTitle(packageItem.title)
+        return !title.isEmpty && title == comparableTitle(localItem.title)
+    }
+
+    /// Both sides name a publish day, and it is the same day.
+    private static func publishDaysMatch(_ packageItem: SharedItemIdentity, _ localItem: SharedItemIdentity) -> Bool {
+        guard let packageDay = publishDay(packageItem.publishedAt), let localDay = publishDay(localItem.publishedAt) else { return false }
+        return packageDay == localDay
+    }
+
+    private static func hasNoLinks(_ item: SharedItemIdentity) -> Bool {
+        [item.canonicalURL, item.originalURL, item.enclosureURL, item.source?.canonicalURL].allSatisfy(isBlank)
+    }
+
+    private static func isBlank(_ value: String?) -> Bool {
+        (value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "").isEmpty
+    }
+
+    private static func comparableTitle(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .unicodeScalars
+            .map { CharacterSet.alphanumerics.contains($0) ? String($0) : " " }
+            .joined()
+            .split(separator: " ")
+            .joined(separator: " ")
+    }
+
+    /// The UTC calendar day an ISO 8601 or RSS timestamp names; nil when it is neither, which neither agrees nor disagrees.
+    private static func publishDay(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else { return nil }
+        let plain = ISO8601DateFormatter()
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let rss = DateFormatter()
+        rss.locale = Locale(identifier: "en_US_POSIX")
+        rss.dateFormat = "EEE, dd MMM yyyy HH:mm:ss Z"
+        if let date = plain.date(from: trimmed) ?? fractional.date(from: trimmed) ?? rss.date(from: trimmed) {
+            return String(plain.string(from: date).prefix(10))
+        }
+        let parts = trimmed.split(separator: "-")
+        guard trimmed.count == 10, parts.count == 3, parts.allSatisfy({ Int($0) != nil }) else { return nil }
+        return trimmed
     }
 
     /// A GUID names an episode, but some feeds reuse one for a trailer or a different cut (#177).
@@ -297,24 +371,27 @@ public enum ImportedItemResolver {
     /// differently (Following drops tags and decodes `&amp;`; a direct RSS add keeps CDATA text as
     /// written), so both titles get the same cleanup before they're compared.
     static func guidShowsAreCompatible(_ lhs: String?, _ rhs: String?) -> Bool {
-        func folded(_ value: String?) -> String? {
-            // Entities first, then tags, so `&lt;b&gt;` and an already decoded `<b>` end up alike.
-            let cleaned = value?
-                .replacingOccurrences(of: "&nbsp;", with: " ")
-                .replacingOccurrences(of: "&quot;", with: "\"")
-                .replacingOccurrences(of: "&#39;", with: "'")
-                .replacingOccurrences(of: "&apos;", with: "'")
-                .replacingOccurrences(of: "&lt;", with: "<")
-                .replacingOccurrences(of: "&gt;", with: ">")
-                .replacingOccurrences(of: "&amp;", with: "&")
-                .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
-                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
-            return cleaned?.isEmpty == false ? cleaned : nil
-        }
-        guard let lhs = folded(lhs), let rhs = folded(rhs) else { return true }
+        guard let lhs = foldedShowTitle(lhs), let rhs = foldedShowTitle(rhs) else { return true }
         return lhs == rhs
+    }
+
+    /// A show title with entities decoded, tags and extra spaces dropped, and case and accents folded;
+    /// nil when nothing is left.
+    static func foldedShowTitle(_ value: String?) -> String? {
+        // Entities first, then tags, so `&lt;b&gt;` and an already decoded `<b>` end up alike.
+        let cleaned = value?
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
+            .replacingOccurrences(of: "&apos;", with: "'")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: #"<[^>]+>"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+        return cleaned?.isEmpty == false ? cleaned : nil
     }
 
     static func guidDurationsAreCompatible(_ lhs: Int?, _ rhs: Int?) -> Bool {

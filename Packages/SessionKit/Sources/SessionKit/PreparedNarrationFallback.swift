@@ -23,11 +23,15 @@ public enum PreparedNarrationFallback {
 
     /// True when `session` plays `item`'s generated narration and `item` has text to read instead.
     /// An item whose media was already cleared still qualifies: its session can outlive the media.
-    public static func canReadText(instead session: Session, item: Item) -> Bool {
+    ///
+    /// `playingPublisherAudio`: the session plays the article's publisher recording (#547), which an
+    /// article's text can always stand in for, whatever the item stores.
+    public static func canReadText(instead session: Session, item: Item, playingPublisherAudio: Bool = false) -> Bool {
         guard session.currentTargetType == .transcriptBackedMedia,
               session.itemId == item.id,
-              !audioFirstMediaTypes.contains(item.mediaType),
+              !isAudioFirst(item),
               item.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else { return false }
+        if playingPublisherAudio { return true }
         switch item.media?.sourceType {
         case .some(.generatedTTSPrerendered):
             return true
@@ -89,6 +93,16 @@ public enum PreparedNarrationFallback {
         let fraction = Double(clamped - segment.startMs) / Double(segment.endMs - segment.startMs)
         let offset = startChar + Int((Double(endChar - startChar) * max(0, min(1, fraction))).rounded())
         return max(startChar, min(offset, endChar))
+    }
+
+    /// Where a Margin is heard in an article's generated narration (#1537). A Margin recorded while the narration
+    /// played keeps its own media time. One recorded while the article was read with on-device speech (before it
+    /// was prepared, or while a render was still on its way) has only a text place, which the narration timeline
+    /// finds. Nil when the render doesn't reach that place: the caller reads it with on-device speech instead.
+    public static func mediaTimeMs(forMargin anchor: Anchor, timeline: TranscriptTimeline?) -> Int? {
+        if let mediaTimeMs = anchor.mediaTimeMs { return mediaTimeMs }
+        guard let timeline else { return nil }
+        return mediaTimeMs(textOffset: anchor.startChar, timeline: timeline)
     }
 
     /// The media time generated narration reaches `textOffset`, interpolated within a segment. Text between two
@@ -180,6 +194,9 @@ public enum PreparedNarrationFallback {
         guard let marker = path.range(of: "/Library/Application Support/") else { return path }
         return String(path[marker.upperBound...])
     }
+
+    /// True for an item whose audio is the source itself, so reading its text isn't a substitute.
+    static func isAudioFirst(_ item: Item) -> Bool { audioFirstMediaTypes.contains(item.mediaType) }
 
     /// Items whose audio is the source itself, so reading their text isn't a substitute.
     private static let audioFirstMediaTypes: Set<String> = [

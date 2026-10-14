@@ -143,8 +143,78 @@ final class Build29DatabaseFixtureTests: XCTestCase {
         XCTAssertEqual(try store.loadPublisherAudio(itemId: v1.id)?.durationMs, 60_000)
         XCTAssertNil(try store.loadTranscriptTimeline(itemId: v1.id), "the map must not make the article transcript-backed")
 
+        // An article playing its publisher's recording through its map (#547). Build 29 must see a plain
+        // article, its session reading the article, and a Margin anchored to the article's words.
+        let postText = "The harbour shelters fishing boats. Gulls circle the old pier."
+        let post = Item(id: "item-publisher-post", title: "Harbour", mediaType: "text", text: postText,
+                        externalReference: "https://example.substack.com/p/harbour", status: "ready")
+        try store.saveItem(post)
+        try store.savePublisherAudio(PublisherAudio(
+            itemId: post.id, audioURL: "https://api.substack.com/feed/podcast/2/b.mp3", durationMs: 8_000, detectedFrom: "feed_enclosure",
+            textMap: TranscriptTimeline(segments: [
+                MediaTimelineSegment(id: "publisher-audio-0001", startMs: 500, endMs: 3_500, startChar: 0, endChar: 35, text: "The harbour shelters fishing boats."),
+                MediaTimelineSegment(id: "publisher-audio-0002", startMs: 4_000, endMs: 7_000, startChar: 36, endChar: 62, text: "Gulls circle the old pier.")
+            ], chapters: [], durationMs: 8_000),
+            textMapStatus: "aligned(2 of 2 sentences)"
+        ))
+        let playingEngine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: [
+                "sync": ["canonical_persistence"], "playback": ["realtime_tts", "native_media"], "interjection": ["record_audio"]
+            ]),
+            repository: store
+        )
+        let playing = try playingEngine.startSession(itemId: post.id)
+        XCTAssertEqual(playing.targetType, TargetType.transcriptBackedMedia.rawValue, "the recording plays")
+        let postCapture = try playingEngine.beginWrittenInterjection()
+        _ = try playingEngine.saveWrittenInterjection(captureId: postCapture.id, text: "On the harbour")
+        let postSessionId = try XCTUnwrap(playing.sessionId)
+        let postMargin = try XCTUnwrap(try store.loadInterjections(sessionId: postSessionId).first)
+        XCTAssertEqual(postMargin.anchor.anchorType, .text)
+        XCTAssertNil(try store.loadItem(id: post.id).media)
+        XCTAssertEqual(try store.loadSession(id: postSessionId)?.currentTargetType, .itemTextTTS)
+        expected.append([
+            "itemId": post.id,
+            "textSHA256": SHA256.hash(data: Data(postText.utf8)).map { String(format: "%02x", $0) }.joined(),
+            "sessionId": postSessionId,
+            "marginId": postMargin.id,
+            "hasListeningMap": try store.loadListeningMap(itemId: post.id) != nil,
+            "sessionTargetType": TargetType.itemTextTTS.rawValue,
+            "itemHasNoMedia": true,
+        ])
+
         XCTAssertNil(try store.loadStructuredDocument(itemId: v1.id))
         XCTAssertEqual(try store.loadStructuredDocument(itemId: v2.id), document)
+
+        // #1052: the shipped reader must open a database the restore pass actually wrote to,
+        // not merely one with the same table shapes. Set aside the v2 item's Library rows
+        // as an older decoder would, then reopen with this build before handing it to Build 29.
+        let restoredRowsSQL = """
+            SELECT kind, id, session_id, item_id, payload FROM records
+            WHERE item_id = ? AND kind IN ('item', 'session', 'interjection', 'listening_map', 'canonical_source')
+            ORDER BY kind, id;
+            """
+        let rowsBeforeQuarantine = try StoreRawSQL.rows(restoredRowsSQL, bindings: [v2.id], at: path)
+        let itemBeforeQuarantine = try store.loadItem(id: v2.id)
+        XCTAssertGreaterThanOrEqual(rowsBeforeQuarantine.count, 3, "item, session and Margin must exercise restoration")
+        try StoreRawSQL.execute("""
+            INSERT INTO quarantined_records(kind, id, payload, decode_error, quarantined_at)
+            SELECT kind, id, payload, 'older build could not decode this row', '2026-02-03 04:05:06'
+            FROM records WHERE item_id = ?
+            AND kind IN ('item', 'session', 'interjection', 'listening_map', 'canonical_source');
+            """, bindings: [v2.id], at: path)
+        try StoreRawSQL.execute("""
+            DELETE FROM records WHERE item_id = ?
+            AND kind IN ('item', 'session', 'interjection', 'listening_map', 'canonical_source');
+            """, bindings: [v2.id], at: path)
+        XCTAssertEqual(try StoreRawSQL.rows(restoredRowsSQL, bindings: [v2.id], at: path), [])
+        XCTAssertEqual(try store.quarantinedRecordCount(), rowsBeforeQuarantine.count)
+
+        let reopened = try SQLiteSessionStore(path: path)
+        XCTAssertEqual(try StoreRawSQL.rows(restoredRowsSQL, bindings: [v2.id], at: path), rowsBeforeQuarantine,
+                       "the shipped-reader fixture contains the original keys, columns and bytes restored on open")
+        XCTAssertEqual(try reopened.loadItem(id: v2.id), itemBeforeQuarantine)
+        XCTAssertEqual(try reopened.loadInterjections(sessionId: "session-\(v2.id)").map(\.id), ["margin-\(v2.id)"])
+        XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
         XCTAssertEqual(SQLiteSessionStore.schemaVersion(atPath: path), 5)
         let data = try JSONSerialization.data(
             withJSONObject: ["items": expected, "importedMargins": [["layerId": layer.id, "marginId": "arrived-reply"]], "feedEntryIds": [feedEntry.id]],

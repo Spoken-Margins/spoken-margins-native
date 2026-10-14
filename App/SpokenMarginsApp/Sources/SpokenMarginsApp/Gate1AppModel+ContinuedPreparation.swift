@@ -6,13 +6,11 @@ import SessionKitPersistence
 /// system progress task while the app is away, and a wait that ends a heat pause or a memory backoff by itself.
 extension Gate1AppModel {
     // Read and driven by the continued-processing task and the heat wait.
-    var isForegroundAudioPreparationRunning: Bool { foregroundAudioPreparationTask != nil }
+    var isForegroundAudioPreparationRunning: Bool { libraryAudioLoop.isRunning }
 
     /// Ends the loop without the restart a plain cancel gets: iOS or the listener ended its background time.
     func stopForegroundAudioPreparation() {
-        foregroundAudioPreparationTask?.cancel()
-        foregroundAudioPreparationGeneration += 1
-        foregroundAudioPreparationTask = nil
+        libraryAudioLoop.stopAndInvalidate()
     }
 
     /// Live playback leaves the renderer free. Apart from the memory backoff so a loop that a
@@ -23,7 +21,7 @@ extension Gate1AppModel {
             || (speechPlaybackClient as? SupertonicSpeechPlaybackClient)?.canYieldRendererToLibrary == true
     }
 
-    func idleForegroundPreparationTurn() { libraryAudioTurns.stopped(.foreground) }
+    func idleForegroundPreparationTurn() { libraryAudioLoop.turns.stopped(.foreground) }
 
     /// The foreground preparation loop: runs passes while they have work, and after a pass that
     /// rendered nothing waits out a heat pause or a memory backoff and goes on. `pass` returns

@@ -484,7 +484,7 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertFalse(ready.needsAttention)
         XCTAssertEqual(ready.preview, "Audio Margin")
         XCTAssertTrue(pending.needsAttention)
-        XCTAssertEqual(pending.preview, "Transcription is pending")
+        XCTAssertEqual(pending.preview, "Transcribing…")
         XCTAssertTrue(unavailableContext.needsAttention)
         XCTAssertEqual(unavailableContext.attentionDescription, "Context needs retry")
         XCTAssertTrue(missingRecording.needsAttention)

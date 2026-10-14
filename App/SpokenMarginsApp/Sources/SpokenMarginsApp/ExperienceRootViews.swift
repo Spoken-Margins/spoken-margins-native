@@ -6,26 +6,7 @@ import UIKit
 #endif
 
 enum Build23ExperiencePolishLayout {
-    enum LibraryComposition: Equatable {
-        case horizontal
-        case wrapped
-    }
-
     static let addSourceBottomClearance: CGFloat = 32
-    static let persistentMiniPlayerContentClearance: CGFloat = 8
-
-    static func libraryComposition(
-        isCompactWidth: Bool,
-        isAccessibilitySize: Bool
-    ) -> LibraryComposition {
-        isCompactWidth || isAccessibilitySize ? .wrapped : .horizontal
-    }
-
-    static func rootContentBottomClearance(
-        showsPersistentMiniPlayer: Bool
-    ) -> CGFloat {
-        showsPersistentMiniPlayer ? persistentMiniPlayerContentClearance : 0
-    }
 }
 
 struct ExperienceRootTabs: View {
@@ -50,7 +31,7 @@ struct ExperienceRootTabs: View {
                 }
                 .tag(AppRoot.library)
 
-            ExperienceSourcesScreen()
+            ExperienceSourcesScreen(scrollMemory: $navigation.followingScroll)
                 .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
                 .tabItem {
                     Label("Following", systemImage: AppRoot.sources.systemImage)

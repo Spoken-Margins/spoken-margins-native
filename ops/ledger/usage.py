@@ -28,6 +28,7 @@ def read_usage(transcript: Path) -> dict:
     missing = set()
     turns = completed = 0
     failed = False
+    sessions = []  # Claude session ids, so the transcript collector never counts a wrapped run twice
     try:
         with transcript.open(errors='replace') as source:
             for line in source:
@@ -47,6 +48,8 @@ def read_usage(transcript: Path) -> dict:
                     turns += 1
                     completed += 1
                     failed = failed or bool(event.get('is_error'))
+                    if isinstance(event.get('session_id'), str) and event['session_id'] not in sessions:
+                        sessions.append(event['session_id'])
                     values = event['usage']
                     cached = values.get('cache_read_input_tokens')
                     parts = [values.get('input_tokens'), values.get('cache_creation_input_tokens'), cached]
@@ -82,7 +85,10 @@ def read_usage(transcript: Path) -> dict:
     complete = not missing and not failed and completed >= turns
     reason = ('usage fields missing/invalid: ' + ', '.join(sorted(missing)) if missing else
               'unfinished/failed turn; counts cover completed turns only' if not complete else None)
-    return dict(totals, usage_complete=complete, usage_missing_reason=reason)
+    result = dict(totals, usage_complete=complete, usage_missing_reason=reason)
+    if sessions:
+        result['session_ids'] = sessions
+    return result
 
 
 def signature(text: str) -> str:

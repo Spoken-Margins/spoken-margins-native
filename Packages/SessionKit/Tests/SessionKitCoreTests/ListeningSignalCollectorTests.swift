@@ -109,6 +109,86 @@ final class ListeningSignalCollectorTests: XCTestCase {
         XCTAssertEqual(recorder.signals().map { $0.source.title }, ["Notes", "Renamed"])
     }
 
+    /// #1340: the item had no followed source when playback began, so the collector cached "none".
+    /// Then the item got the source link of a feed already followed, with the subscriptions untouched
+    /// and no stop in between. Only the item's own fields tell the collector to look again.
+    func testAnItemThatGainsAFollowedSourceMidPlaybackIsCreditedWithoutTheSubscriptionsChanging() throws {
+        try store.saveItem(Item(id: "plain", title: "Plain", mediaType: "article", text: "Words",
+                                externalReference: nil, status: "ready"))
+        let subscriptions = try store.loadFeedSubscriptions()
+        let collector = ListeningSignalCollector(recorder: recorder)
+        for second in 0...2 {
+            collector.playbackProgress(itemId: "plain", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.flush()
+        XCTAssertTrue(recorder.signals().isEmpty, "no followed source yet, so nothing to credit")
+
+        var item = try store.loadItem(id: "plain")
+        item.sourceURL = "https://example.com/feed"
+        try store.saveItem(item)
+        XCTAssertEqual(try store.loadFeedSubscriptions(), subscriptions)
+        for second in 10...12 {
+            collector.playbackProgress(itemId: "plain", status: .playing, repository: store, at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.endListening()
+        collector.flush()
+
+        XCTAssertEqual(recorder.signals().map(\.event), [.listened(seconds: 2)])
+        XCTAssertEqual(recorder.signals().map { $0.source.id }, ["source"])
+    }
+
+    /// #1353: the check for #1340 read the whole item, text and document structure included, on
+    /// every tick (twice a second). It now reads the item once and again only after the item was written.
+    func testSteadyTicksReadTheItemOnceAndAWriteIsStillNoticed() throws {
+        let repository = ItemReadCountingRepository()
+        try seed(repository)
+        let collector = ListeningSignalCollector(recorder: recorder)
+        collector.playbackProgress(itemId: "item", status: .playing, repository: repository, at: epoch)
+        collector.flush()
+        let readsAfterFirstTick = repository.itemReads
+        XCTAssertGreaterThan(readsAfterFirstTick, 0)
+
+        for second in 1...20 {
+            collector.playbackProgress(itemId: "item", status: .playing, repository: repository,
+                                       at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.flush()
+        XCTAssertEqual(repository.itemReads, readsAfterFirstTick, "20 steady ticks read the item again")
+
+        var item = try repository.loadItem(id: "item")
+        item.externalReference = "https://example.com/posts/2"
+        try repository.saveItem(item)
+        let readsBeforeChange = repository.itemReads
+        for second in 21...22 {
+            collector.playbackProgress(itemId: "item", status: .playing, repository: repository,
+                                       at: epoch.addingTimeInterval(Double(second)))
+        }
+        collector.flush()
+        XCTAssertGreaterThan(repository.itemReads, readsBeforeChange, "a saved item is read again")
+        XCTAssertLessThanOrEqual(repository.itemReads - readsBeforeChange, 2, "and then only once for the change")
+    }
+
+    /// The same, on the real store, whose revision the app's collector watches: a tick after an item's
+    /// own link changes still re-resolves it (#1340), and another item's save does not.
+    func testTheStoresItemRevisionMovesOnlyWithThatItem() throws {
+        let before = store.itemRevision(id: "item")
+        XCTAssertEqual(store.itemRevision(id: "item"), before, "asking does not move it")
+        try store.saveItem(Item(id: "other", title: "Other", mediaType: "article", text: "Words",
+                                externalReference: nil, status: "ready"))
+        XCTAssertEqual(store.itemRevision(id: "item"), before, "another item's save is not this item's change")
+        var item = try store.loadItem(id: "item")
+        XCTAssertEqual(store.itemRevision(id: "item"), before, "reading does not move it")
+        item.sourceTitle = "Renamed"
+        try store.saveItem(item)
+        let afterSave = store.itemRevision(id: "item")
+        XCTAssertNotEqual(afterSave, before)
+        try store.deleteItem(id: "item")
+        let afterDelete = store.itemRevision(id: "item")
+        XCTAssertNotEqual(afterDelete, afterSave)
+        try store.reset()
+        XCTAssertNotEqual(store.itemRevision(id: "item"), afterDelete, "a reset can remove any item")
+    }
+
     /// #1048 (PERSIST-11): the test above renames the subscription between the spells, which makes
     /// the collector re-resolve whatever stopping did. Here nothing about the follows changes, only
     /// the item's link to a feed entry, so a cache that survived the stop would keep the old entry.
@@ -188,7 +268,7 @@ final class ListeningSignalCollectorTests: XCTestCase {
         ])
     }
 
-    private func seed(_ repository: SQLiteSessionStore) throws {
+    private func seed(_ repository: any SessionRepository) throws {
         try repository.saveFeedSubscription(FeedSubscription(id: "subscription", source: SourceIdentity(
             id: "source", kind: .articleFeed, canonicalURL: "https://example.com/feed", host: "example.com", title: "Notes")))
         try repository.saveFeedEntry(FeedEntry(id: "entry", subscriptionId: "subscription",
@@ -203,4 +283,15 @@ private final class Counter: @unchecked Sendable {
     private var count = 0
     func increment() { lock.lock(); defer { lock.unlock() }; count += 1 }
     var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+}
+
+/// Counts every whole-item read, the cost #1353 is about.
+private final class ItemReadCountingRepository: InMemorySessionRepository, @unchecked Sendable {
+    private let lock = NSLock()
+    private var reads = 0
+    var itemReads: Int { lock.lock(); defer { lock.unlock() }; return reads }
+    override func loadItem(id: String) throws -> Item {
+        lock.lock(); reads += 1; lock.unlock()
+        return try super.loadItem(id: id)
+    }
 }

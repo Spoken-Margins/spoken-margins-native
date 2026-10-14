@@ -15,11 +15,13 @@ import signal
 import subprocess
 import sys
 import time
+from xml.etree import ElementTree
 from lane_xcresult_attachments import export_failed_attachments
 
 from check_posterboard_repair import crash_snapshot, new_crash
 import host_audio
 import lane_sim
+import sessionkit_pass
 import lane_sim_pool
 from lane_slots import (acquire_simulator_slot, build_slot, host_test_slot, release_handle,
                         state_dir, SIMULATOR_SLOTS)
@@ -39,6 +41,33 @@ PLANS = {
 
 # A run waits at most this long for a Mac-wide build slot, then fails rather than hanging.
 BUILD_SLOT_WAIT_SECONDS = 1800
+
+# Xcode's compilation cache for the app build-for-testing (#1331). Every T3 builds in fresh DerivedData, so
+# without it each one recompiled every module. Measured on the lane Mac (Xcode 27.0, 2026-10-12): 57-73 s
+# cold; with the cache 46 s after a one-line SessionKit edit, 39 s after an app-only edit, 18-25 s with
+# nothing changed. The store is shared by every checkout on this Mac: the extra prefix map makes paths
+# inside the tree the same in each, which took a second worktree from 23 to all 104 Swift compiles hit.
+# Xcode bounds the store: past the limit it starts a new chunk and drops the oldest, so it stays under
+# about twice the limit (measured: a 1G limit held it to 1.4 GB).
+COMPILATION_CACHE_LIMIT = '3G'
+
+
+def compilation_cache_settings(root=None):
+    """The build settings that turn on Xcode's compilation cache, in the lane's state folder."""
+    root = root or ROOT
+    mapping = f'"{root}=/^tree"'
+    return ['COMPILATION_CACHE_ENABLE_CACHING=YES',
+            f'COMPILATION_CACHE_CAS_PATH={state_dir() / "compilation-cache"}',
+            f'COMPILATION_CACHE_LIMIT_SIZE={COMPILATION_CACHE_LIMIT}',
+            'SWIFT_ENABLE_PREFIX_MAPPING=YES', 'SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES',
+            'CLANG_ENABLE_PREFIX_MAPPING=YES', 'CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES',
+            f'SWIFT_OTHER_PREFIX_MAPPINGS={mapping}', f'CLANG_OTHER_PREFIX_MAPPINGS={mapping}']
+
+
+def compilation_cache_hits(log):
+    """Xcode's own count, e.g. '441 hits / 508 cacheable tasks (87%)', or None when it printed none."""
+    found = re.findall(r'note: (\d+ hits / \d+ cacheable tasks \(\d+%\))', log)
+    return found[-1] if found else None
 
 # Keep aligned with project.yml and the SessionKit iOS deployment target.
 MINIMUM_IOS_MAJOR = 26
@@ -190,6 +219,36 @@ def test_records(log):
     return records
 
 
+def xunit_records(path):
+    """Test results from a `swift test --xunit-output` file, keyed like test_records (Module/Class/method).
+
+    `swift test --parallel` doesn't print a line per passing test, so its results come from this file.
+    A missing or unreadable file gives no records, which the caller's reconcile reports as a failure."""
+    try:
+        suite = ElementTree.parse(path).getroot()
+    except (OSError, ElementTree.ParseError):
+        return {}
+    records = {}
+    for case in suite.iter('testcase'):
+        module, _, name = case.get('classname', '').partition('.')
+        method = case.get('name', '').removesuffix('()')
+        if not (re.fullmatch(r'\w+', module) and re.fullmatch(r'\w+', name) and re.fullmatch(r'test\w+', method)):
+            continue
+        status = ('failed' if case.find('failure') is not None or case.find('error') is not None
+                  else 'skipped' if case.find('skipped') is not None else 'passed')
+        identifier = f'{module}/{name}/{method}'
+        try:
+            seconds = float(case.get('time', 0))
+        except ValueError:
+            seconds = 0.0
+        if identifier in records:  # a repeated case keeps its worst result
+            previous = records[identifier]
+            status = next(s for s in ('failed', 'skipped', 'passed') if s in (previous['status'], status))
+            seconds += previous['seconds']
+        records[identifier] = {'status': status, 'seconds': seconds}
+    return records
+
+
 def xcresult_test_records(payload):
     """Read individual XCTest results, independent of interleaved application stdout."""
     records = {}
@@ -305,7 +364,8 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
 # app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
-# Packages/ and App/ (re-measured 2026-10-09). A diff that touches those inputs (and no lane path) runs just
+# Packages/ and App/; the SessionKit pass key's reader guard reads every Swift file of the package (re-measured
+# 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
 # `python -m unittest discover -s scripts/tests` there and on a full checkout: the classes that fail only in
@@ -314,7 +374,8 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels', 'test_verification',
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
-                       'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit')
+                       'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
+                       'test_sessionkit_pass')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
@@ -412,11 +473,50 @@ def stop_process_group(process, grace=10):
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+# SessionKitCoreTests run in parallel (#1328); the other two targets hold the real-time AVFoundation tests and
+# stay serial. A parallel run that fails for any reason is run again serially, and that result decides.
+PARALLEL_CORE_TIMEOUT = 300
+PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
 # detached checkout of it, so the 180 s command default left no room: built beside a simulator job, the step
 # was killed (exit 124) and the plan reported "Infrastructure runner executed zero tests", twice on #1103's
 # head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
 RUNNER_TESTS_TIMEOUT = 600
+
+
+# #705: on intermittent runs the AudioAdapters step launched the app (AcquiredPID) and then sat until its 5m00s
+# budget with no test-runner handshake: no "Test Suite" line, 0 tests, exit 124, an unreadable xcresult. Runs that
+# start normally print their first Test Suite line about 7 s after launch and finish in 8-30 s. A step that has
+# printed none after this long has stalled at startup: record what the host app was doing, then launch the same
+# test command once more inside the same budget. The retry runs the same real tests; nothing is skipped or widened.
+STARTUP_STALL_SECONDS = 90
+STARTUP_RETRIES = 1
+TESTS_STARTED = re.compile(r"^Test (?:Suite|Case) '", re.M)
+
+
+class StartupStall(Exception):
+    pass
+
+
+def stall_evidence(udid, folder, sample_seconds=3):
+    """Best effort: which processes of this simulator are alive and what the host app is doing. Never raises."""
+    folder.mkdir(parents=True, exist_ok=True)
+    found = {}
+    try:
+        ps = subprocess.run(['ps', '-axo', 'pid=,etime=,stat=,command='], capture_output=True, text=True, timeout=20).stdout
+        mine = [line for line in ps.splitlines() if udid and udid in line]
+        (folder / 'processes.txt').write_text('\n'.join(mine) + '\n')
+        found['processes'] = len(mine)
+        for line in mine:
+            fields = line.split(None, 3)
+            if len(fields) == 4 and 'SpokenMarginsApp.app/SpokenMarginsApp' in fields[3]:
+                pid = fields[0]
+                sampled = subprocess.run(['sample', pid, str(sample_seconds), '-file', str(folder / f'sample-{pid}.txt')],
+                                         capture_output=True, text=True, timeout=sample_seconds + 30)
+                found.setdefault('samples', []).append({'pid': int(pid), 'exit': sampled.returncode})
+    except (OSError, subprocess.SubprocessError, ValueError) as error:
+        found['error'] = repr(error)
+    return found
 
 
 # The SessionKit tests that need a running audio output (#909).
@@ -459,7 +559,8 @@ class Run:
         print(f'warning: simulator process crashed once ({process}); continuing', flush=True)
         return False
 
-    def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None):
+    def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
+                startup=None, record_source=None):
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
         self.manifest['steps'].append(entry)
@@ -471,13 +572,16 @@ class Run:
             if not reports.is_dir():
                 raise RuntimeError('Simulator crash reports are unavailable')
             self.crash_baseline = crash_snapshot(reports)
-        # xcodebuild shares the Mac-wide build slots with every session; the wait isn't timed.
+        # Only compilation needs a build slot. Tests run under the simulator slot (#1330).
         slot = build_slot(f'verify-tests {self.manifest["plan"]} {name}', max_wait=BUILD_SLOT_WAIT_SECONDS) \
-            if args[0] == 'xcodebuild' else contextlib.nullcontext()
+            if args[0] == 'xcodebuild' and 'test-without-building' not in args else contextlib.nullcontext()
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
-            start = time.monotonic()
+            start = attempt_start = time.monotonic()
+            attempt = 1
+            watching = startup is not None
+            scan_from = 0  # each launch is judged by its own part of the shared log
             process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
                                        start_new_session=True)
             try:
@@ -492,9 +596,40 @@ class Run:
                         result = process.wait(timeout=min(0.25, remaining))
                         break
                     except subprocess.TimeoutExpired:
+                        pass
+                    if not watching:
                         continue
-            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError):
-                entry['interrupted'] = True
+                    text = (self.output / f'{name}.log').read_text(errors='replace')[scan_from:]
+                    if TESTS_STARTED.search(text):
+                        watching = False
+                    elif time.monotonic() - attempt_start >= startup['seconds']:
+                        lines = [line for line in text.splitlines() if line.strip()]
+                        stall = {'attempt': attempt, 'after_seconds': round(time.monotonic() - attempt_start, 1),
+                                 'last_log_line': lines[-1][:200] if lines else None}
+                        stall.update(startup['diagnose'](self.output / f'{name}-stall-{attempt}'))
+                        # The diagnosis takes seconds; a launch that began its tests meanwhile is slow, not stalled.
+                        if TESTS_STARTED.search((self.output / f'{name}.log').read_text(errors='replace')[scan_from:]):
+                            entry.setdefault('slow_starts', []).append(stall)
+                            watching = False
+                            continue
+                        entry.setdefault('startup_stalls', []).append(stall)
+                        print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
+                              f'(last log line: {stall["last_log_line"]}); attempt {attempt}', flush=True)
+                        stop_process_group(process)
+                        if attempt > startup['retries']:
+                            raise StartupStall()
+                        startup['reset'](attempt)
+                        attempt += 1
+                        log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
+                        log.flush()
+                        scan_from = len((self.output / f'{name}.log').read_text(errors='replace'))
+                        attempt_start = time.monotonic()
+                        process = subprocess.Popen(args, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                                   start_new_session=True)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt, InterruptedError, StartupStall) as stopped:
+                # A startup stall is reported as its own reason below, not as the step running out of budget.
+                entry['interrupted'] = not isinstance(stopped, StartupStall)
+                entry['signalled'] = isinstance(stopped, KeyboardInterrupt)  # the lane stopped this run, not the step's own limit
                 stop_process_group(process)
                 result = 124
                 if entry.get('simulator_crash_report'):
@@ -510,10 +645,28 @@ class Run:
         entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
+        if entry.get('startup_stalls'):
+            entry['startup_attempts'] = attempt
+            last = entry['startup_stalls'][-1]
+            if result and last['attempt'] == attempt:  # the final launch itself stalled
+                errors.append(f'Test runner printed no test output in {attempt} launch(es) of {startup["seconds"]}s '
+                              f'(last log line: {last["last_log_line"]}); host-app samples under {name}-stall-*/')
+            elif not result and len(entry['startup_stalls']) == 1:
+                # #705, owner's call 2026-10-11: one stall that the first retry recovered, with every requested
+                # test then passing (the checks below still hold the step to that), counts as a PASS. The stall
+                # stays on record: the lane runner logs each one on #705 as evidence of the cause.
+                entry['startup_recovered'] = True
+                print(f'warning: {name} recovered after 1 startup stall of {startup["seconds"]}s; '
+                      f'samples under {name}-stall-*/', flush=True)
+            elif not result:
+                # More than one stall before a pass is not covered by that call: the step stays INCONCLUSIVE.
+                errors.append(f'Recovered after {len(entry["startup_stalls"])} startup stall(s) of {startup["seconds"]}s; '
+                              f'the tests passed on launch {attempt} but the stalls are undiagnosed, so this is not a PASS '
+                              f'(samples under {name}-stall-*/)')
         if tests:
-            records = test_records(text)
+            records = record_source() if record_source else test_records(text)
             payload = None
-            entry['test_evidence'] = 'log'
+            entry['test_evidence'] = 'xunit' if record_source else 'log'
             if '-resultBundlePath' in args:
                 bundle = args[args.index('-resultBundlePath') + 1]
                 entry['result_bundle'] = bundle
@@ -613,16 +766,43 @@ class Run:
         expected = set()
         for target in ('SessionKitCoreTests', 'SessionKitTests', 'SessionKitTraceTests'):
             expected.update(f'{target}/{test}' for test in swift_tests(ROOT / f'Packages/SessionKit/Tests/{target}'))
+        # Lane runs skip the SessionKit build and tests when this exact tree (the package, what its tests read,
+        # the toolchain and the test runner) already passed them on this Mac (#1328). Only a run given the PR's
+        # changed paths skips; one without them runs every step.
+        identity = None if in_codex_sandbox() else sessionkit_pass.toolchain()
+        pass_key = sessionkit_pass.key(ROOT, identity)
+        earlier = sessionkit_pass.find(state_dir(), pass_key) if self.changed else None
+        if earlier:
+            why = (f'the same SessionKit inputs, toolchain and test runner passed all {earlier.get("tests", "its")} tests '
+                   f'at {earlier.get("passed_at")} (commit {str(earlier.get("head"))[:7]})')
+            self.manifest['sessionkit_pass'] = {'reused': pass_key, **earlier}
+            self.manifest.setdefault('notes', []).append('SessionKit build and tests skipped: ' + why)
+            self.skip('package-build', why)
+            self.skip('package', why)
+        else:
+            self.package_steps(expected)
+            if pass_key and sessionkit_pass.key(ROOT, identity) == pass_key:
+                sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
+
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError('Inputs changed during fast verification')
+
+    def package_steps(self, expected):
+        """Build SessionKit and run its tests: SessionKitCoreTests in parallel (#1328), the rest serially."""
         # The build gets its own limit, so a cold build under load can't use up the tests' time (#844).
         # The tests' limit covers about 1,000 tests, including real-time AVPlayer tests that took
         # 150 s of a 230 s run with the Mac's load average at 40 to 180 (2026-10-05).
-        self.command('package-build', ['bash', 'scripts/run-sessionkit-tests.sh', '--build-only'],
-                     timeout=PACKAGE_BUILD_TIMEOUT)
+        self.command('package-build', [*PACKAGE_RUNNER, '--build-only'], timeout=PACKAGE_BUILD_TIMEOUT)
         audio = self.manifest['audio_output'] = host_audio.audio_output()
+        # Inside Codex's sandbox the audio tests are tolerated and the runner stays as it was: one serial step.
+        core = {test for test in expected if test.startswith('SessionKitCoreTests/')}
+        split = bool(core) and not in_codex_sandbox()
         try:
-            self.command('package', ['bash', 'scripts/run-sessionkit-tests.sh', '--skip-build'],
+            if split:
+                self.package_core(core)
+            self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
                          timeout=PACKAGE_TEST_TIMEOUT,
-                         expected=expected, tests=True,
+                         expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
@@ -639,8 +819,27 @@ class Run:
                 raise RuntimeError(f'lane fault, not the PR: {self.manifest["lane_fault"]}; {error}')
             raise
 
-        if input_identity() != self.manifest['input_sha256']:
-            raise RuntimeError('Inputs changed during fast verification')
+    def package_core(self, expected):
+        """SessionKitCoreTests with `swift test --parallel`. Anything wrong with that run (a failing test, a missing
+        or unreadable result file, a timeout) is run again serially, and the serial run decides: parallel
+        tests can fail on shared state that serial runs never meet, and the result file's format is SwiftPM's."""
+        xunit = self.output / 'package-core.xunit.xml'
+        try:
+            self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
+                         timeout=PARALLEL_CORE_TIMEOUT, expected=expected, tests=True,
+                         record_source=lambda: xunit_records(xunit))
+            return
+        except RuntimeError as error:
+            step = self.manifest['steps'][-1]
+            if step.get('signalled'):
+                raise  # the lane is stopping this run: a serial run would outlive it
+            step['superseded'] = 'run again serially'
+            self.manifest.setdefault('notes', []).append(
+                f'SessionKitCoreTests: the parallel run failed, so they ran again serially ({str(error)[:300]})')
+            self.save()
+            print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
+        self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
+                     timeout=PACKAGE_TEST_TIMEOUT, expected=expected, tests=True)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -656,7 +855,79 @@ class Run:
             name = 'ops-' + '-'.join(folder.relative_to(base).parts[1:]) if folder != base / 'ops' else 'ops'
             self.command(name, [sys.executable, '-m', 'unittest', 'discover', '-s', str(folder), '-t', str(folder)])
 
-    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None):
+    def simulator(self, device, ios=None):
+        """The destination, and whether this run created it (its first boot gets the lane's tolerance).
+
+        --device is used as given. Otherwise the dedicated Test Runner, created when missing, and
+        replaced when the lane has marked it unsafe: it is this script's own device, and refusing it
+        stopped every integration run on next for a day (#1325). A T3 gets a fresh device each run too.
+        """
+        def listed():
+            return json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+
+        if device:
+            return select_simulator(listed(), device, ios), False
+        chosen, template = dedicated_simulator(listed(), ios)
+        marked = lane_sim.unsafe_devices().get(chosen['udid']) if chosen else None
+        if marked:
+            print(f'{TEST_RUNNER_NAME} ({chosen["udid"]}) is on the lane\'s unsafe list ({marked["reason"]}); '
+                  'replacing it with a fresh one', flush=True)
+            subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']], cwd=ROOT, capture_output=True, timeout=60)
+            self.command('simulator-retire', ['xcrun', 'simctl', 'delete', chosen['udid']], timeout=120)
+            chosen, template = dedicated_simulator(listed(), ios)
+        if chosen is not None:
+            return chosen, False
+        self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
+                     template['deviceTypeIdentifier'], template['runtime']], timeout=60)
+        chosen, _ = dedicated_simulator(listed(), ios)
+        if chosen is None:
+            raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        return chosen, True
+
+    def xcode_build(self, plan, runtime, rebuild=False, require_build=False):
+        """Build every test plan of the scheme once, without a running simulator (#1330).
+
+        The plan selects tests, not binaries. Omitting -testPlan from build-for-testing emits the
+        scheme's test plans together; test-without-building still names the exact plan and selectors.
+        """
+        if input_identity() != self.manifest['input_sha256']:
+            raise RuntimeError('Inputs changed before Xcode verification')
+        scheme = PLANS[plan][0]
+        if not require_build:
+            self.command('generate', ['xcodegen', 'generate'])
+        identity = input_identity()
+        toolchain = capture(['xcodebuild', '-version']) + '\n' + platform.machine() + '\nSDK ' + capture(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'])
+        cache_key = hashlib.sha256(('all-test-plans-v1' + identity + toolchain + runtime + scheme).encode()).hexdigest()
+        derived = ROOT / '.build/verification' / scheme
+        derived.mkdir(parents=True, exist_ok=True)
+        stamp = derived / 'scheme.build.json'
+        base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
+                '-destination', 'generic/platform=iOS Simulator', '-derivedDataPath', str(derived)]
+        self.manifest.update(input_sha256=identity, toolchain=toolchain, build_key=cache_key)
+        try:
+            reused = not rebuild and json.loads(stamp.read_text()).get('key') == cache_key
+        except (OSError, ValueError):
+            reused = False
+        self.manifest['reused_build'] = reused
+        if not reused:
+            if require_build:
+                raise RuntimeError('Prepared Xcode build is missing or stale; refusing to build on a booted T3 device')
+            stamp.unlink(missing_ok=True)
+            self.command('build-for-testing', base + compilation_cache_settings() + ['build-for-testing'], timeout=900)
+            log = self.output / 'build-for-testing.log'
+            self.manifest['compilation_cache'] = compilation_cache_hits(log.read_text(errors='replace')) \
+                if log.is_file() else None
+            self.save()
+        if input_identity() != identity:
+            raise RuntimeError('Inputs changed during the build; evidence is not for one source state')
+        if not reused:
+            stamp.write_text(json.dumps({'key': cache_key}) + '\n')
+        self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
+                     str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
+        return derived, identity
+
+    def xcode(self, plan, device, rebuild, ios=None, only=(), probation=None, simulator_slot_fd=None,
+              require_build=False):
         if input_identity() != self.manifest['input_sha256']:
             raise RuntimeError('Inputs changed before Xcode verification')
         scheme, name, timeout = PLANS[plan]
@@ -671,40 +942,12 @@ class Run:
                                      {f'{APP_TEST_TARGET}/{test}' for test in target_tests(ROOT, APP_TEST_TARGET)})
         if selectors:
             self.manifest['only_testing'] = selectors
-        devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-        if device:
-            chosen = select_simulator(devices, device, ios)
-        else:
-            chosen, template = dedicated_simulator(devices, ios)
-            if chosen is None:
-                self.command('simulator-create', ['xcrun', 'simctl', 'create', TEST_RUNNER_NAME,
-                             template['deviceTypeIdentifier'], template['runtime']], timeout=60)
-                devices = json.loads(capture(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-                chosen, _ = dedicated_simulator(devices, ios)
-                if chosen is None:
-                    raise RuntimeError(f'Could not create the {TEST_RUNNER_NAME} simulator')
+        chosen, created = self.simulator(device, ios)
         refuse_unsafe(chosen, lane_sim.unsafe_devices())
         self.manifest['destination'] = chosen
-        self.command('generate', ['xcodegen', 'generate'])
-        identity = input_identity()
-        toolchain = capture(['xcodebuild', '-version']) + '\n' + platform.machine() + '\nSDK ' + capture(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'])
-        cache_key = hashlib.sha256((identity + toolchain + chosen['runtime'] + scheme + name).encode()).hexdigest()
-        derived = ROOT / '.build/verification' / scheme
-        stamp = derived / f'{name}.build.json'
+        derived, identity = self.xcode_build(plan, chosen['runtime'], rebuild, require_build)
         base = ['xcodebuild', '-configuration', 'Debug', '-project', 'SpokenMarginsNative.xcodeproj', '-scheme', scheme,
                 '-testPlan', name, '-destination', f'id={chosen["udid"]}', '-derivedDataPath', str(derived)]
-        self.manifest.update(input_sha256=identity, toolchain=toolchain, build_key=cache_key)
-        reused = not rebuild and stamp.exists() and json.loads(stamp.read_text()).get('key') == cache_key
-        self.manifest['reused_build'] = reused
-        if not reused:
-            stamp.unlink(missing_ok=True)
-            self.command('build-for-testing', base + ['build-for-testing'], timeout=900)
-        if input_identity() != identity:
-            raise RuntimeError('Inputs changed during the build; evidence is not for one source state')
-        if not reused:
-            stamp.write_text(json.dumps({'key': cache_key}) + '\n')
-        self.command('bundle-contracts', [sys.executable, 'scripts/verify-bundle.py',
-                     str(derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app')])
         booted_here = chosen['state'] != 'Booted'
         # A run that boots its own simulator holds a Mac-wide simulator slot until it shuts it down
         # (16 GB Mac: a second simulator job only while memory pressure is normal, #184). A device
@@ -720,7 +963,8 @@ class Run:
                 self.manifest['steps'].append(entry)
                 self.save()
                 try:
-                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout), 3),
+                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout,
+                                                             first_boot=created), 3),
                                  exit_code=0, errors=[])
                 except lane_sim.BootError as error:
                     entry.update(exit_code=1, errors=[str(error)])
@@ -737,11 +981,26 @@ class Run:
             expected = {test for test in planned if not selectors or any(selected(test, s) for s in selectors)}
             on_probation = None if probation is None else {
                 test for test in expected if any(selected(test, s) for s in probation)}
+            result_bundle = self.output / 'tests.xcresult'
+
+            def relaunch(attempt):
+                # The stalled attempt's app may still be up, and xcodebuild refuses an existing result bundle.
+                app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+                bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
+                subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
+                               cwd=ROOT, capture_output=True, timeout=60)
+                if result_bundle.exists():
+                    result_bundle.rename(self.output / f'tests-stalled-{attempt}.xcresult')
+
+            # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
+            startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
+                       'diagnose': lambda folder: stall_evidence(chosen['udid'], folder),
+                       'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                          'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
-                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(self.output / 'tests.xcresult')],
-                         timeout=timeout, expected=expected, tests=True, probation=on_probation)
+                         '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
+                         timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
         finally:
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
@@ -772,6 +1031,9 @@ def main():
     parser.add_argument('--ios', type=int, help='Required iOS major version, e.g. 26 or 27; never falls back to another OS')
     parser.add_argument('--simulator-slot-fd', type=int, help=argparse.SUPPRESS)
     parser.add_argument('--rebuild', action='store_true', help='Ignore the compatible build stamp')
+    parser.add_argument('--build-only', action='store_true', help='Build all plans of the Xcode scheme; do not boot or test')
+    parser.add_argument('--runtime', help='Simulator runtime identifier for --build-only')
+    parser.add_argument('--require-build', action='store_true', help='Refuse tests unless the prepared scheme build is current')
     parser.add_argument('--output', type=Path, help='New evidence directory')
     parser.add_argument('--changed-files', type=Path, metavar='FILE',
                         help='Lane runs: the PR\'s changed paths, one per line (renames name both sides). --plan fast then '
@@ -780,6 +1042,10 @@ def main():
     parser.add_argument('--only-testing', action='append', default=[], metavar='CLASS[/METHOD]',
                         help='Xcode plans: run only these tests of the plan (repeatable); unknown ones fail the run')
     args = parser.parse_args()
+    if args.build_only and (args.plan not in PLANS or not args.runtime):
+        parser.error('--build-only needs an Xcode --plan and --runtime')
+    if args.build_only and (args.device or args.require_build or args.only_testing):
+        parser.error('--build-only takes no --device, --require-build or --only-testing')
     if errors := validate():
         parser.error('; '.join(errors))
     from test_inventory import scripted_journeys  # only the journeys plan reads the list
@@ -801,17 +1067,21 @@ def main():
             datetime.datetime.now().strftime('%Y%m%d-%H%M%S-%f') + '-' + args.plan)
         run = Run(output.resolve(), args.plan, read_changed_files(args.changed_files) if args.plan == 'fast' else None)
         try:
-            if args.plan in ('fast', 'release'):
+            if args.build_only:
+                run.xcode_build(args.plan, args.runtime, args.rebuild)
+            elif args.plan in ('fast', 'release'):
                 run.fast()
-            if args.plan != 'fast':
+            if args.plan != 'fast' and not args.build_only:
                 if journeys:
                     run.manifest['scripted_journeys'] = journeys
                     run.xcode(args.plan, args.device, args.rebuild, args.ios,
                               journeys['gating'] + journeys['probation'], probation=journeys['probation'],
-                              simulator_slot_fd=args.simulator_slot_fd)
+                              simulator_slot_fd=args.simulator_slot_fd,
+                              **({'require_build': True} if args.require_build else {}))
                 else:
                     run.xcode(args.plan, args.device, args.rebuild, args.ios, args.only_testing,
-                              simulator_slot_fd=args.simulator_slot_fd)
+                              simulator_slot_fd=args.simulator_slot_fd,
+                              **({'require_build': True} if args.require_build else {}))
             if input_identity() != run.manifest['input_sha256']:
                 raise RuntimeError('Inputs changed during verification; rerun on a stable source state')
             run.manifest['status'] = passed_status()

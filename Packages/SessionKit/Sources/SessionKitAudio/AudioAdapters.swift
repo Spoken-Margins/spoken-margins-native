@@ -1831,6 +1831,9 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     private var paused = true
     private var remoteCommandHandlingEnabled = true
     private var interruptionResumePolicy = AudioPlaybackInterruptionResumePolicy()
+    /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS says
+    /// it is over (#1434).
+    private let interruptionHold: InterruptionBackgroundHold?
     private var preferredSkipBackSeconds: Int
     private var preferredSkipForwardSeconds: Int
 
@@ -1843,12 +1846,14 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         preferredSkipForwardSeconds: Int = 15,
         audioSessionNotificationCenter: NotificationCenter = .default,
         interruptionHandler: (@Sendable (AudioPlaybackInterruptionEvent) -> Void)? = nil,
+        interruptionHold: InterruptionBackgroundHold? = nil,
         remoteCommandHandler: (@Sendable (CompactControlCommand, Int?, Double?) -> Void)? = nil
     ) {
         self.preferredSkipBackSeconds = Self.validatedSkipSeconds(preferredSkipBackSeconds)
         self.preferredSkipForwardSeconds = Self.validatedSkipSeconds(preferredSkipForwardSeconds)
         self.audioSessionNotificationCenter = audioSessionNotificationCenter
         self.interruptionHandler = interruptionHandler
+        self.interruptionHold = interruptionHold
         self.remoteCommandHandler = remoteCommandHandler
         installAudioSessionObservers()
         installRemoteCommandHandlers()
@@ -1906,6 +1911,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         removeCompletionObserver()
         removeTimeObserver()
         removeRemoteCommandHandlers()
+        withInterruptionHold { $0.listenerActed() }
         for observer in audioSessionObservers {
             audioSessionNotificationCenter.removeObserver(observer)
         }
@@ -1913,7 +1919,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func configureMediaContext(_ context: PlaybackMediaContext?) throws {
         if context?.targetId != mediaContext?.targetId {
-            interruptionResumePolicy.cancelAutomaticResume()
+            cancelAutomaticInterruptionResume()
         }
         mediaContext = context
         if let context, let durationMs = context.durationMs {
@@ -1936,7 +1942,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func play(targetId: String, fromMediaTimeMs mediaTimeMs: Int) throws {
         #if canImport(AVFoundation)
-        interruptionResumePolicy.cancelAutomaticResume()
+        cancelAutomaticInterruptionResume()
         let requestedURL = mediaContext?.targetId == targetId ? mediaContext?.playbackURL : nil
         guard let url = URL(string: requestedURL ?? targetId) else {
             throw SessionKitError.invalidCommandForState("stream_audio_invalid_url:\(requestedURL ?? targetId)")
@@ -2286,7 +2292,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
 
     public func pause() throws {
         #if canImport(AVFoundation)
-        interruptionResumePolicy.cancelAutomaticResume()
+        cancelAutomaticInterruptionResume()
         paused = true
         player?.pause()
         stopStallWatchdog()
@@ -2300,7 +2306,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     public func stop() throws {
         #if canImport(AVFoundation)
         cancelPostResumeEvidenceCapture(reason: "playback_stopped_during_capture")
-        interruptionResumePolicy.cancelAutomaticResume()
+        cancelAutomaticInterruptionResume()
         invalidatePendingMediaSeek()
         player?.pause()
         stopStallWatchdog()
@@ -2403,6 +2409,16 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         }
         fields.merge(playerStateFields(uptime: uptime)) { current, _ in current }
         playbackStallTraceHandler?(fields)
+    }
+
+    /// AVPlayer's own state right now, in the fields the stall trace carries, plus `uptimeMs` (#835). Unlike
+    /// `currentMediaTimeMs()`, `playerMs` is the player's raw clock even while a seek is pending, so a caller can
+    /// tell a frozen player clock from a pending seek or a buffering wait.
+    public func playbackStateTraceFields() -> [String: String] {
+        let uptime = ProcessInfo.processInfo.systemUptime
+        var fields = playerStateFields(uptime: uptime)
+        fields["uptimeMs"] = String(Int(uptime * 1_000))
+        return fields
     }
 
     private func playerStateFields(uptime: TimeInterval) -> [String: String] {
@@ -2797,7 +2813,7 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
                   let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
             switch type {
             case .began:
-                self?.pauseForSystemInterruption()
+                self?.pauseForSystemInterruption(awaitsEnd: true)
             case .ended:
                 let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
                 self?.finishSystemInterruption(
@@ -2814,14 +2830,22 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         ) { [weak self] notification in
             guard let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
                   AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
-            self?.pauseForSystemInterruption()
+            self?.pauseForSystemInterruption(awaitsEnd: false)
         })
         #endif
     }
 
-    private func pauseForSystemInterruption() {
+    /// `awaitsEnd` is false for a lost route, which never reports an end: nothing to wait for.
+    private func pauseForSystemInterruption(awaitsEnd: Bool) {
         let wasPlaying = activeTargetId != nil && !paused
         guard interruptionResumePolicy.began(wasPlaying: wasPlaying) else { return }
+        if awaitsEnd {
+            // iOS doesn't report the end of a message announcement, so the hold also resumes once the other
+            // audio stops (#1434).
+            withInterruptionHold { [weak self] hold in
+                hold.interruptionBegan(resumeWhenOtherAudioStops: { self?.resumeBecauseOtherAudioStopped() })
+            }
+        }
         paused = true
         player?.pause()
         #if os(iOS)
@@ -2832,8 +2856,32 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
     }
 
     private func finishSystemInterruption(shouldResume: Bool) {
+        withInterruptionHold { $0.interruptionEnded() }
         guard interruptionResumePolicy.ended(shouldResume: shouldResume) else { return }
         interruptionHandler?(.endedShouldResume)
+    }
+
+    /// The interruption's other audio stopped without iOS reporting an end: resume as an end with "should resume"
+    /// would, unless the listener has taken over since (#1434).
+    private func resumeBecauseOtherAudioStopped() {
+        guard interruptionResumePolicy.ended(shouldResume: true) else { return }
+        interruptionHandler?(.endedShouldResume)
+    }
+
+    /// The listener's Play, Pause, Stop or a new item replaces an interruption's automatic resume.
+    private func cancelAutomaticInterruptionResume() {
+        interruptionResumePolicy.cancelAutomaticResume()
+        withInterruptionHold { $0.listenerActed() }
+    }
+
+    /// The audio-session observers run on the main thread; the hold is main-actor state.
+    private func withInterruptionHold(_ work: @escaping @MainActor (InterruptionBackgroundHold) -> Void) {
+        guard let hold = interruptionHold else { return }
+        if Thread.isMainThread {
+            MainActor.assumeIsolated { work(hold) }
+        } else {
+            Task { @MainActor in work(hold) }
+        }
     }
     #else
     private func removePlayerStateObserver() {}
@@ -2863,7 +2911,13 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: context?.title ?? "Spoken Margins",
             MPNowPlayingInfoPropertyElapsedPlaybackTime: elapsedSeconds,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? playbackRate : 0,
+            // The clock runs only once the player is really playing: while it opens the stream or
+            // rebuffers it is waiting, and a nonzero rate would advance the Lock Screen clock (#943).
+            MPNowPlayingInfoPropertyPlaybackRate: SystemPlaybackPresentation.playerRate(
+                isPlayingByIntent: isPlaying,
+                isWaitingForPlayer: player?.timeControlStatus == .waitingToPlayAtSpecifiedRate,
+                selectedRate: playbackRate
+            ),
             MPNowPlayingInfoPropertyDefaultPlaybackRate: playbackRate,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue,
             MPNowPlayingInfoPropertyIsLiveStream: durationSeconds == nil
@@ -3217,7 +3271,8 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
     }
 }
 
-public final class SystemRecordingClient: RecordingClient {
+/// Used on the main thread; the audio-session observers run on the main queue.
+public final class SystemRecordingClient: RecordingClient, RecordingInterruptionReporting, @unchecked Sendable {
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
@@ -3233,16 +3288,41 @@ public final class SystemRecordingClient: RecordingClient {
     /// The length of a stopped recorder's finalized file, measured once off the main thread. Nil while the
     /// recorder runs. Until it lands, or if the file can't be read, the length is unknown and kept (#937).
     private var stoppedMeasurement: StoppedFileMeasurement?
+    /// Chosen at the start of a Margin from the route playback was on, and kept for its restarts (#1506).
+    private var inputChoice: RecordingInputChoice = .headsetMicrophoneAllowed
     #endif
     private let fileManager: FileManager
     private let baseDirectory: URL?
     private let deactivateSessionOnFinish: Bool
     private var shouldNotifyOtherAudioOnFinish = false
+    /// A call, Siri or lost headphones while recording (#771). iOS stops the recorder on its own;
+    /// without this the app kept showing "Recording".
+    public var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
+    private let audioSessionNotificationCenter: NotificationCenter
+    private var audioSessionObservers: [NSObjectProtocol] = []
+    private var recordingStartedAt: Date?
+    /// After an interruption stops a recording, its end still decides whether the source resumes.
+    private var awaitsInterruptionEnd = false
+    /// Headphone outputs in use when the interruption began. A suspended app may miss the route
+    /// change during a call, so the end checks they are still there.
+    private var headphonesWhenInterrupted: Set<String> = []
 
-    public init(baseDirectory: URL? = nil, fileManager: FileManager = .default, deactivateSessionOnFinish: Bool = false) {
+    public init(
+        baseDirectory: URL? = nil,
+        fileManager: FileManager = .default,
+        deactivateSessionOnFinish: Bool = false,
+        audioSessionNotificationCenter: NotificationCenter = .default
+    ) {
         self.baseDirectory = baseDirectory
         self.fileManager = fileManager
         self.deactivateSessionOnFinish = deactivateSessionOnFinish
+        self.audioSessionNotificationCenter = audioSessionNotificationCenter
+    }
+
+    deinit {
+        for observer in audioSessionObservers {
+            audioSessionNotificationCenter.removeObserver(observer)
+        }
     }
 
     public static func requestRecordPermission() async -> Bool {
@@ -3305,7 +3385,14 @@ public final class SystemRecordingClient: RecordingClient {
         #if os(watchOS)
         try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.allowBluetoothHFP])
         #else
-        try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        switch inputChoice {
+        case .phoneMicrophoneKeepingA2DP:
+            // No hands-free profile in the options: the Bluetooth microphone isn't an input, so iOS leaves
+            // the headphones on A2DP and records from the phone (#1506).
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        case .headsetMicrophoneAllowed:
+            try session.setCategory(.playAndRecord, mode: .spokenAudio, options: [.defaultToSpeaker, .allowBluetoothHFP])
+        }
         #endif
         try session.setActive(true)
         #endif
@@ -3405,10 +3492,18 @@ public final class SystemRecordingClient: RecordingClient {
         #if os(iOS) || os(watchOS)
         shouldNotifyOtherAudioOnFinish = session.categoryOptions.contains(.mixWithOthers)
         #endif
+        #if os(iOS)
+        inputChoice = RecordingInputPolicy.choice(outputPortTypes: session.currentRoute.outputs.map(\.portType.rawValue))
+        #else
+        inputChoice = .headsetMicrophoneAllowed
+        #endif
         let (recorder, url) = try startRecorder(cycleSession: false)
         isCaptureActive = true
         self.recorder = recorder
         self.currentURL = url
+        recordingStartedAt = Date()
+        awaitsInterruptionEnd = false
+        installAudioSessionObservers()
         #else
         throw SessionKitError.persistenceFailed("recording_unavailable")
         #endif
@@ -3439,10 +3534,17 @@ public final class SystemRecordingClient: RecordingClient {
                 durationKnown = false
             }
         }
+        #if os(iOS) || os(watchOS)
+        let inputRoute: String? = AVAudioSession.sharedInstance().currentRoute.inputs.map(\.portType.rawValue).joined(separator: "+")
+        #else
+        let inputRoute: String? = nil
+        #endif
         return RecordingCaptureReading(
             recorderRunning: recorder.isRecording,
             capturedMs: capturedHighWaterMs,
-            durationKnown: durationKnown
+            durationKnown: durationKnown,
+            peakPowerDb: peak,
+            inputRoute: inputRoute
         )
         #else
         return nil
@@ -3453,18 +3555,27 @@ public final class SystemRecordingClient: RecordingClient {
         #if canImport(AVFoundation)
         guard isCaptureActive else { throw SessionKitError.invalidCommandForState("restartCapture") }
         let previousURL = currentURL
-        recorder?.stop()
-        // The stop finalizes the file, and a restart deletes it. The poll that asked for this restart may be
-        // old, so read what the file really holds first and refuse to delete audio worth keeping.
-        // This one read is on the main thread, once, and only for a recorder that is already stopped.
-        switch previousURL.map(RecordedFileDuration.measure) ?? .milliseconds(0) {
-        case .milliseconds(let fileMs):
-            capturedHighWaterMs = max(capturedHighWaterMs, fileMs)
-        case .unreadable:
-            // The length is unknown, so the file may hold speech: keep it, never delete on a failed read.
-            throw SessionKitError.persistenceFailed("recording_unreadable")
+        // A restart deletes the file, and the poll that asked for it may be old, so work out what the recorder
+        // really holds first and refuse to delete audio worth keeping. None of this reads the file on the main
+        // thread (#1041). A running recorder says how much it has taken in until the moment it stops. One that
+        // had already stopped has a background measurement the poll started; if that hasn't landed, the length
+        // is unknown, which means keep.
+        let hadStopped = recorder.map { !$0.isRecording } ?? false
+        if let recorder, !hadStopped {
+            capturedHighWaterMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         }
-        if capturedHighWaterMs >= MarginCaptureTimings.keepAudioMs {
+        recorder?.stop()
+        switch CaptureRestartGuard.verdict(
+            capturedMs: capturedHighWaterMs,
+            recorderHadStopped: hadStopped,
+            measurement: stoppedMeasurement?.outcome
+        ) {
+        case .restart:
+            break
+        case .keepUnknown:
+            // The file may hold speech: keep it, never delete on an unfinished or failed read.
+            throw SessionKitError.persistenceFailed("recording_unreadable")
+        case .keepAudio:
             throw SessionKitError.persistenceFailed("recording_has_audio")
         }
         recorder?.delegate = nil
@@ -3482,9 +3593,18 @@ public final class SystemRecordingClient: RecordingClient {
         #endif
     }
 
+    public func recordingInProgressRef() -> String? {
+        #if canImport(AVFoundation)
+        guard isCaptureActive, let currentURL else { return nil }
+        return relativeRecordingPath(for: currentURL)
+        #else
+        return nil
+        #endif
+    }
+
     public func captureDiagnostics() -> [String: String] {
         #if canImport(AVFoundation)
-        var fields: [String: String] = ["captureRestarts": String(captureRestarts)]
+        var fields: [String: String] = ["captureRestarts": String(captureRestarts), "inputPolicy": inputChoice.rawValue]
         if let recorder {
             fields["recorderRunning"] = String(recorder.isRecording)
             fields["capturedMs"] = String(max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded())))
@@ -3520,6 +3640,7 @@ public final class SystemRecordingClient: RecordingClient {
         recorder.stop()
         self.recorder = nil
         self.currentURL = nil
+        recordingEnded()
         #if os(iOS) || os(watchOS)
         if deactivateSessionOnFinish || shouldNotifyOtherAudioOnFinish {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -3541,6 +3662,7 @@ public final class SystemRecordingClient: RecordingClient {
         recorder?.deleteRecording()
         recorder = nil
         currentURL = nil
+        recordingEnded()
         shouldNotifyOtherAudioOnFinish = false
         if let url {
             try? fileManager.removeItem(at: url)
@@ -3549,6 +3671,82 @@ public final class SystemRecordingClient: RecordingClient {
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         #endif
         #endif
+    }
+
+    /// Seconds since recording started, or nil when not recording.
+    private var recordedSeconds: TimeInterval? {
+        recordingStartedAt.map { max(0, Date().timeIntervalSince($0)) }
+    }
+
+    private func recordingEnded() {
+        recordingStartedAt = nil
+        // Keep listening for the end of an interruption that stopped this recording.
+        if !awaitsInterruptionEnd { removeAudioSessionObservers() }
+    }
+
+    private func installAudioSessionObservers() {
+        removeAudioSessionObservers()
+        #if canImport(AVFoundation) && os(iOS)
+        let center = audioSessionNotificationCenter
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            guard let self,
+                  let typeValue = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+                  let type = AVAudioSession.InterruptionType(rawValue: typeValue) else { return }
+            switch type {
+            case .began:
+                // While waiting for an end that may never come, a new interruption is reported
+                // too, so the app drops the stale resume.
+                guard self.recordingStartedAt != nil || self.awaitsInterruptionEnd else { return }
+                if !self.awaitsInterruptionEnd { self.headphonesWhenInterrupted = Self.headphoneOutputs() }
+                self.awaitsInterruptionEnd = true
+                self.onInterruption?(.interruptionBegan, self.recordedSeconds)
+            case .ended:
+                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let shouldResume = AVAudioSession.InterruptionOptions(rawValue: rawOptions).contains(.shouldResume)
+                let wasAwaiting = self.awaitsInterruptionEnd
+                self.awaitsInterruptionEnd = false
+                if self.recordingStartedAt == nil { self.removeAudioSessionObservers() }
+                guard wasAwaiting else { return }
+                if !self.headphonesWhenInterrupted.isSubset(of: Self.headphoneOutputs()) {
+                    self.onInterruption?(.routeLost, self.recordedSeconds)
+                }
+                self.headphonesWhenInterrupted = []
+                self.onInterruption?(.interruptionEnded(shouldResume: shouldResume), self.recordedSeconds)
+            @unknown default:
+                break
+            }
+        })
+        audioSessionObservers.append(center.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            // Also while a call that stopped a Margin is on: lost headphones cancel its resume.
+            guard let self, self.recordingStartedAt != nil || self.awaitsInterruptionEnd,
+                  let reasonValue = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+                  AVAudioSession.RouteChangeReason(rawValue: reasonValue) == .oldDeviceUnavailable else { return }
+            self.onInterruption?(.routeLost, self.recordedSeconds)
+        })
+        #endif
+    }
+
+    #if canImport(AVFoundation) && os(iOS)
+    /// By name: AirPods change port (and UID) between music and a call's two-way profile.
+    private static func headphoneOutputs() -> Set<String> {
+        let headphoneTypes: Set<AVAudioSession.Port> = [.headphones, .bluetoothA2DP, .bluetoothLE, .bluetoothHFP, .usbAudio]
+        return Set(AVAudioSession.sharedInstance().currentRoute.outputs.filter { headphoneTypes.contains($0.portType) }.map(\.portName))
+    }
+    #endif
+
+    private func removeAudioSessionObservers() {
+        for observer in audioSessionObservers {
+            audioSessionNotificationCenter.removeObserver(observer)
+        }
+        audioSessionObservers.removeAll()
     }
 
     private func recordingsDirectory() throws -> URL {

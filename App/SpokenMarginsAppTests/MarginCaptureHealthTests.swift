@@ -6,8 +6,36 @@ import SessionKit
 /// and the empty file was saved as a Margin. The screen follows what the recorder has taken in.
 @MainActor
 final class MarginCaptureHealthTests: XCTestCase {
+    // A fresh simulator has never accepted the Terms, so the default voice holds text playback behind the
+    // Terms sheet, `startItem` plays nothing and `beginInterjection` is refused. Run alone on a fresh
+    // simulator, every test here failed that way (lane report pr1301-r38057340698). Accept them before the
+    // model is made (it reads them at init) and put the earlier answer back afterwards, so order doesn't matter.
+    private static let termsKeys = [SpokenMarginsTerms.acceptanceVersionKey, SpokenMarginsTerms.acceptanceDateKey]
+    private var priorTermsDefaults: [String: Any] = [:]
+
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        priorTermsDefaults = [:]
+        for key in Self.termsKeys {
+            priorTermsDefaults[key] = UserDefaults.standard.object(forKey: key)
+        }
+        SpokenMarginsTerms.recordAcceptance()
+    }
+
+    override func tearDownWithError() throws {
+        for key in Self.termsKeys {
+            if let value = priorTermsDefaults[key] {
+                UserDefaults.standard.set(value, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
+        try super.tearDownWithError()
+    }
+
     /// A recorder that accepts its start, as the phone's did, and then takes in only what the test lets it.
-    private final class ScriptedRecordingClient: RecordingClient {
+    private final class ScriptedRecordingClient: RecordingClient, RecordingInterruptionReporting {
+        var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
         /// What the recorder reports as audio taken in. The phone's said 22 and stayed there.
         var capturedMs: Int
         /// Audio grows by the time that passes, as a working microphone's does.
@@ -123,6 +151,50 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(harness.model.recordingCaptureHealth, .capturing, "the state resets for the next Margin")
     }
 
+    /// #771 audit P2: a call after ten seconds on the clock, with a microphone that took in 22 ms, must not
+    /// save an empty voice as a Margin. The interruption path asks the watcher, as Save does. (Ten seconds,
+    /// because each automatic restart resets the supervisor's clock and it judges only after 1.5 s on it.)
+    func testACallDuringARecordingThatTookInNothingSavesNoMargin() async throws {
+        let harness = Harness(recorder: ScriptedRecordingClient(capturedMs: 22))
+        harness.run(seconds: 10)
+        let marginCount = harness.model.selectedItem.interjections.count
+        // What the phone does: iOS stops the recorder, and its file has not been measured yet.
+        harness.recorder.stoppedButReports = true
+        harness.recorder.durationUnknown = true
+
+        harness.recorder.onInterruption?(.interruptionBegan, 10)
+        for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertFalse(harness.model.snapshot.isRecording)
+        XCTAssertEqual(harness.recorder.finishCount, 0, "an empty voice must not be saved as a Margin")
+        XCTAssertEqual(harness.recorder.cancelCount, 1)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, marginCount)
+        XCTAssertEqual(harness.model.snapshot.status, .paused, "the source still waits through the call")
+        XCTAssertNil(harness.model.diagnostics["lastMarginCutShort"])
+        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=discard_empty"), true)
+        XCTAssertEqual(harness.model.statusMessage.contains("hadn't picked up any sound"), true)
+    }
+
+    /// #771 audit P2: a recording that did take in speech is still kept, and its end-of-recording line is written.
+    func testACallDuringARecordingWithSpeechSavesItAndWritesTheCaptureLine() async throws {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        harness.run(seconds: 5)
+        let marginCount = harness.model.selectedItem.interjections.count
+        recorder.stoppedButReports = true
+        recorder.durationUnknown = true
+
+        recorder.onInterruption?(.interruptionBegan, 5)
+        for _ in 0..<50 where harness.model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+
+        XCTAssertFalse(harness.model.snapshot.isRecording)
+        XCTAssertEqual(recorder.finishCount, 1)
+        XCTAssertEqual(recorder.cancelCount, 0)
+        XCTAssertEqual(harness.model.selectedItem.interjections.count, marginCount + 1)
+        XCTAssertEqual(harness.model.diagnostics["lastVoiceCapture"]?.contains("outcome=save_cut_short;"), true)
+    }
+
     func testARestartThatWorksShowsRecordingOnceAudioArrives() {
         let recorder = ScriptedRecordingClient(capturedMs: 22)
         recorder.healthyAfterRestart = true
@@ -148,6 +220,30 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertFalse(harness.model.snapshot.isRecording)
         XCTAssertEqual(recorder.finishCount, 1)
         XCTAssertEqual(recorder.cancelCount, 0)
+    }
+
+    /// #1291 APO-03: a double tap on Save & resume reaches `finishInterjection()` twice. The UI test that
+    /// double-taps Save never counted what was saved, and `Gate1FlowUITests` runs nowhere, so the count is
+    /// checked here. The seeded item may already have Margins, so it counts from before the recording.
+    func testADoubleTapOnSaveSavesExactlyOneMargin() {
+        let recorder = ScriptedRecordingClient(capturedMs: 0)
+        recorder.growsWithTime = true
+        let harness = Harness(recorder: recorder)
+        let model = harness.model
+        model.refreshMarginRows()
+        let before = model.marginRows.count
+        harness.run(seconds: 10)
+        XCTAssertTrue(model.snapshot.isRecording, "precondition: the Margin is recording")
+
+        model.finishInterjection()
+        model.finishInterjection()
+
+        model.refreshMarginRows()
+        XCTAssertEqual(model.marginRows.count, before + 1, "a double tap on Save saves exactly one Margin")
+        XCTAssertEqual(recorder.finishCount, 1, "the recorder is finished once")
+        XCTAssertEqual(recorder.cancelCount, 0, "the second tap does not discard or cancel anything")
+        XCTAssertFalse(model.snapshot.isRecording, "the second tap does not start or keep a recording")
+        XCTAssertNil(model.lastError, "the second tap is ignored, not reported as a failure")
     }
 
     func testTryAgainRestartsTheRecorderAfterAFailure() {
@@ -361,6 +457,29 @@ final class MarginCaptureHealthTests: XCTestCase {
         XCTAssertEqual(recorder.finishCount, 1, "Save keeps it")
         XCTAssertEqual(recorder.cancelCount, 0, "and does not cancel it as empty")
         XCTAssertEqual(harness.model.statusMessage.hasPrefix("Margin saved, but part of it may be missing"), true)
+    }
+
+    func testAMeasurementThatResolvesUnderTheLineReplacesTheKeptMessageWithTryAgain() {
+        // #1041: after retries are used up, a pending measurement is "unknown, keep". When it lands under 250 ms
+        // the health and restart count don't change, but the words and Try again must.
+        let recorder = ScriptedRecordingClient(capturedMs: 22)
+        recorder.stoppedButReports = true
+        recorder.durationUnknown = true
+        recorder.restartFails = true
+        let harness = Harness(recorder: recorder)
+
+        harness.run(seconds: 3)
+
+        XCTAssertTrue(harness.model.recordingHasKeepableAudio)
+        XCTAssertFalse(harness.model.canRetryMicrophone)
+        XCTAssertEqual(harness.model.lastError?.contains("kept if you tap Save"), true)
+
+        recorder.durationUnknown = false
+        harness.run(seconds: 1)
+
+        XCTAssertFalse(harness.model.recordingHasKeepableAudio)
+        XCTAssertTrue(harness.model.canRetryMicrophone)
+        XCTAssertEqual(harness.model.lastError?.contains("Tap Try again"), true)
     }
 
     func testAShortRecordingThatStallsIsKeptBySaveAndNotDeletedByTryAgain() {

@@ -46,7 +46,7 @@ final class SystemVoiceSessionTests: XCTestCase {
         func add(_ count: Int) { lock.withLock { frames += count } }
     }
 
-    private func probe(usesApplicationAudioSession: Bool) async throws -> Probe {
+    private func probe(_ renderer: SystemVoiceChunkRenderer) async throws -> Probe {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .spokenAudio, options: [])
         try session.setActive(true)
@@ -100,7 +100,6 @@ final class SystemVoiceSessionTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: reference) }
 
         let startDuring = counter.value
-        let renderer = SystemVoiceChunkRenderer(usesApplicationAudioSession: usesApplicationAudioSession)
         for index in 0..<3 {
             let output = FileManager.default.temporaryDirectory.appending(path: "system-voice-\(index)-\(UUID().uuidString).wav")
             defer { try? FileManager.default.removeItem(at: output) }
@@ -123,9 +122,17 @@ final class SystemVoiceSessionTests: XCTestCase {
 
     /// The renderer as it ships: the synthesizer stays off the app's session. App audio must keep
     /// rendering through the writes and afterwards, with no interruption or route change.
+    /// APA-06 (#1042): this used to pass `usesApplicationAudioSession: false` itself, so flipping the default
+    /// that `SupertonicOutputGuard` relies on left it green. It now builds the renderer the way the guard
+    /// does; `SystemVoiceChunkRendererDefaultTests` pins that default on the host, because this probe may not
+    /// tell the two settings apart on the simulator. The shared-session setting (#288's) is checked on a phone.
     func testWritingIOSVoiceChunksLeavesTheAppsPlayingAudioUndisturbed() async throws {
-        let result = try await probe(usesApplicationAudioSession: false)
-        print("#288 probe usesApplicationAudioSession=false: \(result)")
+        // #768: on a wedged simulator the engine start in `probe` aborts the app; check the voice answers
+        // first. That check may wait on the speech service's cold start (#1230), so allow the plan's maximum.
+        executionTimeAllowance = 180
+        try await SystemVoiceRuntime.requireAnsweringVoice()
+        let result = try await probe(SystemVoiceChunkRenderer())
+        print("#288 probe, renderer as the output guard builds it: \(result)")
         XCTAssertEqual(result.written.count, 3, "every chunk was written")
         XCTAssertTrue(result.written.allSatisfy { $0 > 0.5 }, "\(result.written)")
         XCTAssertEqual(result.interruptions, 0, "\(result)")
@@ -133,13 +140,5 @@ final class SystemVoiceSessionTests: XCTestCase {
         XCTAssertTrue(result.engineRunningAfter, "\(result)")
         XCTAssertGreaterThan(result.framesAfter, 22_050, "app audio still renders a second later: \(result)")
         XCTAssertEqual(result.categoryAfter, result.categoryBefore, "\(result)")
-    }
-
-    /// Build 30 candidate behavior, recorded for comparison (the synthesizer shares the app's
-    /// session). Not asserted: whether the simulator shows the device's disturbance is part of
-    /// what this measures.
-    func testRecordWhatSharingTheAppsSessionDoes() async throws {
-        let result = try await probe(usesApplicationAudioSession: true)
-        print("#288 probe usesApplicationAudioSession=true: \(result)")
     }
 }

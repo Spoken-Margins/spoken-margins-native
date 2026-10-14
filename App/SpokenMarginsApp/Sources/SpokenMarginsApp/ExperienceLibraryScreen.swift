@@ -8,6 +8,7 @@ struct ExperienceLibraryScreen: View {
 
     @Binding var addSourceRoute: AddSourceRoute?
     @State private var isAudioPreparationQueuePresented = false
+    @State private var collectionItem: LibraryItemRow?
 
     private var continueItem: LibraryItemRow? {
         LibraryPresentation.continueItem(in: model.libraryItems, activeItemId: model.activePlaybackItemId)
@@ -23,6 +24,11 @@ struct ExperienceLibraryScreen: View {
             List {
                 controls
                     .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+
+                if model.sourceLinksWaitingForNetwork > 0 {
+                    PendingLinksWaitingLine(count: model.sourceLinksWaitingForNetwork)
+                        .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 4)
+                }
 
                 items
 
@@ -48,6 +54,10 @@ struct ExperienceLibraryScreen: View {
         .accessibilityIdentifier("library.screen")
         .sheet(isPresented: $isAudioPreparationQueuePresented) {
             ExperienceAudioPreparationQueueScreen()
+                .environmentObject(model)
+        }
+        .sheet(item: $collectionItem) { item in
+            ItemCollectionSheet(item: item)
                 .environmentObject(model)
         }
     }
@@ -329,6 +339,7 @@ struct ExperienceLibraryScreen: View {
                     onComplete: { model.markItemCompleted(id: row.id) },
                     onMarkUnfinished: { model.markItemUnfinished(id: row.id) },
                     onPrepareOffline: { model.prioritizeOfflinePreparation(id: row.id) },
+                    onAddToCollection: { collectionItem = row },
                     onDelete: { model.moveItemToTrash(id: row.id) }
                 )
                 .libraryRowLayout(horizontalSizeClass: horizontalSizeClass)
@@ -353,6 +364,7 @@ private struct ExperienceLibraryCompactRow: View {
     let onComplete: () -> Void
     let onMarkUnfinished: () -> Void
     let onPrepareOffline: () -> Void
+    let onAddToCollection: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -440,6 +452,7 @@ private struct ExperienceLibraryCompactRow: View {
             if row.offlineState != .readyOffline {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
             }
+            Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }
@@ -475,6 +488,7 @@ private struct ExperienceLibraryCompactRow: View {
             }
         }
         .accessibilityAction(named: "Prepare Offline", onPrepareOffline)
+        .accessibilityAction(named: "Add to Collection", onAddToCollection)
         .accessibilityAction(named: "Move to Recently Deleted", onDelete)
     }
 
@@ -580,21 +594,5 @@ private extension View {
         ))
         .listRowBackground(AppColors.bone)
         .listRowSeparator(.hidden)
-    }
-}
-
-extension LibraryItemRow {
-    var mediaSymbol: String {
-        if hasNativeAudio { return "headphones" }
-        return switch mediaType.lowercased() {
-        case "podcast", "audio", "audiobook", "m4a", "m4b", "mp3":
-            "headphones"
-        case "pdf":
-            "doc.richtext"
-        case "epub":
-            "book.closed"
-        default:
-            "doc.text"
-        }
     }
 }

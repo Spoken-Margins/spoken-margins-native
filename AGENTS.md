@@ -43,6 +43,13 @@ Replace this section when the focus changes; do not append to it.
     - Otherwise it's opt-in.
   - **Keep no user data that could identify someone unless the feature needs it.** Where a feature needs it (a voice Margin is traceable by voice alone), encrypt it end to end so the server holds only unreadable bytes, as share links do (#805).
   - **Owner ideas are challenges, not directives.** When the owner suggests a solution, solve the challenge it serves. Treat the suggestion as one example and pick whatever works best.
+- **Owner's standing calls (2026-10-10).** Don't ask again:
+  - **Database changes stay backward compatible.** A full database migration happens only after the app tells the listener and they tap to migrate.
+  - **Map lookups and relay features are opt-in** until an anonymous relay exists. Relay experiments are fine; spend nothing until the owner approves a price.
+  - **Cloud voices start as a limited trial** (a couple of minutes per listener). No payment work until the trial shows whether to charge. Server maps stay free.
+  - **Solid Ground has no ship pressure.** Start the second half of the model split now; cutting Solid Ground off as its own branch first is fine.
+- **Owner's standing call (2026-10-11).** Don't ask again:
+  - **A recovered startup stall is a PASS.** A T3 plan (app or adapters) that stalls once at startup, recovers on the first retry and then passes every requested test reports PASS, not INCONCLUSIVE. Each stall is logged on #705 as evidence. This is an owner-accepted exception to #705's "don't convert this INCONCLUSIVE to PASS" while the cause is still open; #705 stays open. Two or more stalls, or a stall that doesn't recover, keep their verdict.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
@@ -60,6 +67,7 @@ Replace this section when the focus changes; do not append to it.
   - `SessionKitSharing`: packets, import/export.
 - `Contracts/`: JSON schemas, fixtures and product docs bundled with the app. `Contracts/docs/recovery-mvp.md` is the product boundary.
 - `docs/`: durable product and architecture notes. `docs/archive/` holds historical process documents; don't treat them as instructions.
+  - `docs/areas.md`: the four product areas and what "excellent" means in each. Read the issue's area before scoping it or calling it done.
 - `project.yml`: XcodeGen spec. The `.xcodeproj` is generated from it with `xcodegen generate`, and both are committed.
 
 ## How to work
@@ -78,8 +86,8 @@ Replace this section when the focus changes; do not append to it.
   3. what it is meant to catch, with evidence it catches it (a past failure it would have caught);
   4. the signal that would show it's waste, which the lane's step ledger (`scripts/lane_ledger.py`) watches.
   - The audit and reviewers block a pipeline PR without it. The per-PR app builds ran 140 times in a week and caught nothing (#1196).
-  - Pipeline waste fixes outrank feature work in dispatch. A lane or pipeline fix never waits on the owner's phone check: no `needs-human-validation` on lane fixes.
-  - A PR touching `scripts/lane-runner.py` that the runner won't merge goes to the lead session the same day, for the owner's merge tap.
+  - Pipeline waste fixes outrank feature work in dispatch. A lane or pipeline fix never waits on the owner's phone check: no `needs-human-validation` on lane fixes, model-split moves or test fixes. Close those once merged into `next` ([workstreams README](docs/workstreams/README.md#branches-and-merging)).
+  - The runner never merges a PR touching `scripts/lane-runner.py` or `.github/`, whatever the audit says. Such a PR goes to the lead session the same day, for the owner's merge tap.
 - **Small, verified commits.** Each commit is one logical change with a message that says what was wrong and why the change fixes it. The commit message and PR description are the record, so don't write separate handoff, audit or status files for routine work.
 - **Branches.** Each PR gets its own branch, off `next` or, one level deep, off your own armed branch (project threads: `ws/<issue>-<slug>`). Don't push new work to a branch whose PR is armed: the runner could merge it half done. Merging to `main`, pushing `main`, archiving, uploading and distributing are the owner's decisions; ask first.
 - **Decide reversible and technical things yourself.** When a choice can be undone later, or is an engineering call (dead code, refactors, deleting unused paths, internal structure, test and lane choices, when to schedule engineering work), post it on your stream's tracking issue under a **Default taken** heading (the options, your pick, why) and keep going on your pick; the owner vetoes by number. Stop and ask only when the choice touches the owner's data, packet or database compatibility, money, his accounts or machines, anything public, `main` or a release, or product taste he'd notice on the phone (design, voice). How to ask: "Working with the owner".

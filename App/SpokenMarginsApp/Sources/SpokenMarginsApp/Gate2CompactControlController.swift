@@ -674,14 +674,88 @@ final class Gate2CompactControlController {
     }
 }
 
+#if canImport(ActivityKit)
+/// One Live Activity card as the controller's sweeps see it: ActivityKit's `Activity` in the app,
+/// a fake in tests, so the orphan sweep and duplicate pruning run under test (APO-05, #1291).
+protocol Gate2LiveActivityCard: Sendable {
+    var id: String { get }
+    var sessionId: String { get }
+    var state: ActivityState { get }
+    func update(_ state: Gate2LiveActivityAttributes.ContentState, staleDate: Date?) async
+    /// Ends the card and takes it off the screen now.
+    func endImmediately() async
+    /// Ends the card with its current content; iOS removes it at `date`.
+    func endKeepingContent(dismissAt date: Date) async
+}
+
+/// Where the Live Activity controller reads, requests and checks permission for cards.
+struct Gate2LiveActivitySystem: Sendable {
+    var areActivitiesEnabled: @MainActor @Sendable () -> Bool
+    var activities: @Sendable () -> [any Gate2LiveActivityCard]
+    /// Requests a new card and returns its id.
+    var request: @Sendable (
+        _ sessionId: String,
+        _ state: Gate2LiveActivityAttributes.ContentState,
+        _ staleDate: Date?
+    ) throws -> String
+
+    static let activityKit = Gate2LiveActivitySystem(
+        areActivitiesEnabled: { ActivityAuthorizationInfo().areActivitiesEnabled },
+        activities: { Activity<Gate2LiveActivityAttributes>.activities.map(ActivityKitLiveActivityCard.init) },
+        request: { sessionId, state, staleDate in
+            try Activity<Gate2LiveActivityAttributes>.request(
+                attributes: Gate2LiveActivityAttributes(sessionId: sessionId),
+                content: ActivityContent(state: state, staleDate: staleDate),
+                pushType: nil
+            ).id
+        }
+    )
+}
+
+private struct ActivityKitLiveActivityCard: Gate2LiveActivityCard, @unchecked Sendable {
+    let activity: Activity<Gate2LiveActivityAttributes>
+
+    var id: String { activity.id }
+    var sessionId: String { activity.attributes.sessionId }
+    var state: ActivityState { activity.activityState }
+
+    func update(_ state: Gate2LiveActivityAttributes.ContentState, staleDate: Date?) async {
+        await activity.update(ActivityContent(state: state, staleDate: staleDate))
+    }
+
+    func endImmediately() async {
+        let content: ActivityContent<Gate2LiveActivityAttributes.ContentState>? = nil
+        await activity.end(content, dismissalPolicy: .immediate)
+    }
+
+    func endKeepingContent(dismissAt date: Date) async {
+        await activity.end(activity.content, dismissalPolicy: .after(date))
+    }
+}
+#endif
+
 @MainActor
-private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
+final class Gate2LiveActivityController: Gate2LiveActivityControlling {
+    #if canImport(ActivityKit)
+    private let system: Gate2LiveActivitySystem
+    #endif
     private var activityId: String?
     private var adoptedSessionId: String?
     private var hasSweptEarlierProcess = false
     private var publishGeneration = 0
     private var activityTask: Task<Void, Never>?
     private(set) var status = "not_started"
+
+    #if canImport(ActivityKit)
+    init(system: Gate2LiveActivitySystem = .activityKit) {
+        self.system = system
+    }
+    #endif
+
+    /// Waits for the queued ActivityKit work to finish (tests).
+    func waitForPendingWork() async {
+        await activityTask?.value
+    }
 
     func publish(
         _ snapshot: CompactControlSnapshot,
@@ -698,10 +772,11 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         let generation = publishGeneration
         let previousActivityTask = activityTask
         #if canImport(ActivityKit)
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+        guard system.areActivitiesEnabled() else {
             status = "disabled"
             return
         }
+        let system = system
         if let sessionId = snapshot.sessionId,
            snapshot.status.isPlaybackActive || snapshot.isRecording {
             adoptedSessionId = sessionId
@@ -720,6 +795,7 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
                 await previousActivityTask?.value
                 guard generation == publishGeneration else { return }
                 let endedCount = await Self.endInactiveActivities(
+                    system.activities(),
                     inactiveSessionId: inactiveSessionId,
                     trackedActivityId: trackedActivityId,
                     isFirstPassInProcess: isFirstPassInProcess
@@ -755,7 +831,7 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             await previousActivityTask?.value
             guard generation == publishGeneration else { return }
             // Publishing ends every other session's activity and any duplicate, so it is a sweep too.
-            let result = await Self.publishActivity(sessionId: sessionId, state: state, staleDate: staleDate)
+            let result = await Self.publishActivity(system, sessionId: sessionId, state: state, staleDate: staleDate)
             hasSweptEarlierProcess = true
             guard generation == publishGeneration else { return }
             activityId = result.activityId
@@ -784,7 +860,7 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
             // immediately after an apparently successful end-all pass.
             await previousActivityTask?.value
             guard generation == publishGeneration else { return }
-            let endedCount = await Self.endInactiveActivities(inactiveSessionId: nil, trackedActivityId: nil)
+            let endedCount = await Self.endInactiveActivities(system.activities(), inactiveSessionId: nil, trackedActivityId: nil)
             guard generation == publishGeneration else { return }
             activityId = nil
             adoptedSessionId = nil
@@ -808,7 +884,7 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
         let task = Task { @MainActor in
             await previousActivityTask?.value
             guard generation == publishGeneration else { return }
-            let count = await Self.handOffActivities(dismissAt: date)
+            let count = await Self.handOffActivities(system.activities(), dismissAt: date)
             guard generation == publishGeneration else { return }
             activityId = nil
             adoptedSessionId = nil
@@ -823,82 +899,72 @@ private final class Gate2LiveActivityController: Gate2LiveActivityControlling {
     }
 
     #if canImport(ActivityKit)
-    private nonisolated static func handOffActivities(dismissAt date: Date) async -> Int {
+    private nonisolated static func handOffActivities(_ cards: [any Gate2LiveActivityCard], dismissAt date: Date) async -> Int {
         var count = 0
-        for activity in Activity<Gate2LiveActivityAttributes>.activities
-        where activity.activityState == .active || activity.activityState == .stale {
-            await activity.end(activity.content, dismissalPolicy: .after(date))
+        for card in cards where card.state == .active || card.state == .stale {
+            await card.endKeepingContent(dismissAt: date)
             count += 1
         }
         return count
     }
 
     private nonisolated static func publishActivity(
+        _ system: Gate2LiveActivitySystem,
         sessionId: String,
         state: Gate2LiveActivityAttributes.ContentState,
         staleDate: Date?
     ) async -> (activityId: String?, status: String) {
-        let content = ActivityContent(state: state, staleDate: staleDate)
-        let activities = Activity<Gate2LiveActivityAttributes>.activities
-        var matchingActivities: [Activity<Gate2LiveActivityAttributes>] = []
+        var matchingCards: [any Gate2LiveActivityCard] = []
         var endedCount = 0
-        for activity in activities {
+        for card in system.activities() {
             // A card handed off to iOS is ended but still on screen, saying "Paused". It can't be
             // updated, so it goes now and a new card is requested.
-            if activity.activityState == .ended {
-                await end(activity)
+            if card.state == .ended {
+                await card.endImmediately()
                 endedCount += 1
                 continue
             }
-            if Gate2LiveActivityPolicy.shouldEnd(activitySessionId: activity.attributes.sessionId, currentSessionId: sessionId) {
-                await end(activity)
+            if Gate2LiveActivityPolicy.shouldEnd(activitySessionId: card.sessionId, currentSessionId: sessionId) {
+                await card.endImmediately()
                 endedCount += 1
             } else {
-                matchingActivities.append(activity)
+                matchingCards.append(card)
             }
         }
-        if let activity = matchingActivities.first {
-            await activity.update(content)
-            for duplicate in matchingActivities.dropFirst() {
-                await end(duplicate)
+        if let card = matchingCards.first {
+            await card.update(state, staleDate: staleDate)
+            for duplicate in matchingCards.dropFirst() {
+                await duplicate.endImmediately()
                 endedCount += 1
             }
-            return (activity.id, endedCount > 0 ? "updated_pruned_stale" : "updated")
+            return (card.id, endedCount > 0 ? "updated_pruned_stale" : "updated")
         }
         do {
-            let activity = try Activity<Gate2LiveActivityAttributes>.request(
-                attributes: Gate2LiveActivityAttributes(sessionId: sessionId),
-                content: content,
-                pushType: nil
-            )
-            return (activity.id, "started")
+            let requestedId = try system.request(sessionId, state, staleDate)
+            return (requestedId, "started")
         } catch {
             return (nil, "failed:\(error.localizedDescription)")
         }
     }
 
     private nonisolated static func endInactiveActivities(
+        _ cards: [any Gate2LiveActivityCard],
         inactiveSessionId: String?,
         trackedActivityId: String?,
         isFirstPassInProcess: Bool = false
     ) async -> Int {
         var endedCount = 0
-        for activity in Activity<Gate2LiveActivityAttributes>.activities where Gate2LiveActivityPolicy.shouldEndInactive(
-            activitySessionId: activity.attributes.sessionId,
-            activityId: activity.id,
+        for card in cards where Gate2LiveActivityPolicy.shouldEndInactive(
+            activitySessionId: card.sessionId,
+            activityId: card.id,
             inactiveSessionId: inactiveSessionId,
             trackedActivityId: trackedActivityId,
             isFirstPassInProcess: isFirstPassInProcess
         ) {
-            await end(activity)
+            await card.endImmediately()
             endedCount += 1
         }
         return endedCount
-    }
-
-    private nonisolated static func end(_ activity: Activity<Gate2LiveActivityAttributes>) async {
-        let content: ActivityContent<Gate2LiveActivityAttributes.ContentState>? = nil
-        await activity.end(content, dismissalPolicy: .immediate)
     }
     #endif
 }
@@ -1073,11 +1139,15 @@ private final class Gate2LiveSpeechNowPlayingController {
             configureRemoteCommandAvailability(for: snapshot)
         }
         let timeline = Gate2NowPlayingTimelineMetadata(snapshot: snapshot)
+        // A pending start publishes rate 0 and a loading line: iOS runs the clock from a nonzero rate (#943).
+        let presentation = SystemPlaybackPresentation(
+            status: snapshot.status, selectedRate: snapshot.playbackRate, isNarration: publishesLiveSpeech
+        )
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: snapshot.title ?? "Spoken Margins",
             MPMediaItemPropertyAlbumTitle: snapshot.chapterTitle ?? "Session",
-            MPMediaItemPropertyArtist: "Spoken Margins",
-            MPNowPlayingInfoPropertyPlaybackRate: snapshot.status.isPlaybackActive ? snapshot.playbackRate : 0,
+            MPMediaItemPropertyArtist: presentation.loadingLine ?? "Spoken Margins",
+            MPNowPlayingInfoPropertyPlaybackRate: presentation.playbackRate,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         if let elapsedSeconds = timeline.elapsedSeconds,

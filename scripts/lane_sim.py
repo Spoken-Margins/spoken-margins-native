@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -124,6 +125,76 @@ def create_temporary(name: str) -> str:
     if not runtime:
         raise BootError(f'No iOS {IOS_MAJOR} simulator runtime is installed.')
     return subprocess.check_output(simctl() + ['create', name, DEVICE_TYPE, runtime], text=True).strip()
+
+
+def clone_temporary(name: str, runtime: str, out=sys.stderr) -> str:
+    """Clone the lane's clean, first-booted template. The caller holds a simulator slot.
+
+    Only this function creates/boots the template; tests never install anything into it. The
+    state file is a completion marker, written after shutdown and the late-report check. A lock
+    prevents two jobs warming or cloning a half-prepared template. Runtime and Xcode changes
+    invalidate it. An unsafe or missing template is replaced, never booted again.
+    """
+    directory = state_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    marker = directory / 't3-template.json'
+    template_name = 'SM Lane T3 template'
+    toolchain = subprocess.check_output(['xcodebuild', '-version'], text=True, timeout=30).strip()
+    key = [runtime, DEVICE_TYPE, toolchain]
+    with (directory / 't3-template.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            saved = json.loads(marker.read_text())
+        except (OSError, ValueError):
+            saved = {}
+        if not isinstance(saved, dict):
+            saved = {}
+
+        def owned_devices():
+            listed = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'available', '--json'],
+                                                        text=True, timeout=120))['devices']
+            return {d['udid']: (r, d) for r, group in listed.items() for d in group
+                    if d.get('name') == template_name and d.get('deviceTypeIdentifier') == DEVICE_TYPE}
+
+        owned = owned_devices()
+        udid = saved.get('udid')
+        ready = (bool(saved.get('boot_window')) and saved.get('key') == key and udid in owned and owned[udid][0] == runtime
+                 and owned[udid][1].get('state') == 'Shutdown' and udid not in unsafe_devices())
+        if ready:
+            report = late_report(crash_reports_dir(), udid, saved['boot_window'])
+            if report:
+                mark_unsafe(udid, f'late crash report for template boot: {report.name}')
+                ready = False
+        if not ready:
+            marker.unlink(missing_ok=True)
+            # Only retire devices this function owns, never an arbitrary UDID from a state file.
+            for old in owned:
+                release(old)
+            udid = subprocess.check_output(simctl() + ['create', template_name, DEVICE_TYPE, runtime],
+                                           text=True, timeout=120).strip()
+            info = {}
+            completed = False
+            try:
+                boot(udid, 'T3 template first boot', out=out, info=info, first_boot=True)
+                start_watcher(udid, Path(__file__).resolve().with_name('lane-sim-boot'),
+                              crash_window=info.get('boot_window'))
+                # Once per template: give delayed boot crash reports time to reach the watcher.
+                # A failed template is deleted; no clone inherits its state and no boot is retried.
+                time.sleep(LATE_REPORT_WAIT)
+                completed = udid not in unsafe_devices()
+            finally:
+                release(udid, keep=completed)
+            report = late_report(crash_reports_dir(), udid, info['boot_window'])
+            stopped = owned_devices().get(udid)
+            if udid in unsafe_devices() or report or not stopped or stopped[1].get('state') != 'Shutdown':
+                if report:
+                    mark_unsafe(udid, f'late crash report for template boot: {report.name}')
+                if completed:
+                    release(udid)
+                raise BootError('The T3 template was unsafe or did not shut down; it was deleted and no clone was made.')
+            marker.write_text(json.dumps({'udid': udid, 'key': key, 'boot_window': info['boot_window']}) + '\n')
+        print(f'[lane] cloning first-booted template {udid} for {name}', file=out, flush=True)
+        return subprocess.check_output(simctl() + ['clone', udid, name], text=True, timeout=120).strip()
 
 
 def crash_reports(reports: Path):

@@ -167,30 +167,66 @@ public struct ReadwiseSentLedger: Sendable {
         var sent: [String]
         /// Item id to its page on readwise.io.
         var links: [String: String]?
+        /// Which connection this history belongs to (#1467). Disconnect starts a new one; saving a new
+        /// token without disconnecting does not. Build 29 and the files before this one have none.
+        var destination: String?
     }
+
+    /// The file is read and rewritten whole, from a pass off the main actor and from Disconnect on it.
+    private static let lock = NSLock()
 
     private func load() throws -> File {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return File(sent: []) }
         return try JSONDecoder().decode(File.self, from: Data(contentsOf: fileURL))
     }
 
-    public func sentKeys() throws -> Set<String> { Set(try load().sent) }
+    private func write(_ file: File) throws {
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(file).write(to: fileURL, options: .atomic)
+    }
+
+    public func sentKeys() throws -> Set<String> { try Self.lock.withLock { Set(try load().sent) } }
 
     /// Each item's readwise.io page, for the items whose Margins were sent since links were kept.
     public func links() throws -> [String: URL] {
-        (try load().links ?? [:]).compactMapValues { URL(string: $0) }
+        try Self.lock.withLock { (try load().links ?? [:]).compactMapValues { URL(string: $0) } }
+    }
+
+    /// The connection the history belongs to; nil for a file from before connections were told apart.
+    public func destination() throws -> String? { try Self.lock.withLock { try load().destination } }
+
+    /// Disconnect ends the connection: the next one is a new destination, with nothing sent to it yet
+    /// and no links to the old account's pages (#1467). A pass still running for the old one can no
+    /// longer record into the new one (`record(_:links:ifDestination:)`).
+    public func startNewDestination() throws {
+        try Self.lock.withLock { try write(File(sent: [], links: nil, destination: UUID().uuidString)) }
     }
 
     public func record<Keys: Sequence>(_ keys: Keys, links newLinks: [String: URL] = [:]) throws where Keys.Element == String {
+        try Self.lock.withLock { try recordLocked(keys, links: newLinks) }
+    }
+
+    /// Records a sent batch only if the history still belongs to `destination`, as read when the pass
+    /// started. Otherwise the batch went to an account that has since been disconnected and is not
+    /// recorded for the new one; this throws `CancellationError` to end the pass.
+    public func record<Keys: Sequence>(
+        _ keys: Keys, links newLinks: [String: URL] = [:], ifDestination destination: String?
+    ) throws where Keys.Element == String {
+        try Self.lock.withLock {
+            guard try load().destination == destination else { throw CancellationError() }
+            try recordLocked(keys, links: newLinks)
+        }
+    }
+
+    private func recordLocked<Keys: Sequence>(_ keys: Keys, links newLinks: [String: URL]) throws where Keys.Element == String {
         var file = try load()
         file.sent = Set(file.sent).union(keys).sorted()
         if !newLinks.isEmpty {
             file.links = (file.links ?? [:]).merging(newLinks.mapValues(\.absoluteString)) { _, new in new }
         }
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys]
-        try encoder.encode(file).write(to: fileURL, options: .atomic)
+        try write(file)
     }
 
     /// Links each item in a sent batch to the book Readwise filed its highlights under: by title, or
@@ -271,6 +307,7 @@ public enum ReadwiseHighlightSyncPass {
         ledger: ReadwiseSentLedger, batchSize: Int = 50,
         tokenIsCurrent: @Sendable (String) -> Bool = { _ in true }
     ) async throws -> ReadwiseSyncReport {
+        let destination = try ledger.destination()
         var seen = try ledger.sentKeys()
         let pending = highlights.filter { seen.insert($0.marginKey).inserted }
         var report = ReadwiseSyncReport()
@@ -281,7 +318,7 @@ public enum ReadwiseHighlightSyncPass {
             guard tokenIsCurrent(token) else { throw CancellationError() }
             let batch = Array(pending[start..<min(start + max(1, batchSize), pending.count)])
             let books = try await client.send(batch, token: token)
-            try ledger.record(batch.map(\.marginKey), links: ReadwiseSentLedger.links(for: batch, books: books ?? []))
+            try ledger.record(batch.map(\.marginKey), links: ReadwiseSentLedger.links(for: batch, books: books ?? []), ifDestination: destination)
             report.sent += batch.count
             // An unreadable reply says nothing either way; only a reply listing no highlights counts against it.
             if let books, !books.contains(where: \.listsHighlights) { report.unlisted += batch.count }

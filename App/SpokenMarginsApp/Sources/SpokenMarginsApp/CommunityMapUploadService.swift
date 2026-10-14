@@ -91,6 +91,8 @@ final class CommunityMapUploadService {
         localAudio: @escaping @MainActor (String) -> URL?,
         report: @escaping @MainActor (String) -> Void
     ) {
+        // Also reached from a queued transcript after an upload: the setting may be off by then.
+        guard Self.optedIn else { return }
         guard let item = try? store.loadItem(id: itemId),
               let episodeKey = CommunityMapEpisodeKey.key(for: item) else { return }
         // The map job deletes its transcript once the map is made, so the phone's transcript is
@@ -175,7 +177,7 @@ final class CommunityMapUploadService {
     }
 
     /// The downloaded audio's length, for an episode whose feed doesn't give one.
-    private nonisolated static func measuredDurationMs(_ file: URL) async -> Int? {
+    nonisolated static func measuredDurationMs(_ file: URL) async -> Int? {
         guard FileManager.default.isReadableFile(atPath: file.path),
               let duration = try? await AVURLAsset(url: file).load(.duration),
               duration.isNumeric, duration.seconds > 0 else { return nil }
@@ -184,7 +186,7 @@ final class CommunityMapUploadService {
 
     /// Whether the audio file carries chapters, or nil when it couldn't be read (gone, or still
     /// being replaced), so a failed read holds the upload instead of counting as "no chapters".
-    private nonisolated static func hasEmbeddedChapters(_ file: URL) async -> Bool? {
+    nonisolated static func hasEmbeddedChapters(_ file: URL) async -> Bool? {
         guard FileManager.default.isReadableFile(atPath: file.path) else { return nil }
         let asset = AVURLAsset(url: file)
         guard let groups = try? await asset.loadChapterMetadataGroups(

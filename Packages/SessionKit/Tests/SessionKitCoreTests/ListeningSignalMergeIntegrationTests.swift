@@ -31,12 +31,11 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     }
 
     func testAllSpokenMarginCompletionRoutesShareTheSignalHook() throws {
-        let source = try appSource("Gate1AppModel.swift")
-        for (start, end) in [
-            ("func finishInterjection()", "func cancelInterjection()"),
-            ("private func performGate2CompactCommand(", "private func compactSkipUnit(")
+        for (file, start, end) in [
+            ("Gate1AppModel+MarginCapture.swift", "func finishInterjection()", "func cancelInterjection()"),
+            ("Gate1AppModel.swift", "func performGate2CompactCommand(", "private func compactSkipUnit(")
         ] {
-            let route = try body(source, from: start, to: end)
+            let route = try body(appSource(file), from: start, to: end)
             XCTAssertTrue(route.contains("transcribeAndRecordSavedSpokenMargin()"), start)
             XCTAssertTrue(route.contains("recordSpokenMarginSavedBeforeFailure(engine"),
                           "\(start): a Margin saved before resuming playback failed still counts")
@@ -64,7 +63,7 @@ final class ListeningSignalMergeIntegrationTests: XCTestCase {
     }
 
     func testManualCompletionRecordsFinishOnlyAfterTheCompletionHelperChangesTheItem() throws {
-        let source = try appSource("Gate1AppModel.swift")
+        let source = try appSource("Gate1AppModel+CompletionMarking.swift")
         let completion = try body(source, from: "func markItemCompleted(id:", to: "func undoMarkedCompletion(")
         XCTAssertFalse(completion.contains("<<<<<<<"), "The completion merge must be resolved")
         try assertOrdered([

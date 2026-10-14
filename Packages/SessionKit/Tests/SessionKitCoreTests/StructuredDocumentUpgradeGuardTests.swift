@@ -192,7 +192,7 @@ final class StructuredDocumentUpgradeGuardTests: XCTestCase {
 }
 
 /// A PDF imported under the old extraction (v1) in a real SQLite file, and the v2 document it is imported again with.
-private final class PDFReimportFixture {
+final class PDFReimportFixture {
     let path: String
     let store: SQLiteSessionStore
     let engine: SessionEngine
@@ -283,6 +283,16 @@ private final class PDFReimportFixture {
 
     func reimport() throws -> Item {
         try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Paper"),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+    }
+
+    @MainActor
+    func reimportOffMain() async throws -> Item {
+        try await engine.importBrowserTextInBackgroundOffMain(BrowserTextHandoff(
             captureMode: .markdownFile,
             source: BrowserTextSource(url: url, title: "Paper"),
             text: document.text,

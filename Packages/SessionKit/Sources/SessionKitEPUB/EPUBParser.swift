@@ -76,11 +76,13 @@ public final class EPUBParser: @unchecked Sendable {
                 throw EPUBImportError.archiveLimitExceeded("expanded_size")
             }
         }
-        if let encryption = archive["META-INF/encryption.xml"] {
-            let data = try read(encryption, from: archive)
-            if String(decoding: data, as: UTF8.self).localizedCaseInsensitiveContains("EncryptedData") {
-                throw EPUBImportError.unsupportedEncryption
-            }
+        // Only locked text refuses a book. Font obfuscation (IDPF `http://www.idpf.org/2008/embedding`,
+        // Adobe `http://ns.adobe.com/pdf/enc#RC`) and other encrypted non-text resources leave the
+        // chapters readable, so those entries are ignored. An entry that names no resource can't be
+        // told apart from locked text, so it refuses.
+        let encryption = try encryptionManifest(in: archive)
+        if encryption.hasUnlocatedEntry || encryption.covers("META-INF/container.xml") {
+            throw EPUBImportError.unsupportedEncryption
         }
         guard let containerEntry = archive["META-INF/container.xml"] else {
             throw EPUBImportError.malformedPackage("missing_container")
@@ -91,6 +93,7 @@ public final class EPUBParser: @unchecked Sendable {
             throw EPUBImportError.malformedPackage("missing_rootfile")
         }
         try validate(path: opfPath)
+        if encryption.covers(opfPath) { throw EPUBImportError.unsupportedEncryption }
         guard let opfEntry = archive[opfPath] else {
             throw EPUBImportError.malformedPackage("missing_opf")
         }
@@ -105,6 +108,7 @@ public final class EPUBParser: @unchecked Sendable {
             guard let href = opf.manifest[idref]?.href else { continue }
             let path = resolve(path: href, relativeTo: base)
             try validate(path: path)
+            if encryption.covers(path) { throw EPUBImportError.unsupportedEncryption }
             guard let entry = archive[path] else { continue }
             let xhtml = XHTMLTextDelegate(maximumDepth: limits.maximumXMLDepth)
             try parseXML(try read(entry, from: archive), delegate: xhtml)
@@ -125,7 +129,7 @@ public final class EPUBParser: @unchecked Sendable {
         }
         guard !segments.isEmpty else { throw EPUBImportError.emptySpine }
 
-        let navigation = try navigationNodes(opf: opf, base: base, archive: archive, sourceDocumentId: sourceDocumentId, segments: segments)
+        let navigation = try navigationNodes(opf: opf, base: base, archive: archive, encryption: encryption, sourceDocumentId: sourceDocumentId, segments: segments)
         let package = CanonicalSourcePackage(
             id: "canonical-\(itemId)",
             itemId: itemId,
@@ -144,6 +148,7 @@ public final class EPUBParser: @unchecked Sendable {
         opf: OPFXMLDelegate,
         base: String,
         archive: Archive,
+        encryption: EncryptionManifest,
         sourceDocumentId: String,
         segments: [SpeakableSegment]
     ) throws -> [CanonicalNavigationNode] {
@@ -156,6 +161,7 @@ public final class EPUBParser: @unchecked Sendable {
         }
         let path = resolve(path: item.href, relativeTo: base)
         try validate(path: path)
+        if encryption.covers(path) { throw EPUBImportError.unsupportedEncryption }
         guard let entry = archive[path] else { return [] }
         let nav = NavigationXMLDelegate(maximumDepth: limits.maximumXMLDepth)
         try parseXML(try read(entry, from: archive), delegate: nav)
@@ -174,6 +180,26 @@ public final class EPUBParser: @unchecked Sendable {
             )
         }
         return nav.nodes.enumerated().map { convert($0.element, id: "nav-\($0.offset + 1)") }
+    }
+
+    /// Reads `META-INF/encryption.xml`. A missing or blank file lists nothing; one that can't be parsed
+    /// refuses the book, because the text might be locked.
+    private func encryptionManifest(in archive: Archive) throws -> EncryptionManifest {
+        guard let entry = archive["META-INF/encryption.xml"] else { return EncryptionManifest(resources: []) }
+        let data = try read(entry, from: archive)
+        guard !String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return EncryptionManifest(resources: [])
+        }
+        let delegate = EncryptionXMLDelegate(maximumDepth: limits.maximumXMLDepth)
+        do { try parseXML(data, delegate: delegate) }
+        catch let error as EPUBImportError {
+            if case .malformedPackage = error { throw EPUBImportError.unsupportedEncryption }
+            throw error
+        }
+        // Linux's parser reports no error for a document cut off mid-way, so an element that never
+        // closed is a file that can't be trusted to list everything.
+        guard delegate.depth == 0 else { throw EPUBImportError.unsupportedEncryption }
+        return EncryptionManifest(resources: delegate.resources)
     }
 
     private func read(_ entry: Entry, from archive: Archive) throws -> Data {
@@ -241,6 +267,67 @@ private final class ContainerXMLDelegate: DepthDelegate {
         if elementName.lowercased().hasSuffix("rootfile") { rootfilePath = attributeDict["full-path"] }
     }
     override func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) { leave() }
+}
+
+/// What `encryption.xml` says is encrypted: one list of `CipherReference` URIs per `EncryptedData` entry.
+private struct EncryptionManifest {
+    private let locked: Set<String>
+    /// An entry with no usable URI: it could cover anything, so it counts as covering the text.
+    let hasUnlocatedEntry: Bool
+
+    init(resources: [[String]]) {
+        var locked = Set<String>()
+        var unlocated = false
+        for uris in resources {
+            let usable = uris.map { Self.normalize($0, percentEncoded: true) }.filter { !$0.isEmpty }
+            if usable.isEmpty { unlocated = true }
+            locked.formUnion(usable)
+        }
+        self.locked = locked
+        self.hasUnlocatedEntry = unlocated
+    }
+
+    /// Whether an entry covers the archive path. Case, a leading `./` or `/`, a fragment and
+    /// percent-encoding in the entry's URI don't change which resource it names.
+    func covers(_ archivePath: String) -> Bool {
+        locked.contains(Self.normalize(archivePath, percentEncoded: false))
+    }
+
+    private static func normalize(_ path: String, percentEncoded: Bool) -> String {
+        var value = path.replacingOccurrences(of: "\\", with: "/")
+        if percentEncoded {
+            value = value.split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? value
+            value = value.removingPercentEncoding ?? value
+        }
+        // Archive paths never hold "..", so collapsing it only affects the entry's URI.
+        var parts: [Substring] = []
+        for part in value.split(separator: "/") {
+            if part == "." { continue }
+            if part == "..", !parts.isEmpty { parts.removeLast(); continue }
+            parts.append(part)
+        }
+        return parts.joined(separator: "/").precomposedStringWithCanonicalMapping.lowercased()
+    }
+}
+
+private final class EncryptionXMLDelegate: DepthDelegate {
+    var resources: [[String]] = []
+    private var stack: [[String]] = []
+    override func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
+        enter(parser)
+        let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
+        if name == "encrypteddata" {
+            stack.append([])
+        } else if name == "cipherreference", !stack.isEmpty {
+            let uri = attributeDict.first { $0.key.lowercased().split(separator: ":").last.map(String.init) == "uri" }?.value ?? ""
+            stack[stack.count - 1].append(uri)
+        }
+    }
+    override func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
+        let name = elementName.lowercased().split(separator: ":").last.map(String.init) ?? elementName.lowercased()
+        if name == "encrypteddata", let uris = stack.popLast() { resources.append(uris) }
+        leave()
+    }
 }
 
 private struct OPFManifestItem { var href: String; var mediaType: String; var properties: String }

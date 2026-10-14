@@ -1,0 +1,151 @@
+import Combine
+import Foundation
+import SessionKit
+
+/// The Margin capture state (#993): what the recording and written-Margin screens show, the one microphone request
+/// that may be waiting, and the shield that stops a double tap on Save from starting a new Margin. Moved out of
+/// `Gate1AppModel` without changing a statement of what it does or the order it does it in.
+///
+/// It is state and the rules that guard it, nothing else. It has no host, no engine, no recorder, no Task, no timer
+/// and no audio session, and it never calls out. The model keeps every sequence (engine, snapshot, streaming
+/// queue, diagnostics) in the statement order it always ran in, and each write it made to this state is one call
+/// here at the same place. That keeps the order visible in the model, and it means no call here can re-enter the
+/// model while one of these values is being changed.
+///
+/// The published values are the canonical copies. The model exposes them under their old names and forwards
+/// `objectWillChange` synchronously, so observers are told before a value changes, as they were when the model
+/// published them itself. Every write notifies, including one that stores an equal value: nothing here compares
+/// first, and the tests pin that. `pendingVoiceRequestID` is deliberately not published, as before.
+@MainActor
+final class MarginCaptureCoordinator: ObservableObject {
+    @Published private(set) var presentationContext: RecordingPresentationContext?
+    @Published private(set) var isRequestingPermission = false
+    @Published private(set) var permissionDenied = false
+    @Published private(set) var primer = MicrophonePrimer()
+    @Published private(set) var isFinishing = false
+    @Published private(set) var restartShield = MarginRestartShield()
+    @Published private(set) var writtenDraft: WrittenMarginDraft?
+    private(set) var pendingVoiceRequestID: UUID?
+
+    // MARK: A spoken Margin's microphone request
+
+    /// A tap on Add a Margin: a new request, the earlier denial forgotten, the request showing. In this order.
+    func beginVoiceRequest() -> UUID {
+        let id = UUID()
+        pendingVoiceRequestID = id
+        permissionDenied = false
+        isRequestingPermission = true
+        return id
+    }
+
+    /// True when this request must wait for Continue before iOS's prompt. Always writes the primer, as before.
+    func holdForPrimer(captureID: UUID, status: PermissionPromptStatus) -> Bool {
+        primer.holds(captureID: captureID, status: status)
+    }
+
+    /// Continue on the primer: the request to go on with, once. The primer clears even when the request has moved on.
+    func continuePrimer() -> UUID? {
+        guard let captureID = primer.continueTapped(), pendingVoiceRequestID == captureID else { return nil }
+        return captureID
+    }
+
+    enum PermissionOutcome { case stale, denied, granted }
+
+    /// The answer to the microphone request. An answer for a request that is no longer the current one changes
+    /// nothing; a denial ends the request and shows the denial, in the order it always did.
+    func resolvePermission(for id: UUID, granted: Bool) -> PermissionOutcome {
+        guard pendingVoiceRequestID == id else { return .stale }
+        guard granted else {
+            isRequestingPermission = false
+            presentationContext = nil
+            pendingVoiceRequestID = nil
+            permissionDenied = true
+            return .denied
+        }
+        return .granted
+    }
+
+    /// Whether this is still the current request. Writes nothing.
+    func claimStart(for id: UUID) -> Bool {
+        pendingVoiceRequestID == id
+    }
+
+    /// The end of a start, however it went (the `defer` after `claimStart`).
+    func releaseStart() {
+        isRequestingPermission = false
+        pendingVoiceRequestID = nil
+    }
+
+    /// Cancel, or the pencil, while a request waits: the primer, the request and the screen's context go. It does
+    /// not clear a denial and does not put the source back; the callers decide that.
+    func abandonVoiceRequest() {
+        primer.cancel()
+        pendingVoiceRequestID = nil
+        isRequestingPermission = false
+        presentationContext = nil
+    }
+
+    // MARK: A compact control's request (no request ID, no fence, as before)
+
+    func beginCompactRequest() {
+        isRequestingPermission = true
+    }
+
+    func endCompactRequest() {
+        isRequestingPermission = false
+    }
+
+    // MARK: What the recording screen shows
+
+    func setPresentationContext(_ context: RecordingPresentationContext) {
+        presentationContext = context
+    }
+
+    /// Always writes, and so always notifies, even when there is no context.
+    func clearPresentationContext() {
+        presentationContext = nil
+    }
+
+    // MARK: Finishing, and the shield that follows
+
+    /// Save was tapped. False when a finish is already under way. The flag and then the shield, in this order.
+    func requestFinish() -> Bool {
+        guard !isFinishing else { return false }
+        isFinishing = true
+        restartShield.saveRequested()
+        return true
+    }
+
+    /// The save returned: the shield first, then the flag.
+    func finalizeFinish(at date: Date, stillRecording: Bool) {
+        restartShield.saveFinished(at: date, stillRecording: stillRecording)
+        isFinishing = false
+    }
+
+    func screenAppeared(at date: Date) {
+        restartShield.screenAppeared(at: date)
+    }
+
+    func isCoolingDown(at date: Date) -> Bool {
+        !restartShield.acceptsBegin(at: date)
+    }
+
+    // MARK: A written Margin
+
+    func clearPermissionDenied() {
+        permissionDenied = false
+    }
+
+    func openDraft(_ draft: WrittenMarginDraft) {
+        writtenDraft = draft
+    }
+
+    /// Without a draft nothing is written, so nothing is announced.
+    func setDraftText(_ text: String) {
+        writtenDraft?.text = text
+    }
+
+    func closeDraft() {
+        writtenDraft = nil
+    }
+}

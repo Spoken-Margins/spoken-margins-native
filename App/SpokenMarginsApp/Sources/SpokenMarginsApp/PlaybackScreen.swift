@@ -48,13 +48,12 @@ struct PlaybackScreen: View {
     @State private var mediaScrubState = PlaybackScrubState()
     @State private var textScrubState = PlaybackScrubState()
     @State private var isSleepTimerPresented = false
-    @State private var isSourceTextPresented = false
+    @State private var sourceTextTarget: PlaybackTextReaderTarget?
     @State private var isPlaybackOptionsPresented = false
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write }
-    @State private var sourceTextOffsetAtPresentation = 0
+    private enum OptionsDestination { case item, timeline, export, margins, write, sourceText }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -150,13 +149,8 @@ struct PlaybackScreen: View {
                 PastedAssistantResponseView(isPresented: $isPastingAssistantResponse)
                     .environmentObject(model)
             }
-            .sheet(isPresented: $isSourceTextPresented) {
-                NativeTextPeekView(
-                    title: model.selectedItem.title,
-                    text: model.selectedItem.text,
-                    chapters: model.selectedItem.chapters,
-                    currentOffset: sourceTextOffsetAtPresentation
-                )
+            .sheet(item: $sourceTextTarget) { target in
+                NativeTextPeekView(title: model.selectedItem.title, target: target)
             }
             .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {
@@ -439,7 +433,23 @@ struct PlaybackScreen: View {
         case .export: model.openExport()
         case .margins: model.openMargins()
         case .write: model.beginWrittenMargin()
+        case .sourceText: openSourceText()
         }
+    }
+
+    /// #1547: the button sits in the More sheet, so close it first, then resolve the playhead when the
+    /// reader opens. The target is the sheet's item, so the reader can't open with a stale offset.
+    private func openSourceText() {
+        if isPlaybackOptionsPresented {
+            closeOptions(to: .sourceText)
+            return
+        }
+        sourceTextTarget = PlaybackTextReaderTarget.resolve(
+            text: model.selectedItem.text,
+            chapters: model.selectedItem.chapters,
+            offset: model.snapshot.currentTextStart,
+            fallbackChapterId: model.currentChapter?.id
+        )
     }
 
     @ViewBuilder
@@ -653,6 +663,14 @@ struct PlaybackScreen: View {
             .contentShape(Rectangle())
             .accessibilityHint("Opens item details and listening-session history")
             .accessibilityIdentifier("playback.itemTitle.button")
+
+            PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
+                selectedItemId: model.selectedItem.id,
+                playingItemId: model.snapshot.itemId,
+                sessionId: model.snapshot.sessionId,
+                interjections: model.selectedItem.interjections,
+                isRetrying: model.isRetryingInterjectionTranscription
+            ))
 
             if let chapterTitle = model.playbackChapterHeaderTitle {
                 Button(action: model.openCurrentPlaybackItem) {
@@ -893,16 +911,13 @@ struct PlaybackScreen: View {
     @ViewBuilder
     private var playbackSecondaryControls: some View {
         if let state = model.selectedPodcastDownloadState {
-            Button(state == .availableOffline ? "Download Again" : "Download Audio", action: model.redownloadSelectedPodcast)
+            Button(model.selectedPodcastDownloadButtonTitle, action: model.redownloadSelectedPodcast)
                 .disabled(state == .downloading)
                 .accessibilityIdentifier("playback.download.button")
         }
 
         if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
-            Button {
-                sourceTextOffsetAtPresentation = model.snapshot.currentTextStart ?? 0
-                isSourceTextPresented = true
-            } label: {
+            Button(action: openSourceText) {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
                     .frame(minHeight: 32)
@@ -1144,13 +1159,6 @@ struct PlaybackScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("playback.preparedAudio.status")
-                if model.canPlayLiveSpeechInstead {
-                    Button(action: model.playLiveSpeechInstead) {
-                        Label("Play Live Speech Instead", systemImage: "speaker.wave.2")
-                    }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .accessibilityIdentifier("playback.liveSpeechFallback.button")
-                }
             }
         }
         .padding(20)
@@ -1774,28 +1782,41 @@ private struct PastedAssistantResponseView: View {
 private struct NativeTextPeekView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
-    let text: String
-    let chapters: [Chapter]
-    let currentOffset: Int
+    let target: PlaybackTextReaderTarget
+    /// Height of the chapter text up to the current sentence, measured at the shown width.
+    @State private var sentenceTop: CGFloat?
+    private static let sentenceAnchor = "nativeText.peek.sentence"
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(chapterTitle)
-                            .font(.headline)
-                        Text(chapterText)
-                            .font(.body)
-                            .textSelection(.enabled)
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(AppColors.inputBackground)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(target.chapterTitle ?? "Full Text")
+                                .font(.headline)
+                            Text(chapterText)
+                                .font(.body)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(alignment: .topLeading) { sentenceMeasure }
+                                .overlay(alignment: .topLeading) { sentenceMarker }
+                        }
+                        .padding(16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(AppColors.inputBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
 
+                    }
+                    .padding(20)
                 }
-                .padding(20)
+                .onChange(of: sentenceTop) { _, top in
+                    guard top != nil else { return }
+                    // Next turn of the run loop, once the marker placed at that height is laid out.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(Self.sentenceAnchor, anchor: UnitPoint(x: 0, y: 0.25))
+                    }
+                }
             }
             .navigationTitle(title.isEmpty ? "Source Text" : title)
             .navigationBarTitleDisplayMode(.inline)
@@ -1808,25 +1829,42 @@ private struct NativeTextPeekView: View {
         }
     }
 
-    private var selectedChapter: Chapter? {
-        guard !chapters.isEmpty else { return nil }
-        let offset = max(0, min(currentOffset, text.count))
-        return chapters.first(where: { offset >= $0.startChar && offset < $0.endChar })
-            ?? chapters.last(where: { $0.startChar <= offset })
-            ?? chapters.first
+    /// The chapter, with the sentence being read lit.
+    private var chapterText: AttributedString {
+        guard !target.text.isEmpty else { return AttributedString("No native text is available.") }
+        var attributed = AttributedString(target.text)
+        if let sentence = target.sentence,
+           let lower = attributed.characters.index(attributed.startIndex, offsetBy: sentence.lowerBound, limitedBy: attributed.endIndex),
+           let upper = attributed.characters.index(attributed.startIndex, offsetBy: sentence.upperBound, limitedBy: attributed.endIndex) {
+            attributed[lower..<upper].backgroundColor = Color.yellow.opacity(0.28)
+        }
+        return attributed
     }
 
-    private var chapterTitle: String {
-        selectedChapter?.title ?? "Full Text"
+    /// The text before the sentence, laid out hidden at the same width, so its height reaches the sentence's line.
+    @ViewBuilder
+    private var sentenceMeasure: some View {
+        if let sentence = target.sentence, sentence.lowerBound > 0 {
+            Text(String(target.text.prefix(sentence.lowerBound)))
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .hidden()
+                .accessibilityHidden(true)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sentenceTop = $0 }
+        }
     }
 
-    private var chapterText: String {
-        guard !text.isEmpty else { return "No native text is available." }
-        guard let chapter = selectedChapter else { return text }
-        let characters = Array(text)
-        let start = max(0, min(chapter.startChar, characters.count))
-        let end = max(start, min(chapter.endChar, characters.count))
-        return String(characters[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+    /// A point at the sentence's line for the scroll view to bring into view.
+    @ViewBuilder
+    private var sentenceMarker: some View {
+        if let sentenceTop {
+            Color.clear
+                .frame(width: 1, height: 1)
+                .padding(.top, max(0, sentenceTop - 1))
+                .id(Self.sentenceAnchor)
+                .accessibilityHidden(true)
+        }
     }
 }
 

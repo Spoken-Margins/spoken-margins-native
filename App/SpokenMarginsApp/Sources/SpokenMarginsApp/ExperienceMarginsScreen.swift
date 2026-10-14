@@ -1,5 +1,6 @@
 import SwiftUI
 import SessionKit
+import SessionKitPersistence
 
 struct ExperienceMarginsScreen: View {
     private struct MarginGroup: Identifiable {
@@ -18,6 +19,7 @@ struct ExperienceMarginsScreen: View {
     @State private var selectedMargin: MarginRow?
     @State private var selectedSharedMargin: SharedMarginRow?
     @State private var markdownFileURL: URL?
+    @State private var collections: [ItemCollection] = []
 
     var body: some View {
         NavigationStack {
@@ -28,9 +30,18 @@ struct ExperienceMarginsScreen: View {
                         .accessibilityIdentifier("margins.search.field")
                         .padding(.bottom, 12)
                     HStack {
-                        Picker("Scope", selection: $model.marginCollectionQuery.itemID) {
+                        Picker("Scope", selection: scopeTag) {
                             Text("All items").tag(String?.none)
-                            ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
+                            if !collections.isEmpty {
+                                Section("Collections") {
+                                    ForEach(collections) { collection in
+                                        Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
+                                    }
+                                }
+                            }
+                            Section("Items") {
+                                ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
+                            }
                         }
                         .accessibilityIdentifier("margins.scope.picker")
                         Spacer()
@@ -60,11 +71,14 @@ struct ExperienceMarginsScreen: View {
                     .accessibilityLabel("Settings")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: model.openBatchExport)
+                    Button("Export Sessions", systemImage: "square.and.arrow.up.on.square", action: openBatchExport)
                         .accessibilityIdentifier("margins.export.button")
                 }
             }
-            .task { model.refreshMarginRows() }
+            .task {
+                model.refreshMarginRows()
+                loadCollections()
+            }
             .refreshable { model.refreshMarginRows() }
             .scrollDismissesKeyboard(.interactively)
             .sheet(item: $selectedMargin) { row in
@@ -74,6 +88,25 @@ struct ExperienceMarginsScreen: View {
                 SharedMarginDetailView(row: row).environmentObject(model)
             }
         }
+    }
+
+    /// The scope picker's choice: one item, one collection (#490) or all items.
+    private var scopeTag: Binding<String?> {
+        Binding(
+            get: { model.marginCollectionQuery.scopeTag },
+            set: { model.marginCollectionQuery.selectScope(tag: $0, collections: collections) }
+        )
+    }
+
+    private func loadCollections() {
+        guard let stored = try? model.store?.loadItemCollections() else { return }
+        collections = stored
+        model.marginCollectionQuery.refreshCollection(from: stored)
+    }
+
+    /// Export Sessions starts with only the scoped collection's sessions selected.
+    private func openBatchExport() {
+        model.openBatchExport(scopedTo: model.marginCollectionQuery.collection)
     }
 
     private var filterBar: some View {
@@ -146,14 +179,19 @@ struct ExperienceMarginsScreen: View {
                                     .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.evergreen)
                                     .frame(width: 28, height: 32)
                                 VStack(alignment: .leading, spacing: 5) {
-                                    Text(row.preview)
-                                        .font(.system(.body, design: .serif))
-                                        .foregroundStyle(AppColors.text)
+                                    // Where it was made comes first, then the opening words. A bold one-line gist
+                                    // missed the point on 15 of 40 of the owner's real Margins, so none is shown (#777).
+                                    Text(row.needsAttention ? row.attentionDescription : row.placeDescription())
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(row.needsAttention ? AppColors.coral : AppColors.text)
                                         .multilineTextAlignment(.leading)
-                                        .lineLimit(3)
-                                    Text(row.needsAttention ? row.attentionDescription : "\(row.targetDescription) · \(row.interjection.roughPercent)%")
-                                        .font(.caption)
-                                        .foregroundStyle(AppColors.secondaryText)
+                                    if !row.needsAttention || row.preview != row.attentionDescription {
+                                        Text(row.preview)
+                                            .font(.system(.body, design: .serif))
+                                            .foregroundStyle(AppColors.secondaryText)
+                                            .multilineTextAlignment(.leading)
+                                            .lineLimit(2)
+                                    }
                                 }
                                 Spacer(minLength: 8)
                                 Image(systemName: "chevron.right")
@@ -165,7 +203,7 @@ struct ExperienceMarginsScreen: View {
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("My Margin. \(row.preview). \(group.itemTitle). \(row.sessionDate?.formatted(date: .abbreviated, time: .shortened) ?? "Listening session")")
+                        .accessibilityLabel("My Margin. \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
@@ -230,7 +268,9 @@ struct ExperienceMarginsScreen: View {
         let rowsByItem = Dictionary(grouping: filteredRows, by: \.interjection.itemId)
         return orderedItemIDs.compactMap { itemID in
             guard let rows = rowsByItem[itemID], let first = rows.first else { return nil }
-            return MarginGroup(itemID: itemID, itemTitle: first.itemTitle, rows: rows)
+            // Within an item, Margins read in the order they were heard (#777).
+            let heardInOrder = rows.sorted { MarginSourceOrder.isOrderedBefore($0.interjection, $1.interjection) }
+            return MarginGroup(itemID: itemID, itemTitle: first.itemTitle, rows: heardInOrder)
         }
     }
 

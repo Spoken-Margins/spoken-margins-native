@@ -219,6 +219,55 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         ])
     }
 
+    func testV2ReadsAnOutlineTitleStartingWithLLMOnceAtItsNumberedHeading() throws {
+        // #355 on arXiv 2608.09666: the outline entry "LLM as a Judge" didn't match the
+        // printed "2.2 LLM as a Judge" (the label stripper took "LLM" for a roman numeral),
+        // so the title was inserted at the top of page 2 and read before "2 Related Work",
+        // then read again at 2.2 as body text. Same outline shape as the paper.
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let bold: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            ("1 Introduction" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: bold)
+            ("Evaluating generative models usually means sampling hundreds of outputs." as NSString).draw(at: CGPoint(x: 60, y: 140), withAttributes: body)
+            ("We ask whether an agent can choose what to probe next instead." as NSString).draw(at: CGPoint(x: 60, y: 154), withAttributes: body)
+            context.beginPage()
+            ("2 Related Work" as NSString).draw(at: CGPoint(x: 60, y: 120), withAttributes: bold)
+            ("2.1 Visual Generation and Evaluation" as NSString).draw(at: CGPoint(x: 60, y: 140), withAttributes: bold)
+            ("Benchmarks use fixed test sets and scoring pipelines." as NSString).draw(at: CGPoint(x: 60, y: 160), withAttributes: body)
+            ("2.2 LLM as a Judge" as NSString).draw(at: CGPoint(x: 60, y: 200), withAttributes: bold)
+            ("Language models now grade the answers of other models." as NSString).draw(at: CGPoint(x: 60, y: 220), withAttributes: body)
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let root = PDFOutline()
+        func entry(_ title: String, _ pageIndex: Int, under parent: PDFOutline) throws -> PDFOutline {
+            let entry = PDFOutline()
+            entry.label = title
+            entry.destination = PDFDestination(page: try XCTUnwrap(pdf.page(at: pageIndex)), at: CGPoint(x: 60, y: 700))
+            parent.insertChild(entry, at: parent.numberOfChildren)
+            return entry
+        }
+        _ = try entry("Introduction", 0, under: root)
+        let related = try entry("Related Work", 1, under: root)
+        _ = try entry("Visual Generation and Evaluation", 1, under: related)
+        _ = try entry("LLM as a Judge", 1, under: related)
+        pdf.outlineRoot = root
+
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertEqual(spoken.components(separatedBy: "LLM as a Judge").count - 1, 1, "read once")
+        let judge = try XCTUnwrap(spoken.range(of: "2.2 LLM as a Judge"), "read with its number, where it is printed")
+        let pageOneBody = try XCTUnwrap(spoken.range(of: "probe next instead."))
+        let sectionTwoOneBody = try XCTUnwrap(spoken.range(of: "scoring pipelines."))
+        XCTAssertGreaterThan(judge.lowerBound, pageOneBody.upperBound, "not before page 1's body")
+        XCTAssertGreaterThan(judge.lowerBound, sectionTwoOneBody.upperBound, "after section 2.1")
+        let characters = Array(document.text)
+        let headings = document.segments.filter { $0.role == .heading }.map { String(characters[$0.range.start..<$0.range.end]) }
+        XCTAssertEqual(headings, ["1 Introduction", "2 Related Work", "2.1 Visual Generation and Evaluation", "2.2 LLM as a Judge"])
+        XCTAssertNil(document.outline, "every outline entry matched a printed heading")
+    }
+
     func testV2SkipsTheAuthorNotesAtTheBottomOfPageOne() throws {
         // #250 on arXiv 2608.09666: page 1's bulleted author notes ("• Corresponding
         // author.", "• Email: ...") were read in the middle of an Introduction sentence.
@@ -304,6 +353,291 @@ final class PDFStructuredTextExtractorTests: XCTestCase {
         let v1Title = try PDFStructuredTextExtractor.markdown(from: pdf)
             .split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
         XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), try XCTUnwrap(v1Title))
+    }
+
+    /// A page-one title (16 pt bold) over the given lines, then an abstract and a second page.
+    private func titlePagePDF(_ top: [(String, CGFloat)], others: [(String, CGPoint, [NSAttributedString.Key: Any])] = []) -> Data {
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 16)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 612, height: 792))
+        return renderer.pdfData { context in
+            context.beginPage()
+            for (text, y) in top {
+                (text as NSString).draw(at: CGPoint(x: 60, y: y), withAttributes: title)
+            }
+            for (text, point, attributes) in others {
+                (text as NSString).draw(at: point, withAttributes: attributes)
+            }
+            ("Abstract" as NSString).draw(at: CGPoint(x: 60, y: 236), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: body)
+            }
+        }
+    }
+
+    private func headingTexts(_ document: StructuredDocument) -> [String] {
+        let characters = Array(document.text)
+        return document.segments.filter { $0.role == .heading }.map {
+            String(characters[$0.range.start..<$0.range.end]).split(whereSeparator: \.isNewline).joined(separator: " ")
+        }
+    }
+
+    func testV2ReadsASectionHeadingPrintedOverSeveralLinesAsOneChapter() throws {
+        // #1144 (Test Desk T4 on next 6a22bb8): "Automating AI R&D could trigger an" and
+        // "intelligence explosion" were two chapters at 13%.
+        for lines in [["Automating AI R&D could trigger an", "intelligence explosion"],
+                      ["Automating AI R&D could", "trigger an intelligence", "explosion"]] {
+            let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF(sectionHeading: lines)))
+            let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+            XCTAssertEqual(headingTexts(document), ["Abstract", "Introduction", "Automating AI R&D could trigger an intelligence explosion"],
+                           "\(lines.count) lines")
+            let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(for: document, title: "Paper", itemId: "item"))
+            XCTAssertEqual(map.chapters.map(\.title), ["Abstract", "Introduction", "Automating AI R&D could trigger an intelligence explosion"])
+            XCTAssertEqual(map.chapters.first?.startChar, 0, "the title page starts the first chapter; no Front Matter chapter")
+        }
+    }
+
+    func testV2KeepsTheItemTitleOfAnUntitledPDFWhoseTitleIsPrintedOverTwoLines() throws {
+        // Review of #1144's heading join: with no metadata title and no Abstract label, a
+        // two-line printed title is a level-1 heading. Joining it changed `itemTitle`, so a
+        // re-imported shared PDF became a new item with its Margins left on the old one.
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842))
+        let data = renderer.pdfData { context in
+            context.beginPage()
+            let title: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 20)]
+            ("Listening to Papers:" as NSString).draw(at: CGPoint(x: 60, y: 60), withAttributes: title)
+            ("A Field Study" as NSString).draw(at: CGPoint(x: 60, y: 84), withAttributes: title)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 130 + CGFloat(offset) * 12), withAttributes: [.font: UIFont.systemFont(ofSize: 9)])
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: [.font: UIFont.boldSystemFont(ofSize: 12)])
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: [.font: UIFont.systemFont(ofSize: 9)])
+            }
+        }
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let v1Title = try PDFStructuredTextExtractor.markdown(from: pdf)
+            .split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) }
+        XCTAssertEqual(v1Title, "Listening to Papers:")
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document), v1Title)
+    }
+
+    func testV2StartsTheChaptersAtAnAbstractLabelSetInBodyType() throws {
+        // The real paper sets "Abstract" in 12 pt regular, so it is not a heading by its type.
+        // The chapter list started with "Front Matter", holding the title page and the abstract.
+        let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF(abstractInBodyType: true)))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        XCTAssertEqual(headingTexts(document), ["Introduction"])
+        let map = try XCTUnwrap(StructuredDocumentImport.listeningMap(
+            for: document, title: "What if automating AI R&D triggers an intelligence explosion?", itemId: "item"))
+        XCTAssertEqual(map.chapters.map(\.title), ["Abstract", "Introduction"])
+        XCTAssertEqual(map.chapters.first?.startChar, 0)
+    }
+
+    func testV2ReadsTheTitleOnceHoweverPageTwoRepeatsIt() throws {
+        // Page 2's copy of the cover title is front matter whatever its case, spacing or line
+        // breaks; a paper without the copy reads the same; the title in later prose is read.
+        let rows: [(String, [String], String?, Int)] = [
+            ("upper case", ["WHAT IF AUTOMATING AI R&D", "TRIGGERS AN INTELLIGENCE", "EXPLOSION?"], nil, 1),
+            ("hyphenated at the break", ["What if automating AI R&D", "triggers an intelli-", "gence explosion?"], nil, 1),
+            ("broken elsewhere, double space", ["What  if automating AI R&D", "triggers an intelligence explosion?"], nil, 1),
+            ("no repeat on page 2", [], nil, 1),
+            ("the title quoted in later prose", ["What if automating AI R&D triggers an", "intelligence explosion?"],
+             "We ask what if automating AI R&D triggers an intelligence explosion in this paper.", 2),
+        ]
+        for (name, repeated, later, expected) in rows {
+            let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF(repeatedTitle: repeated, laterProse: later)))
+            let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+            let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ").lowercased()
+            XCTAssertEqual(spoken.components(separatedBy: "automating ai r&d").count - 1, expected, name)
+            XCTAssertTrue(spoken.contains("alan chan"), name)
+            XCTAssertEqual(titleSegments(document), ["What if automating AI R&D triggers an intelligence explosion?"], name)
+        }
+    }
+
+    private func titleSegments(_ document: StructuredDocument) -> [String] {
+        let characters = Array(document.text)
+        return document.segments.filter { $0.role == .title }.map {
+            String(characters[$0.range.start..<$0.range.end]).split(whereSeparator: \.isNewline).joined(separator: " ")
+        }
+    }
+
+    func testV2ReadsATitleWhoseFirstLineIsShort() throws {
+        // #692: title candidates need four or more words, so a short first line was
+        // left out of the title, read as a badge, and never spoken; the item title
+        // also changed from v1's, so a re-import missed the existing item.
+        let authors: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 13)]
+        let data = titlePagePDF(
+            [("Understanding uncertainty", 90), ("in modern machine learning systems", 110)],
+            others: [("Ada Example1, Ben Sample2", CGPoint(x: 60, y: 160), authors)]
+        )
+        let pdf = try XCTUnwrap(PDFDocument(data: data))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let fullTitle = "Understanding uncertainty in modern machine learning systems"
+
+        XCTAssertEqual(titleSegments(document), [fullTitle], "both printed lines are one title segment")
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertTrue(spoken.contains(fullTitle), spoken)
+        XCTAssertEqual(spoken.components(separatedBy: "Understanding uncertainty").count, 2, "the title is read once")
+
+        let v1Markdown = try PDFStructuredTextExtractor.markdown(from: pdf)
+        let v1Title = try XCTUnwrap(v1Markdown.split(separator: "\n").first { $0.hasPrefix("# ") }.map { String($0.dropFirst(2)) })
+        let v2Title = try XCTUnwrap(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document))
+        XCTAssertEqual(v2Title, v1Title)
+
+        // The same PDF imported under v1, then again under v2, is one Library item.
+        let path = FileManager.default.temporaryDirectory.appending(path: "pdf-692-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]),
+            repository: try SQLiteSessionStore(path: path)
+        )
+        let url = "shared-file://share-sheet/Uncertainty.pdf"
+        let v1 = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: "Uncertainty"),
+            text: v1Markdown,
+            contentFormat: .markdown
+        ))
+        let reimported = try engine.importBrowserTextInBackground(BrowserTextHandoff(
+            captureMode: .markdownFile,
+            source: BrowserTextSource(url: url, title: v2Title),
+            text: document.text,
+            contentFormat: .plainText
+        ), structuredDocument: document)
+        XCTAssertEqual(reimported.id, v1.id)
+    }
+
+    /// A title-only cover, then a page that repeats the title over the authors and the
+    /// abstract (#1144: Cambridge CASP working paper "What if automating AI R&D
+    /// triggers an intelligence explosion?"; the real PDF is not committed).
+    /// `repeatedTitle` is page 2's copy of the title; `abstractInBodyType` sets the "Abstract"
+    /// label as the real paper does (12 pt regular, read as body text); `sectionHeading` is a
+    /// heading printed over several lines on page 3, after the introduction; `laterProse` is
+    /// a sentence on page 3.
+    private func coverThenTitlePagePDF(
+        coverBody: [String] = [],
+        repeatedTitle: [String] = ["What if automating AI R&D triggers an", "intelligence explosion?"],
+        abstractInBodyType: Bool = false,
+        sectionHeading: [String] = [],
+        laterProse: String? = nil
+    ) -> Data {
+        let body: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 9)]
+        let coverTitle: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 32)]
+        let pageTitle: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 26)]
+        let series: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 12)]
+        let authors: [NSAttributedString.Key: Any] = [.font: UIFont.systemFont(ofSize: 10)]
+        let heading: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 12)]
+        let prose = [
+            "Listening lets researchers take in papers during time that reading cannot use.",
+            "We asked twelve researchers to listen to papers during their daily commute.",
+            "Each participant kept a short diary of the sessions over four weeks of study.",
+        ]
+        let format = UIGraphicsPDFRendererFormat()
+        format.documentInfo = [kCGPDFContextTitle as String: "What if automating AI R&D triggers an intelligence explosion?"]
+        let renderer = UIGraphicsPDFRenderer(bounds: CGRect(x: 0, y: 0, width: 595, height: 842), format: format)
+        return renderer.pdfData { context in
+            context.beginPage()
+            for (offset, line) in ["What if automating AI R&D", "triggers an intelligence", "explosion?"].enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 58, y: 300 + CGFloat(offset) * 46), withAttributes: coverTitle)
+            }
+            ("Frontier AI Working Paper Series No. 2/2026" as NSString).draw(at: CGPoint(x: 58, y: 700), withAttributes: series)
+            ("September 2026" as NSString).draw(at: CGPoint(x: 58, y: 724), withAttributes: series)
+            for (offset, line) in coverBody.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 58, y: 600 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            for (offset, line) in repeatedTitle.enumerated() {
+                // Centred under the first line when short, as the paper sets it.
+                (line as NSString).draw(at: CGPoint(x: offset > 0 && line.count <= 25 ? 160 : 66, y: 64 + CGFloat(offset) * 30),
+                                        withAttributes: pageTitle)
+            }
+            let authorsY = 82 + CGFloat(max(2, repeatedTitle.count)) * 30
+            ("Alan Chan" as NSString).draw(at: CGPoint(x: 109, y: authorsY), withAttributes: authors)
+            ("Sören Mindermann" as NSString).draw(at: CGPoint(x: 109, y: authorsY + 16), withAttributes: authors)
+            ("Abstract" as NSString).draw(at: CGPoint(x: 260, y: 236),
+                                          withAttributes: abstractInBodyType ? [.font: UIFont.systemFont(ofSize: 9.5)] : heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 256 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            context.beginPage()
+            ("Introduction" as NSString).draw(at: CGPoint(x: 60, y: 90), withAttributes: heading)
+            for (offset, line) in prose.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 110 + CGFloat(offset) * 12), withAttributes: body)
+            }
+            // Headings set 12 pt with 15 pt leading, like the paper's 14.3 pt with 18 pt.
+            for (offset, line) in sectionHeading.enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: 180 + CGFloat(offset) * 15), withAttributes: heading)
+            }
+            let after = 190 + CGFloat(sectionHeading.count) * 15
+            for (offset, line) in (prose + [laterProse].compactMap { $0 }).enumerated() {
+                (line as NSString).draw(at: CGPoint(x: 60, y: after + CGFloat(offset) * 12), withAttributes: body)
+            }
+        }
+    }
+
+    func testV2MakesNoChaptersFromATitleOnlyCoverAndItsRepeatedTitle() throws {
+        // #1144 (Build 30): the cover's three title lines and the next page's two lines
+        // each became a chapter, because the title-page rule only ran on a first page
+        // that held the abstract.
+        let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF()))
+        let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+        let characters = Array(document.text)
+        func text(_ segment: StructuredDocument.Segment) -> String {
+            String(characters[segment.range.start..<segment.range.end]).split(whereSeparator: \.isNewline).joined(separator: " ")
+        }
+
+        XCTAssertEqual(document.segments.filter { $0.role == .heading }.map(text), ["Abstract", "Introduction"])
+        XCTAssertEqual(titleSegments(document), ["What if automating AI R&D triggers an intelligence explosion?"],
+                       "the cover's three lines are one title, and the repeat is not another")
+        let spoken = StructuredDocumentSpeech.spokenLines(document).joined(separator: " ")
+        XCTAssertEqual(spoken.components(separatedBy: "intelligence explosion").count, 2, "the title is read once")
+        XCTAssertTrue(spoken.contains("Alan Chan"), "author names are read (owner, #191)")
+        XCTAssertTrue(spoken.contains("take in papers during time"), "the abstract is still read")
+        XCTAssertFalse(spoken.contains("Working Paper Series"))
+        XCTAssertEqual(PDFStructuredTextExtractor.itemTitle(for: pdf, structured: document),
+                       "What if automating AI R&D triggers an intelligence explosion?")
+    }
+
+    func testV2DoesNotTakeAFirstPageWithBodyTextForATitleOnlyCover() throws {
+        // A first page that holds prose isn't a cover, so nothing on it is dropped.
+        // Long lines, and short ones (under eight words, which the prose test passes over).
+        for line in ["A first page that carries sentences of its own, set in ordinary body type for listening.",
+                     "Short lines of body type on page one."] {
+            let pdf = try XCTUnwrap(PDFDocument(data: coverThenTitlePagePDF(coverBody: [line])))
+            let spoken = StructuredDocumentSpeech.spokenLines(try PDFStructuredTextExtractor.structuredDocument(from: pdf)).joined(separator: " ")
+            XCTAssertTrue(spoken.contains(String(line.dropLast())), spoken)
+        }
+    }
+
+    func testV2KeepsBadgesInTheTitleTypeOutOfTheTitle() throws {
+        // #692's fix joins short lines above the title only when they sit right above
+        // it in the same type, and never an article-type label.
+        for (badge, y) in [("sensors", CGFloat(40)), ("Research Article", 70)] {
+            let pdf = try XCTUnwrap(PDFDocument(data: titlePagePDF(
+                [(badge, y), ("Understanding uncertainty in modern", 90), ("machine learning systems", 110)]
+            )))
+            let document = try PDFStructuredTextExtractor.structuredDocument(from: pdf)
+            XCTAssertEqual(titleSegments(document), ["Understanding uncertainty in modern machine learning systems"], badge)
+        }
     }
 
     func testV2SkipsFootnoteTextAtTheFootOfAPage() throws {

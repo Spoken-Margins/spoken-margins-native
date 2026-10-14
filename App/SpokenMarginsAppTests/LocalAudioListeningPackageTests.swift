@@ -16,6 +16,9 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let db = root.appending(path: "library.sqlite")
         let store = try SQLiteSessionStore(path: db.path)
         let sourcePlayer = AVPlayerStreamPlaybackClient()
+        // The app wires this handler only for the player it makes itself; a recurrence of #835 needs it here.
+        let stallTrace = SourcePlayerStallTrace()
+        stallTrace.install(on: sourcePlayer)
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: sourcePlayer)
         let model = Gate1AppModel(audioPlaybackClient: routed, databaseURLOverride: db)
         model.resetAndSeed()
@@ -87,6 +90,18 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let loadedResources = model.skimResourceLoadCount
         for _ in 0..<40 { model.snapshot.currentMediaTimeMs = model.snapshot.currentMediaTimeMs }
         XCTAssertEqual(model.skimResourceLoadCount, loadedResources, "Progress updates must reuse the loaded map and asset metadata")
+        // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
+        // a second press skips the summary instead of queueing another (#569).
+        XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)
+        model.jumpToNextChapter()
+        XCTAssertEqual(model.snapshot.skimBridgeState?.direction, .forward)
+        XCTAssertEqual(model.snapshot.skimBridgeState?.summarySceneId, "scene-0", "the summary is of the chapter being left")
+        XCTAssertEqual(model.snapshot.skimBridgeState?.destinationMediaTimeMs, 5_000)
+        XCTAssertTrue(model.canJumpToNextChapter, "a second press can skip the summary")
+        model.jumpToNextChapter()
+        XCTAssertNil(model.snapshot.skimBridgeState)
+        XCTAssertLessThanOrEqual(abs((model.snapshot.currentMediaTimeMs ?? 0) - 5_000), 250, "the skipped summary lands at the next chapter's start")
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 0))
         let priorRate = model.mediaPlaybackRate
         model.setMediaPlaybackRate(1.75)
         model.skimForward()
@@ -102,7 +117,7 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         XCTAssertNil(model.snapshot.skimBridgeState)
         // Crossing the test Margin opens Companion's intentional pause.
         // The wait dismisses it just as the listener would before expecting progress.
-        let returned = try await waitForSourceProgress(model: model, player: sourcePlayer, toMs: 5_200)
+        let returned = try await waitForSourceProgress(model: model, player: sourcePlayer, toMs: 5_200, stallTrace: stallTrace)
         XCTAssertGreaterThan(sourcePlayer.currentMediaTimeMs() ?? 0, 5_100, "Skim must return to progressing source audio: status=\(model.snapshot.status), failure=\(model.snapshot.lastFailure ?? "none"), pending=\(model.pendingImportedCommentary != nil), \(returned)")
         model.pause()
         // While paused, a map change can move where Skim Back lands without flipping availability.
@@ -237,19 +252,44 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     /// So the clock's allowance starts only once the session is playing again (no Skim summary, no Companion pause
     /// waiting) and the player itself reports playing, with no seek pending. Companion's pause is dismissed as the
     /// listener would. A source that never gets back to playing, or whose clock never moves once it does, still fails.
+    ///
+    /// The first trace since the stall trace landed (integration-6b9da95, 2026-10-13) showed AVPlayer's own clock
+    /// frozen: rate 1.75, playing, no waiting reason, no pending seek, item ready, raw playerMs at exactly 5000 in
+    /// eight samples and a 6 s `stalled` event. Waiting longer cannot help that, and the same test passed alone on
+    /// the same build. A listener whose audio sat silent while the player claimed to play would pause and press
+    /// play, so after `toNudge` of a raw clock that hasn't moved, the wait does the same once. The pause and resume
+    /// are recorded in the returned text and in the test log, so a recovered stall stays visible. If the clock is
+    /// still frozen after the nudge, the wait fails as before.
     /// Returns what was observed, for assertion messages.
     private func waitForSourceProgress(
         model: Gate1AppModel,
         player: AVPlayerStreamPlaybackClient,
         toMs target: Int,
         toStartPlaying: Duration = .seconds(15),
-        toAdvanceOncePlaying: Duration = .seconds(10)
+        toAdvanceOncePlaying: Duration = .seconds(10),
+        toNudge: Duration = .seconds(3),
+        stallTrace: SourcePlayerStallTrace? = nil
     ) async throws -> String {
         let clock = ContinuousClock()
         let began = clock.now
+        var startWaitBegan = began
         var playingSince: ContinuousClock.Instant?
+        var frozenSince: (rawMs: String, at: ContinuousClock.Instant)?
+        var nudgedAt: String?
         var lastState = "not sampled"
+        // #835: the player's raw state about every half second, kept for the failure message. A long gap between
+        // samples means the test itself wasn't scheduled; raw playerMs stuck while rate and timeControl say
+        // playing means AVPlayer's clock froze; playerMs moving while the adapter clock sticks points higher up.
+        var samples: [String] = []
+        var lastSampleAt: ContinuousClock.Instant?
+        let stallEventsBefore = stallTrace?.count ?? 0
         while (player.currentMediaTimeMs() ?? 0) < target {
+            let sampledAt = clock.now
+            if lastSampleAt.map({ sampledAt - $0 >= .milliseconds(500) }) ?? true {
+                lastSampleAt = sampledAt
+                samples.append("+\((sampledAt - began).formatted(.units(allowed: [.milliseconds]))) \(Self.compactPlayerState(player.playbackStateTraceFields()))")
+                if samples.count > 8 { samples.removeFirst() }
+            }
             if model.pendingImportedCommentary != nil { model.dismissPendingImportedCommentary() }
             let transport = model.snapshot.targetId.flatMap { player.playbackTransportState(targetId: $0) }
             let playing = model.snapshot.skimBridgeState == nil
@@ -261,17 +301,51 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             if playing {
                 let since = playingSince ?? now
                 playingSince = since
-                if now - since > toAdvanceOncePlaying { break }
+                // Only a clock that is frozen in the player itself counts: no seek pending, no buffer wait.
+                let raw = player.playbackStateTraceFields()
+                if let rawMs = raw["playerMs"], raw["pendingSeek"] == "none", raw["waitingReason"] == "none" {
+                    if frozenSince?.rawMs != rawMs { frozenSince = (rawMs, now) }
+                } else {
+                    frozenSince = nil
+                }
+                if nudgedAt == nil, let frozen = frozenSince, now - frozen.at > toNudge {
+                    nudgedAt = "+\((now - began).formatted(.units(allowed: [.milliseconds]))) at playerMs=\(frozen.rawMs)"
+                    print("#835 player clock frozen \(toNudge.formatted(.units(allowed: [.milliseconds]))) while playing: pause and resume once, \(nudgedAt ?? "")")
+                    let note = XCTAttachment(string: "#835 nudge: \(nudgedAt ?? "")\n\(Self.compactPlayerState(raw))")
+                    note.name = "player-clock-frozen-nudge"
+                    note.lifetime = .keepAlways
+                    add(note)
+                    model.pause()
+                    model.resumePlayback()
+                    playingSince = nil
+                    frozenSince = nil
+                    startWaitBegan = clock.now
+                } else if now - since > toAdvanceOncePlaying {
+                    break
+                }
             } else {
                 playingSince = nil
-                if now - began > toStartPlaying { break }
+                frozenSince = nil
+                if now - startWaitBegan > toStartPlaying { break }
             }
             try await Task.sleep(for: .milliseconds(20))
         }
         let waited = clock.now - began
         let playedFor = playingSince.map { clock.now - $0 }
+        let stallEvents = stallTrace.map { Array($0.events.dropFirst(stallEventsBefore)) } ?? []
         return "clock \(player.currentMediaTimeMs() ?? -1) ms after \(waited.formatted(.units(allowed: [.milliseconds]))); "
-            + "player reported playing for \(playedFor?.formatted(.units(allowed: [.milliseconds])) ?? "none"); last \(lastState)"
+            + "player reported playing for \(playedFor?.formatted(.units(allowed: [.milliseconds])) ?? "none"); last \(lastState); "
+            + (nudgedAt.map { "player clock was frozen, paused and resumed once at \($0); " } ?? "")
+            + "raw samples [\(samples.joined(separator: " | "))]"
+            + (stallTrace == nil ? "" : "; stall trace [\(stallEvents.suffix(4).map(Self.compactPlayerState).joined(separator: " | "))]")
+    }
+
+    /// The trace fields that tell a frozen clock from a seek or a buffer wait, in a fixed order.
+    private static func compactPlayerState(_ fields: [String: String]) -> String {
+        let keys = ["event", "atMs", "forMs", "fromMs", "toMs", "playerMs", "rate", "timeControl", "waitingReason",
+                    "pendingSeek", "pendingSeekToMs", "pendingSeekAgeMs", "intendsToPlay", "itemStatus", "keepUp",
+                    "bufferEmpty", "bufferedAheadMs", "uptimeMs"]
+        return keys.compactMap { key in fields[key].map { "\(key)=\($0)" } }.joined(separator: " ")
     }
 
     private enum SenderEdition { case sameAsRecipient, differentWithoutEvidence }
@@ -411,4 +485,22 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let file = try AVAudioFile(forWriting: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 24_000, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000])
         try file.write(from: buffer)
     }
+}
+
+/// Collects the source player's stall trace (#166) during a test, as the app's diagnostics do for its own player.
+private final class SourcePlayerStallTrace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [[String: String]] = []
+
+    func install(on player: AVPlayerStreamPlaybackClient) {
+        player.playbackStallTraceHandler = { [weak self] fields in
+            guard let self else { return }
+            var stamped = fields
+            stamped["uptimeMs"] = String(Int(ProcessInfo.processInfo.systemUptime * 1_000))
+            self.lock.withLock { self.recorded.append(stamped) }
+        }
+    }
+
+    var events: [[String: String]] { lock.withLock { recorded } }
+    var count: Int { lock.withLock { recorded.count } }
 }

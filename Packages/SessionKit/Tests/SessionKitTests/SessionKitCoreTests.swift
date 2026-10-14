@@ -144,6 +144,48 @@ final class SessionKitCoreTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1291 APO-14: the emoji-article soak (`EmojiArticlePlaybackUITests`, retired SpeechCanary
+    /// plan) accepted a run that returned Home at 90 percent, so a voice queue missing the
+    /// article's tail could pass. This holds the same claim where it runs: every spoken word of a
+    /// long article with emoji and links reaches the voice, its last sentence is in the final
+    /// utterance, and playback completes only when that utterance finishes.
+    func testLongEmojiArticleQueuesEveryWordAndCompletesOnlyAfterItsLastSentence() throws {
+        let paragraph = "Expression keeps evolving 💪🏿 as people find new ways to say what they mean, "
+            + "and [the guide](https://example.com/emoji-guide) explains why. Color meets contrast ⛲ "
+            + "when the artwork has to read at every size on every screen. "
+        let lastSentence = "Language only truly lives when people use it."
+        let source = Array(repeating: paragraph, count: 24).joined(separator: "\n\n") + "\n\n" + lastSentence
+        let client = SystemSpeechPlaybackClient(voiceIdentifier: nil, speechRate: AVSpeechUtteranceDefaultSpeechRate)
+        var queued: [(synthesizer: AVSpeechSynthesizer, utterance: AVSpeechUtterance)] = []
+        client.speakNarration = { queued.append(($0, $1)) } // nothing is spoken, so the test delivers the callbacks
+        let spoken = try client.prepareSpeechText(source)
+        try client.play(targetId: "emoji-article", from: 0)
+
+        let utterances = queued.map(\.utterance)
+        XCTAssertGreaterThan(utterances.count, 2, "a long article is spoken in several utterances")
+        XCTAssertEqual(
+            utterances.map(\.speechString).joined(), spoken,
+            "every spoken word of the article reaches the voice, in order, with nothing dropped"
+        )
+        XCTAssertTrue(utterances.allSatisfy { SpeechTextNormalizer.isSystemSpeechSafe($0.speechString) })
+        let final = try XCTUnwrap(utterances.last)
+        XCTAssertTrue(final.speechString.hasSuffix(lastSentence), "the article's last sentence is the last thing spoken")
+
+        let synthesizer = try XCTUnwrap(queued.first?.synthesizer)
+        client.speechSynthesizer(synthesizer, didStart: utterances[0])
+        for utterance in utterances.dropLast() {
+            client.speechSynthesizer(synthesizer, didFinish: utterance)
+            XCTAssertFalse(
+                client.isPlaybackComplete(targetId: "emoji-article"),
+                "playback completed before the article's last sentence was spoken"
+            )
+        }
+        client.speechSynthesizer(synthesizer, didFinish: final)
+        XCTAssertTrue(client.isPlaybackComplete(targetId: "emoji-article"))
+        XCTAssertEqual(client.currentCharOffset(), source.count)
+        try client.stop()
+    }
+
     /// #221 lane FAIL: with the iOS voice, changing the speed mid-session restarted playback with
     /// the session's old 1× rate, so "1.50×" played at 1× and Now Playing reported rate 1.
     /// Rate is one number (I14): the session's rate follows the listener's speech rate.
@@ -1131,7 +1173,12 @@ final class SessionKitCoreTests: XCTestCase {
             "Tax-deferred growth versus HSAs",
             "2. Earmark savings for health care"
         ])
-        XCTAssertEqual(map.chapters.map(\.title), parsed.headings.map(\.title))
+        // One heading level makes the chapters: the lone `##` section stays inside the chapter before it.
+        XCTAssertEqual(map.chapters.map(\.title), [
+            "Key takeaways",
+            "1. Understand the triple tax advantage",
+            "2. Earmark savings for health care"
+        ])
         XCTAssertEqual(map.chapters.first?.startChar, 0)
         XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
         XCTAssertTrue(zip(map.chapters, map.chapters.dropFirst()).allSatisfy { $0.endChar == $1.startChar })
@@ -1157,7 +1204,7 @@ final class SessionKitCoreTests: XCTestCase {
     func testTitleOverrideKeepsFirstPastedHeadingAsAChapter() throws {
         let parsed = try ObsidianMarkdownParser.parse(
             fileName: "Manual Paste.md",
-            contents: "# Opening\n\nFirst section.\n\n## Next\n\nSecond section.",
+            contents: "## Opening\n\nFirst section.\n\n## Next\n\nSecond section.",
             titleOverride: "User-entered title"
         )
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-manual-paste"))
@@ -1167,7 +1214,7 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(map.chapters.first?.startChar, 0)
     }
 
-    func testHSAStyleMapKeepsNumberedSectionsAndMergesShortCallouts() throws {
+    func testHSAStyleMapKeepsNumberedSectionsAndFoldsOtherLevelCallouts() throws {
         func words(_ count: Int) -> String {
             Array(repeating: "content", count: count).joined(separator: " ")
         }
@@ -1202,11 +1249,12 @@ final class SessionKitCoreTests: XCTestCase {
             "2. Earmark savings just for health care",
             "3. Consider putting your HSA dollars to work by investing them",
             "4. Plan to use your HSA in retirement",
-            "5. Let HSAs play a role in your estate plan"
+            "5. Let HSAs play a role in your estate plan",
+            "Plan ahead"
         ])
     }
 
-    func testDeterministicListeningMapMergesHeaderExplosionWithinHardCap() throws {
+    func testDeterministicListeningMapNeverMergesHeaderExplosion() throws {
         let filler = Array(repeating: "brief", count: 20).joined(separator: " ")
         var markdown = "---\ntitle: Deep Outline\n---\n"
         for major in 1...2 {
@@ -1219,8 +1267,8 @@ final class SessionKitCoreTests: XCTestCase {
         let parsed = try ObsidianMarkdownParser.parse(fileName: "deep-outline.md", contents: markdown)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-deep-outline"))
 
-        XCTAssertGreaterThanOrEqual(map.chapters.count, 5)
-        XCTAssertLessThanOrEqual(map.chapters.count, 12)
+        // Every `###` is a chapter: the author's headings are never merged to meet a cap.
+        XCTAssertEqual(map.chapters.count, 24)
         XCTAssertTrue(zip(map.chapters, map.chapters.dropFirst()).allSatisfy { $0.endChar == $1.startChar })
         XCTAssertEqual(map.chapters.first?.startChar, 0)
         XCTAssertEqual(map.chapters.last?.endChar, parsed.text.count)
@@ -1228,26 +1276,31 @@ final class SessionKitCoreTests: XCTestCase {
 
     func testDeterministicListeningMapSplitsVeryLongSectionsAtNaturalBoundaries() throws {
         let paragraph = Array(repeating: "substantive", count: 300).joined(separator: " ") + "."
-        let markdown = "---\ntitle: Long Read\n---\n\n## Main argument\n\n" + Array(repeating: paragraph, count: 8).joined(separator: "\n\n")
+        let short = Array(repeating: "brief", count: 100).joined(separator: " ") + "."
+        let markdown = "---\ntitle: Long Read\n---\n\n## Setup\n\n\(short)\n\n## Main argument\n\n"
+            + Array(repeating: paragraph, count: 14).joined(separator: "\n\n")
+            + "\n\n## Wrap-up\n\n\(short)"
 
         let parsed = try ObsidianMarkdownParser.parse(fileName: "long-read.md", contents: markdown)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-read"))
 
-        XCTAssertEqual(map.chapters.count, 2)
-        XCTAssertEqual(map.chapters.first?.title, "Main argument")
-        XCTAssertEqual(map.chapters.last?.title, "Main argument — part 2")
-        XCTAssertEqual(map.chapters.first?.endChar, map.chapters.last?.startChar)
+        XCTAssertEqual(map.chapters.map(\.title), ["Setup", "Main argument", "Main argument — part 2", "Wrap-up"])
+        XCTAssertEqual(map.chapters[1].endChar, map.chapters[2].startChar)
     }
 
     func testDeterministicListeningMapNumbersRepeatedSplitsWithoutRecursiveLabels() throws {
         let body = Array(repeating: "substantive", count: 11_000).joined(separator: " ")
-        let markdown = "---\ntitle: Long Chapter\n---\n\n## Chapter Text\n\n\(body)"
+        let short = Array(repeating: "brief", count: 100).joined(separator: " ")
+        let markdown = "---\ntitle: Long Chapter\n---\n\n## Opening\n\n\(short)\n\n## Chapter Text\n\n\(body)\n\n## Closing\n\n\(short)"
 
         let parsed = try ObsidianMarkdownParser.parse(fileName: "long-chapter.md", contents: markdown)
         let map = try XCTUnwrap(parsed.deterministicListeningMap(itemId: "item-long-chapter"))
 
-        XCTAssertEqual(map.chapters.count, 10)
-        XCTAssertEqual(map.chapters.map(\.title), ["Chapter Text"] + (2...10).map { "Chapter Text — part \($0)" })
+        let parts = map.chapters.filter { $0.title.hasPrefix("Chapter Text") }
+        XCTAssertEqual(parts.map(\.title), ["Chapter Text"] + (2...parts.count).map { "Chapter Text — part \($0)" })
+        XCTAssertGreaterThan(parts.count, 3)
+        XCTAssertEqual(map.chapters.first?.title, "Opening")
+        XCTAssertEqual(map.chapters.last?.title, "Closing")
         XCTAssertFalse(map.chapters.contains { $0.title.contains("continued — continued") })
     }
 
@@ -1573,6 +1626,111 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertThrowsError(try engine.submitFollowup(text: "Discuss this.")) { error in
             XCTAssertEqual(error as? SessionKitError, .invalidCommandForCapability("submitFollowup"))
         }
+    }
+
+    /// #943: the system card shows Play while a start is pending (its clock must not run), so a Play tap
+    /// there cancels the load like the Pause it replaced, and Pause still works.
+    func testPlayTapWhilePlaybackIsStartingCancelsThePendingStart() throws {
+        for command in [CompactControlCommand.play, .pause] {
+            let audio = RecordingAudioClient()
+            audio.startStatus = .pending
+            let engine = SessionEngine(
+                profile: phonePlaybackProfile(),
+                repository: InMemorySessionRepository(items: [
+                    "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+                ]),
+                audio: audio
+            )
+            _ = try engine.startSession(itemId: "item-pill")
+            XCTAssertEqual(engine.snapshot.status, .starting)
+            let surface = RuntimeCapabilityProfile(
+                id: "lock-screen-widget",
+                displayName: "Lock Screen / Widget",
+                capabilities: [
+                    "timeline": ["chapter_timing"],
+                    "remoteControl": ["display_snapshot", "send_transport_commands"]
+                ],
+                forbiddenCapabilities: []
+            )
+            let dispatcher = CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine)
+
+            let result = try dispatcher.dispatch(command)
+            XCTAssertEqual(result.snapshot.status, .paused, "\(command)")
+            XCTAssertEqual(engine.snapshot.status, .paused, "\(command)")
+        }
+    }
+
+    /// #943: a podcast that rebuffers keeps engine status `.playing` while the system card shows Play
+    /// (rate 0). That Play tap pauses instead of failing; with audio really playing, Play is still refused.
+    func testPlayTapWhileAudioIsWaitingForTheNetworkPauses() throws {
+        let surface = RuntimeCapabilityProfile(
+            id: "lock-screen-widget",
+            displayName: "Lock Screen / Widget",
+            capabilities: [
+                "timeline": ["chapter_timing"],
+                "remoteControl": ["display_snapshot", "send_transport_commands"]
+            ],
+            forbiddenCapabilities: []
+        )
+        func makeDispatcher(transport: PlaybackTransportState) throws -> (CompactControlDispatcher, SessionEngine) {
+            let audio = RecordingAudioClient()
+            let engine = SessionEngine(
+                profile: phonePlaybackProfile(),
+                repository: InMemorySessionRepository(items: [
+                    "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready")
+                ]),
+                audio: audio
+            )
+            _ = try engine.startSession(itemId: "item-pill")
+            XCTAssertEqual(engine.snapshot.status, .playing)
+            audio.transportState = transport
+            return (CompactControlDispatcher(surfaceProfile: surface, canonicalRuntime: engine), engine)
+        }
+
+        let (stalled, stalledEngine) = try makeDispatcher(transport: .waiting)
+        let result = try stalled.dispatch(.play)
+        XCTAssertEqual(result.snapshot.status, .paused)
+        XCTAssertEqual(stalledEngine.snapshot.status, .paused)
+
+        let (running, runningEngine) = try makeDispatcher(transport: .playing)
+        XCTAssertThrowsError(try running.dispatch(.play))
+        XCTAssertEqual(runningEngine.snapshot.status, .playing)
+    }
+
+    /// #943: delayed start, failed start and replacing the item never publish a running clock.
+    func testSystemClockStaysStillThroughDelayedFailedAndReplacedStarts() throws {
+        func rate(_ engine: SessionEngine) -> Double {
+            SystemPlaybackPresentation(status: engine.snapshot.status, selectedRate: 1.25, isNarration: true).playbackRate
+        }
+        let repo = InMemorySessionRepository(items: [
+            "item-pill": Item(id: "item-pill", title: "Pill", mediaType: "text", text: "One. Two.", externalReference: nil, status: "ready"),
+            "item-two": Item(id: "item-two", title: "Two", mediaType: "text", text: "Three. Four.", externalReference: nil, status: "ready")
+        ])
+        let audio = RecordingAudioClient()
+        let engine = SessionEngine(profile: phonePlaybackProfile(), repository: repo, audio: audio)
+
+        // Confirmed playback earns the selected rate.
+        _ = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(rate(engine), 1.25)
+
+        // Replacing the item with one whose audio is still loading must not carry the old running clock.
+        audio.startStatus = .pending
+        _ = try engine.startSession(itemId: "item-two")
+        XCTAssertEqual(engine.snapshot.status, .starting)
+        XCTAssertEqual(rate(engine), 0)
+
+        // Delayed start confirms: the clock may run.
+        audio.startStatus = .confirmed
+        _ = try engine.syncPlaybackProgress()
+        XCTAssertEqual(engine.snapshot.status, .playing)
+        XCTAssertEqual(rate(engine), 1.25)
+
+        // A start that fails never runs it.
+        audio.startStatus = .failed("native_audio_failed")
+        _ = try engine.startSession(itemId: "item-pill")
+        XCTAssertEqual(engine.snapshot.status, .failed)
+        XCTAssertEqual(rate(engine), 0)
     }
 
     func testPlaybackStartRemainsStartingUntilAudioConfirms() throws {

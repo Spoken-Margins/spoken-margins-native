@@ -558,8 +558,8 @@ final class Gate1FlowUITests: XCTestCase {
 
         let failure = element("app.feedback.banner")
         XCTAssertTrue(failure.waitForExistence(timeout: 8))
-        XCTAssertTrue(failure.label.contains("On-device summary failed"))
-        XCTAssertTrue(failure.label.contains("Retry Summary"))
+        XCTAssertTrue(failure.label.contains("Summary couldn’t finish."))
+        XCTAssertTrue(app.buttons["app.feedback.retry"].isEnabled)
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
         XCTAssertTrue(summarize.label.contains("Retry summary"))
@@ -687,6 +687,25 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
     }
 
+    /// #1436: only the words of the row were tappable. A tap beside them, at the row's right edge,
+    /// starts it too.
+    func testShareDiagnosticsRowTakesATapBesideTheWords() throws {
+        XCTAssertTrue(element("home.screen").waitForExistence(timeout: 8))
+        openLibrarySettings()
+        let share = scrollToElement("settings.shareDiagnostics.button")
+        XCTAssertGreaterThan(
+            share.frame.width, app.windows.firstMatch.frame.width * 0.55,
+            "The Share Diagnostics button is only as wide as its words."
+        )
+
+        share.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5)).tap()
+
+        let shareSheet = element("ActivityListView")
+        XCTAssertTrue(shareSheet.waitForExistence(timeout: 8), "A tap beside the words did not open the share sheet.")
+        dismissTopSystemSheet()
+        XCTAssertTrue(waitForDisappearance(shareSheet, timeout: 5))
+    }
+
     func testPrivateExperienceRootsPreserveNowPlayingAndStateConsentBoundaries() throws {
         XCTAssertTrue(element("library.screen").waitForExistence(timeout: 8))
         let seededStart = app.buttons["queue.start.item-pill"]
@@ -751,7 +770,8 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Margins"].exists)
 
         let finish = element("recording.finish.button")
-        XCTAssertLessThan(finish.frame.maxY, app.frame.midY, "Finish must stay away from the bottom capture control")
+        XCTAssertGreaterThan(finish.frame.minY, app.frame.midY, "Save & resume sits in the bottom row, where Add a Margin was (#148)")
+        XCTAssertLessThan(element("recording.cancel.button").frame.maxX, finish.frame.minX, "Cancel is the small button to the left of Save")
         // Save ignores taps for 0.5 s after the recording screen appears (#148), so wait past that window.
         _ = XCTWaiter.wait(for: [XCTestExpectation(description: "recording save guard window")], timeout: 0.6)
         finish.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).doubleTap()

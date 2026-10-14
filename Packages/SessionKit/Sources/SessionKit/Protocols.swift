@@ -33,6 +33,15 @@ public protocol ItemRepository {
     func saveListeningMap(_ map: ListeningMap) throws
 }
 
+/// A repository that can say, without reading the item, whether an item was saved or deleted
+/// through it since the last time you asked. The number means nothing on its own: only a change
+/// between two reads does. Callers that watch an item's fields (the listening-signal collector)
+/// re-read the item only when it moves, instead of decoding its text on every playback tick.
+/// A repository without it is simply read each time.
+public protocol ItemRevisionReading: AnyObject {
+    func itemRevision(id: String) -> Int
+}
+
 public protocol ListeningSessionRepository {
     func saveSession(_ session: Session) throws
     func loadSession(id: String) throws -> Session?
@@ -116,6 +125,9 @@ public protocol EpisodeMapRepository {
     func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact]
     func saveResolvedListeningMapProjection(_ projection: ResolvedListeningMapProjection) throws
     func loadResolvedListeningMapProjection(itemId: String) throws -> ResolvedListeningMapProjection?
+    /// Removes a community map's proposal and projection (#553), found by their ids; nothing else.
+    /// Called when the publisher's own chapters arrive, which a community map never outlives.
+    func removeCommunityMap(itemId: String) throws
     func saveEpisodeMapPreparationJob(_ job: EpisodeMapPreparationJob) throws
     func loadEpisodeMapPreparationJobs() throws -> [EpisodeMapPreparationJob]
     func deleteEpisodeMapPreparationJob(id: String) throws
@@ -413,9 +425,13 @@ public protocol RecordingClient {
     func restartCapture() throws
     /// Privacy-safe fields about the capture in progress (route, restarts, level), for the diagnostics log.
     func captureDiagnostics() -> [String: String]
+    /// Where the file being recorded will be, named the way the saved Margin names it. Nil when nothing is recording
+    /// or the recorder can't say. The draft journal keeps it so a kill before Save still points at the file (#951).
+    func recordingInProgressRef() -> String?
 }
 
 extension RecordingClient {
+    public func recordingInProgressRef() -> String? { nil }
     public func captureReading() -> RecordingCaptureReading? { nil }
     public func restartCapture() throws {
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")
@@ -444,4 +460,9 @@ public extension AIProviderClient {
             return false
         }
     }
+}
+
+extension EpisodeMapRepository {
+    /// Stores that never hold community maps have nothing to remove.
+    public func removeCommunityMap(itemId: String) throws {}
 }

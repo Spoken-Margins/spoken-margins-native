@@ -153,6 +153,8 @@ struct AppNavigationState: Equatable, Sendable {
     ]
     var taskRoute: AppRoute?
     var addSourceRoute: AddSourceRoute?
+    /// Where Following was scrolled to, kept across the screen switches that destroy its list (#479).
+    var followingScroll = FollowingScrollMemory()
 
     mutating func select(_ root: AppRoot, recordingIsLocked: Bool) {
         guard !recordingIsLocked else { return }
@@ -252,6 +254,9 @@ struct MarginRow: Identifiable, Equatable, Sendable {
     let interjection: Interjection
     let itemTitle: String
     let sessionDate: Date?
+    /// The chapter the Margin was made in and, for text, its paragraph number (#777). nil when the item has no
+    /// chapters or the position isn't a paragraph.
+    var place: MarginPlaces.Place? = nil
 
     var id: String { "\(interjection.sessionId)::\(interjection.id)" }
     var isWritten: Bool { interjection.captureKind == .written }
@@ -290,6 +295,15 @@ struct MarginRow: Identifiable, Equatable, Sendable {
             contextUnavailable: interjection.anchorContextStatus == .unavailable,
             recordingMissing: interjection.audioStatus == "missing"
         )
+    }
+
+    /// The row's second line: where the Margin was made, then the day (#777). Responses and summaries keep their label.
+    func placeDescription(now: Date = Date()) -> String {
+        guard interjection.targetType == .item else { return "\(targetDescription) · \(interjection.roughPercent)%" }
+        return MarginRowWording.placeLine(
+            placeName: place?.chapterName, mediaTimeMs: interjection.anchor.mediaTimeMs,
+            paragraph: place?.paragraph, roughPercent: interjection.roughPercent,
+            createdAt: interjection.createdAt, now: now)
     }
 
     var targetDescription: String {
@@ -398,11 +412,4 @@ struct OfflineStorageSnapshot: Equatable, Sendable {
             categories: categories
         )
     }
-}
-
-struct RecordingPresentationContext: Equatable, Sendable {
-    let itemTitle: String
-    let locationTitle: String
-    let progressPercent: Int
-    let startedAt: Date
 }

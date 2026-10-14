@@ -51,11 +51,22 @@ final class J7PDFJourneyUITests: XCTestCase {
         }
 
         try XCTContext.runActivity(named: "J7 step 2a: Write a Margin at the current passage") { _ in
+            // Move well into the document first, so a Margin anchored at the start can't pass for one
+            // anchored at the passage being heard (#1044 APO-02).
+            let scrubber = element("playback.scrubber")
+            XCTAssertTrue(scrubber.waitForExistence(timeout: 5), "No scrubber to move into the PDF with")
+            scrubber.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
+            waitUntil("Scrubbing did not move into the PDF", timeout: 10) {
+                self.currentPercent().map { $0 >= 25 } ?? false
+            }
+            let playingPercent = try percent()
             tap("playback.write.button")
             XCTAssertTrue(element("writtenMargin.screen").waitForExistence(timeout: 5), "Write a Margin did not open")
             let anchor = element("writtenMargin.anchor")
             XCTAssertTrue(anchor.waitForExistence(timeout: 5), "The Margin's saved position is missing")
             marginPercent = try XCTUnwrap(trailingPercent(anchor.label), "Saved position has no percentage: \(anchor.label)")
+            XCTAssertLessThanOrEqual(abs(marginPercent - playingPercent), 3,
+                                     "The Margin was placed at \(marginPercent)%, not at the passage playing (\(playingPercent)%)")
             let field = element("writtenMargin.text")
             field.tap()
             field.typeText(note)
@@ -74,9 +85,9 @@ final class J7PDFJourneyUITests: XCTestCase {
             }
             tap("playback.timeline.button")
             XCTAssertTrue(element("timeline.screen").waitForExistence(timeout: 5), "Timeline did not open")
-            let margin = app.descendants(matching: .any)
-                .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.interjection.")).firstMatch
-            XCTAssertTrue(margin.waitForExistence(timeout: 5), "The Margin is not on the timeline")
+            // The Timeline is a lazy list that follows the playing source, which is now well past the
+            // Margin, so the Margin's row isn't materialized until the list is scrolled back to it (#1427).
+            let margin = revealTimelineMargin()
             margin.tap()
             XCTAssertTrue(element("marginDetail.screen").waitForExistence(timeout: 5), "The Margin did not open")
             let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", note)).firstMatch
@@ -87,6 +98,37 @@ final class J7PDFJourneyUITests: XCTestCase {
                 self.currentPercent().map { abs($0 - marginPercent) <= 3 } ?? false
             }
         }
+    }
+
+    /// Scrolls the lazy Timeline back, then forward if needed, until the saved Margin's row is on screen.
+    /// A bounded search: if the row is still missing after both passes, the Margin isn't on the Timeline.
+    private func revealTimelineMargin() -> XCUIElement {
+        let margin = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH %@", "timeline.interjection.")).firstMatch
+        let timeline = element("timeline.screen")
+        XCTAssertTrue(timeline.waitForExistence(timeout: 5), "Timeline did not open")
+        func isRevealed() -> Bool { margin.exists && margin.isHittable }
+        if !isRevealed() { _ = margin.waitForExistence(timeout: 2) }
+        var swipes = 0
+        while !isRevealed() && swipes < 12 {
+            timeline.swipeDown()
+            swipes += 1
+        }
+        swipes = 0
+        while !isRevealed() && swipes < 24 {
+            timeline.swipeUp()
+            swipes += 1
+        }
+        XCTAssertTrue(isRevealed(), "The Margin is not on the timeline, even after scrolling through it")
+        screenshot("J7 Timeline with the saved Margin revealed")
+        return margin
+    }
+
+    private func screenshot(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private var playPause: XCUIElement { app.buttons["playback.play.button"] }

@@ -28,27 +28,167 @@ struct StatusMessageText: View {
     }
 }
 
+/// Margin Output in Settings (#492): the listener's notes destinations, each opening to its own settings.
 struct MarginOutputSettingsSection: View {
     @EnvironmentObject private var model: Gate1AppModel
+    var body: some View {
+        MarginOutputDestinationsSection(coordinator: model.marginOutput)
+    }
+}
+
+struct MarginOutputDestinationsSection: View {
+    private enum FolderPick: Equatable {
+        case add
+        case reselect(String)
+    }
+
+    @ObservedObject var coordinator: MarginOutputCoordinator
+    @State private var pick = FolderPick.add
     @State private var choosingFolder = false
+
     var body: some View {
         Section("Margin Output") {
-            Button { choosingFolder = true } label: {
-                Label(model.hasMarginNotesFolder ? model.marginNotesFolderName : "Choose Notes Folder", systemImage: "folder")
+            ForEach(coordinator.rows) { row in
+                NavigationLink {
+                    MarginOutputDestinationScreen(coordinator: coordinator, id: row.id)
+                } label: {
+                    MarginOutputDestinationRow(row: row)
+                }
+                if row.needsAccess {
+                    Button("Reselect Folder", systemImage: "folder.badge.questionmark") { choose(.reselect(row.id)) }
+                }
             }
-            Button("Send Test Note", action: model.testMarginOutput).disabled(!model.hasMarginNotesFolder)
-            Toggle("Save Margins to Notes Folder", isOn: $model.automaticMarginOutputEnabled)
-                .disabled(!model.hasMarginNotesFolder)
-                .onChange(of: model.automaticMarginOutputEnabled) { _, _ in model.automaticMarginOutputChanged() }
-            Button("Retry Delivery") { Task { await model.deliverAutomaticMargins() } }
-                .disabled(!model.automaticMarginOutputEnabled)
-            StatusMessageText(message: model.marginOutputStatus.message, isFailure: model.marginOutputStatus.isFailure)
-            Text("Writes each text Margin as a Markdown note in the folder you choose, such as an Obsidian vault. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
+            Button { choose(.add) } label: {
+                Label(coordinator.destinations.isEmpty ? "Choose Notes Folder" : "Add Destination", systemImage: "folder.badge.plus")
+            }
+            .accessibilityIdentifier("settings.marginOutput.add")
+            if let notice = coordinator.notice { StatusMessageText(message: notice.message, isFailure: notice.isFailure) }
+            if coordinator.destinations.contains(where: \.isEnabled) {
+                Button("Retry Delivery") { Task { await coordinator.retry() } }
+            }
+            Text("Writes each text Margin as a Markdown note in a folder you choose, such as an Obsidian vault. Add more than one to send different Margins to different places. It doesn’t change how Margins play. Notes are written while the app is active and retried when you return. Existing Margins are included. Audio recordings and full source text are excluded. Your folder provider may sync files to its cloud.").font(.footnote).foregroundStyle(.secondary)
         }
         .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
             switch result {
-            case .success(let url): model.configureMarginNotesFolder(url: url)
-            case .failure(let error): model.reportBatchExportFolderFailure(error)
+            case .success(let url):
+                switch pick {
+                case .add: _ = coordinator.addDestination(folder: url)
+                case .reselect(let id): coordinator.replaceFolder(of: id, with: url)
+                }
+            case .failure(let error): coordinator.reportFolderPickFailure(error)
+            }
+        }
+    }
+
+    private func choose(_ target: FolderPick) {
+        pick = target
+        choosingFolder = true
+    }
+}
+
+private struct MarginOutputDestinationRow: View {
+    let row: MarginOutputCoordinator.Row
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(row.destination.name, systemImage: "folder")
+            if row.needsAccess {
+                FailureMessageLabel("Needs folder access").font(.footnote)
+            } else {
+                Text(summary).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var summary: String {
+        let scope = row.destination.scope == .starred ? "Starred Margins" : "All Margins"
+        return "\(row.folderName) · \(scope) · \(row.destination.isEnabled ? "Delivering" : "Paused")"
+    }
+}
+
+/// One destination's folder, contents and delivery. Test, Pause and Remove live here; Remove never deletes written files.
+struct MarginOutputDestinationScreen: View {
+    @ObservedObject var coordinator: MarginOutputCoordinator
+    let id: String
+    @State private var name = ""
+    @State private var choosingFolder = false
+    @State private var confirmingRemove = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Form {
+            if let row = coordinator.rows.first(where: { $0.id == id }) {
+                Section("Destination") {
+                    TextField("Name", text: $name)
+                        .onSubmit { coordinator.rename(id, to: name) }
+                    Label(row.folderName, systemImage: "folder")
+                    Button(row.needsAccess ? "Reselect Folder" : "Change Folder", systemImage: "folder.badge.gearshape") { choosingFolder = true }
+                    if row.needsAccess { FailureMessageLabel("Needs folder access").font(.footnote) }
+                }
+                Section("Notes") {
+                    Picker("Shape", selection: Binding(
+                        get: { row.destination.shape },
+                        set: { coordinator.setShape(of: id, $0) }
+                    )) {
+                        ForEach(MarginNotesShape.allCases, id: \.self) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.inline)
+                    if row.destination.shape == .itemOnCompletion {
+                        Text("One note per item, written when you mark it complete. It holds every Margin from your listening, with the item’s properties. Items you finished before choosing this don’t get one. Finishing an item by listening is picked up within about half an hour.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                Section("Contents") {
+                    Picker("Margins", selection: Binding(
+                        get: { row.destination.scope },
+                        set: { coordinator.setContent(of: id, scope: $0) }
+                    )) {
+                        Text("All Margins").tag(MarginOutputDestination.Scope.all)
+                        Text("Starred only").tag(MarginOutputDestination.Scope.starred)
+                    }
+                    Toggle("Include source context", isOn: Binding(
+                        get: { row.destination.includesContext },
+                        set: { coordinator.setContent(of: id, includesContext: $0) }
+                    ))
+                    Picker("Text", selection: Binding(
+                        get: { row.destination.text },
+                        set: { coordinator.setContent(of: id, text: $0) }
+                    )) {
+                        Text("Cleaned").tag(MarginOutputDestination.TextChoice.cleaned)
+                        Text("Original").tag(MarginOutputDestination.TextChoice.original)
+                    }
+                    Text(row.destination.shape == .itemOnCompletion
+                         ? "These choices shape notes for single Margins. A note for a whole item keeps its own form."
+                         : "Source context is the passage around each Margin. The title, source link and position are always included. Changing a choice rewrites the notes this app wrote, never ones you edited.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Section("Delivery") {
+                    StatusMessageText(message: row.status.message, isFailure: row.status.isFailure)
+                    Button("Send Test Note") { Task { await coordinator.sendTestNote(to: id) } }
+                    Button(row.destination.isEnabled ? "Pause" : "Start Delivery") {
+                        coordinator.setEnabled(id, !row.destination.isEnabled)
+                    }
+                    .disabled(row.needsAccess && !row.destination.isEnabled)
+                    Button("Remove Destination", role: .destructive) { confirmingRemove = true }
+                }
+            }
+        }
+        .confirmationDialog("Remove \(coordinator.destination(id)?.name ?? "this destination")?", isPresented: $confirmingRemove, titleVisibility: .visible) {
+            Button("Remove Destination", role: .destructive) {
+                coordinator.remove(id)
+                dismiss()
+            }
+        } message: {
+            Text("Notes already written stay in the folder. Your Margins stay in the Library.")
+        }
+        .navigationTitle(coordinator.destination(id)?.name ?? "Destination")
+        .onAppear { name = coordinator.destination(id)?.name ?? "" }
+        .onDisappear { coordinator.rename(id, to: name) }
+        .fileImporter(isPresented: $choosingFolder, allowedContentTypes: [.folder]) { result in
+            switch result {
+            case .success(let url): coordinator.replaceFolder(of: id, with: url)
+            case .failure(let error): coordinator.reportFolderPickFailure(error)
             }
         }
     }
@@ -145,7 +285,11 @@ struct ReadLaterScreen: View {
                 Button("Connect", action: connection.connect).disabled(connection.isLoading)
                 if connection.connected {
                     Button("Refresh") { connection.refresh() }.disabled(connection.isLoading)
-                    Button("Disconnect", role: .destructive, action: connection.disconnect)
+                    Button("Disconnect", role: .destructive) {
+                        // Readwise is also where Margins are sent; a later connection is a new destination (#1467).
+                        let wasReader = connection.service == .reader
+                        if connection.disconnect(), wasReader { model.readwiseHighlightSync.destinationDisconnected() }
+                    }
                 }
                 Text(connection.service == .reader
                      ? "Reader requires a Readwise account. This view lists Later articles with available text. PDFs, books and highlights are not imported by this adapter."

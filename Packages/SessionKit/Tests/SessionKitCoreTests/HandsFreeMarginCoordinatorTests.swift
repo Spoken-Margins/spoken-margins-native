@@ -559,6 +559,71 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.phase, .idle)
     }
 
+    // MARK: A press while only faint words have been heard (#1030)
+
+    /// The room reads -50 dBFS, so the threshold is -42. Faint words at -44 never cross it but are 6 dB over
+    /// the room, which the attempt rule keeps. Leaves the coordinator still `.listening`, 3 s in.
+    private func recordFaintWords() {
+        startRecording()
+        feed(-50, for: 0.5)
+        feed(-44, for: 2.5)
+        XCTAssertEqual(coordinator.phase, .listening)
+    }
+
+    func testAPressAfterFaintWordsKeepsThemInsteadOfFlagging() {
+        recordFaintWords()
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        XCTAssertEqual(coordinator.phase, .saving)
+        XCTAssertEqual(coordinator.saveCompleted(), [.playTone(.saved)])
+        XCTAssertEqual(coordinator.toneFinished(.saved), [.resumeSource])
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    func testEveryTriggerSourceKeepsFaintWordsOnAPress() {
+        for source in [HandsFreeTriggerSource.headphones, .carPlay, .lockScreen, .actionButton, .siri, .watch, .onScreen] {
+            setUp()
+            recordFaintWords()
+            XCTAssertEqual(coordinator.trigger(from: source), [.finishRecording(.press)], "\(source)")
+        }
+    }
+
+    func testAPressWithNothingSaidIsStillAFlag() {
+        startRecording()
+        feed(quiet, for: 3)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.cancelRecording, .requestFlag, .playTone(.flag)])
+        XCTAssertEqual(coordinator.toneFinished(.flag), [.resumeSource])
+    }
+
+    func testAPressAfterOnlyMicrophoneJitterIsStillAFlag() {
+        startRecording()
+        feed(quiet, for: 1)
+        feed(samples: [-54])
+        feed(quiet, for: 1)
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.cancelRecording, .requestFlag, .playTone(.flag)])
+    }
+
+    func testASecondPressInsideTheBounceWindowAfterFaintWordsIsOneCommand() {
+        recordFaintWords()
+        XCTAssertEqual(coordinator.trigger(from: .headphones), [.finishRecording(.press)])
+        clock.advance(0.2)
+        XCTAssertEqual(coordinator.trigger(from: .lockScreen), [])
+        XCTAssertEqual(coordinator.phase, .saving)
+    }
+
+    func testRemovedHeadphonesAfterFaintWordsSaveThemAndStayPaused() {
+        recordFaintWords()
+        XCTAssertEqual(coordinator.headphonesRemoved(), [.finishRecording(.headphonesRemoved)])
+        XCTAssertEqual(coordinator.saveCompleted(), [], "no tone from the phone speaker, no resume")
+        XCTAssertEqual(coordinator.phase, .idle)
+    }
+
+    /// An interruption keeps a Margin only with a second of speech heard (the coordinator's own comment),
+    /// so faint words below the threshold are still a flag. Pinned so a change to it is deliberate.
+    func testAnInterruptionAfterOnlyFaintWordsIsStillAFlag() {
+        recordFaintWords()
+        XCTAssertEqual(coordinator.interruptionBegan(), [.cancelRecording, .requestFlag])
+    }
+
     func testFaintSpeechTheThresholdMissedIsKeptNotFlagged() {
         startRecording()
         feed(-50, for: 0.5)

@@ -12,7 +12,12 @@ final class SystemVoiceRateOnIOSTests: XCTestCase {
         guard let voice = AVSpeechSynthesisVoice(language: "en-US") else {
             throw XCTSkip("No en-US system voice in this runtime")
         }
-        let normal = try renderedSeconds(rate: SpeechRateRule.systemSpeechRate(forMultiplier: 1), voice: voice)
+        try SystemVoiceRuntime.skipIfStalledEarlier()
+        // #1230: the first write may wait minutes on the speech service loading; give it the cold-start
+        // allowance, and the test the plan's maximum, so a slow start isn't read as a #768 stall.
+        executionTimeAllowance = 180
+        let normal = try renderedSeconds(rate: SpeechRateRule.systemSpeechRate(forMultiplier: 1), voice: voice,
+                                         waiting: SystemVoiceRuntime.coldStartAllowance)
         let slow = try renderedSeconds(rate: SpeechRateRule.systemSpeechRate(forMultiplier: 0.75), voice: voice)
         let fast = try renderedSeconds(rate: SpeechRateRule.systemSpeechRate(forMultiplier: 1.5), voice: voice)
         let faster = try renderedSeconds(rate: SpeechRateRule.systemSpeechRate(forMultiplier: 2), voice: voice)
@@ -27,26 +32,20 @@ final class SystemVoiceRateOnIOSTests: XCTestCase {
         XCTAssertEqual(normal / faster, 2, accuracy: 2 * 0.25, report)
     }
 
-    private func renderedSeconds(rate: Float, voice: AVSpeechSynthesisVoice) throws -> Double {
+    private func renderedSeconds(rate: Float, voice: AVSpeechSynthesisVoice, waiting: TimeInterval = 60) throws -> Double {
         let utterance = AVSpeechUtterance(string: passage)
         utterance.voice = voice
         utterance.rate = rate
-        let synthesizer = AVSpeechSynthesizer()
-        var frames: Double = 0
-        var sampleRate: Double = 0
-        var finished = false
-        let done = expectation(description: "rendered at \(rate)")
-        synthesizer.write(utterance) { buffer in
-            guard let pcm = buffer as? AVAudioPCMBuffer else { return }
-            if pcm.frameLength == 0 {
-                if !finished { finished = true; done.fulfill() }
-                return
-            }
-            frames += Double(pcm.frameLength)
-            sampleRate = pcm.format.sampleRate
-        }
-        wait(for: [done], timeout: 60)
-        guard sampleRate > 0 else { throw XCTSkip("The system voice rendered no audio in this runtime") }
-        return frames / sampleRate
+        let listening = SystemVoiceRuntime.startWrite(utterance, offTheAppsSession: false)
+        // #768: `wait(for:)` recorded a failure on timeout, so a write that never answered failed this test
+        // and left the next audio engine start in the process to abort. XCTWaiter only reports the timeout;
+        // a write that delivered nothing is recorded as a stall and skipped, and the session test skips too.
+        let finished = XCTWaiter().wait(for: [listening.finished], timeout: waiting) == .completed
+        let heard = listening.heard
+        if finished, heard.frames == 0 { throw XCTSkip("The system voice rendered no audio in this runtime") }
+        try SystemVoiceRuntime.requireAnswered(
+            SystemVoiceRuntime.classify(heard, finished: finished, waited: waiting, what: "rendering at rate \(rate)"),
+            from: listening)
+        return heard.frames / heard.sampleRate
     }
 }

@@ -157,7 +157,12 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         try await checkCompletion(compact: true)
     }
 
-    private func checkCompletion(compact: Bool) async throws {
+    /// #771 audit P3: a Margin a call cut short is a spoken Margin like any other, so it counts once.
+    func testAMarginCutShortByACallRecordsTheSpokenSignal() async throws {
+        try await checkCompletion(compact: false, interruptedByACall: true)
+    }
+
+    private func checkCompletion(compact: Bool, interruptedByACall: Bool = false) async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -168,8 +173,9 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         try XCTUnwrap(buffer.floatChannelData)[0].initialize(repeating: 0, count: 48_000)
         try AVAudioFile(forWriting: audioURL, settings: format.settings).write(from: buffer)
         let database = root.appendingPathComponent("library.sqlite")
+        let savedFileRecorder = SavedFileRecordingClient(path: audioURL.path)
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
-            recordingClient: SavedFileRecordingClient(path: audioURL.path),
+            recordingClient: savedFileRecorder,
             interjectionTranscriptionHandler: { _ in "A saved Margin." }, databaseURLOverride: database)
         model.resetAndSeed()
         model.declineCurrentTerms()
@@ -189,7 +195,11 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
         model.startItem(id: item.id)
         model.dispatchGate2CompactCommand(.beginInterjection)
         XCTAssertTrue(model.snapshot.isRecording)
-        if compact { model.dispatchGate2CompactCommand(.finishInterjection) }
+        if interruptedByACall {
+            savedFileRecorder.onInterruption?(.interruptionBegan, 5)
+            for _ in 0..<50 where model.snapshot.isRecording { try await Task.sleep(for: .milliseconds(10)) }
+            XCTAssertNotNil(model.diagnostics["lastMarginCutShort"])
+        } else if compact { model.dispatchGate2CompactCommand(.finishInterjection) }
         else { model.finishInterjection() }
         XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertEqual(model.selectedItem.interjections.count, 1)
@@ -208,8 +218,10 @@ final class ListeningSignalsCoordinatorTests: XCTestCase {
     }
 }
 
-private struct SavedFileRecordingClient: RecordingClient {
+private final class SavedFileRecordingClient: RecordingClient, RecordingInterruptionReporting, @unchecked Sendable {
     let path: String
+    var onInterruption: (@Sendable (_ event: MarginRecordingInterruptionEvent, _ recordedSeconds: TimeInterval?) -> Void)?
+    init(path: String) { self.path = path }
     func beginRecording() throws {}
     func finishRecording(audioRef: String?) throws -> String { path }
     func cancelRecording() throws {}

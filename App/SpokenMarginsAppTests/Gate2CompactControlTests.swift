@@ -1,4 +1,6 @@
+import ActivityKit
 import AVFoundation
+import MediaPlayer
 import UIKit
 import XCTest
 @testable import SessionKit
@@ -606,22 +608,99 @@ final class Gate2CompactControlTests: XCTestCase {
     }
 
     /// C3 M1: a process killed in the background never runs `willTerminate`, so its activity is
-    /// orphaned. The first idle pass after launch ends it even when it belongs to another session.
-    func testFirstIdlePassAfterLaunchEndsActivitiesFromAnEarlierProcess() {
-        XCTAssertTrue(Gate2LiveActivityPolicy.shouldEndInactive(
-            activitySessionId: "session-killed",
-            activityId: "activity-orphan",
-            inactiveSessionId: "session-restored",
-            trackedActivityId: nil,
-            isFirstPassInProcess: true
-        ))
-        XCTAssertFalse(Gate2LiveActivityPolicy.shouldEndInactive(
-            activitySessionId: "session-other",
-            activityId: "activity-2",
-            inactiveSessionId: "session-restored",
-            trackedActivityId: nil,
-            isFirstPassInProcess: false
-        ), "later passes still end only the inactive session's activity")
+    /// orphaned. The first idle pass after launch ends it even when it belongs to another session;
+    /// later idle passes end only the inactive session's card. Drives the real controller over a
+    /// fake card list (APO-05, #1291), so the flag's wiring is what is tested.
+    func testFirstIdlePassAfterLaunchEndsActivitiesFromAnEarlierProcess() async {
+        let list = FakeLiveActivityList()
+        list.add(id: "activity-orphan", sessionId: "session-killed")
+        let controller = Gate2LiveActivityController(system: list.system)
+        let restoredButPaused = liveActivitySnapshot(sessionId: "session-restored", status: .paused)
+
+        publish(restoredButPaused, to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(list.log, ["end:activity-orphan"], "the first idle pass ends the killed process's card")
+        XCTAssertEqual(controller.status, "ended")
+
+        list.add(id: "activity-other", sessionId: "session-other")
+        publish(restoredButPaused, to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(list.log, ["end:activity-orphan"], "a later idle pass leaves another session's card alone")
+        XCTAssertEqual(list.cardIds, ["activity-other"])
+        XCTAssertEqual(controller.status, "not_ready")
+    }
+
+    /// Publishing ends every other session's card, so it counts as the launch sweep: the idle pass
+    /// after it ends only the card it tracks.
+    func testAPublishCountsAsTheFirstSweepOfTheProcess() async {
+        let list = FakeLiveActivityList()
+        list.add(id: "activity-mine", sessionId: "session-pill")
+        let controller = Gate2LiveActivityController(system: list.system)
+
+        publish(liveActivitySnapshot(sessionId: "session-pill", status: .playing), to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(controller.status, "updated")
+
+        list.add(id: "activity-other", sessionId: "session-other")
+        publish(liveActivitySnapshot(sessionId: nil, status: .idle), to: controller)
+        await controller.waitForPendingWork()
+        XCTAssertEqual(list.log, ["update:activity-mine", "end:activity-mine"])
+        XCTAssertEqual(list.cardIds, ["activity-other"])
+        XCTAssertEqual(controller.status, "ended")
+    }
+
+    /// Publishing for a session updates its first card and ends the rest: a card already handed
+    /// off to iOS (ended, still on screen), another session's card, and any duplicate.
+    func testPublishEndsHandedOffCardsOtherSessionsAndDuplicates() async {
+        let list = FakeLiveActivityList()
+        list.add(id: "activity-handed-off", sessionId: "session-pill", state: .ended)
+        list.add(id: "activity-first", sessionId: "session-pill")
+        list.add(id: "activity-duplicate", sessionId: "session-pill")
+        list.add(id: "activity-old", sessionId: "session-old")
+        let controller = Gate2LiveActivityController(system: list.system)
+
+        publish(liveActivitySnapshot(sessionId: "session-pill", status: .playing), to: controller)
+        await controller.waitForPendingWork()
+
+        XCTAssertEqual(list.log, [
+            "end:activity-handed-off",
+            "end:activity-old",
+            "update:activity-first",
+            "end:activity-duplicate"
+        ])
+        XCTAssertEqual(list.cardIds, ["activity-first"])
+        XCTAssertEqual(controller.status, "updated_pruned_stale")
+    }
+
+    /// A handed-off card can't be updated, so publishing replaces it with a new request.
+    func testPublishReplacesAHandedOffCardWithANewOne() async {
+        let list = FakeLiveActivityList()
+        list.add(id: "activity-handed-off", sessionId: "session-pill", state: .ended)
+        let controller = Gate2LiveActivityController(system: list.system)
+
+        publish(liveActivitySnapshot(sessionId: "session-pill", status: .playing), to: controller)
+        await controller.waitForPendingWork()
+
+        XCTAssertEqual(list.log, ["end:activity-handed-off", "request:session-pill"])
+        XCTAssertEqual(list.cardIds, ["requested-1"])
+        XCTAssertEqual(controller.status, "started")
+    }
+
+    /// The hand-off ends live and stale cards with their content and a dismissal time, and
+    /// leaves cards that are already ended.
+    func testHandOffDismissalEndsLiveCardsAtTheGivenTime() async {
+        let list = FakeLiveActivityList()
+        list.add(id: "activity-live", sessionId: "session-pill")
+        list.add(id: "activity-stale", sessionId: "session-pill", state: .stale)
+        list.add(id: "activity-handed-off", sessionId: "session-old", state: .ended)
+        let controller = Gate2LiveActivityController(system: list.system)
+        let dismissAt = Date(timeIntervalSinceReferenceDate: 800_000_000)
+
+        await controller.handOffDismissal(at: dismissAt)
+
+        XCTAssertEqual(list.log, ["handoff:activity-live", "handoff:activity-stale"])
+        XCTAssertEqual(list.handOffDates, [dismissAt, dismissAt])
+        XCTAssertEqual(controller.status, "handed_off")
     }
 
     /// C3 M1: a paused Live Activity carries a stale date and ends after the idle limit, then
@@ -945,6 +1024,24 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true)
         XCTAssertNil(controller.snapshot?.skimForwardDestinationMs, "a hidden Skim shows no stale time")
         XCTAssertEqual(controller.snapshot?.skimBackwardDestinationMs, 30_000)
+
+        // #1044 APO-13: each Skim follows its own readiness, and neither is offered while recording.
+        appSnapshot.canSkimBackward = false
+        appSnapshot.canSkimForward = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered although the app says it can't skim back")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skimForward) == true)
+
+        appSnapshot.canSkimBackward = true
+        appSnapshot.isRecording = true
+        controller.update(snapshot: appSnapshot)
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimBackward) == true,
+                       "Skim back is offered while a Margin is recording")
+        XCTAssertFalse(controller.snapshot?.availableCommands.contains(.skimForward) == true,
+                       "Skim forward is offered while a Margin is recording")
+        XCTAssertTrue(controller.snapshot?.availableCommands.contains(.skipBack) == true,
+                      "the overlay only removes Skim; time skips are not its to change")
     }
 
     func testNowPlayingPoliciesKeepNativeMediaMetadataWithoutSharingCommandOwnership() {
@@ -997,7 +1094,7 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["lockScreenLifecycleRefresh"], model.snapshot.targetType ?? "none")
     }
 
-    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() {
+    func testSessionMixingPolicyCanRelinquishAndRestoreNowPlaying() throws {
         let profile = RuntimeCapabilityProfile(
             id: "mixing-now-playing",
             displayName: "Mixing Now Playing",
@@ -1018,7 +1115,8 @@ final class Gate2CompactControlTests: XCTestCase {
             )
         ])
         let engine = SessionEngine(profile: profile, repository: repository, audio: NoopAudioPlaybackClient())
-        _ = try? engine.startSession(itemId: "text")
+        let started = try engine.startSession(itemId: "text")
+        let sessionId = try XCTUnwrap(started.sessionId, "the text session did not start")
         let controller = Gate2CompactControlController(liveActivity: RecordingLiveActivityController())
         controller.configure(
             canonicalRuntime: engine,
@@ -1033,6 +1131,14 @@ final class Gate2CompactControlTests: XCTestCase {
 
         controller.setNowPlayingEnabled(true)
         XCTAssertEqual(controller.diagnostics()["gate2NowPlayingEnabled"], "true")
+        // #1044 APO-07: turning mixing off again must bring the Lock Screen card back, not just flip the flag.
+        let restored = controller.diagnostics()["gate2NowPlaying"] ?? "missing"
+        XCTAssertTrue(restored.hasPrefix("live_speech_"), "Now Playing was not republished after the restore: \(restored)")
+        XCTAssertEqual(
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPNowPlayingInfoPropertyExternalContentIdentifier] as? String,
+            sessionId,
+            "the system Now Playing card does not show this session again"
+        )
     }
 
     func testPeriodicCompactRefreshIgnoresRawElapsedTimeButRetainsMeaningfulChanges() {
@@ -1051,6 +1157,27 @@ final class Gate2CompactControlTests: XCTestCase {
 
         first.status = .paused
         XCTAssertFalse(Gate2CompactControlController.hasEquivalentSurfaceState(first, elapsedOnly))
+    }
+
+    private func liveActivitySnapshot(sessionId: String?, status: PlaybackStatus) -> CompactControlSnapshot {
+        var snapshot = compactSnapshot(
+            targetType: TargetType.itemTextTTS.rawValue,
+            availableCommands: [.pause],
+            durationMs: 120_000
+        )
+        snapshot.sessionId = sessionId
+        snapshot.status = status
+        return snapshot
+    }
+
+    private func publish(_ snapshot: CompactControlSnapshot, to controller: Gate2LiveActivityController) {
+        controller.publish(
+            snapshot,
+            staleDate: nil,
+            sharedMarginPrompt: nil,
+            upcomingSharedMargins: [],
+            microphone: .capturing
+        )
     }
 
     private func compactSnapshot(
@@ -1133,6 +1260,77 @@ private final class RecordingLiveActivityController: Gate2LiveActivityControllin
     func handOffDismissal(at date: Date) async {
         handOffDates.append(date)
         status = "handed_off"
+    }
+}
+
+/// The Live Activity list the real `Gate2LiveActivityController` sees in tests (APO-05). Ending a
+/// card immediately takes it off the list, as ActivityKit does; a hand-off leaves it ended.
+private final class FakeLiveActivityList: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cards: [(id: String, sessionId: String, state: ActivityState)] = []
+    private var events: [String] = []
+    private var dismissals: [Date] = []
+    private var requestCount = 0
+
+    var log: [String] { lock.withLock { events } }
+    var cardIds: [String] { lock.withLock { cards.map(\.id) } }
+    var handOffDates: [Date] { lock.withLock { dismissals } }
+
+    var system: Gate2LiveActivitySystem {
+        Gate2LiveActivitySystem(
+            areActivitiesEnabled: { true },
+            activities: { [self] in
+                lock.withLock { cards.map { FakeLiveActivityCard(id: $0.id, sessionId: $0.sessionId, list: self) } }
+            },
+            request: { [self] sessionId, _, _ in
+                lock.withLock {
+                    requestCount += 1
+                    let id = "requested-\(requestCount)"
+                    cards.append((id, sessionId, .active))
+                    events.append("request:\(sessionId)")
+                    return id
+                }
+            }
+        )
+    }
+
+    func add(id: String, sessionId: String, state: ActivityState = .active) {
+        lock.withLock { cards.append((id, sessionId, state)) }
+    }
+
+    fileprivate func state(of id: String) -> ActivityState {
+        lock.withLock { cards.first { $0.id == id }?.state ?? .ended }
+    }
+
+    fileprivate func record(_ event: String, removing id: String? = nil, handingOff handOffId: String? = nil, at date: Date? = nil) {
+        lock.withLock {
+            events.append(event)
+            if let id { cards.removeAll { $0.id == id } }
+            if let handOffId, let index = cards.firstIndex(where: { $0.id == handOffId }) {
+                cards[index].state = .ended
+            }
+            if let date { dismissals.append(date) }
+        }
+    }
+}
+
+private struct FakeLiveActivityCard: Gate2LiveActivityCard {
+    let id: String
+    let sessionId: String
+    let list: FakeLiveActivityList
+
+    var state: ActivityState { list.state(of: id) }
+
+    func update(_ state: Gate2LiveActivityAttributes.ContentState, staleDate: Date?) async {
+        list.record("update:\(id)")
+    }
+
+    func endImmediately() async {
+        list.record("end:\(id)", removing: id)
+    }
+
+    func endKeepingContent(dismissAt date: Date) async {
+        list.record("handoff:\(id)", handingOff: id, at: date)
     }
 }
 
