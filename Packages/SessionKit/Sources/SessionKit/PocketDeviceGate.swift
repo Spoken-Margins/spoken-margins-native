@@ -36,6 +36,9 @@ public struct PocketDeviceGate: Equatable, Sendable {
     /// this, playback would catch up with the renderer.
     public static let floorSpeed: Double = 2
 
+    /// The threshold never drops below real time: slower than that, playback outruns the renderer.
+    public static let minimumThreshold: Double = 1
+
     /// How much slower than the owner's measured phone a listener's phone may be.
     public static let defaultMargin: Double = 0.25
 
@@ -55,10 +58,12 @@ public struct PocketDeviceGate: Equatable, Sendable {
         self.margin = margin
     }
 
-    /// 2x real time, or the reference phone's speed minus the margin when that is lower.
+    /// 2x real time, or the reference phone's speed minus the margin when that is lower, but never
+    /// below real time.
     public var threshold: Double {
         guard let reference = referencePhoneSpeed, reference.isFinite, reference > 0 else { return Self.floorSpeed }
-        return min(Self.floorSpeed, max(0, reference - max(0, margin)))
+        let margin = margin.isFinite ? max(0, margin) : 0
+        return min(Self.floorSpeed, max(Self.minimumThreshold, reference - margin))
     }
 
     public func decide(_ measurement: PocketRenderMeasurement) -> Decision {
