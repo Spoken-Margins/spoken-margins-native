@@ -1410,7 +1410,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
-        releaseUnplayedReviewMargins()
+        giveBackUnfinishedReview()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
         marginMoment = nil
@@ -2011,6 +2011,7 @@ final class Gate1AppModel: ObservableObject {
         guard !rejectNavigationOrSessionMutationWhileRecording("start_new_session") else { return }
         // Before ending what's playing: a blocked start must not stop a downloaded episode.
         guard !blockOfflineEpisodeStart(itemId: id) else { return }
+        endUnfinishedReview()
         resetMixWithOtherAudioForNewSession()
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         cancelSleepTimer()
@@ -2028,6 +2029,7 @@ final class Gate1AppModel: ObservableObject {
 
     func openSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("open_session") else { return }
+        endUnfinishedReview()
         resetMixWithOtherAudioForNewSession()
         sharedMarginOffers.removeAll()
         pendingImportedCommentary = nil
@@ -2057,6 +2059,7 @@ final class Gate1AppModel: ObservableObject {
     func resumeSession(_ session: Session) {
         guard !rejectNavigationOrSessionMutationWhileRecording("resume_session") else { return }
         guard !blockOfflineEpisodeStart(itemId: session.itemId) else { return }
+        endUnfinishedReview()
         resetMixWithOtherAudioForNewSession()
         cancelSleepTimer()
         sharedMarginOffers.removeAll()

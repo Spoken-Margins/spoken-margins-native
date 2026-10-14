@@ -89,14 +89,33 @@ extension Gate1AppModel {
 
     /// Stop on the review card: the voice stops and the item goes back to where the listener left off, paused.
     func stopReviewingNewMargins() {
-        marginMomentConductor?.stopReview()
         endMarginMoment()
+    }
+
+    /// A review that ends before its last Margin (Stop, another item, a Timeline jump, the session closing, a new
+    /// review) hands the item back as the listener left it: the voice stops, the source goes back to where they left
+    /// off, paused, and the Margins it didn't reach go back to the automatic prompts. Without that, the session is
+    /// saved wherever the review had got to and the next Continue lands there. Called first whenever a moment ends.
+    /// The source only moves while it is still on the review's item: once another item has taken the player, the
+    /// place belongs to the item that was left, not to the new one.
+    func giveBackUnfinishedReview() {
+        guard let conductor = marginMomentConductor, conductor.sequence.isUnfinishedReview else { return }
+        releaseUnplayedReviewMargins()
+        if snapshot.itemId == conductor.sequence.itemId { conductor.stopReview() }
+    }
+
+    /// For the places that stop the player or start another session before they end a moment (opening, resuming or
+    /// starting a session): an unfinished review ends first, while the source is still on its item, so that item is
+    /// saved at the listener's place. It runs before they clear the shared-Margin prompts, so the jump back doesn't
+    /// count as passing a Margin the review already played.
+    func endUnfinishedReview() {
+        if marginMomentConductor?.sequence.isUnfinishedReview == true { endMarginMoment() }
     }
 
     /// A review that ends before it reaches every Margin gives back the ones still ahead of the place it will return
     /// to, so the automatic prompts play them when the listener gets there. The ones behind that place stay
-    /// announced: going back to the place would otherwise count as passing them. Called when any moment ends.
-    func releaseUnplayedReviewMargins() {
+    /// announced: going back to the place would otherwise count as passing them.
+    private func releaseUnplayedReviewMargins() {
         guard let moment = marginMoment, let review = moment.review, moment.itemId == selectedItem.id else { return }
         let returnTo = review.returnToMediaTimeMs ?? 0
         var left = moment.unplayed

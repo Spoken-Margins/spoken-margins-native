@@ -154,6 +154,11 @@ public struct MarginMomentSequence: Sendable, Equatable {
 
     public var isReview: Bool { review != nil }
 
+    /// A review that hasn't played its last Margin. The source is somewhere in the middle of it, so a review that ends
+    /// now (another item, a Timeline jump, Stop) owes the listener the way back to `Review.returnToMediaTimeMs`. One that
+    /// played its last Margin has already gone back.
+    public var isUnfinishedReview: Bool { review != nil && phase != .listening }
+
     /// Which Margin of the review is playing or next, from 1, for "2 of 3". Nil outside a review.
     public var reviewNumber: Int? {
         guard let review else { return nil }

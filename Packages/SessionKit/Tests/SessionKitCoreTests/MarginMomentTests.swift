@@ -256,6 +256,28 @@ final class MarginMomentTests: XCTestCase {
         XCTAssertEqual(fresh.marginFinished(), .reviewDone(returnToMediaTimeMs: nil, resumes: false))
     }
 
+    /// A review that ends in the middle (another item, a Timeline jump, Stop) owes the listener the way back; one that
+    /// played its last Margin has already gone back, and a plain Margin moment never moves the listener.
+    func testAReviewOwesTheWayBackUntilItsLastMarginHasPlayed() throws {
+        var sequence = try review([anchor("a", 60_000), anchor("b", 200_000)], returnTo: 900_000)
+        XCTAssertTrue(sequence.isUnfinishedReview, "in the lead-in to the first Margin")
+        _ = sequence.progressed(from: 59_800, to: 60_300)
+        XCTAssertTrue(sequence.isUnfinishedReview, "while the first Margin plays")
+        _ = sequence.marginFinished(sourceAtMediaTimeMs: 60_300)
+        XCTAssertTrue(sequence.isUnfinishedReview, "between the Margins, with the source hopping ahead")
+        _ = sequence.progressed(from: 199_800, to: 200_300)
+        XCTAssertTrue(sequence.isUnfinishedReview, "while the last Margin plays")
+        _ = sequence.marginFinished(sourceAtMediaTimeMs: 200_300)
+        XCTAssertFalse(sequence.isUnfinishedReview, "the last Margin has played and the source has gone back")
+
+        XCTAssertFalse(MarginMomentSequence(itemId: "ep", target: target, otherMargins: []).isUnfinishedReview,
+                       "Play this moment is not a review")
+        XCTAssertFalse(
+            MarginMomentSequence(itemId: "ep", resumingAtMediaTimeMs: 5_000, playedMargin: target, otherMargins: []).isUnfinishedReview,
+            "neither is the play-on after one of your own Margins"
+        )
+    }
+
     func testPlayThisMomentStillEndsListeningWhenItsMarginsAreDone() {
         var sequence = MarginMomentSequence(itemId: "ep", target: target, otherMargins: [])
         XCTAssertFalse(sequence.isReview)

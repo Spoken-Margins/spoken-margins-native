@@ -572,6 +572,55 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
                       "the one already heard isn't prompted again")
     }
 
+    /// #474 audit: a review that ends before its last Margin (a Timeline jump, Add Margin, the session closing) must
+    /// give the item back where the listener left off. Left where the review had got to, the session is saved there
+    /// and the next Continue lands in the wrong place, which is the problem the review exists to fix.
+    func testAReviewThatEndsEarlyGivesTheItemBackWhereTheListenerWas() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 25_000)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 12_000))
+        model.pause()
+        let leftOffAt = try XCTUnwrap(model.snapshot.currentMediaTimeMs)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        try waitUntil("the first Margin's voice plays", timeout: 10) { model.marginMoment?.isPlayingMargin == true }
+        XCTAssertLessThan(model.snapshot.currentMediaTimeMs ?? .max, 5_000, "the review moved the source to the Margin at 1 s")
+
+        model.endMarginMoment() // what a Timeline jump, Add Margin or the session closing does
+        XCTAssertNil(model.marginMoment)
+        XCTAssertLessThan(abs((model.snapshot.currentMediaTimeMs ?? .max) - leftOffAt), 1_000,
+                          "back where the listener left off, not where the review had got to")
+        XCTAssertEqual(model.snapshot.status, .paused, "and nothing plays on from the middle of the review")
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        XCTAssertNil(try fixture.storedRecord("note2")?.firstHeardAt, "the Margin it never reached stays new")
+        XCTAssertEqual(model.snapshot.status, .paused)
+    }
+
+    /// #474 audit: Continue or a session list tap during a review stops the player before anything ends the moment.
+    /// The review ends first, so the session is saved at the listener's place and the item resumes there.
+    func testResumingTheItemDuringAReviewResumesWhereTheListenerLeftOff() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 25_000)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 12_000))
+        model.pause()
+        let leftOffAt = try XCTUnwrap(model.snapshot.currentMediaTimeMs)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        try waitUntil("the first Margin's voice plays", timeout: 10) { model.marginMoment?.isPlayingMargin == true }
+
+        model.startItem(id: "real-source") // Continue again: resumes this item's session
+        XCTAssertNil(model.marginMoment, "the review is over")
+        let resumedAt = try XCTUnwrap(model.snapshot.currentMediaTimeMs)
+        XCTAssertTrue((leftOffAt - 1_000...leftOffAt + 3_000).contains(resumedAt),
+                      "resumed at \(resumedAt) ms, not where the listener left off (\(leftOffAt) ms)")
+    }
+
     /// #474: "Listen without them" is remembered, so the offer isn't made at every Continue; a Margin that arrives
     /// later brings it back, and a Margin whose recording is gone isn't counted.
     func testTurningDownTheOfferStopsItBeingRepeated() throws {
