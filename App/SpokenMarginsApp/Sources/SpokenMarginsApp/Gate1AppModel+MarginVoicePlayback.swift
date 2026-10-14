@@ -170,10 +170,12 @@ extension Gate1AppModel {
     }
 
     func reconcileImportedCommentary(previous: SessionSnapshot, current: SessionSnapshot) {
-        // Margins crossed together are offered one after another (#918).
+        // Margins crossed together are offered one after another (#918). None is offered over a review of new
+        // Margins (#474): its lead-ins cross Margins already heard, and an offer would pause the review.
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil,
+            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil
+                && marginMomentConductor?.sequence.isReview != true,
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)

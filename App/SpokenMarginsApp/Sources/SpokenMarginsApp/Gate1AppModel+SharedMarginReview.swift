@@ -55,6 +55,13 @@ extension Gate1AppModel {
             return
         }
         endMarginMoment()
+        // A Margin voice already playing (your own, #1538, or a friend's) or a shared-Margin card waiting gives way:
+        // it would play over the review, and its end would resume the source mid-review.
+        importedCommentaryAutoPlayTask?.cancel()
+        importedCommentaryAutoPlayTask = nil
+        pendingImportedCommentary = nil
+        _ = sharedMarginReturn.promptDismissed()
+        stopImportedCommentaryPlayback(resumeSource: false)
         if snapshot.itemId != itemId || !hasActiveSession { startItem(id: itemId) }
         guard snapshot.itemId == itemId,
               let sequence = MarginMomentSequence(
