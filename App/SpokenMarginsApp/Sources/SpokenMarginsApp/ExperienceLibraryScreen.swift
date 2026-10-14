@@ -453,6 +453,7 @@ private struct ExperienceLibraryCompactRow: View {
                 Button("Prepare Offline", systemImage: "arrow.down.circle", action: onPrepareOffline)
             }
             Button("Add to Collection…", systemImage: "folder.badge.plus", action: onAddToCollection)
+                .accessibilityIdentifier("library.addToCollection.\(row.id)")
             if row.canDelete {
                 Button("Move to Recently Deleted", systemImage: "trash", role: .destructive, action: onDelete)
             }

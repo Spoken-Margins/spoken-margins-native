@@ -89,6 +89,15 @@ The owner's one-phone version, with prepared packets and an episode that shares 
 2. Record a written Margin, then reopen it later.
    - Pass: it opens at the right passage.
 
+## J8 — Collections
+
+1. Long-press a Library item, choose Add to Collection, and make a collection such as "HIST 210" on the spot.
+   - Pass: the collection is listed with this item checked.
+2. Open Margins and open the scope picker.
+   - Pass: the collection is listed above the single items. Choosing it shows only the Margins of items in it, and Export Sessions starts with only those sessions selected.
+3. Delete the collection from the same sheet.
+   - Pass: its items and their Margins are still there.
+
 ## Writing scripted journeys
 
 The Test Desk keeps this guide. Threads writing a first pass follow it, and the desk corrects it when a script teaches it something.
