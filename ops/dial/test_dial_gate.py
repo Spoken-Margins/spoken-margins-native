@@ -431,5 +431,67 @@ class Status(unittest.TestCase):
         self.assertNotIn('Old one', text)  # quiet for more than 6 hours: dropped
 
 
+class PerProviderSlots(unittest.TestCase):
+    """2026-10-14: the Dial gave Claude 2 slots and Codex 3, but Codex workers were counted
+    against Claude's 2, so the gate read "2 of 2" with only Codex workers running."""
+    DIAL = BODY.replace('- [x] 3\n- [ ] 4', '- [ ] 3\n- [x] 2').replace('- [ ] Any slot opens', '- [x] Any slot opens')
+    COMMENTS = [claim('Codex worker 1', 1577, ago(minutes=20)), claim('Codex worker 2', 861, ago(minutes=10))]
+
+    def setUp(self):
+        self.dial = g.parse_dial(self.DIAL)
+        self.threads = g.parse_threads(self.COMMENTS, [], NOW)
+        self.usage = g.parse_usage([tick(40, ago(minutes=30))])
+
+    def test_fixture_reads_two_claude_threads(self):
+        self.assertEqual(self.dial['threads'], 2)
+
+    def test_codex_workers_are_not_claude_threads(self):
+        self.assertEqual({t['title']: t['provider'] for t in self.threads},
+                         {'Codex worker 1': 'codex', 'Codex worker 2': 'codex'})
+        self.assertEqual(g.active_count(self.threads), 0)
+        self.assertEqual(g.active_count(self.threads, 'codex'), 2)
+
+    def test_only_codex_workers_running_leaves_both_claude_slots_open(self):
+        decision = g.decide(NOW, self.dial, self.usage, 10, None, {}, g.active_count(self.threads))
+        self.assertTrue(decision['fire'], decision['why'])
+        self.assertIn('0 of 2', decision['why'])
+
+    def test_claude_threads_still_fill_claude_slots_beside_codex_workers(self):
+        threads = g.parse_threads(self.COMMENTS + [claim('Podcast anchors', 592, ago(minutes=5)),
+                                                   claim('Zotero export', 588, ago(minutes=4))], [], NOW)
+        self.assertEqual(g.active_count(threads), 2)
+        self.assertEqual(g.active_count(threads, 'codex'), 2)
+        state = {'last_fire': 'fire-x', 'last_fire_at': ts(ago(hours=1))}
+        ack = {'fire': 'fire-x', 'running': None, 'at': NOW}
+        decision = g.decide(NOW, self.dial, self.usage, 10, ack, state, g.active_count(threads))
+        self.assertFalse(decision['fire'])
+        self.assertIn('2 of 2 threads are active', decision['why'])
+
+    def test_a_codex_claim_does_not_acknowledge_a_claude_fire(self):
+        self.assertEqual(g.claims_since(self.threads, ago(hours=1)), 0)
+        self.assertEqual(g.claims_since(self.threads, ago(hours=1), 'codex'), 2)
+
+    def test_title_matching_is_exact_to_the_worker_format(self):
+        for title in ('Codex worker 3', 'codex worker 12', ' Codex worker 1 '):
+            self.assertEqual(g.thread_provider(title), 'codex', title)
+        for title in ('Codex worker', 'Codex workers 1', 'Fix Codex worker 1 crash', 'Mac finisher', 'Podcast anchors'):
+            self.assertEqual(g.thread_provider(title), 'claude', title)
+
+    def test_fire_payload_states_claudes_number_and_claudes_count(self):
+        threads = g.parse_threads(self.COMMENTS + [claim('Podcast anchors', 592, ago(minutes=5))], [], NOW)
+        active = [t for t in g.of_provider(threads) if t['state'] == 'active']
+        text = g.fire_text('fire-1', self.dial['threads'], active)
+        self.assertIn('allows up to 2 Claude threads', text)
+        self.assertIn('1 Claude threads look active', text)
+        self.assertIn('"Podcast anchors"', text)
+        self.assertNotIn('Codex worker 1"', text)
+
+    def test_status_counts_claude_and_names_codex_separately(self):
+        decision = g.decide(NOW, self.dial, self.usage, 10, None, {}, 0)
+        text = g.status_text(NOW, self.dial, self.usage, 10, None, {}, decision, self.threads)
+        self.assertIn('Active threads: 0 of 2 (Claude).', text)
+        self.assertIn('Codex workers active: 2', text)
+
+
 if __name__ == '__main__':
     unittest.main()
