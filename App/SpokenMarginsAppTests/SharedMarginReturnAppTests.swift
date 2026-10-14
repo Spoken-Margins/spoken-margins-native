@@ -200,6 +200,24 @@ final class SharedMarginReturnAppTests: XCTestCase {
         }
     }
 
+    // #1538: moving from one of your Margins to another while the first plays keeps the promise to bring the source back.
+    func testSwitchingFromOneOwnMarginToAnotherStillBringsTheSourceBackWhenTheSecondEnds() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let first = try fixture.addOwnMargin(id: "own-first", atMediaTimeMs: 100, voiceSeconds: 5)
+        let second = try fixture.addOwnMargin(id: "own-second", atMediaTimeMs: 150, voiceSeconds: 1)
+
+        model.toggleInterjectionAudioPlayback(first)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.toggleInterjectionAudioPlayback(second)
+        XCTAssertFalse(model.isPlayingInterjectionAudio(first))
+        XCTAssertTrue(model.isPlayingInterjectionAudio(second))
+
+        try await fixture.waitUntil("the second Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(second) }
+        try await fixture.waitUntil("the source plays again") { model.snapshot.status == .playing }
+    }
+
     // #1538: the listener had paused the source themselves, so a Margin that ends owes it nothing.
     func testAnOwnMarginPlayedOverAPausedSourceLeavesItPausedWhenItEnds() async throws {
         let fixture = try await ReturnFixture.make(sourcePlaying: true)

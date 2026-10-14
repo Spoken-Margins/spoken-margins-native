@@ -38,8 +38,8 @@ extension Gate1AppModel {
             return
         }
         // The source comes back when this Margin ends if playing it is what paused it (#1538); read before the pause.
-        let returnsSource = snapshot.status.isPlaybackActive
-            || (playingImportedCommentary != nil && sharedMarginReturn.heldByVoice)
+        // A voice that is already playing (another of your Margins, or a shared one) holds the promise made for it.
+        let returnsSource = snapshot.status.isPlaybackActive || sharedMarginReturn.heldByVoice
         if snapshot.status.isPlaybackActive {
             pause()
         }
@@ -248,6 +248,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String) {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
               let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
+              played.itemId == itemID, snapshot.status.isPlaybackActive,
               played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
         let spoken = inlineSpokenMargins(itemId: itemID, store: store)
         let playedIdentity = Self.marginIdentity(played)
