@@ -19,11 +19,6 @@ extension Gate1AppModel {
     /// Records a `playback.state` when the status or target changes, and every 30 seconds while playing. The
     /// snapshot's `didSet` calls it. A snapshot that loses its item also gets a `playback.sessionCleared` (#1337).
     func recordPlaybackEventState(previous: SessionSnapshot) {
-        let now = ProcessInfo.processInfo.systemUptime
-        let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
-            || previous.lastFailure != snapshot.lastFailure
-        guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
-        lastPlaybackEventCheckpoint = now
         if previous.itemId != nil, snapshot.itemId == nil {
             playbackEventRecording.record("playback.sessionCleared", PlaybackDiagnosticFields.sessionCleared(
                 previousItemToken: DeveloperDiagnosticRecording.token(previous.itemId),
@@ -32,6 +27,11 @@ extension Gate1AppModel {
                 narration: narrationDiagnostics()
             ))
         }
+        let now = ProcessInfo.processInfo.systemUptime
+        let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
+            || previous.lastFailure != snapshot.lastFailure
+        guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
+        lastPlaybackEventCheckpoint = now
         playbackEventRecording.record("playback.state", playbackStateRecordFields())
     }
 

@@ -96,7 +96,6 @@ final class PlaybackDiagnosticFieldsTests: XCTestCase {
             XCTAssertEqual(fields["session"], "bbbb")
             XCTAssertEqual(fields["clientIntent"], "playing", "the state before the close stays in the record")
         }
-        XCTAssertEqual(Set(["mini_player_close", "done_button", "chapter_action_switch_item", "start_new_session"]).count, 4)
     }
 
     func testClearedSessionFlagsNarrationThatOutlivesIt() {
