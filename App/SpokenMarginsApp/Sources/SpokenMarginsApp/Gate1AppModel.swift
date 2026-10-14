@@ -2382,9 +2382,8 @@ final class Gate1AppModel: ObservableObject {
 
     func handleIncomingURL(_ url: URL) {
         if let marginLink = MarginDeepLink(url: url) { openMargin(marginLink); return }
-        if url.isFileURL, url.pathExtension.lowercased() == "json" {
-            importListeningEditionFile(url); return
-        }
+        if ShareLinkURL.isOnShareHost(url) { openShareLink(url); return }
+        if url.isFileURL, url.pathExtension.lowercased() == "json" { importListeningEditionFile(url); return }
         if url.scheme == "spokenmargins", url.host == "listening-edition" {
             do {
                 let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value ?? ""
