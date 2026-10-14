@@ -113,6 +113,6 @@ struct ItemDetailLoader {
             importedCommentaryInterjections: importedInterjections,
             sharedMarginPlacement: placementPasses.pass(itemId: item.id),
             turns: turns
-        )
+        ).includingTimelineSource(try? store.loadStructuredDocument(itemId: id))
     }
 }

@@ -524,7 +524,7 @@ private struct ManageFeedsScreen: View {
 }
 
 /// The feeds a link or an item's Follow found, when there is more than one to choose from.
-private struct FollowCandidateChoices: View {
+struct FollowCandidateChoices: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     var body: some View {

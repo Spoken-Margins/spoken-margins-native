@@ -105,42 +105,111 @@ public enum PlaybackLivePassage {
         sentencesBefore: Int = defaultSentencesBefore,
         sentencesAfter: Int = defaultSentencesAfter
     ) -> Window {
-        let characters = Array(text)
-        guard !characters.isEmpty else { return .empty }
+        var index = Index(text: text, chapters: chapters)
+        index.update(offset: offset, margins: margins, sentencesBefore: sentencesBefore, sentencesAfter: sentencesAfter)
+        return index.window
+    }
 
-        let chapter = chapter(at: offset, in: chapters, textLength: characters.count)
-        let bounds = chapter.map { $0.range } ?? 0..<characters.count
-        let sentences = sentenceRanges(in: characters, within: bounds)
-        guard !sentences.isEmpty else {
-            return Window(chapterTitle: chapter?.title, sentences: [], currentIndex: nil, hasEarlier: false, hasLater: false)
+    /// A selectable chapter and its current sentence in UIKit/Foundation UTF-16 coordinates.
+    public struct Reader: Equatable, Sendable {
+        public let chapterTitle: String?
+        public let text: String
+        public let currentSentenceRange: NSRange?
+    }
+
+    /// Immutable parsed chapter. Reusing its identity proves playback ticks do not split the text again.
+    public final class IndexedChapter: Sendable {
+        public let title: String?
+        public let bounds: Range<Int>
+        private let characters: [Character]
+        fileprivate let ranges: [Range<Int>]
+
+        fileprivate init(title: String?, bounds: Range<Int>, characters: [Character]) {
+            self.title = title
+            self.bounds = bounds
+            self.characters = characters
+            ranges = sentenceRanges(in: characters, within: bounds)
         }
 
-        let current = sentenceIndex(containing: offset, in: sentences)
-        let first = max(0, current - max(0, sentencesBefore))
-        let last = min(sentences.count - 1, current + max(0, sentencesAfter))
-
-        let shown = (first...last).map { index -> Sentence in
-            let range = sentences[index]
-            let anchored = margins
-                .filter { isInChapter($0.offset, bounds: bounds, textLength: characters.count) && sentenceIndex(containing: $0.offset, in: sentences) == index }
-                .sorted { $0.offset == $1.offset ? $0.id < $1.id : $0.offset < $1.offset }
-            let trimmed = trimmedEnd(of: range, in: characters)
-            return Sentence(
-                start: trimmed.lowerBound,
-                end: trimmed.upperBound,
-                text: String(characters[trimmed]),
-                isCurrent: index == current,
-                diamonds: anchored.map { Diamond(id: $0.id, origin: $0.origin) }
-            )
+        public func reader(at offset: Int) -> Reader {
+            let text = String(characters[bounds])
+            guard !ranges.isEmpty else { return Reader(chapterTitle: title, text: text, currentSentenceRange: nil) }
+            let range = trimmedEnd(of: ranges[sentenceIndex(containing: offset, in: ranges)], in: characters)
+            let start = text.index(text.startIndex, offsetBy: range.lowerBound - bounds.lowerBound)
+            let end = text.index(text.startIndex, offsetBy: range.upperBound - bounds.lowerBound)
+            return Reader(chapterTitle: title, text: text, currentSentenceRange: NSRange(start..<end, in: text))
         }
 
-        return Window(
-            chapterTitle: chapter?.title,
-            sentences: shown,
-            currentIndex: current - first,
-            hasEarlier: first > 0,
-            hasLater: last < sentences.count - 1
-        )
+        fileprivate func window(current: Int, margins: [Margin], before: Int, after: Int) -> Window {
+            guard !ranges.isEmpty else {
+                return Window(chapterTitle: title, sentences: [], currentIndex: nil, hasEarlier: false, hasLater: false)
+            }
+            let first = max(0, current - before)
+            let last = min(ranges.count - 1, current + after)
+            let shown = (first...last).map { index -> Sentence in
+                let anchored = margins
+                    .filter { isInChapter($0.offset, bounds: bounds, textLength: characters.count)
+                        && sentenceIndex(containing: $0.offset, in: ranges) == index }
+                    .sorted { $0.offset == $1.offset ? $0.id < $1.id : $0.offset < $1.offset }
+                let trimmed = trimmedEnd(of: ranges[index], in: characters)
+                return Sentence(start: trimmed.lowerBound, end: trimmed.upperBound, text: String(characters[trimmed]),
+                                isCurrent: index == current,
+                                diamonds: anchored.map { Diamond(id: $0.id, origin: $0.origin) })
+            }
+            return Window(chapterTitle: title, sentences: shown, currentIndex: current - first,
+                          hasEarlier: first > 0, hasLater: last < ranges.count - 1)
+        }
+    }
+
+    /// View-owned index: parse a chapter once, and rebuild only the small window when its inputs change.
+    /// Create a new index when the source text or chapters change. No playback state is owned here.
+    public struct Index: Sendable {
+        private struct ChapterKey: Hashable, Sendable {
+            let title: String?
+            let bounds: Range<Int>
+        }
+        private struct Selection: Equatable, Sendable {
+            let chapter: ChapterKey
+            let sentence: Int
+            let margins: [Margin]
+            let before: Int
+            let after: Int
+        }
+        private let characters: [Character]
+        private let chapters: [Chapter]
+        private var cache: [ChapterKey: IndexedChapter] = [:]
+        private var selection: Selection?
+        public private(set) var chapter: IndexedChapter?
+        public private(set) var window: Window = .empty
+        public var characterCount: Int { characters.count }
+
+        public init(text: String, chapters: [Chapter] = []) {
+            characters = Array(text)
+            self.chapters = chapters
+        }
+
+        /// Returns whether the displayed window changed. Whitespace belongs to the preceding sentence,
+        /// even though the displayed sentence excludes it; offsets cannot be memoized using visible bounds.
+        @discardableResult
+        public mutating func update(offset: Int, margins: [Margin] = [],
+                                    sentencesBefore: Int = defaultSentencesBefore,
+                                    sentencesAfter: Int = defaultSentencesAfter) -> Bool {
+            guard !characters.isEmpty else { return false }
+            let span = PlaybackLivePassage.chapter(at: offset, in: chapters, textLength: characters.count)
+            let key = ChapterKey(title: span?.title, bounds: span?.range ?? 0..<characters.count)
+            let parsed = cache[key] ?? IndexedChapter(title: key.title, bounds: key.bounds, characters: characters)
+            cache[key] = parsed
+            chapter = parsed
+            let current = sentenceIndex(containing: offset, in: parsed.ranges)
+            let next = Selection(chapter: key, sentence: current, margins: margins,
+                                 before: max(0, sentencesBefore), after: max(0, sentencesAfter))
+            guard next != selection else { return false }
+            selection = next
+            let value = parsed.window(current: current, margins: margins, before: next.before, after: next.after)
+            guard value != window else { return false }
+            window = value
+            return true
+        }
     }
 
     // MARK: Chapter
