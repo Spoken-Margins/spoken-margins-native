@@ -35,6 +35,7 @@ final class ShareLinkOpener {
             } catch let failure as ShareLinkPacketDownloader.Failure {
                 fail(failure.message)
             } catch {
+                guard !Task.isCancelled else { return }
                 fail(ShareLinkPacketDownloader.Failure.expiredOrUnreachable.message)
             }
         }

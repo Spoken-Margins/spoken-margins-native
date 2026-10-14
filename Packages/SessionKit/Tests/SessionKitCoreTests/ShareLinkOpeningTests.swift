@@ -135,6 +135,15 @@ final class ShareLinkOpeningTests: XCTestCase {
         }
     }
 
+    func testAURLSessionCancellationIsACancellationNotAnUnreachableLink() async throws {
+        let downloader = ShareLinkPacketDownloader { _, _ in throw URLError(.cancelled) }
+        do {
+            _ = try await downloader.download(try link(key: .random()), into: try scratchDirectory())
+            XCTFail("a cancelled download must not produce a file")
+        } catch is CancellationError {
+        }
+    }
+
     func testALinkWithoutItsKeyIsDamagedAndNeverAsksTheServer() async throws {
         let requested = Requests()
         let downloader = ShareLinkPacketDownloader { url, maximumBytes in

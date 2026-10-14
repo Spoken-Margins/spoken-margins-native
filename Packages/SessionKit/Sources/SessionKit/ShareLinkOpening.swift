@@ -86,7 +86,8 @@ public struct ShareLinkPacketDownloader: Sendable {
         } catch let failure as Failure {
             throw failure
         } catch {
-            if (error as? CancellationError) != nil || (error as? URLError)?.code == .cancelled { throw error }
+            // A superseded or abandoned download surfaces as URLError.cancelled; callers treat it as a plain cancellation.
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
             throw Failure.expiredOrUnreachable
         }
         let packet: Data
