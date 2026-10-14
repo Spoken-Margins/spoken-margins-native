@@ -9,13 +9,20 @@ public struct MarginCaptureRequest: Equatable, Sendable {
     /// True when `tappedAt` is only when the engine was called: Margins that start from the Live Activity, the
     /// Lock Screen or a widget don't carry the time of the tap, so their figures leave out what came before.
     public let startsAtEngineCall: Bool
+    /// The shared Margin this recording answers; the saved Margin carries the link (#473).
+    public let replyTo: MarginReplyLink?
 
     public init(id: UUID = UUID(), tappedAt: Date = Date(), uptime: TimeInterval = ProcessInfo.processInfo.systemUptime,
-                startsAtEngineCall: Bool = true) {
+                startsAtEngineCall: Bool = true, replyTo: MarginReplyLink? = nil) {
         self.id = id
         self.tappedAt = tappedAt
         self.uptime = uptime
         self.startsAtEngineCall = startsAtEngineCall
+        self.replyTo = replyTo
+    }
+
+    public func replying(to link: MarginReplyLink?) -> MarginCaptureRequest {
+        MarginCaptureRequest(id: id, tappedAt: tappedAt, uptime: uptime, startsAtEngineCall: startsAtEngineCall, replyTo: link)
     }
 
     /// A tap noted as a wall-clock `Date` earlier in the same run: the uptime is that many seconds before now.
