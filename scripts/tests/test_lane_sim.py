@@ -596,6 +596,13 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual(len(announced), 1)
         self.assertIn('back to one simulator', announced[0])
 
+    def test_the_watcher_refreshes_audio_on_each_live_tick_but_not_after_shutdown(self):
+        monitor = lane_sim.SpringBoardMonitor(UDID, sequence((10, 20), (10, 20), (None, None)))
+        with mock.patch.object(lane_audio, 'pin') as pin, \
+                mock.patch.object(lane_sim, 'simulator_jobs_running', return_value=1):
+            self.assertEqual(lane_sim.watch(UDID, poll=0, monitor=monitor), 'shut down')
+        self.assertEqual(pin.call_args_list, [mock.call(UDID, refresh=True), mock.call(UDID, refresh=True)])
+
     def test_the_switch_on_the_command_line(self):
         helper = [sys.executable, str(SCRIPTS / 'lane-sim-boot'), '--second-slot']
         env = dict(os.environ)

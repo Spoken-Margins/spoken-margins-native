@@ -7,11 +7,14 @@ system-output devices are the built-in ones; when the last one is gone they go b
 
 - pin(udid) runs inside lane_sim.boot, before `simctl boot`. It saves the current defaults the first
   time, switches any wireless default (Bluetooth, AirPlay, the iPhone's Continuity microphone) to the
-  built-in device, and records the simulator as a holder.
+  built-in device, and records the simulator as a holder even when the defaults are already built-in.
+- pin(udid, refresh=True) runs on each live watcher tick. Only changed defaults are inspected for a
+  wireless device, so headphones connecting after boot are pinned too. Unchanged ticks read only
+  the three CoreAudio defaults and pin state; they do not query simctl, devices or the lid.
 - settle() runs wherever a simulator is shut down, and at the start of every boot (which heals a run
   that died without settling). It drops holders that are no longer booted and, with none left, puts
   each default back, but only where it is still the built-in device we pinned and the old device is
-  still on the Mac. A default someone changed by hand meanwhile is left alone.
+  still on the Mac. A non-wireless default someone changed by hand meanwhile is left alone.
 - Wired and virtual defaults (USB, HDMI, aggregate, BlackHole-style devices) are never touched.
 - Nothing changes when the lid is closed with no external display: the built-in speakers are off then
   (host_audio.py, #909), and playback would stall.
@@ -225,38 +228,49 @@ def disabled():
     return os.environ.get('SM_LANE_AUDIO') == 'off' or bool(os.environ.get('SM_LANE_SIMCTL'))
 
 
-def pin(udid, backend=None, out=sys.stderr, lid_closed=speakers_off):
+def pin(udid, backend=None, out=sys.stderr, lid_closed=speakers_off, *, refresh=False):
     """Switch wireless default audio devices to the built-in ones for the simulator udid. Returns a list of
-    what changed (empty when nothing needed to). Never raises."""
+    what changed (empty when nothing needed to). Never raises.
+
+    refresh checks an existing holder without settling or renewing its boot grace. It cannot recreate
+    a holder removed by shutdown, and does expensive discovery only when the defaults changed."""
     if backend is None and disabled():
         return []
     try:
         backend = backend or CoreAudio()
-        settle(backend=backend, out=out, drop=udid)  # a run that died leaves holders behind; this puts them right first
-        if lid_closed():
-            print('[lane] audio: lid closed with no external display, so the built-in speakers are off; '
-                  'leaving the default audio devices alone', file=out, flush=True)
-            return []
+        if not refresh:
+            settle(backend=backend, out=out, drop=udid)  # heal a run that died without settling
         with _locked():
             state = _read_state()
+            if refresh and udid not in state.get('holders', {}):
+                return []
+            defaults = {kind: backend.default(kind) for kind in KINDS}
+            if refresh and defaults == state.get('observed'):
+                return []
+            if lid_closed():
+                print('[lane] audio: lid closed with no external display, so the built-in speakers are off; '
+                      'leaving the default audio devices alone', file=out, flush=True)
+                return []
             devices = backend.devices()
             known = _by_id(devices)
             changed = []
             for kind in KINDS:
                 try:
-                    current = known.get(backend.default(kind))
+                    current = known.get(defaults[kind])
                     builtin = _builtin_for(kind, devices)
                     if not current or not builtin or current['transport'] not in WIRELESS:
                         continue
                     state.setdefault('saved', {}).setdefault(kind, {'uid': current['uid'], 'name': current['name']})
                     state.setdefault('pinned', {})[kind] = builtin['id']
                     backend.set_default(kind, builtin['id'])
+                    defaults[kind] = builtin['id']
                     changed.append(f'{kind}: {current["name"]} -> {builtin["name"]}')
                 except OSError as error:
                     print(f'[lane] audio: could not pin the {kind} device: {error}', file=out, flush=True)
-            if state.get('saved'):
+            state['observed'] = defaults
+            if not refresh:
                 state.setdefault('holders', {})[udid] = time.time()
-                _write_state(state)
+            _write_state(state)
             if changed:
                 print('[lane] audio: pinned to the built-in devices while the simulator runs (' + '; '.join(changed)
                       + ')', file=out, flush=True)

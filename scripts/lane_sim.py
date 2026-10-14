@@ -379,6 +379,7 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
         if seen:
             stop(udid, f'{seen} after boot')
             return f'crash: {seen}; shut down and marked unsafe'
+        lane_audio.pin(udid, refresh=True)
         time.sleep(poll)
 
 

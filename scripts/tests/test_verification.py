@@ -151,11 +151,12 @@ class VerificationTests(unittest.TestCase):
                 self.assertNotIn(setting, tests)
 
     def setUp(self):
-        # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
-        # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
+        # Isolate both direct state access and helpers (audio pins, SessionKit pass records) from the
+        # lane Mac's live state. Patching only verification.state_dir leaves imported helpers exposed.
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
+                        patch.dict(os.environ, {'SM_LANE_STATE_DIR': state.name}),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -195,6 +196,19 @@ class VerificationTests(unittest.TestCase):
             step = run.manifest['steps'][-1]
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
+
+    def test_crash_shutdown_is_isolated_from_an_active_external_audio_pin(self):
+        # Reproduce the lane Mac with an active pin, without touching its real state or audio.
+        with tempfile.TemporaryDirectory() as external:
+            pin_file = Path(external) / 'audio-pin.json'
+            pin_file.write_text(json.dumps({'holders': {'real-simulator': time.time()}}))
+            with patch.dict(os.environ, {'SM_LANE_STATE_DIR': external, 'SM_LANE_AUDIO': 'on',
+                                         'SM_LANE_SIMCTL': ''}):
+                case = VerificationTests('test_repeated_identical_simulator_crashes_stop_command_and_shut_down')
+                result = unittest.TestResult()
+                case.run(result)
+            self.assertEqual(result.errors + result.failures, [])
+            self.assertTrue(pin_file.exists())
 
     def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
         # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.

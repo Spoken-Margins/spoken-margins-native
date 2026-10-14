@@ -62,6 +62,9 @@ class LaneAudioTests(unittest.TestCase):
         self.out = io.StringIO()
         self.mac = FakeAudio([AIRPODS_IN, AIRPODS_OUT, IPHONE_MIC, MAC_MIC, MAC_SPEAKERS, USB_OUT, TEAMS])
         self.booted = set()
+        booted = mock.patch('lane_sim.booted_udids', side_effect=lambda **kw: set(self.booted))
+        booted.start()
+        self.addCleanup(booted.stop)
 
     def pin(self, udid='SIM-A', lid_closed=False):
         self.booted.add(udid)
@@ -97,6 +100,49 @@ class LaneAudioTests(unittest.TestCase):
         self.pin()
         self.assertEqual(self.mac.defaults['input'], 99)
 
+    def test_wireless_defaults_arriving_after_boot_are_pinned_on_the_next_tick(self):
+        self.mac.listed = [MAC_MIC, MAC_SPEAKERS, USB_OUT, TEAMS]
+        self.mac.defaults = {'input': 99, 'output': 92, 'system': 92}
+        self.assertEqual(self.pin(), [])
+        self.assertIn('SIM-A', lane_audio._read_state().get('holders', {}))
+        self.mac.listed.extend([AIRPODS_IN, AIRPODS_OUT])
+        self.mac.defaults = {'input': 112, 'output': 106, 'system': 106}
+        changed = lane_audio.pin('SIM-A', backend=self.mac, out=self.out,
+                                 lid_closed=lambda: False, refresh=True)
+        self.assertEqual(len(changed), 3)
+        self.assertEqual(self.mac.defaults, {'input': 99, 'output': 92, 'system': 92})
+        self.booted.clear()
+        self.settle()
+        self.assertEqual(self.mac.defaults, {'input': 112, 'output': 106, 'system': 106})
+
+    def test_refresh_preserves_original_defaults_and_manual_wired_choices(self):
+        self.pin()
+        self.mac.defaults.update(input=IPHONE_MIC['id'], output=USB_OUT['id'], system=AIRPODS_OUT['id'])
+        lane_audio.pin('SIM-A', backend=self.mac, out=self.out, lid_closed=lambda: False, refresh=True)
+        self.assertEqual(self.mac.defaults, {'input': 99, 'output': 70, 'system': 92})
+        self.booted.clear()
+        self.settle()
+        self.assertEqual(self.mac.defaults, {'input': 112, 'output': 70, 'system': 106})
+
+    def test_unchanged_refresh_does_not_enumerate_devices_or_check_the_lid(self):
+        self.pin()
+        with mock.patch.object(self.mac, 'devices', side_effect=AssertionError('enumerated devices')), \
+                mock.patch.object(lane_audio, 'settle', side_effect=AssertionError('queried simulators')):
+            self.assertEqual(lane_audio.pin('SIM-A', backend=self.mac, out=self.out,
+                                           lid_closed=lambda: self.fail('checked lid'), refresh=True), [])
+        self.assertNotIn('skipped', self.out.getvalue())
+
+    def test_refresh_does_not_recreate_a_released_holder(self):
+        self.pin('SIM-A')
+        self.pin('SIM-B')
+        self.booted.discard('SIM-A')
+        self.settle(drop='SIM-A')
+        self.mac.defaults['output'] = AIRPODS_OUT['id']
+        self.assertEqual(lane_audio.pin('SIM-A', backend=self.mac, out=self.out,
+                                       lid_closed=lambda: False, refresh=True), [])
+        self.assertEqual(self.mac.defaults['output'], AIRPODS_OUT['id'])
+        self.assertEqual(list(lane_audio._read_state()['holders']), ['SIM-B'])
+
     def test_built_in_wired_and_virtual_defaults_are_left_alone(self):
         for current in (MAC_SPEAKERS, USB_OUT, TEAMS):
             with self.subTest(current=current['name']):
@@ -104,7 +150,8 @@ class LaneAudioTests(unittest.TestCase):
                 self.mac.sets.clear()
                 self.assertEqual(self.pin(), [])
                 self.assertEqual(self.mac.sets, [])
-                self.assertFalse(lane_audio._state_path().exists())
+                self.assertIn('SIM-A', lane_audio._read_state()['holders'])
+                self.assertFalse(lane_audio._read_state().get('saved'))
 
     def test_nothing_changes_without_a_built_in_device_to_move_to(self):
         self.mac.listed = [AIRPODS_IN, AIRPODS_OUT]
