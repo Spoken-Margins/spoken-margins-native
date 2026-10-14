@@ -42,6 +42,7 @@ import subprocess
 import sys
 import time
 
+import lane_audio
 from lane_slots import (build_slot_file, disable_second_slot, memory_pressure_level, simulator_boot_lock,
                         simulator_jobs_running, state_dir, PRESSURE_NAMES, SLOTS)
 
@@ -97,8 +98,9 @@ def mark_unsafe(udid: str, reason: str) -> None:
     unsafe_path().write_text(json.dumps(devices, indent=2, sort_keys=True) + '\n')
 
 
-def booted_udids() -> set:
-    listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'booted', '--json'], text=True))
+def booted_udids(timeout: float | None = None) -> set:
+    listing = json.loads(subprocess.check_output(simctl() + ['list', 'devices', 'booted', '--json'], text=True,
+                                                 timeout=timeout))
     return {d['udid'] for group in listing.get('devices', {}).values() for d in group}
 
 
@@ -377,6 +379,7 @@ def watch(udid: str, poll: float = 1.0, monitor: SpringBoardMonitor | None = Non
         if seen:
             stop(udid, f'{seen} after boot')
             return f'crash: {seen}; shut down and marked unsafe'
+        lane_audio.pin(udid, refresh=True)
         time.sleep(poll)
 
 
@@ -404,7 +407,10 @@ def release(udid: str, wait: float = RELEASE_WAIT, keep: bool = False) -> None:
     stop_flag, _, pid_file = watch_files(udid)
     stop_flag.parent.mkdir(parents=True, exist_ok=True)
     stop_flag.write_text('released\n')
-    subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    try:
+        subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    finally:
+        lane_audio.settle(drop=udid)
     if not keep:
         subprocess.run(simctl() + ['delete', udid], capture_output=True, timeout=120)
     try:
@@ -469,7 +475,10 @@ def wait_until_ready(udid: str, is_ready, monitor, find_crash, timeout: float, c
             raise BootError(f'{crash.name} while booting. The device is shut down and marked '
                             'unsafe. Delete it and use a fresh device.')
         if clock() - started > timeout:
-            subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+            try:
+                subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+            finally:
+                lane_audio.settle(drop=udid)
             raise BootError(f'not ready after {timeout:.0f}s; shut down (not marked unsafe).')
         sleep(CRASH_POLL_SECONDS if poll is None else poll)
     return tolerated
@@ -527,6 +536,7 @@ def back_to_one_simulator(reason: str) -> bool:
 
 def stop(udid: str, reason: str) -> None:
     subprocess.run(simctl() + ['shutdown', udid], capture_output=True, timeout=120)
+    lane_audio.settle(drop=udid)
     mark_unsafe(udid, reason)
 
 
@@ -560,6 +570,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 record_event(udid, f'boot started ({"first boot" if first_boot else "existing device"}, '
                                    f'memory pressure {pressure}, {period} period)')
                 baseline = crash_snapshot(reports)
+                lane_audio.pin(udid, out=out)  # the simulator plays and records through the Mac's defaults (#1556)
                 try:
                     booted = subprocess.run(simctl() + ['boot', udid], capture_output=True, text=True, timeout=120)
                 except subprocess.TimeoutExpired:

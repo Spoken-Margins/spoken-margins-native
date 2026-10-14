@@ -151,11 +151,12 @@ class VerificationTests(unittest.TestCase):
                 self.assertNotIn(setting, tests)
 
     def setUp(self):
-        # The host steps look up and write SessionKit pass records in the lane's state folder (#1328): keep a
-        # developer's or the lane Mac's real records out of these tests (tests/test_sessionkit_steps.py covers them).
+        # Isolate both direct state access and helpers (audio pins, SessionKit pass records) from the
+        # lane Mac's live state. Patching only verification.state_dir leaves imported helpers exposed.
         state = tempfile.TemporaryDirectory()
         self.addCleanup(state.cleanup)
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
+                        patch.dict(os.environ, {'SM_LANE_STATE_DIR': state.name}),
                         patch.object(verification.sessionkit_pass, 'toolchain', return_value=None)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -195,6 +196,19 @@ class VerificationTests(unittest.TestCase):
             step = run.manifest['steps'][-1]
             self.assertEqual(step['simulator_crash_report'], crashes[-1])
             self.assertEqual(step['exit_code'], 124)
+
+    def test_crash_shutdown_is_isolated_from_an_active_external_audio_pin(self):
+        # Reproduce the lane Mac with an active pin, without touching its real state or audio.
+        with tempfile.TemporaryDirectory() as external:
+            pin_file = Path(external) / 'audio-pin.json'
+            pin_file.write_text(json.dumps({'holders': {'real-simulator': time.time()}}))
+            with patch.dict(os.environ, {'SM_LANE_STATE_DIR': external, 'SM_LANE_AUDIO': 'on',
+                                         'SM_LANE_SIMCTL': ''}):
+                case = VerificationTests('test_repeated_identical_simulator_crashes_stop_command_and_shut_down')
+                result = unittest.TestResult()
+                case.run(result)
+            self.assertEqual(result.errors + result.failures, [])
+            self.assertTrue(pin_file.exists())
 
     def test_a_flood_on_a_desk_pool_device_marks_it_unsafe_before_the_shutdown(self):
         # #688: the pool erases and reuses its devices, so a device that flooded must be retired, not reused.
@@ -1325,6 +1339,86 @@ class VerificationTests(unittest.TestCase):
         udid, created, commands = self.pick_simulator(self.simulator_listings('old'), {'old': {'reason': 'x'}},
                                                       device='old')
         self.assertEqual((udid, created, commands), ('old', False, []))
+
+    def test_self_booted_app_refreshes_audio_during_steps_and_clears_it_on_exit(self):
+        # Test Desk has no lane watcher. Exercise xcode() and its real command loop with a fake child,
+        # so no simulator, xcodebuild or host audio runs; an externally booted device keeps its watcher.
+        for owned in (True, False):
+            for fail in (False, True):
+                with self.subTest(owned=owned, fail=fail), tempfile.TemporaryDirectory() as temporary:
+                    root = Path(temporary) / 'repo'
+                    self.app_test_root(root)
+                    run = verification.Run(Path(temporary) / 'run', 'app')
+                    run.manifest['input_sha256'] = 'inputs'
+                    run.crash_baseline = {}
+                    chosen = {'udid': 'desk', 'state': 'Shutdown' if owned else 'Booted',
+                              'runtime': 'iOS-26', 'name': 'Other'}
+                    clock = [0.0]
+                    active = [not owned]
+                    ticks = {}
+                    current_step = [None]
+
+                    def wait(timeout):
+                        clock[0] += 0.25
+                        if clock[0] % 2.5:
+                            raise subprocess.TimeoutExpired('fake-child', timeout)
+                        return 0
+
+                    def boot(*args, **kwargs):
+                        active[0] = True
+                        return 1.0
+
+                    def shutdown(*args, **kwargs):
+                        active[0] = False
+
+                    def pin(udid, **kwargs):
+                        self.assertTrue(active[0])
+                        self.assertEqual((udid, kwargs.get('refresh')), ('desk', True))
+                        ticks.setdefault(current_step[0], []).append(clock[0])
+
+                    command = run.command
+
+                    def step(name, args, **kwargs):
+                        current_step[0] = name
+                        # Only the command loop matters here; XCTest reconciliation has its own tests.
+                        command(name, args)
+                        if fail and name == 'xcode-tests':
+                            raise RuntimeError('synthetic test failure')
+
+                    with patch.object(verification, 'ROOT', root), \
+                            patch.object(verification, 'input_identity', return_value='inputs'), \
+                            patch.object(run, 'simulator', return_value=(chosen, False)), \
+                            patch.object(run, 'xcode_build', return_value=(root / 'derived', 'inputs')), \
+                            patch.object(verification, 'refuse_unsafe'), \
+                            patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                            patch.object(verification.lane_sim, 'boot', side_effect=boot), \
+                            patch.object(verification, 'acquire_simulator_slot', return_value=None), \
+                            patch.object(verification.subprocess, 'run', side_effect=shutdown), \
+                            patch.object(verification.subprocess, 'Popen') as process, \
+                            patch.object(verification, 'new_crash', return_value=None), \
+                            patch.object(verification.time, 'monotonic', side_effect=lambda: clock[0]), \
+                            patch.object(verification.lane_audio, 'pin', side_effect=pin), \
+                            patch.object(verification.lane_audio, 'settle') as settle, \
+                            patch.object(run, 'command', side_effect=step):
+                        process.return_value.wait.side_effect = wait
+                        if fail:
+                            with self.assertRaisesRegex(RuntimeError, 'synthetic test failure'):
+                                run.xcode('app', None, rebuild=False)
+                        else:
+                            run.xcode('app', None, rebuild=False)
+                        if owned:
+                            self.assertEqual(set(ticks), {'simulator-ready', 'xcode-tests'})
+                            for times in ticks.values():
+                                self.assertGreaterEqual(len(times), 2)
+                                self.assertTrue(all(1 <= b - a <= 1.25 for a, b in zip(times, times[1:])))
+                            settle.assert_called_once_with(drop='desk')
+                        else:
+                            self.assertEqual(ticks, {})
+                            settle.assert_not_called()
+                        # A later host command must not refresh a simulator this run already shut down.
+                        previous = sum(map(len, ticks.values()))
+                        command('host-afterwards', ['fake-child'])
+                        self.assertEqual(sum(map(len, ticks.values())), previous)
 
     def test_a_device_this_run_created_boots_with_the_first_boot_tolerance(self):
         # A fresh device's first boot may restart SpringBoard once (lane_sim.FIRST_BOOT_TOLERANCE); without
