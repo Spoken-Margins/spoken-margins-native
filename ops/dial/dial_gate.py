@@ -14,6 +14,10 @@ Safety rules (owner, 2026-10-01):
 - Paced mode needs a usage reading under 3 hours old; with the Mac offline it doesn't fire.
 - At most one fire outstanding: no new fire until a thread claims an issue after the last
   one (or 3 hours pass), so fires can't pile up while the plan limit is hit.
+- Slots are per provider (owner, 2026-10-14): the Threads box is Claude's slot count and the
+  Codex workers box is Codex's. The Codex worker (ops/codex/sm_codex_worker.py) leaves the same
+  claim and stop notes under the title `Codex worker N`; the gate counts those against Codex,
+  never against the Threads box, and its fire payload states Claude's number and Claude's count.
 - Active threads (owner, 2026-10-01): a thread is active from its claim note until its stop
   note, or until it shows nothing on GitHub for 2 hours (a crashed thread leaves no note).
   If threads skip stop notes the gate under-fires; the 2-hour limit and the 3-hour fallback
@@ -62,6 +66,13 @@ CLAIM_RE = re.compile(r'[*_\s]*Claimed by project thread "([^"]+)"')
 STOP_RE = re.compile(r'[*_\s]*Thread "([^"]+)" stopping:\s*(.*)')
 
 MODES = ('off', 'paced', 'cloud max')
+
+# The Codex worker's notes use the title `Codex worker <slot>` (sm_codex_worker.py claim_note/stop_note).
+CODEX_TITLE_RE = re.compile(r'Codex worker \d+$', re.IGNORECASE)
+
+
+def thread_provider(title: str) -> str:
+    return 'codex' if CODEX_TITLE_RE.match(title.strip()) else 'claude'
 
 
 # ---------- parsing (pure) ----------
@@ -223,8 +234,9 @@ def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) ->
         at = parse_time(c['created_at'])
         m = CLAIM_RE.match(body)
         if m:
-            t = threads.setdefault(m.group(1), {'title': m.group(1), 'issues': [], 'claims': [], 'runs': [],
-                                                'started': at, 'stopped_at': None, 'stop_text': None})
+            t = threads.setdefault(m.group(1), {'title': m.group(1), 'provider': thread_provider(m.group(1)),
+                                                'issues': [], 'claims': [], 'runs': [], 'started': at,
+                                                'stopped_at': None, 'stop_text': None})
             if t['stopped_at']:   # a new run under the same title
                 t['runs'].append({'title': t['title'], 'started': t['started'], 'ended': t['stopped_at'],
                                   'how': 'stop note'})
@@ -261,6 +273,7 @@ def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) ->
 def finished_runs(threads: list[dict], now: dt.datetime) -> list[dict]:
     """How long each finished thread run lasted, from its first claim to its stop note, or
     to its last sign of life if it went quiet. Used to tune the spacing (owner, 2026-10-01)."""
+    threads = of_provider(threads)   # spacing is tuned on Claude's runs
     runs = [r for t in threads for r in t['runs']]
     for t in threads:
         if t['state'] == 'stopped':
@@ -272,12 +285,18 @@ def finished_runs(threads: list[dict], now: dt.datetime) -> list[dict]:
     return sorted(runs, key=lambda r: r['ended'])
 
 
-def active_count(threads: list[dict]) -> int:
-    return sum(t['state'] == 'active' for t in threads)
+def of_provider(threads: list[dict], provider: str = 'claude') -> list[dict]:
+    return [t for t in threads if t.get('provider', thread_provider(t['title'])) == provider]
 
 
-def claims_since(threads: list[dict], when: dt.datetime) -> int:
-    return sum(at >= when for t in threads for at in t['claims'])
+def active_count(threads: list[dict], provider: str = 'claude') -> int:
+    """Active threads of one provider. The Threads box is Claude's slot count, so the default
+    leaves the Codex workers out; they are counted against the Codex workers box."""
+    return sum(t['state'] == 'active' for t in of_provider(threads, provider))
+
+
+def claims_since(threads: list[dict], when: dt.datetime, provider: str = 'claude') -> int:
+    return sum(at >= when for t in of_provider(threads, provider) for at in t['claims'])
 
 
 def parse_time(s: str) -> dt.datetime:
@@ -353,6 +372,16 @@ def decide(now, dial, usage_info, ready_count, ack, state, active) -> dict:
     return {'fire': True, 'why': f'Waking the project: {active} of {threads} threads are active.', 'hold': None}
 
 
+def fire_text(fire_id: str, claude_slots: int, active: list[dict]) -> str:
+    """The payload the Dial relay posts. It states Claude's slot number and Claude's active
+    count; Codex workers have their own slots and are not in either number."""
+    running = '; '.join(f'"{th["title"]}"' for th in active) or 'none'
+    return (f'Dial {fire_id}: Cole\'s Dial (#{DIAL_ISSUE}) allows up to {claude_slots} Claude threads '
+            f'(Codex workers have their own slots and are not counted). '
+            f'{len(active)} Claude threads look active from their claim and stop notes ({running}). '
+            f'Keep {claude_slots} Claude threads going from the ready queue.')
+
+
 def hours(delta: dt.timedelta) -> str:
     minutes = int(delta.total_seconds() // 60)
     return f'{minutes} min' if minutes < 90 else f'{minutes / 60:.1f} h'
@@ -383,10 +412,15 @@ def status_text(now, dial, usage_info, ready_count, ack, state, decision, thread
                      f"({mine}, so this gate {'holds' if usage_info['halted'] else 'is unaffected'}).")
     lines.append(f'- Ready issues: {ready_count}.')
     issues = lambda th: ', '.join(f'#{n}' for n in th['issues']) or 'no issue'
+    codex = [th for th in of_provider(threads, 'codex') if th['state'] == 'active']
+    threads = of_provider(threads)   # the Threads box counts Claude only
     active = [th for th in threads if th['state'] == 'active']
-    lines.append(f"- Active threads: {len(active)} of {dial['threads']}" + (':' if active else '.'))
+    lines.append(f"- Active threads: {len(active)} of {dial['threads']} (Claude)" + (':' if active else '.'))
     for th in active:
         lines.append(f"  - \"{th['title']}\" on {issues(th)}, last seen {t(th['last_seen'])}")
+    if codex:
+        lines.append(f"- Codex workers active: {len(codex)} (their own slots on the Dial, not counted above): " +
+                     '; '.join(f"\"{th['title']}\" on {issues(th)}" for th in codex) + '.')
     recent = lambda th, at: now - at <= QUIET_SHOWN
     quiet = [th for th in threads if th['state'] == 'quiet' and recent(th, th['last_seen'])]
     if quiet:
@@ -504,15 +538,12 @@ def main(argv=None) -> int:
             ack = {'fire': state['last_fire'], 'running': None, 'started': claimed,
                    'at': now, 'id': None, 'via': 'claims'}
 
-    active = [th for th in threads if th['state'] == 'active']
+    active = [th for th in of_provider(threads) if th['state'] == 'active']   # Claude only
     decision = decide(now, dial, usage_info, ready, ack, state, len(active))
 
     if decision['fire'] and not args.dry_run:
         fire_id = 'fire-' + now.strftime('%Y%m%dT%H%MZ')
-        running = ('; '.join(f'"{th["title"]}"' for th in active)) or 'none'
-        text = (f'Dial {fire_id}: Cole\'s Dial (#{DIAL_ISSUE}) allows up to {dial["threads"]} threads. '
-                f'{len(active)} look active from their claim and stop notes ({running}). '
-                f'Keep {dial["threads"]} going from the ready queue.')
+        text = fire_text(fire_id, dial['threads'], active)
         url = (CONFIG_DIR / 'relay-url').read_text().strip()
         try:
             fire_relay(url, (CONFIG_DIR / 'relay-token').read_text().strip(), text)

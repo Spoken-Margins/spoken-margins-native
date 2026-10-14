@@ -95,6 +95,25 @@ final class PDFReimportAuditTests: XCTestCase {
         XCTAssertTrue(try store.loadAudioPreparationJobs().isEmpty)
     }
 
+    func testAutomaticKeepsExplicitRequestAndExplicitClearsWaitingForSystem() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "audit-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let store = try SQLiteSessionStore(path: path.path)
+        let item = try engine(store).importBrowserTextInBackground(handoff("We measured sleep in adults."))
+        let prepared = manifest(item)
+        try store.savePreparedAudioManifest(prepared)
+        let explicit = try PreparedAudioEnqueue.configureJob(manifest: prepared, sourceText: item.text!, repository: store, request: .explicit)
+        XCTAssertEqual(explicit?.policy, .explicit)
+        var waiting = try XCTUnwrap(explicit)
+        waiting.lastFailureCode = OfflinePreparationRecovery.waitingForSystem
+        try store.saveAudioPreparationJob(waiting)
+        let automatic = try PreparedAudioEnqueue.configureJob(manifest: prepared, sourceText: item.text!, repository: store, request: .automatic(requestedAt: nil))
+        XCTAssertEqual(automatic?.policy, .explicit, "An automatic pass must not turn the listener's request into charging-only work")
+        XCTAssertEqual(automatic?.lastFailureCode, OfflinePreparationRecovery.waitingForSystem)
+        let retried = try PreparedAudioEnqueue.configureJob(manifest: prepared, sourceText: item.text!, repository: store, request: .explicit)
+        XCTAssertNil(retried?.lastFailureCode, "A new explicit request starts clean")
+    }
+
     func testJobPolicyUpdateCannotRecreatePreparationRetiredAfterBegin() throws {
         let path = FileManager.default.temporaryDirectory.appending(path: "audit-\(UUID()).sqlite")
         defer { try? FileManager.default.removeItem(at: path) }

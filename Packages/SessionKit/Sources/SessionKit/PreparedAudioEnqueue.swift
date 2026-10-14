@@ -112,13 +112,10 @@ public enum PreparedAudioEnqueue {
                 job.userPriority = 0
                 job.maximumChunkCount = nil
                 job.requestedAt = Date()
+                job.lastFailureCode = nil
             case .automatic(let requestedAt):
-                let unfinishedStartup = job.policy == .demandWindow
-                    && job.maximumChunkCount.map { current.chunks.count < $0 } == true
-                if !unfinishedStartup {
-                    job.policy = .whileCharging
-                    job.maximumChunkCount = nil
-                }
+                // Automatic enqueueing never turns the listener's explicit request into charging-only work.
+                job = OfflinePreparationRecovery.automaticJob(job, committedChunks: current.chunks.count)
                 // New automatic jobs keep the item's order in the Library.
                 if existing == nil {
                     job.requestedAt = requestedAt ?? job.requestedAt

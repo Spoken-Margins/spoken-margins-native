@@ -41,7 +41,9 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             episodePolicy: automaticEpisodeMapPreparationPolicy,
             hasLocalAudio: { self.podcastDownloadCoordinator?.validatedLocalURL(for: $0) != nil }
         )
-        let hasAudioWork = ((try? store.loadAudioPreparationJobs()) ?? []).contains { !$0.isCancelled }
+        let hasAudioWork = !OfflinePreparationRecovery.backgroundJobs(
+            (try? store.loadAudioPreparationJobs()) ?? [], automaticPolicy: automaticAudioPreparationPolicy
+        ).isEmpty
         if let job = backgroundPreparationPlanner.plan(
             hasAudioWork: hasAudioWork,
             episodeJobs: episodeJobs,
@@ -71,9 +73,13 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             )
         }
         let audioHasMore = await performBackgroundAudioPreparationPass()
-        let hasRemainingWork = backgroundPreparationPlanner.afterAudioPass(
+        let plannerHasMore = backgroundPreparationPlanner.afterAudioPass(
             audioHasMore: audioHasMore, hadAudioWork: hasAudioWork, hadEpisodeJobs: !episodeJobs.isEmpty
         )
+        // A pass can stop for heat, playback or expiry without consuming its durable job.
+        let hasRemainingWork = plannerHasMore || !OfflinePreparationRecovery.backgroundJobs(
+            (try? store.loadAudioPreparationJobs()) ?? [], automaticPolicy: automaticAudioPreparationPolicy
+        ).isEmpty
         return BackgroundPreparationPlanner.result(
             hasRemainingWork: hasRemainingWork, before: progressBefore, after: progressToken()
         )
@@ -107,8 +113,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
         // Live speech owns the serial renderer while the listener has active
         // demand. A stale/background job must not queue ahead of its next chunk.
         guard canPrepareLibraryAudio else { libraryAudioLoop.turns.stopped(caller); return false }
-        guard (foregroundDemandOnly || automaticAudioPreparationPolicy == .whileCharging),
-              hasAcceptedCurrentTerms,
+        guard hasAcceptedCurrentTerms,
               let voice = ttsVoiceSelection.supertonicVoice else { libraryAudioLoop.turns.blocked(caller); return false } // settles until these change (#647)
         let device = preparationSeams.deviceConditions() // heat and Low Power Mode, checked per chunk (#64)
         do {
@@ -116,12 +121,23 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             let store = try requireStore()
             var queuedJobs = try store.loadAudioPreparationJobs()
                 .filter({ !PreparationChunkGate.setsAsideForLowPowerMode($0.policy, thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) })
+            if !foregroundDemandOnly {
+                queuedJobs = OfflinePreparationRecovery.backgroundJobs(queuedJobs, automaticPolicy: automaticAudioPreparationPolicy)
+            }
             if !foregroundDemandOnly, !queuedJobs.contains(where: { !$0.isCancelled }),
                PreparationChunkGate.allowsAutomaticWork(thermal: device.thermal, isLowPowerModeEnabled: device.isLowPowerModeEnabled) {
                 await enqueueAutomaticAudioPreparationJobs()
-                queuedJobs = try store.loadAudioPreparationJobs()
+                queuedJobs = OfflinePreparationRecovery.backgroundJobs(
+                    try store.loadAudioPreparationJobs(), automaticPolicy: automaticAudioPreparationPolicy
+                )
             }
-            let hasMoreMatchingJobs = { try !LibraryAudioPreparationTurns.eligible(store.loadAudioPreparationJobs(), for: caller).isEmpty }
+            let hasMoreMatchingJobs = {
+                let jobs = try store.loadAudioPreparationJobs()
+                return !LibraryAudioPreparationTurns.eligible(
+                    foregroundDemandOnly ? jobs : OfflinePreparationRecovery.backgroundJobs(jobs, automaticPolicy: self.automaticAudioPreparationPolicy),
+                    for: caller
+                ).isEmpty
+            }
             let previous = libraryAudioPreparingItemId // nil job: nothing to do, or the foreground loop waits for the background task (#534)
             guard var job = libraryAudioLoop.turns.select(queuedJobs, activeItemId: activePlaybackItemId, for: caller) else { libraryAudioLoop.turns.stopped(caller); return false }
             if let previous, previous != job.itemId,
@@ -285,7 +301,7 @@ extension Gate1AppModel: LibraryAudioPreparationHost {
             if var job = attemptedJob,
                !suppressedAutomaticAudioPreparationItemIds.contains(job.itemId),
                let store {
-                job.lastFailureCode = "background_time_expired"
+                job.lastFailureCode = OfflinePreparationRecovery.waitingForSystem
                 if let current = try? store.loadPreparedAudioManifest(id: job.manifestId) {
                     _ = try? PreparedAudioEnqueue.withCurrentManifest(current, repository: store) { _, _ in
                         if try store.loadAudioPreparationJobs().contains(where: { $0.id == job.id }) { try store.saveAudioPreparationJob(job) }

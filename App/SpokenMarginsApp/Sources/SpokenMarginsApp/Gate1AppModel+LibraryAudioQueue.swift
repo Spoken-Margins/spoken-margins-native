@@ -42,10 +42,18 @@ extension Gate1AppModel {
         let enabled = automaticAudioPreparationPolicy == .whileCharging
         Task { [weak self] in
             if enabled { await self?.enqueueAutomaticAudioPreparationJobs() }
-            AudioPreparationBackgroundController.shared.submitIfEnabled(
-                enabled || self?.automaticEpisodeMapPreparationPolicy == .whileCharging
-            )
+            self?.scheduleAudioPreparationBackgroundTask()
         }
+        #endif
+    }
+
+    func scheduleAudioPreparationBackgroundTask() {
+        #if canImport(BackgroundTasks) && canImport(UIKit)
+        AudioPreparationBackgroundController.shared.submitIfEnabled(OfflinePreparationRecovery.shouldSchedule(
+            jobs: (try? store?.loadAudioPreparationJobs()) ?? [],
+            automaticAudio: automaticAudioPreparationPolicy,
+            automaticEpisodeMaps: automaticEpisodeMapPreparationPolicy
+        ))
         #endif
     }
 
@@ -363,6 +371,7 @@ extension Gate1AppModel {
             try refreshLibraryRows(store: store)
             diagnostics["explicitAudioPreparation:\(item.id)"] = "queued"
             reportConfirmation("Prioritized \(item.title) for audio preparation.")
+            scheduleAudioPreparationBackgroundTask()
             startForegroundAudioPreparationIfNeeded()
         } catch PreparedAudioEnqueue.Rejection.staleSource {
             diagnostics["explicitAudioPreparation:\(item.id)"] = "retired_source"
