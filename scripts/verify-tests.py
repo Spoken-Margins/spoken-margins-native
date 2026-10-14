@@ -427,6 +427,16 @@ CODEX_SANDBOX_AUDIO_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
     'SystemNarrationRateTests/testNarrationIsHeardAtTheChosenSpeed',
 ))
 
+# Pocket's render tests need ~131 MB of git-ignored weights (research/C2/pocket/fetch_weights.sh). Without them they
+# skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
+# their own fixtures, still run everywhere.
+POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' for test in (
+    'testTokenizerAndSplitterMatchPythonOnTheExportsFiles',
+    'testRendersAndRefusesEmptyAndCancelledText',
+    'testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread',
+    'testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError',
+))
+
 
 def in_codex_sandbox():
     return bool(os.environ.get('CODEX_SANDBOX'))
@@ -803,7 +813,8 @@ class Run:
             self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
                          timeout=PACKAGE_TEST_TIMEOUT,
                          expected=expected - core if split else expected, tests=True,
-                         allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus'},
+                         allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
+                                        *POCKET_WEIGHT_TESTS},
                          probation=CODEX_SANDBOX_AUDIO_TESTS & expected if in_codex_sandbox() else None)
         except RuntimeError as error:
             step = self.manifest['steps'][-1]
