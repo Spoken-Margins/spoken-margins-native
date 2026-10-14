@@ -587,6 +587,52 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         }
     }
 
+    func testRemotePressAtThreeSecondsUsesTheSameAttemptBoundaryAsTheSilenceTimeout() {
+        // Room: -50; speech threshold: -42. Exactly 4 dB over the room is still a flag;
+        // just above it is kept, even at the speech threshold (which speech must exceed).
+        let cases: [(level: Double, keepsWords: Bool)] = [
+            (-50, false), (-46.1, false), (-46, false),
+            (-45.9, true), (-44, true), (-42, true)
+        ]
+        for source in [HandsFreeTriggerSource.headphones, .carPlay, .lockScreen] {
+            for sample in cases {
+                for endByPress in [true, false] {
+                    let clock = FakeClock()
+                    let capture = HandsFreeMarginCoordinator(microphonePermission: .granted, clock: { clock.now })
+                    XCTAssertEqual(capture.trigger(from: source), [.pauseSource, .playTone(.start)])
+                    XCTAssertEqual(capture.toneFinished(.start), [.beginRecording])
+                    for index in 0..<30 {
+                        clock.advance(0.1)
+                        XCTAssertEqual(capture.level(index < 5 ? -50 : sample.level), [])
+                    }
+                    let context = "\(source), \(sample.level) dBFS, \(endByPress ? "press" : "timeout")"
+                    XCTAssertEqual(capture.speechThresholdDB, -42, context)
+                    XCTAssertEqual(capture.phase, .listening, context)
+                    XCTAssertEqual(capture.speechSeconds, 0, context)
+
+                    let commands: [HandsFreeMarginCommand]
+                    if endByPress {
+                        commands = capture.trigger(from: source)
+                    } else {
+                        clock.advance(3)
+                        commands = capture.tick()
+                    }
+                    if sample.keepsWords {
+                        XCTAssertEqual(commands, [.finishRecording(endByPress ? .press : .silence)], context)
+                        XCTAssertEqual(capture.phase, .saving, context)
+                        XCTAssertEqual(capture.tick(), [], "save tone must wait for storage: \(context)")
+                        XCTAssertEqual(capture.saveCompleted(), [.playTone(.saved)], context)
+                        XCTAssertEqual(capture.toneFinished(.saved), [.resumeSource], context)
+                    } else {
+                        XCTAssertEqual(commands, [.cancelRecording, .requestFlag, .playTone(.flag)], context)
+                        XCTAssertEqual(capture.toneFinished(.flag), [.resumeSource], context)
+                    }
+                    XCTAssertEqual(capture.phase, .idle, context)
+                }
+            }
+        }
+    }
+
     func testAPressWithNothingSaidIsStillAFlag() {
         startRecording()
         feed(quiet, for: 3)
@@ -631,9 +677,8 @@ final class HandsFreeMarginCoordinatorTests: XCTestCase {
         XCTAssertEqual(feed(-44, for: 5.5), [.finishRecording(.silence)])
     }
 
-    /// The faint-speech rule above has only one positive case, a talker 6 dB over the room. These two
-    /// pin the 4 dB margin from both sides: a quiet room whose microphone jitters a few dB must still
-    /// end as a flag, and a talker just over the margin is kept. (Exactly 4.0 dB is left unpinned.)
+    /// A single blip also follows the attempt rule: a few dB of microphone jitter stays a flag,
+    /// and a sample just over the margin is kept. The remote-press table pins exactly 4.0 dB.
     func testAQuietRoomWithAFewDecibelsOfJitterStillEndsAsAFlag() {
         for blip in [-54.0, -52.0] {
             XCTAssertEqual(
