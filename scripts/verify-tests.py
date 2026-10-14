@@ -431,6 +431,7 @@ CODEX_SANDBOX_AUDIO_TESTS = frozenset(f'SessionKitTests/{test}' for test in (
 # skip with "skipped: weights not fetched", which is how the lane Mac runs them. The renderer's logic tests, with
 # their own fixtures, still run everywhere.
 POCKET_WEIGHT_TESTS = frozenset(f'SessionKitTests/PocketRendererTests/{test}' for test in (
+    'testTokenizerAndSplitterMatchPythonOnTheExportsFiles',
     'testRendersAndRefusesEmptyAndCancelledText',
     'testRendersTheThreeC2PassagesFasterThanRealTimeOnOneThread',
     'testProsePassagesAreSpokenWithinTwoPointsOfThePyTorchWordError',
