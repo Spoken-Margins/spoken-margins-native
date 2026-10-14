@@ -268,7 +268,7 @@ final class PDFReimportLifetimeTests: XCTestCase {
         let originalBytes = try Data(contentsOf: shared)
         try addAsset(store, root: root, url: shared, id: oldChunk.id, itemId: old.id, category: .preparedChunk)
         try store.saveItem(.init(id: "other", title: "Other", mediaType: "podcast", text: nil, externalReference: nil,
-                                media: .init(sourceType: .nativeMediaFile, url: shared.absoluteString, durationMs: 100), status: "ready"))
+                                status: "ready", media: .init(sourceType: .nativeMediaFile, url: shared.absoluteString, durationMs: 100)))
         let document = StructuredDocumentBuilder.build(lines: [.init(text: "First revised body.", role: .body, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
         let item = try engine.importBrowserTextInBackground(.init(captureMode: .markdownFile, source: source, text: document.text, contentFormat: .plainText), structuredDocument: document)
         XCTAssertEqual(item.id, old.id)
@@ -290,6 +290,28 @@ final class PDFReimportLifetimeTests: XCTestCase {
         XCTAssertTrue(try store.loadOwnedOfflineAssets().contains { $0.relativePath == "PreparedAudio/" + oldChunk.relativePath }, "the shared old file must retain its ledger row")
         XCTAssertEqual(try Data(contentsOf: shared), originalBytes, "the other item must keep its original audio bytes")
         XCTAssertEqual(try AVAudioFile(forReading: shared).length, 4_410)
+    }
+
+    @MainActor
+    func testAppReimportInvalidatesSpeechProjectionWhenCanonicalTextIsUnchanged() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "pdf-projection-cache-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = Gate1AppModel(storageRootOverride: root)
+        let source = BrowserTextSource(url: "shared-file://Paper.pdf", title: "Paper")
+        let body = StructuredDocumentBuilder.build(lines: [.init(text: "A reference is not body text.", role: .body, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let references = StructuredDocumentBuilder.build(lines: [.init(text: "A reference is not body text.", role: .reference, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        XCTAssertEqual(body.text, references.text)
+        let handoff = BrowserTextHandoff(captureMode: .markdownFile, source: source, text: body.text, contentFormat: .plainText)
+        let id = try model.importBrowserTextInBackground(handoff, structuredDocument: body)
+        let store = try model.requireStore()
+        let original = try store.loadItem(id: id)
+        XCTAssertFalse(try XCTUnwrap(PreparedSpeechHooks.preparedText(of: original, in: store)).isEmpty)
+        let imported = try await model.importBrowserTextInBackgroundOffMain(handoff, structuredDocument: references)
+        XCTAssertEqual(imported, id)
+        let current = try store.loadItem(id: id)
+        XCTAssertEqual(current.text, original.text)
+        XCTAssertEqual(PreparedSpeechHooks.preparedText(of: current, in: store), "",
+                       "the actual app importer must invalidate the cached old body projection")
     }
 
 }

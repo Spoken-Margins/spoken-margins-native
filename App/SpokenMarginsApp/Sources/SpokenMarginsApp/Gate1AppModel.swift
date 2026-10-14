@@ -1505,16 +1505,6 @@ final class Gate1AppModel: ObservableObject {
         return engine
     }
 
-    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
-        libraryItems = try loadLibraryRows(store: try requireStore())
-        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
-        diagnostics["lastBackgroundBrowserTextImport"] = item.id
-        if let structure = item.documentStructure {
-            recordPDFExtractionDiagnostics(structure)
-        }
-        markOnboardingSteps(onboardingSteps(for: handoff))
-        return item.id
-    }
 
     @discardableResult
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {

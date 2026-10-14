@@ -95,6 +95,19 @@ extension Gate1AppModel {
         return try finishBackgroundBrowserTextImport(item, handoff: handoff)
     }
 
+    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
+        if item.mediaType == "pdf" { PreparedSpeechHooks.texts.invalidate(itemId: item.id) }
+        libraryItems = try loadLibraryRows(store: try requireStore())
+        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
+        diagnostics["lastBackgroundBrowserTextImport"] = item.id
+        if let structure = item.documentStructure {
+            recordPDFExtractionDiagnostics(structure)
+        }
+        markOnboardingSteps(onboardingSteps(for: handoff))
+        return item.id
+    }
+
+
     func recordPDFExtractionDiagnostics(_ structure: PDFDocumentStructure) {
         diagnostics["lastPDFExtractionEngine"] = structure.extractionEngine.rawValue
         diagnostics["lastPDFAnalysisStatus"] = structure.analysisStatus.rawValue
