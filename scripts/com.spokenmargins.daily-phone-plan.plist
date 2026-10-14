@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Five-minute lightweight tick. Script gates 08:00/17:00 America/Chicago, including DST.
+     Deployment and project-chat relay setup: docs/workstreams/daily-phone-plan.md. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.spokenmargins.daily-phone-plan</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/colemiller/Documents/GitHub/spoken-margins-native/scripts/daily-phone-plan</string>
+  </array>
+  <key>WorkingDirectory</key><string>/Users/colemiller/Documents/GitHub/spoken-margins-native</string>
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><true/>
+  <key>Nice</key><integer>10</integer>
+  <key>StandardOutPath</key><string>/Users/colemiller/SpokenMargins-phone/daily-plan.log</string>
+  <key>StandardErrorPath</key><string>/Users/colemiller/SpokenMargins-phone/daily-plan.log</string>
+</dict>
+</plist>
