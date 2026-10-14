@@ -66,8 +66,8 @@ public enum SpeechNormalizer {
         return head + separator + (last.hasSuffix("y") ? String(last.dropLast()) + "ies" : last + "s")
     }
 
-    static func ordinal(_ n: UInt64) -> String {
-        let words = intWords(n)
+    static func ordinal(digits: String) -> String {
+        let words = intWords(digits: digits)
         let irregular = ["one": "first", "two": "second", "three": "third", "five": "fifth", "eight": "eighth",
                          "nine": "ninth", "twelve": "twelfth"]
         let lastWord = words.split(separator: " ", omittingEmptySubsequences: false).last.map(String.init) ?? words
@@ -221,7 +221,7 @@ public enum SpeechNormalizer {
         t = yearAfterCue.sub(t) { ($0.group(1) ?? "") + " " + yearWords(Int($0.group(2) ?? "") ?? 0) }
         t = parenthesizedYear.sub(t) { "(" + yearWords(Int($0.group(1) ?? "") ?? 0) + ")" }
         // Ordinals.
-        t = ordinalNumber.sub(t) { ordinal(UInt64($0.group(1) ?? "") ?? 0) }
+        t = ordinalNumber.sub(t) { ordinal(digits: $0.group(1) ?? "") }
         // Digits glued to letters: '4K', '101A', '3D' -> '4 K'.
         t = digitsThenLetters.sub(t, template: "$1 $2")
         t = bareNumber.sub(t) { numberWords($0.whole) }
