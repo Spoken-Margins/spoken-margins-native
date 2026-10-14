@@ -447,6 +447,37 @@ class Snapshot(unittest.TestCase):
         self.assertEqual((fetched['pull']['mergeable_state'], waits), ('clean', [2]))
 
 
+class Paging(unittest.TestCase):
+    """The cloud proxy refuses the `repositories/<id>/…` URLs in the Link header, so pages are asked for by number."""
+
+    class Client(status.GitHub):
+        def __init__(self, total):
+            super().__init__('x/y', token='t')
+            self.total, self.asked = total, []
+
+        def request(self, method, path, body=None):
+            self.asked.append(path)
+            page = int(re.search(r'page=(\d+)', path).group(1))
+            start = (page - 1) * 100
+            return list(range(start, min(start + 100, self.total))), {}
+
+    def test_pages_are_read_by_number_until_a_short_page(self):
+        client = self.Client(250)
+        self.assertEqual(len(client.pages('issues/comments?since=x')), 250)
+        self.assertEqual(len(client.asked), 3)
+        self.assertTrue(all('per_page=100' in path and 'since=x' in path for path in client.asked))
+
+    def test_an_exact_multiple_reads_one_more_page(self):
+        client = self.Client(200)
+        self.assertEqual(len(client.pages('pulls')), 200)
+        self.assertEqual(len(client.asked), 3)
+
+    def test_too_many_pages_is_an_error_unless_a_partial_read_is_wanted(self):
+        with self.assertRaises(status.GitHubError):
+            self.Client(1000).pages('x', limit=3)
+        self.assertEqual(len(self.Client(1000).pages('x', limit=3, partial=True)), 300)
+
+
 class LaneFormatsStayInStep(unittest.TestCase):
     """sm_status mirrors a few lane-runner.py constants. If the runner changes them, these fail first."""
 

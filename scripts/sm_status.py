@@ -148,16 +148,22 @@ class GitHub:
     def get(self, path: str):
         return self.request('GET', path)[0]
 
-    def pages(self, path: str, limit: int = 30) -> list:
-        """Every page of a list endpoint, oldest first as GitHub orders it. More than `limit` pages is an error."""
-        url, found = path + ('&' if '?' in path else '?') + 'per_page=100', []
-        for _ in range(limit):
-            chunk, headers = self.request('GET', url)
-            found += chunk if isinstance(chunk, list) else chunk.get('check_runs', [])
-            nxt = re.search(r'<([^>]+)>;\s*rel="next"', headers.get('Link') or '')
-            if not nxt:
+    def pages(self, path: str, limit: int = 30, partial: bool = False) -> list:
+        """Every page of a list endpoint, as GitHub orders it. More than `limit` pages is an error, unless `partial`
+        says the first `limit` pages are all that was wanted.
+
+        Pages are asked for by number, not by following the Link header: the header points at
+        `repositories/<id>/…`, which the cloud agent proxy refuses.
+        """
+        found = []
+        for page in range(1, limit + 1):
+            chunk, _ = self.request('GET', f'{path}{"&" if "?" in path else "?"}per_page=100&page={page}')
+            items = chunk if isinstance(chunk, list) else chunk.get('check_runs', [])
+            found += items
+            if len(items) < 100:
                 return found
-            url = nxt.group(1)
+        if partial:
+            return found
         raise GitHubError(f'GET {path}: more than {limit} pages')
 
     def post(self, path: str, body: dict):
