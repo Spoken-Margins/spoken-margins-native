@@ -421,15 +421,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
         XCTAssertEqual(try store.loadSessions(itemId: "item-pill").first?.id, newest, "the newest session has no Margins")
 
+        let screen = model.screen
         model.openMarginItemExport(itemID: row.interjection.itemId)
 
-        XCTAssertEqual(model.screen, .export)
+        // #147: Share opens the Share Margins sheet directly, not the Share/Export screen.
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.exportSessionId, withMargins)
-        XCTAssertEqual(Set(model.exportShareCandidates.map(\.sessionId)), [withMargins])
-        XCTAssertEqual(model.exportShareCandidates.count, 2)
-        model.prepareExportShareInterjections()
         XCTAssertEqual(model.sharingState.drafts.count, 2)
-        XCTAssertEqual(model.snapshot.sessionId, newest, "opening the export leaves the playing session alone")
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy { $0.interjection.sessionId == withMargins })
+        XCTAssertEqual(model.snapshot.sessionId, newest, "opening the share sheet leaves the playing session alone")
     }
 
     func testChapterFromCompletedSessionStartsReplayWithoutChangingCompletedHistory() throws {
