@@ -252,6 +252,14 @@ final class LocalAudioListeningPackageTests: XCTestCase {
     /// So the clock's allowance starts only once the session is playing again (no Skim summary, no Companion pause
     /// waiting) and the player itself reports playing, with no seek pending. Companion's pause is dismissed as the
     /// listener would. A source that never gets back to playing, or whose clock never moves once it does, still fails.
+    ///
+    /// The first trace since the stall trace landed (integration-6b9da95, 2026-10-13) showed AVPlayer's own clock
+    /// frozen: rate 1.75, playing, no waiting reason, no pending seek, item ready, raw playerMs at exactly 5000 in
+    /// eight samples and a 6 s `stalled` event. Waiting longer cannot help that, and the same test passed alone on
+    /// the same build. A listener whose audio sat silent while the player claimed to play would pause and press
+    /// play, so after `toNudge` of a raw clock that hasn't moved, the wait does the same once. The pause and resume
+    /// are recorded in the returned text and in the test log, so a recovered stall stays visible. If the clock is
+    /// still frozen after the nudge, the wait fails as before.
     /// Returns what was observed, for assertion messages.
     private func waitForSourceProgress(
         model: Gate1AppModel,
@@ -259,11 +267,15 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         toMs target: Int,
         toStartPlaying: Duration = .seconds(15),
         toAdvanceOncePlaying: Duration = .seconds(10),
+        toNudge: Duration = .seconds(3),
         stallTrace: SourcePlayerStallTrace? = nil
     ) async throws -> String {
         let clock = ContinuousClock()
         let began = clock.now
+        var startWaitBegan = began
         var playingSince: ContinuousClock.Instant?
+        var frozenSince: (rawMs: String, at: ContinuousClock.Instant)?
+        var nudgedAt: String?
         var lastState = "not sampled"
         // #835: the player's raw state about every half second, kept for the failure message. A long gap between
         // samples means the test itself wasn't scheduled; raw playerMs stuck while rate and timeControl say
@@ -289,10 +301,28 @@ final class LocalAudioListeningPackageTests: XCTestCase {
             if playing {
                 let since = playingSince ?? now
                 playingSince = since
-                if now - since > toAdvanceOncePlaying { break }
+                // Only a clock that is frozen in the player itself counts: no seek pending, no buffer wait.
+                let raw = player.playbackStateTraceFields()
+                if let rawMs = raw["playerMs"], raw["pendingSeek"] == "none", raw["waitingReason"] == "none" {
+                    if frozenSince?.rawMs != rawMs { frozenSince = (rawMs, now) }
+                } else {
+                    frozenSince = nil
+                }
+                if nudgedAt == nil, let frozen = frozenSince, now - frozen.at > toNudge {
+                    nudgedAt = "+\((now - began).formatted(.units(allowed: [.milliseconds]))) at playerMs=\(frozen.rawMs)"
+                    print("#835 player clock frozen \(toNudge.formatted(.units(allowed: [.milliseconds]))) while playing: pause and resume once, \(nudgedAt ?? "")")
+                    model.pause()
+                    model.resumePlayback()
+                    playingSince = nil
+                    frozenSince = nil
+                    startWaitBegan = clock.now
+                } else if now - since > toAdvanceOncePlaying {
+                    break
+                }
             } else {
                 playingSince = nil
-                if now - began > toStartPlaying { break }
+                frozenSince = nil
+                if now - startWaitBegan > toStartPlaying { break }
             }
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -301,7 +331,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         let stallEvents = stallTrace.map { Array($0.events.dropFirst(stallEventsBefore)) } ?? []
         return "clock \(player.currentMediaTimeMs() ?? -1) ms after \(waited.formatted(.units(allowed: [.milliseconds]))); "
             + "player reported playing for \(playedFor?.formatted(.units(allowed: [.milliseconds])) ?? "none"); last \(lastState); "
-            + "raw samples [\(samples.joined(separator: " | "))]"
+            + (nudgedAt.map { "; player clock was frozen, paused and resumed once at \($0)" } ?? "")
+            + "; raw samples [\(samples.joined(separator: " | "))]"
             + (stallTrace == nil ? "" : "; stall trace [\(stallEvents.suffix(4).map(Self.compactPlayerState).joined(separator: " | "))]")
     }
 
