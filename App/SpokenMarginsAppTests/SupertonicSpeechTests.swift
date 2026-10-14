@@ -2167,7 +2167,8 @@ final class SupertonicSpeechTests: XCTestCase {
                 player.playImmediately(atRate: rate)
                 started.fulfill()
             },
-            observesPlayerLifecycle: false,
+            // The player's own end chains the next chunk; without it the item only moves on at a stall (5 s a chunk).
+            observesPlayerLifecycle: true,
             onDeviceRenderingAllowed: { allowed.value },
             pressureRenderer: bundled,
             fallbackClient: fallback,
