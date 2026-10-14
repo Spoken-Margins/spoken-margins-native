@@ -25,8 +25,8 @@ public enum HandsFreeMarginTimings {
     /// top still ends by press or by the cap.
     public static let lowestThresholdDB: Double = -50
     public static let highestThresholdDB: Double = -25
-    /// At the end of the listening window, anything this far above the background counts as an
-    /// attempt to talk: the recording is saved, not thrown away for a flag.
+    /// At a press, removed headphones or the end of the listening window, anything more than this
+    /// far above the background counts as an attempt to talk: save the recording instead of a flag.
     public static let attemptMarginDB: Double = 4
     /// A tone that never reports finishing (a call cut it off, the player failed) counts as finished
     /// after this: the start tone opens the microphone, the closing tone resumes the source.
