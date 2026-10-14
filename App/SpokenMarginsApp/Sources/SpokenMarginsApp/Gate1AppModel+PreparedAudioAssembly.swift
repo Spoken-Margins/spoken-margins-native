@@ -18,7 +18,7 @@ extension Gate1AppModel {
     ) async throws {
         func stillCurrent() -> Bool {
             (try? PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, current in
-                try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText
+                current.text == item.text && (try PreparedAudioEnqueue.preparedText(item: current, repository: store)) == sourceText
             }) == true
         }
         guard stillCurrent() else { return }
@@ -46,10 +46,10 @@ extension Gate1AppModel {
             )
             let assembledURL = prepared.media.url.flatMap(URL.init(string:))
             let attached = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, current in
-                guard try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { return false }
+                guard current.text == item.text, try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText else { return false }
                 return attachPreparedTextAudio(prepared, itemId: item.id, replaceActivePlayback: false)
             }
-            guard attached != nil else {
+            guard attached != nil, stillCurrent() else {
                 await ledger.discardStaleAssembly(assembledURL, reservationId: assemblyReservation.id)
                 return
             }

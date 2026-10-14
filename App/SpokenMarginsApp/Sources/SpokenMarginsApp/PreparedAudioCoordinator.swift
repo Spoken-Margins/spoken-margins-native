@@ -292,8 +292,8 @@ actor PreparedAudioCoordinator {
         manifest.updatedAt = Date()
         _ = try saveUnlessRetired(manifest, stillCurrent: { (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) == sourceText }, commitFile: {
             // Copy/hash outside the transaction; publish the file only while its preparation is current.
-            if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
-            try fileManager.moveItem(at: temporary, to: destination)
+            if self.fileManager.fileExists(atPath: destination.path) { try self.fileManager.removeItem(at: destination) }
+            try self.fileManager.moveItem(at: temporary, to: destination)
         })
     }
 
