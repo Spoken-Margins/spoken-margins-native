@@ -157,6 +157,65 @@ final class SharedMarginAppExportTests: XCTestCase {
         }
     }
 
+    /// #473, Done when 3: the app's real exporter writes a reply with its link in the optional conversation
+    /// artifact, writes nothing for a Margin that is not a reply, and the last shipped build imports the same file
+    /// with both as ordinary Margins. The parent's audio is not part of the packet: only the listener's own
+    /// Margins are exported.
+    func testExportedPacketCarriesAReplysLinkAndBuild29ReadsItAsAnOrdinaryMargin() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "shared-margin-app-reply-export-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        model.importTitle = "Harbour notes"
+        model.importText = "The tide went out at dawn. Nobody on the pier noticed the boat had gone. By noon the harbour master was asking questions."
+        model.importTextItem()
+        let itemID = model.selectedItem.id
+        let itemText = try XCTUnwrap(SQLiteSessionStore(path: db.path).loadItem(id: itemID).text)
+        let replyRange = try characterRange(of: "Nobody on the pier", in: itemText)
+        let plainRange = try characterRange(of: "harbour master", in: itemText)
+        let parent = MarginPacketIdentity(packageDigest: String(repeating: "a", count: 64), packageScopedId: "margin-0007")
+        let link = MarginReplyLink.replying(to: parent, parentConversationId: nil)
+
+        var reply = margin(
+            id: "margin-reply", itemID: itemID, roughPercent: 31,
+            anchor: Anchor(anchorType: .text, startChar: replyRange.lowerBound, endChar: replyRange.upperBound,
+                           anchorBefore: "The tide went out at dawn.", anchorAfter: "noticed the boat had gone."),
+            audioPath: nil, transcript: "I saw that too."
+        )
+        reply.replyTo = link
+        let plain = margin(
+            id: "margin-plain", itemID: itemID, roughPercent: 77,
+            anchor: Anchor(anchorType: .text, startChar: plainRange.lowerBound, endChar: plainRange.upperBound,
+                           anchorBefore: "By noon the", anchorAfter: "was asking questions."),
+            audioPath: nil, transcript: "He always asks too late."
+        )
+        model.selectedItem.interjections = [reply, plain]
+
+        model.prepareShareInterjections()
+        model.exportSharedInterjections(presentsReadySheet: false)
+        XCTAssertNil(model.sharingState.errorMessage)
+        let packetURL = try XCTUnwrap(model.sharedSpokenMarginsPackageURL)
+        defer { try? FileManager.default.removeItem(at: packetURL) }
+
+        let packet = try SpokenMarginsPackageArchive.read(from: packetURL, extractingAssetsTo: root.appending(path: "read"))
+        let records = packet.commentaryLayers.flatMap(\.interjections)
+        XCTAssertEqual(records.map(\.packageScopedId), ["margin-0001", "margin-0002"])
+        let conversation = try XCTUnwrap(packet.conversations.first, "a packet with a reply carries the conversation artifact")
+        XCTAssertEqual(conversation.linksByPackageScopedId, ["margin-0001": [link]], "only the reply is linked, to the Margin it answers")
+        XCTAssertEqual(packet.manifest.requiredCapabilities, [SharedCommentaryLayerArtifact.schemaVersion],
+                       "a reply requires no new capability")
+        XCTAssertFalse(packet.manifest.assets.contains { $0.role == SpokenMarginsAssetRole.originalVoice },
+                       "the parent's recording is not re-exported")
+
+        let shipped = try ShippedPacketReader.importedMargins(at: packetURL)
+            .sorted { $0.packageScopedId < $1.packageScopedId }
+        XCTAssertEqual(shipped.map(\.packageScopedId), ["margin-0001", "margin-0002"], ShippedPacketReader.build)
+        XCTAssertEqual(shipped.map(\.approvedTranscript), ["I saw that too.", "He always asks too late."])
+    }
+
     private func margin(
         id: String,
         itemID: String,

@@ -17,14 +17,18 @@ extension Gate1AppModel {
             reportFailure("The source for this shared Margin isn't in your Library.")
             return
         }
-        guard let position = SharedMarginPlaybackPosition(row.interjection) else {
-            reportFailure("This shared Margin has no position in the episode, so a reply can't be placed.")
+        guard let place = SharedMarginReplyPlace(row.interjection) else {
+            reportFailure("This shared Margin has no position in your copy, so a reply can't be placed.")
             return
         }
         endMarginMoment()
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
-        guard snapshot.itemId == itemID, seekMedia(toMediaTimeMs: position.mediaTimeMs) else { return }
+        guard snapshot.itemId == itemID else { return }
+        switch place {
+        case .media(let timeMs): guard seekMedia(toMediaTimeMs: timeMs) else { return }
+        case .text(let charOffset): guard seekText(toCharOffset: charOffset) else { return }
+        }
         screen = .playback
         let reply = MarginReplyDraft(parent: row.interjection, in: row.layer)
         if inWriting {
