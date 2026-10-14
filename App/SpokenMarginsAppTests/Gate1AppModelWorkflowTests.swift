@@ -71,7 +71,8 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(Gate1AppModel.pastedSourceText(plainText: plain, html: nil), plain)
     }
 
-    func testItemMarginsOpenExportWithAllSessionMarginsWithoutChangingPlayback() throws {
+    /// #147: the Margins tab's per-item Share opens the Share Margins sheet directly, not the Share/Export screen.
+    func testItemMarginsShareOpensTheShareSheetDirectlyWithoutChangingPlayback() throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
         model.startItem(id: "item-pill")
@@ -82,13 +83,79 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         model.refreshMarginRows()
         let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
         let session = model.snapshot.sessionId
+        let screen = model.screen
         model.openMarginItemExport(itemID: row.interjection.itemId)
-        XCTAssertEqual(model.screen, .export)
-        XCTAssertEqual(model.exportShareCandidates.count, 2)
-        model.prepareExportShareInterjections()
+        XCTAssertNotEqual(model.screen, .export)
+        XCTAssertEqual(model.screen, screen)
         XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.selectedItem.id, row.interjection.itemId)
         XCTAssertEqual(model.sharingState.drafts.count, 2)
         XCTAssertEqual(model.snapshot.sessionId, session)
+    }
+
+    /// #147: when the newest session has no Margins, Share still opens the sheet with the Margins of the
+    /// session that has them, as the Share/Export screen did.
+    func testItemMarginsShareUsesTheSessionWithMarginsWhenTheNewestHasNone() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought from the first session")
+        let first = try XCTUnwrap(model.snapshot.sessionId)
+        model.startNewSession(id: "item-pill")
+        XCTAssertNotEqual(model.snapshot.sessionId, first)
+
+        model.openMarginItemExport(itemID: "item-pill")
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.map(\.interjection.sessionId), [first])
+    }
+
+    func testItemMarginsShareSkipsANewerSessionWithOnlyResponseMargins() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "share-response-only-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "A thought from the first session")
+        let first = try XCTUnwrap(model.snapshot.sessionId)
+        model.startNewSession(id: "item-pill")
+        let newer = try XCTUnwrap(model.snapshot.sessionId)
+        XCTAssertNotEqual(newer, first)
+        var response = shareableInterjection(itemId: "item-pill")
+        response.sessionId = newer
+        response.targetType = .assistantTurn
+        response.targetId = "turn-1"
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveInterjection(response)
+        // Both sessions are saved within the same second, so make the newer one sort first for certain.
+        var newerSession = try XCTUnwrap(store.loadSession(id: newer))
+        newerSession.updatedAt = Date().addingTimeInterval(60)
+        try store.saveSession(newerSession)
+        XCTAssertEqual(try store.loadSessions(itemId: "item-pill").first?.id, newer)
+
+        model.openMarginItemExport(itemID: "item-pill")
+
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.sharingState.drafts.map(\.interjection.sessionId), [first])
+    }
+
+    /// #147: an item with no source Margins to share says so, as the sheet does, and opens nothing.
+    func testItemMarginsShareWithNoSourceMarginsExplainsInsteadOfOpeningTheSheet() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let screen = model.screen
+
+        model.openMarginItemExport(itemID: "item-pill")
+
+        XCTAssertFalse(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
     }
 
     func testNextChapterUnavailableForFinalChapterAndDerivativePlayback() {
@@ -368,15 +435,16 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let row = try XCTUnwrap(model.marginRows.first { $0.preview.contains("Second selected") })
         XCTAssertEqual(try store.loadSessions(itemId: "item-pill").first?.id, newest, "the newest session has no Margins")
 
+        let screen = model.screen
         model.openMarginItemExport(itemID: row.interjection.itemId)
 
-        XCTAssertEqual(model.screen, .export)
+        // #147: Share opens the Share Margins sheet directly, not the Share/Export screen.
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertTrue(model.isSharingInterjectionsPresented)
         XCTAssertEqual(model.exportSessionId, withMargins)
-        XCTAssertEqual(Set(model.exportShareCandidates.map(\.sessionId)), [withMargins])
-        XCTAssertEqual(model.exportShareCandidates.count, 2)
-        model.prepareExportShareInterjections()
         XCTAssertEqual(model.sharingState.drafts.count, 2)
-        XCTAssertEqual(model.snapshot.sessionId, newest, "opening the export leaves the playing session alone")
+        XCTAssertTrue(model.sharingState.drafts.allSatisfy { $0.interjection.sessionId == withMargins })
+        XCTAssertEqual(model.snapshot.sessionId, newest, "opening the share sheet leaves the playing session alone")
     }
 
     func testChapterFromCompletedSessionStartsReplayWithoutChangingCompletedHistory() throws {

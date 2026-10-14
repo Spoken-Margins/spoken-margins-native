@@ -50,7 +50,7 @@ https://hpr.nyc3.cdn.digitaloceanspaces.com/eps/hpr4737/hpr4737.mp3
 6. Tap play. Leave it playing for two minutes with the app open. It takes that long because the app saves fingerprints of a streaming episode only after about 70 seconds of playing.
 7. Drag the scrubber back to about 1:00. Let it play for 15 seconds.
 8. Record a Margin. Tap the record button on the mini player, or **Add a Margin** on Now Playing. Say one short sentence. Tap **Save & resume**.
-9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. Tap **Share Margins (1)**. Tap **Review 1**. If it asks "Clean selected Margins automatically?", tap **Not now**. Tap **Share 1**.
+9. Open the **Margins** tab. Find "hpr4737" and tap **Share** next to its name. The **Share Margins** sheet opens. Tap **Review 1**, at the bottom. If it asks "Clean selected Margins automatically?", tap **Not now**. Tap **Share 1**.
 
 **You should see:** the iOS share sheet opens. Cancel it. That is the pass for #536.
 
@@ -164,11 +164,10 @@ https://www.archives.gov/founding-docs/declaration-transcript
 Episode A is downloaded now and holds Ada's and Cy's Margins. It also holds the Margin you recorded in step 1. If you skipped that Margin, record one now (step 1, part 8).
 
 1. Open the **Margins** tab, on **Mine**. Find "hpr4737" and tap **Share** next to its name.
-2. Tap **Share Margins (1)**.
 
-**You should see:** the **Choose Margins** list holds only your own Margin. Ada's and Cy's Margins are not offered. A packet from here never re-sends someone else's Margins.
+**You should see:** the **Share Margins** sheet opens on **Choose Margins**, and the list holds only your own Margin. Ada's and Cy's Margins are not offered. A packet from here never re-sends someone else's Margins.
 
-3. Tap **Review 1**, then **Share 1**.
+2. Tap **Review 1**, then **Share 1**, both at the bottom of the sheet.
 
 **You should see:** the iOS share sheet opens. Pick **Save to Files**, or AirDrop it to a Mac, and attach the file in the project thread. Claude reads it with the Build 29 reader.
 

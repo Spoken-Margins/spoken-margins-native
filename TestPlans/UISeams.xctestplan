@@ -33,7 +33,7 @@
         "Gate1FlowUITests/testLongTimelineResponseKeepsActionAboveEditorAndStartsPlayback()",
         "Gate1FlowUITests/testListeningEditionPreviewShowsSuppliedScenesBeforeImport()",
         "Gate1FlowUITests/testBatchExportOffersPersistentJumpToDestination()",
-        "Gate1FlowUITests/testMarginsItemShareOpensItemExportAndChapterJumpUpdatesTimeline()"
+        "Gate1FlowUITests/testMarginsItemShareOpensShareSheetAndChapterJumpUpdatesTimeline()"
       ],
       "parallelizable": false
     }
