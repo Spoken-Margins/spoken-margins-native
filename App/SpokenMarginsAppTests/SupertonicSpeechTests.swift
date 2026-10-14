@@ -2191,8 +2191,8 @@ final class SupertonicSpeechTests: XCTestCase {
         }
         XCTAssertEqual(log.notices, ["bundled_voice"])
         let renderedAtRelease = log.completedChunks
-        let totalChunks = log.totalChunks
-        try XCTSkipUnless(renderedAtRelease < totalChunks, "the chain had already rendered everything: no chunk was in flight")
+        // The chain renders one chunk at a time, so with only the split head done the next chunk is rendering now.
+        try XCTSkipUnless(renderedAtRelease == 1, "the chain was not between the head and the next chunk: nothing was in flight")
         // The phone cools; the listener pauses and plays inside the first passage, so the generation is released.
         allowed.value = true
         let releaseOffset = try XCTUnwrap(client.currentCharOffset())
@@ -2206,6 +2206,8 @@ final class SupertonicSpeechTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
         }
         try await Task.sleep(for: .milliseconds(500))
+        XCTAssertGreaterThanOrEqual(client.currentCharOffset() ?? 0, releaseOffset + 80,
+                                    "the playhead reached the passage that was rendering at the release")
         XCTAssertEqual(log.notices, ["bundled_voice"], "the released voice is not announced again")
         XCTAssertEqual(log.fallbacks, [])
         try client.stop()
