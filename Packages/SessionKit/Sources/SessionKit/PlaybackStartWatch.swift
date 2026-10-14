@@ -41,8 +41,9 @@ public struct PlaybackStartWatch: Sendable {
     /// `playbackRequestedAt`), so the time counts the work before the start was published (audits of #580).
     /// A start opens when playback goes to "starting" from a stop (idle, paused, failed, recording), on another
     /// item, or under a new request while playing (a Margin's answer, or another session of the same article). A
-    /// seek, skip or rate change while playing keeps its request and is not a new start, and neither is the engine
-    /// switching a waiting start to another target (narration falling back to live speech). Without request times,
+    /// seek, skip or rate change that stays playing needs no cue. One that returns to "starting" has become
+    /// silent and opens a wait from that transition, rather than reusing the old request's time (#1101).
+    /// The engine switching a waiting start to another target (narration falling back to live speech) keeps its wait. Without request times,
     /// a new target counts as a new start. A start the player confirms at once (a buffered resume) goes straight to
     /// "playing" and is first audio too. A missing or implausible request time falls back to `now`.
     public mutating func observe(
@@ -69,8 +70,10 @@ public struct PlaybackStartWatch: Sendable {
             $0.status.isPlaybackActive && $0.itemId == itemId
                 && Self.sameRequest(requestedAt, targetId, as: $0.requestedAt, $0.targetId)
         } ?? false
-        if let itemId, !continuesPlayback {
-            let startedAt = requestedAt.flatMap { (now.addingTimeInterval(-Self.longestRequest)...now).contains($0) ? $0 : nil } ?? now
+        let becameSilent = status == .starting && previous?.status == .playing
+        if let itemId, !continuesPlayback || becameSilent {
+            let startedAt = continuesPlayback ? now
+                : requestedAt.flatMap { (now.addingTimeInterval(-Self.longestRequest)...now).contains($0) ? $0 : nil } ?? now
             if status == .starting {
                 start = Start(itemId: itemId, targetId: targetId, requestedAt: requestedAt, startedAt: startedAt)
                 startCount += 1

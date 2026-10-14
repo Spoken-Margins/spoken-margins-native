@@ -236,7 +236,7 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
                                 silenceDuration: 0.3,
                                 paceAfterInference: { [weak self] inferenceDuration in
                                     guard !cancellation.isCancelled else { throw CancellationError() }
-                                    self?.paceBackgroundInference(after: inferenceDuration, pacing: pacing)
+                                    try self?.paceBackgroundInference(after: inferenceDuration, pacing: pacing, cancellation: cancellation)
                                     guard !cancellation.isCancelled else { throw CancellationError() }
                                 }
                             )
@@ -325,18 +325,18 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
         return loaded
     }
 
-    private func paceBackgroundInference(after inferenceDuration: TimeInterval, pacing: SupertonicRenderPacing) {
-        var remaining = pacingDelay(afterInferenceDuration: inferenceDuration, for: pacing)
+    private func paceBackgroundInference(
+        after inferenceDuration: TimeInterval, pacing: SupertonicRenderPacing, cancellation: RenderCancellationToken
+    ) throws {
+        let delay = pacingDelay(afterInferenceDuration: inferenceDuration, for: pacing)
         #if DEBUG
         inferencePacingLock.lock()
-        pacingRecords.append((pacing, remaining))
+        pacingRecords.append((pacing, delay))
         inferencePacingLock.unlock()
         #endif
-        while remaining > 0 {
-            guard isPaced(pacing) else { return }
-            let interval = min(0.1, remaining)
-            Thread.sleep(forTimeInterval: interval)
-            remaining -= interval
+        try SupertonicInferencePacingPolicy.wait(for: delay) {
+            guard !cancellation.isCancelled else { throw CancellationError() }
+            return isPaced(pacing)
         }
     }
 
@@ -373,5 +373,23 @@ enum SupertonicInferencePacingPolicy {
     static func delay(afterInferenceDuration duration: TimeInterval, backgrounded: Bool) -> TimeInterval {
         guard backgrounded, duration > 0 else { return 0 }
         return duration * ((1 / backgroundWorkDutyCycle) - 1)
+    }
+
+    /// Scheduler delay already rests inference. In the background a 100 ms sleep may wake much
+    /// later; subtracting only the requested 100 ms would repeatedly add that delay (#1101).
+    /// Clock and sleep are injected for host tests; production uses the monotonic system clock.
+    static func wait(
+        for duration: TimeInterval,
+        now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        shouldContinue: () throws -> Bool
+    ) rethrows {
+        let deadline = now() + duration
+        while true {
+            guard try shouldContinue() else { return }
+            let remaining = deadline - now()
+            guard remaining > 0 else { return }
+            sleep(min(0.1, remaining))
+        }
     }
 }

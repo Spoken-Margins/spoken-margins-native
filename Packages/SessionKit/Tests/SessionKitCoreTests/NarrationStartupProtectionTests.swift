@@ -33,6 +33,47 @@ final class NarrationStartupProtectionTests: XCTestCase {
         XCTAssertEqual(protection.outcome, .completed)
     }
 
+    // #1101: drive the real engine, startup protection and cue watch together. The audio adapter
+    // controls whether the requested chunk exists; this proves waiting/protection, not iOS audio.
+    func testAnUnrenderedTextSeekThenBackgroundKeepsProtectionAndOpensAWaitingCue() async throws {
+        let (engine, audio) = try makeEngine()
+        let ledger = Ledger()
+        let protection = ledger.protection(now: { [unowned self] in self.now })
+        audio.confirmed = true
+        let original = try engine.resumePlayback()
+        XCTAssertEqual(original.status, .playing)
+        protection.statusChanged(to: original.status, itemId: original.itemId, eligible: { true })
+        var cue = PlaybackStartWatch()
+        _ = cue.observe(itemId: original.itemId, status: original.status,
+                        requestedAt: original.playbackRequestedAt, at: now)
+        now += 10
+        audio.confirmed = false
+
+        let seek = try engine.seekText(toCharOffset: 45)
+        XCTAssertEqual(seek.status, .starting)
+        XCTAssertEqual(seek.currentTextStart, 45)
+        protection.statusChanged(to: seek.status, itemId: seek.itemId, eligible: { true })
+        _ = cue.observe(itemId: seek.itemId, status: seek.status,
+                        requestedAt: seek.playbackRequestedAt, at: now)
+        protection.appEnteredBackground()
+        now += 1
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .starting)
+        XCTAssertTrue(cue.takeCue(at: now))
+        XCTAssertTrue(protection.isProtecting)
+        XCTAssertEqual(ledger.begins, 1)
+        XCTAssertEqual(ledger.ends, 0)
+
+        audio.confirmed = true
+        let playing = try engine.syncPlaybackProgress()
+        protection.statusChanged(to: playing.status, itemId: playing.itemId, eligible: { true })
+        _ = cue.observe(itemId: playing.itemId, status: playing.status,
+                        requestedAt: playing.playbackRequestedAt, at: now)
+        XCTAssertEqual(playing.status, .playing)
+        XCTAssertEqual(playing.currentTextStart, 45)
+        XCTAssertEqual(ledger.ends, 1)
+        XCTAssertNil(cue.waitingItemId)
+    }
+
     func testResumingAfterASpokenMarginIsProtectedUntilNarrationPlays() async throws {
         for finishes in [true, false] {
             let label = finishes ? "Save & resume" : "cancel"
