@@ -18,7 +18,8 @@ extension Gate1AppModel {
     ) async throws {
         func stillCurrent() -> Bool {
             (try? PreparedAudioEnqueue.withCurrentManifest(manifest, repository: store) { _, current in
-                current.text == item.text && (try PreparedAudioEnqueue.preparedText(item: current, repository: store)) == sourceText
+                guard current.text == item.text else { return false }
+                return try PreparedAudioEnqueue.preparedText(item: current, repository: store) == sourceText
             }) == true
         }
         guard stillCurrent() else { return }
