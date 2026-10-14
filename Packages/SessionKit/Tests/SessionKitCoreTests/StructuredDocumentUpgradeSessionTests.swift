@@ -203,4 +203,29 @@ final class StructuredDocumentUpgradeSessionTests: XCTestCase {
         XCTAssertEqual(engine.currentSession?.position.charOffset, effect)
         XCTAssertEqual(try store.loadSession(id: session.id)?.position.charOffset, effect)
     }
+
+    // A PDF link without ".pdf" (https://arxiv.org/pdf/2607.28282v1) first imported without a
+    // document was saved as text. The upgrade kept that, so the new reader's listenable text
+    // (no running heads) never reached speech or prepared audio. A fresh import says "pdf".
+    func testUpgradeMarksAnItemFirstImportedAsTextAsAPDF() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "sessionkit-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let store = try SQLiteSessionStore(path: path)
+        let engine = SessionEngine(profile: RuntimeCapabilityProfile(id: "pdf", displayName: "PDF", capabilities: ["sync": ["canonical_persistence"]]), repository: store)
+        let source = BrowserTextSource(url: "https://arxiv.org/pdf/2607.28282v1", title: "Paper")
+        let old = try engine.importBrowserTextInBackground(BrowserTextHandoff(captureMode: .markdownFile, source: source, text: "Paper. We measured sleep.", contentFormat: .plainText))
+        XCTAssertEqual(old.mediaType, "text", "the case: an extension-less PDF link imported without a document")
+        let document = StructuredDocumentBuilder.build(lines: [
+            StructuredDocumentLine(text: "Paper", role: .title, pageIndex: 0),
+            StructuredDocumentLine(text: "Running header", role: .pageHeader, pageIndex: 0),
+            StructuredDocumentLine(text: "We measured sleep.", role: .body, pageIndex: 0),
+        ], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+        let upgraded = try engine.importBrowserTextInBackground(BrowserTextHandoff(captureMode: .markdownFile, source: source, text: document.text, contentFormat: .plainText), structuredDocument: document)
+
+        XCTAssertEqual(upgraded.id, old.id, "upgraded in place")
+        let stored = try store.loadItem(id: old.id)
+        XCTAssertEqual(stored.mediaType, "pdf")
+        let speech = try XCTUnwrap(PreparedSpeechText(item: stored, document: try store.loadStructuredDocument(itemId: old.id)))
+        XCTAssertFalse(speech.text.contains("Running header"), "the new reader's listenable text applies")
+    }
 }

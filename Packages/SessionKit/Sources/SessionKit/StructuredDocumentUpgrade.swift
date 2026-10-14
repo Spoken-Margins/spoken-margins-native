@@ -129,6 +129,8 @@ public enum StructuredDocumentUpgrader {
         }
         var item = existing
         item.text = document.text
+        // A v2 document only comes from a PDF; a link without ".pdf" may have been saved as text.
+        item.mediaType = "pdf"
         item.deletedAt = nil
         if item.media?.sourceType == .generatedTTSPrerendered {
             item.media = nil
