@@ -73,10 +73,11 @@ struct PlaybackScreen: View {
                                     if model.snapshot.phase == .finished {
                                         Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
                                     }
+                                    // Keep the promised Margin visible before the large source header (#1577).
+                                    marginMomentControl
                                     playbackHeader
                                     capturePermissionRecovery
                                     importedCommentaryControl
-                                    marginMomentControl
                                     if model.selectedItem.isNativeAudio {
                                         PlaybackNowView()
                                     } else {
@@ -636,11 +637,12 @@ struct PlaybackScreen: View {
                     Button("Skip to the item", systemImage: "forward.end.fill", action: model.skipMarginMomentVoice)
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("marginMoment.skip")
-                } else if let remaining = moment.msUntilTarget(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
-                    Label("\(model.marginMomentTitle) in \(Self.marginMomentCountdown(remaining))", systemImage: "text.bubble")
+                } else if let countdown = moment.targetCountdown(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
+                    Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
                         .contentTransition(.numericText())
+                        .accessibilityIdentifier("marginMoment.countdown")
                     if model.marginMomentPositionIsApproximate {
                         Text("Approximate position: ads can differ between copies.")
                             .font(.footnote)
@@ -667,11 +669,6 @@ struct PlaybackScreen: View {
             .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
             .accessibilityElement(children: .contain)
         }
-    }
-
-    private static func marginMomentCountdown(_ ms: Int) -> String {
-        let seconds = max(0, Int((Double(ms) / 1000).rounded(.up)))
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     private var playbackHeader: some View {
@@ -941,9 +938,11 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.download.button")
         }
 
-        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue
-            || (!model.selectedItem.isNativeAudio && model.snapshot.itemId == model.selectedItem.id
-                && model.snapshot.targetType == TargetType.transcriptBackedMedia.rawValue) {
+        if PlaybackTextReaderAvailability.isAvailable(
+            targetType: model.snapshot.targetType,
+            itemText: model.selectedItem.text,
+            itemHasNativeAudio: model.selectedItem.isNativeAudio
+        ) {
             Button(action: openSourceText) {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")

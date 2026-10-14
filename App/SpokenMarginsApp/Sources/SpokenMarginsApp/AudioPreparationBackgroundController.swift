@@ -67,7 +67,7 @@ final class AudioPreparationBackgroundController {
         let result = await operation.value
         drainEnded?()
         task.setTaskCompleted(success: !operation.isCancelled)
-        if result.hasRemainingWork && !operation.isCancelled {
+        if result.hasRemainingWork || operation.isCancelled {
             submitIfEnabled(true)
         }
     }

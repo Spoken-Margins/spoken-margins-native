@@ -95,17 +95,40 @@ extension Gate1AppModel {
         return !LibraryAudioPreparationTurns.eligible(jobs, for: .foreground).isEmpty
     }
 
-    func explicitPreparationJobs() -> [OfflinePreparationRun.Job] {
-        audioPreparationQueue.map {
-            OfflinePreparationRun.Job(
-                id: $0.id,
-                requestedAt: $0.requestedAt,
-                policy: $0.policy,
-                state: $0.state,
-                completedChunks: $0.completedChunkCount,
-                plannedChunks: $0.plannedChunkCount
+    func explicitPreparationJobs(including previous: [OfflinePreparationRun.Job] = []) -> [OfflinePreparationRun.Job] {
+        guard let store, let stored = try? store.loadAudioPreparationJobs() else { return previous }
+        let allJobs = stored.filter { !$0.isCancelled && $0.policy == .explicit }.map { job in
+            let manifest = try? store.loadPreparedAudioManifest(id: job.manifestId)
+            return OfflinePreparationRun.Job(
+                id: job.id, manifestId: job.manifestId,
+                requestedAt: job.requestedAt, policy: job.policy,
+                state: manifest?.state ?? .failed,
+                completedChunks: manifest?.committedChunkCount ?? job.nextChunkIndex,
+                plannedChunks: manifest?.plannedChunkCount ?? 0
             )
         }
+        // Old failures aren't part of a new run. A failure this banner saw happen stays in it.
+        let tracked = OfflinePreparationRun.openExplicitRequests(allJobs).union(previous.map {
+            OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt)
+        })
+        let jobs = allJobs.filter { tracked.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt)) }
+        let current = Set(jobs.map { OfflinePreparationRun.RequestKey(jobId: $0.id, requestedAt: $0.requestedAt) })
+        return jobs + previous.filter {
+            !current.contains(.init(jobId: $0.id, requestedAt: $0.requestedAt))
+        }.map { job in
+            OfflinePreparationRun.resolvingRemovedJob(job, manifest: try? store.loadPreparedAudioManifest(id: job.manifestId))
+        }
+    }
+
+    /// Also covers expiry during a heat wait, when no renderer is there to record cancellation.
+    func deferExplicitPreparation(_ requests: Set<OfflinePreparationRun.RequestKey>) {
+        if let store, let jobs = try? store.loadAudioPreparationJobs() {
+            for job in OfflinePreparationRecovery.interruptedJobs(jobs, requests: requests) {
+                try? store.saveAudioPreparationJob(job)
+            }
+            try? refreshAudioPreparationPresentation(store: store)
+        }
+        scheduleAudioPreparationBackgroundTask()
     }
 
     /// Asks iOS to keep the app running for a long run the listener just started. A no-op where
@@ -121,10 +144,11 @@ extension Gate1AppModel {
     private func installContinuedAudioPreparation() {
         ContinuedAudioPreparationController.shared.install(
             ContinuedAudioPreparationController.Hooks(
-                jobs: { [weak self] in self?.explicitPreparationJobs() ?? [] },
+                jobs: { [weak self] previous in self?.explicitPreparationJobs(including: previous) ?? [] },
                 isRunning: { [weak self] in self?.isForegroundAudioPreparationRunning ?? false },
                 isCoolingDown: { [weak self] in self?.isWaitingOutPreparationHeat ?? false },
                 stop: { [weak self] in self?.stopForegroundAudioPreparation() },
+                deferRemaining: { [weak self] requests in self?.deferExplicitPreparation(requests) },
                 report: { [weak self] event in
                     guard let self else { return }
                     diagnostics["continuedAudioPreparation"] = event

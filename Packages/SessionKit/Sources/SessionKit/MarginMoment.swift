@@ -82,6 +82,14 @@ public struct MarginMomentSequence: Sendable, Equatable {
         return target.mediaTimeMs - current
     }
 
+    /// The coming-up card's source-time countdown, rounded up to avoid promising an early arrival.
+    /// Before the first progress reading, show the planned lead-in rather than hiding the cue.
+    public func targetCountdown(currentMediaTimeMs: Int?) -> String? {
+        guard let ms = msUntilTarget(currentMediaTimeMs: currentMediaTimeMs ?? startMediaTimeMs) else { return nil }
+        let seconds = ms / 1_000 + (ms % 1_000 == 0 ? 0 : 1)
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
+    }
+
     /// Call on each progress tick while the source plays. Returns the Margin to play now, if playback just
     /// reached one. Margins crossed in the same tick are consumed; the first plays.
     public mutating func progressed(from before: Int?, to after: Int?) -> MarginMomentAnchor? {

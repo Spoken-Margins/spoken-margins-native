@@ -7,6 +7,7 @@ rewritten into espeak-ng's conventions (lexmap.py), because Kitten was trained o
 espeak output. No espeak code or data is used.
 """
 import json
+import os
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -16,8 +17,10 @@ from neural_g2p import NeuralG2P
 from normalize import ALWAYS_SPELL, normalize
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "models" / "frontend"
-MISAKI = ROOT / ".venv" / "lib" / "python3.11" / "site-packages" / "misaki" / "data"
+# Where the reference data lives (git-ignored): cmudict.dict from github.com/cmusphinx/cmudict, checkpoint20.npz
+# from the g2p_en 2.1.0 wheel, and misaki 0.9.4's data folder. Override with the two environment variables.
+DATA = Path(os.environ.get("C2_FRONTEND_DATA", ROOT / "models" / "frontend"))
+MISAKI = Path(os.environ.get("C2_MISAKI_DATA", ROOT / ".venv" / "lib" / "python3.11" / "site-packages" / "misaki" / "data"))
 
 ARPA = {"AA": "ɑ", "AE": "æ", "AH": "ʌ", "AO": "ɔ", "AW": "aʊ", "AY": "aɪ", "B": "b", "CH": "tʃ", "D": "d",
         "DH": "ð", "EH": "ɛ", "ER": "ɜɹ", "EY": "eɪ", "F": "f", "G": "ɡ", "HH": "h", "IH": "ɪ", "IY": "i",

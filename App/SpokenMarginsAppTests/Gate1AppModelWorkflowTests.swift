@@ -4012,6 +4012,45 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.snapshot.phase, .finished)
     }
 
+    /// #1577: pin the app action to #807's single rule without playing or encoding audio.
+    /// This verifies the lead-in wiring and cue; hearing the saved voice still needs the owner's phone.
+    func testPlayThisMomentUsesEightSecondListeningMomentRuleAndCountdown() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        defer { model.endMarginMoment(); model.pause() }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        // The Noop transport never opens this file. No voice is requested during the lead-in.
+        try store.saveItem(Item(id: "moment-source", title: "Moment source", mediaType: "podcast", text: nil,
+            externalReference: "local", status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: root.appending(path: "source.m4a").absoluteString,
+                durationMs: 180_000, nativeMediaId: "moment-source")))
+        model.startItem(id: "moment-source")
+        var margin = shareableInterjection(itemId: "moment-source")
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+            anchorBefore: "", anchorAfter: "", mediaTimeMs: 120_000)
+        margin.audioPath = root.appending(path: "margin.m4a").path
+        margin.audioStatus = "recorded"
+        try store.saveInterjection(margin)
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
+
+        XCTAssertTrue(model.playMarginMoment(row))
+
+        let moment = try XCTUnwrap(model.marginMoment)
+        let rule = ListeningMoment.rule(for: .playThisMoment)
+        XCTAssertEqual(rule.leadInMs, 8_000)
+        XCTAssertEqual(moment.startMediaTimeMs, 120_000 - rule.leadInMs)
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, moment.startMediaTimeMs)
+        XCTAssertEqual(model.marginMomentTitle, "Your Margin")
+        XCTAssertEqual(moment.targetCountdown(currentMediaTimeMs: model.snapshot.currentMediaTimeMs), "0:08")
+        XCTAssertEqual(model.screen, .playback)
+    }
+
     func testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-retrieval-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

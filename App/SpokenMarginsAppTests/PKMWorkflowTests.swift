@@ -336,11 +336,20 @@ final class PKMWorkflowTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let url = root.appendingPathComponent("library.sqlite")
+        // Declining the Terms choice writes the voice into the app's shared preferences; put them back afterwards (#1448).
+        let voicePreferences = VoicePreferencesSnapshot.capture()
+        addTeardownBlock { voicePreferences.restore() }
         let firstLaunch = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: url)
         firstLaunch.resetAndSeed(); firstLaunch.declineCurrentTerms()
         firstLaunch.startItem(id: "item-pill")
         firstLaunch.pause()
-        let restoredSessionID = try XCTUnwrap(firstLaunch.snapshot.sessionId)
+        // A start that stopped early leaves no session id (#1198: the Terms sheet held it on a fresh simulator); say why.
+        let restoredSessionID = try XCTUnwrap(
+            firstLaunch.snapshot.sessionId,
+            "no session after start and pause: terms gate \(firstLaunch.diagnostics["termsGate"] ?? "none"), "
+                + "Terms sheet shown \(firstLaunch.isTermsOfUsePresented), status \"\(firstLaunch.statusMessage)\", "
+                + "error \(firstLaunch.lastError ?? "none")"
+        )
         let store = try SQLiteSessionStore(path: url.path)
         let restoredPosition = try XCTUnwrap(store.loadSession(id: restoredSessionID)).position
         try store.saveItem(Item(id: "item-linked", title: "An older article", mediaType: "text",
