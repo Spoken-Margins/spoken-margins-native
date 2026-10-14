@@ -371,9 +371,14 @@ struct ExperienceTimelineRailScreen: View {
             guard let place = entry.reference.flatMap({ places[$0] }) else { return entry }
             var threaded = entry
             threaded.threadOrder = place.order
-            threaded.depth = place.depth
             if place.depth > 0 {
-                threaded.position = place.rootPosition ?? entry.position
+                // The rail shows one session's Margins. A reply whose thread starts with a Margin that has no entry
+                // here (an earlier session's) has nothing to indent under: it stands at its own place, and still
+                // says what it answers.
+                if let rootPosition = place.rootPosition {
+                    threaded.depth = place.depth
+                    threaded.position = rootPosition
+                }
                 threaded.detail = "Reply to \(place.parentLabel ?? "a Margin") · \(entry.detail)"
             } else if let note = place.note {
                 threaded.detail = "\(note.prefix(1).uppercased())\(note.dropFirst()) · \(entry.detail)"

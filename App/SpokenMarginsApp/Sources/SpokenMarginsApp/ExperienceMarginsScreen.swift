@@ -427,7 +427,7 @@ struct SharedMarginDetailView: View {
                             .accessibilityIdentifier("sharedMargin.replyMissingParent.label")
                     }
                 }
-                if current.layer.itemId != nil, SharedMarginPlaybackPosition(current.interjection) != nil {
+                if current.layer.itemId != nil, SharedMarginReplyPlace(current.interjection) != nil {
                     Section {
                         Button("Reply", systemImage: "arrowshape.turn.up.left.fill") { reply(inWriting: false) }
                             .accessibilityIdentifier("sharedMargin.reply.button")

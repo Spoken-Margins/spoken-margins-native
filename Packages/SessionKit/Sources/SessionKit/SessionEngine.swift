@@ -1532,7 +1532,8 @@ public final class SessionEngine {
             createdAt: now(),
             roughPercent: interjectionPercent(for: session, targetType: targetType, targetId: targetId, anchor: anchor),
             anchor: anchor,
-            audioRef: recorder.recordingInProgressRef()
+            audioRef: recorder.recordingInProgressRef(),
+            replyTo: recordingReplyTo
         )
         activeRecordingDraft = draft
         recordingDraftFailure = nil
