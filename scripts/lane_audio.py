@@ -8,9 +8,11 @@ system-output devices are the built-in ones; when the last one is gone they go b
 - pin(udid) runs inside lane_sim.boot, before `simctl boot`. It saves the current defaults the first
   time, switches any wireless default (Bluetooth, AirPlay, the iPhone's Continuity microphone) to the
   built-in device, and records the simulator as a holder even when the defaults are already built-in.
-- pin(udid, refresh=True) runs on each live watcher tick. Only changed defaults are inspected for a
-  wireless device, so headphones connecting after boot are pinned too. Unchanged ticks read only
-  the three CoreAudio defaults and pin state; they do not query simctl, devices or the lid.
+- pin(udid, refresh=True) runs on each live watcher or self-booted verification tick. Only changed
+  defaults are inspected for a wireless device, so headphones connecting after boot are pinned too.
+  Unchanged ticks inspect only the three CoreAudio defaults and pin state; they do not query
+  simctl, devices or the lid. Devices first pinned during refresh are never added to the saved
+  defaults to restore.
 - settle() runs wherever a simulator is shut down, and at the start of every boot (which heals a run
   that died without settling). It drops holders that are no longer booted and, with none left, puts
   each default back, but only where it is still the built-in device we pinned and the old device is
@@ -82,6 +84,15 @@ class CoreAudio:
         self.core.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
         self.core.CFStringGetCString.restype = ctypes.c_bool
         self.core.CFRelease.argtypes = [ctypes.c_void_p]
+        # This CLI never pumps CFRunLoopGetMain(). AudioHardwareDeprecated.h documents NULL rnlp
+        # as asking HAL to manage a notification thread, so repeated reads see device changes.
+        address = self._address(_code('rnlp'))
+        run_loop = ctypes.c_void_p()
+        status = self.audio.AudioObjectSetPropertyData(
+            ctypes.c_uint32(SYSTEM_OBJECT), ctypes.byref(address), 0, None,
+            ctypes.sizeof(run_loop), ctypes.byref(run_loop))
+        if status:
+            raise OSError(f'CoreAudio notification thread setup failed ({status})')
 
     def _address(self, selector, scope=GLOBAL):
         return self._Address(selector, scope, 0)
@@ -248,6 +259,9 @@ def pin(udid, backend=None, out=sys.stderr, lid_closed=speakers_off, *, refresh=
             if refresh and defaults == state.get('observed'):
                 return []
             if lid_closed():
+                if refresh:
+                    state['observed'] = defaults
+                    _write_state(state)
                 print('[lane] audio: lid closed with no external display, so the built-in speakers are off; '
                       'leaving the default audio devices alone', file=out, flush=True)
                 return []
@@ -260,7 +274,8 @@ def pin(udid, backend=None, out=sys.stderr, lid_closed=speakers_off, *, refresh=
                     builtin = _builtin_for(kind, devices)
                     if not current or not builtin or current['transport'] not in WIRELESS:
                         continue
-                    state.setdefault('saved', {}).setdefault(kind, {'uid': current['uid'], 'name': current['name']})
+                    if not refresh:
+                        state.setdefault('saved', {}).setdefault(kind, {'uid': current['uid'], 'name': current['name']})
                     state.setdefault('pinned', {})[kind] = builtin['id']
                     backend.set_default(kind, builtin['id'])
                     defaults[kind] = builtin['id']

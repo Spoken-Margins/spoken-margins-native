@@ -534,6 +534,7 @@ class Run:
                          'input_sha256': input_identity(), 'status': 'running', 'steps': []}
         self.crash_baseline = None
         self.crash_times = {}
+        self.audio_pin_udid = None  # only a simulator this run booted; external devices have a watcher
         self.save()
 
     def save(self):
@@ -580,6 +581,7 @@ class Run:
             if held:
                 entry['build_slot'] = held
             start = attempt_start = time.monotonic()
+            audio_refresh_at = start
             attempt = 1
             watching = startup is not None
             scan_from = 0  # each launch is judged by its own part of the shared log
@@ -590,6 +592,9 @@ class Run:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
                         if self.note_crash(entry, report):
                             raise InterruptedError('Repeated simulator process crashes')
+                    if self.audio_pin_udid and time.monotonic() >= audio_refresh_at:
+                        lane_audio.pin(self.audio_pin_udid, refresh=True)
+                        audio_refresh_at = time.monotonic() + 1.0
                     remaining = timeout - (time.monotonic() - start)
                     if remaining <= 0:
                         raise subprocess.TimeoutExpired(args, timeout)
@@ -974,6 +979,7 @@ class Run:
                     raise RuntimeError(f'simulator-boot: {error}')
                 finally:
                     self.save()
+                self.audio_pin_udid = chosen['udid']
             self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
             if chosen.get('name') == TEST_RUNNER_NAME:
                 # Start from an empty app container so earlier runs' data can't leak into this one.
@@ -1005,6 +1011,7 @@ class Run:
                          '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
                          timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
         finally:
+            self.audio_pin_udid = None
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
                 subprocess.run(['xcrun', 'simctl', 'shutdown', chosen['udid']],

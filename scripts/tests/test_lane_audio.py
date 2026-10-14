@@ -1,3 +1,4 @@
+import ctypes
 import io
 import os
 from pathlib import Path
@@ -113,7 +114,8 @@ class LaneAudioTests(unittest.TestCase):
         self.assertEqual(self.mac.defaults, {'input': 99, 'output': 92, 'system': 92})
         self.booted.clear()
         self.settle()
-        self.assertEqual(self.mac.defaults, {'input': 112, 'output': 106, 'system': 106})
+        # These AirPods arrived during the run; restoring them would select a device the run never began on.
+        self.assertEqual(self.mac.defaults, {'input': 99, 'output': 92, 'system': 92})
 
     def test_refresh_preserves_original_defaults_and_manual_wired_choices(self):
         self.pin()
@@ -131,6 +133,21 @@ class LaneAudioTests(unittest.TestCase):
             self.assertEqual(lane_audio.pin('SIM-A', backend=self.mac, out=self.out,
                                            lid_closed=lambda: self.fail('checked lid'), refresh=True), [])
         self.assertNotIn('skipped', self.out.getvalue())
+
+    def test_unchanged_defaults_after_a_closed_lid_refresh_do_not_repeat_discovery(self):
+        self.pin()
+        self.mac.defaults['output'] = USB_OUT['id']  # speakers disappeared when the lid closed
+        lid = mock.Mock(return_value=True)
+        lane_audio.pin('SIM-A', backend=self.mac, out=self.out, lid_closed=lid, refresh=True)
+        message = self.out.getvalue()
+        self.assertEqual(lane_audio.pin('SIM-A', backend=self.mac, out=self.out,
+                                       lid_closed=lid, refresh=True), [])
+        self.assertEqual(lid.call_count, 1)
+        self.assertEqual(self.out.getvalue(), message)
+        self.assertEqual(lane_audio._read_state()['observed'], self.mac.defaults)
+        self.booted.clear()
+        self.settle()
+        self.assertEqual(self.mac.defaults, {'input': 112, 'output': 70, 'system': 106})
 
     def test_refresh_does_not_recreate_a_released_holder(self):
         self.pin('SIM-A')
@@ -245,6 +262,44 @@ class LaneAudioTests(unittest.TestCase):
         def broken(command):
             raise OSError('no ioreg')
         self.assertFalse(lane_audio.speakers_off(broken))
+
+
+class CoreAudioTests(unittest.TestCase):
+    def test_a_process_without_a_run_loop_receives_changed_defaults(self):
+        # Model the HAL notification boundary documented in AudioHardwareDeprecated.h: the main run
+        # loop is not pumped by this CLI. NULL rnlp asks HAL to own a notification thread instead.
+        audio, core = mock.Mock(), mock.Mock()
+        notifications = []
+
+        def set_property(object_id, address, qualifier_size, qualifier, size, value):
+            address = ctypes.cast(address, ctypes.POINTER(lane_audio.CoreAudio._Address)).contents
+            self.assertEqual((object_id.value, address.selector, address.scope, address.element),
+                             (1, lane_audio._code('rnlp'), lane_audio.GLOBAL, 0))
+            self.assertEqual((qualifier_size, qualifier, size), (0, None, ctypes.sizeof(ctypes.c_void_p)))
+            self.assertIsNone(ctypes.cast(value, ctypes.POINTER(ctypes.c_void_p)).contents.value)
+            notifications.append(True)
+            return 0
+
+        def get_property(object_id, address, qualifier_size, qualifier, size, value):
+            # A changed device is visible only once notification delivery is enabled.
+            ctypes.cast(value, ctypes.POINTER(ctypes.c_uint32)).contents.value = 106 if notifications else 92
+            return 0
+
+        audio.AudioObjectSetPropertyData.side_effect = set_property
+        audio.AudioObjectGetPropertyData.side_effect = get_property
+        with mock.patch.object(lane_audio.ctypes.util, 'find_library', side_effect=['audio', 'core']), \
+                mock.patch.object(lane_audio.ctypes, 'CDLL', side_effect=[audio, core]):
+            backend = lane_audio.CoreAudio()
+            self.assertEqual(backend.default('output'), 106)
+        audio.AudioObjectSetPropertyData.assert_called_once()
+
+    def test_a_refused_notification_thread_is_reported_instead_of_reading_stale_defaults(self):
+        audio, core = mock.Mock(), mock.Mock()
+        audio.AudioObjectSetPropertyData.return_value = -1
+        with mock.patch.object(lane_audio.ctypes.util, 'find_library', side_effect=['audio', 'core']), \
+                mock.patch.object(lane_audio.ctypes, 'CDLL', side_effect=[audio, core]):
+            with self.assertRaisesRegex(OSError, 'notification'):
+                lane_audio.CoreAudio()
 
 
 if __name__ == '__main__':
