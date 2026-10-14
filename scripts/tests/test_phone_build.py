@@ -60,6 +60,32 @@ def iphone(identifier, name='Cole iPhone', transport='wired', pairing='paired', 
 
 
 class InstallerTests(unittest.TestCase):
+    def test_daily_pin_installs_its_binary_even_after_latest_advances(self):
+        folder = self.make_build()
+        (self.phone / 'daily-ready').symlink_to(folder.name)
+        newer = self.phone / '20261014-170000-bbbbbbb'
+        newer.mkdir()
+        (newer / 'SpokenMarginsApp.app').mkdir()
+        (newer / 'build.json').write_text(json.dumps({'sha': 'b' * 40, 'built_at': '2026-10-14T17:00:00'}))
+        (self.phone / 'latest').unlink()
+        (self.phone / 'latest').symlink_to(newer.name)
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {folder.resolve()}/SpokenMarginsApp.app'])
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
+        self.assertFalse(any('uninstall' in call for call in calls))
+
+    def test_already_installed_daily_binary_opens_plan_without_reinstall(self):
+        folder = self.make_build()
+        (self.phone / 'daily-ready').symlink_to(folder.name)
+        (self.phone / 'installed.txt').write_text(self.sha + '\n')
+        done, calls = self.run_installer([])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+        self.assertFalse(any('install app' in call for call in calls))
+        self.assertEqual((self.tmp / 'icloud' / f'Test plan {self.sha[:7]}.md').read_text(), '# plan\n')
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)

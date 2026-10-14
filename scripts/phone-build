@@ -522,6 +522,8 @@ def fetch_waiting() -> list[dict] | None:
         if not info.get('hasNextPage') or not info.get('endCursor'):
             break
         cursor = info['endCursor']
+    else:
+        return None  # Never publish a supposedly complete phone backlog after truncating it (#1600).
     return issues
 
 
@@ -1334,6 +1336,8 @@ def tail(path: Path, count: int = 30) -> str:
 def prune() -> None:
     builds = sorted(p for p in phone_dir().iterdir() if p.is_dir() and re.match(r'\d{8}-\d{6}-[0-9a-f]{7}$', p.name))
     for old in builds[:-keep_count()] if keep_count() > 0 else []:
+        if old.resolve() == (phone_dir() / 'daily-ready').resolve():
+            continue  # one pinned daily pass survives the rolling build's retention window (#1600)
         say(f'deleting an older build: {old.name}')
         shutil.rmtree(old, ignore_errors=True)
 

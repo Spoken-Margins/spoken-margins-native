@@ -18,6 +18,9 @@ set -u
 
 phone_dir="${SM_PHONE_DIR:-$HOME/SpokenMargins-phone}"
 latest="$phone_dir/latest"
+if [[ -L "$phone_dir/daily-ready" && -f "$phone_dir/daily-ready/build.json" ]]; then
+  latest="$phone_dir/daily-ready"  # the daily walkthrough and binary must agree (#1600)
+fi
 app="$latest/SpokenMarginsApp.app"
 work=$(mktemp -d "${TMPDIR:-/tmp}/sm-install.XXXXXX")
 trap 'rm -rf "$work"' EXIT
@@ -30,7 +33,11 @@ stop() {
   exit 1
 }
 
-print -r -- "Spoken Margins: install the newest phone build"
+if [[ -L "$phone_dir/daily-ready" ]]; then
+  print -r -- "Spoken Margins: install the daily phone pass"
+else
+  print -r -- "Spoken Margins: install the newest phone build"
+fi
 print -r -- ""
 
 [[ -d "$app" && -f "$latest/build.json" ]] || stop "There is no phone build yet in $phone_dir. Ask for one: scripts/phone-build makes it."
@@ -110,6 +117,14 @@ if [[ "${build_status%%$'\n'*}" == same ]]; then
   print -r -- "${build_status#*$'\n'}"
   print -r -- ""
   print -r -- "Nothing on the phone was changed."
+  if [[ -L "$phone_dir/daily-ready" && -f "$latest/test-plan.md" ]]; then
+    # A daily pass can add checks without changing the already-installed binary.
+    daily_icloud="${SM_PHONE_ICLOUD:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Spoken Margins test plans}"
+    if [[ -d "$daily_icloud" ]] || mkdir "$daily_icloud" 2>/dev/null; then
+      cp "$latest/test-plan.md" "$daily_icloud/Test plan ${sha[1,7]}.md" 2>/dev/null || true
+    fi
+    open "$latest/test-plan.md"
+  fi
   print -r -- "To reinstall this build anyway (say, after installing from Xcode or TestFlight), type R and press Return. Otherwise close this window."
   answer=""
   read -r answer || answer=""

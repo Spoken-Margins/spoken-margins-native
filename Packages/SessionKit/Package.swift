@@ -22,6 +22,7 @@ let package = Package(
         // Mac tool for co-op test packets (#856). The app never links it.
         .executable(name: "coop-packet", targets: ["CoopPacket"]),
         .executable(name: "speech-bench", targets: ["SpeechBench"]),
+        .executable(name: "phone-plan", targets: ["PhonePlan"]),
         // The last shipped build's packet reader, for the app's own test bundle only (#1039): it
         // reads the packet the real app exporter writes. The app target never links it.
         .library(name: "ShippedPacketReader", targets: ["ShippedPacketReader"])
@@ -38,6 +39,7 @@ let package = Package(
     ],
     targets: [
         .target(name: "SessionKit"),
+        .executableTarget(name: "PhonePlan", dependencies: ["SessionKit"]),
         .target(
             name: "SessionKitPersistence",
             dependencies: ["SessionKit"],
