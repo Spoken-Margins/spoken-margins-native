@@ -1485,6 +1485,9 @@ final class Gate1AppModel: ObservableObject {
         if let renderer = supertonicRenderer {
             Task { await renderer.unload(removingGeneratedAudio: false) }
         }
+        if let renderer = kittenRenderer {
+            Task { await renderer.unload(removingGeneratedAudio: false) }
+        }
     }
 
     func makeAppOverviewSample() throws -> (Item, ListeningMap) {

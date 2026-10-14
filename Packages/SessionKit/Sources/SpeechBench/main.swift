@@ -58,7 +58,7 @@ func measure(engine: String, chunks: [String], render: (String) async throws -> 
 
 let threads = Int(argument("--threads") ?? "") ?? 2
 let chunkCount = Int(argument("--chunks") ?? "") ?? 12
-let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appending(path: "App/SpokenMarginsApp/Resources")
+let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let output = FileManager.default.temporaryDirectory.appending(path: "speech-bench-\(UUID().uuidString)", directoryHint: .isDirectory)
 defer { try? FileManager.default.removeItem(at: output) }
 
@@ -70,7 +70,7 @@ print("chunks: \(chunks.count) of \(all.count) distinct, \(chunks.map(\.count).r
 var reports: [EngineReport] = []
 do {
     let kitten = try KittenNarrationRenderer(
-        assets: KittenAssetLocation(rootURL: root.appending(path: "Kitten")), outputDirectory: output, threads: threads)
+        assets: KittenAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Kitten")), outputDirectory: output, threads: threads)
     reports.append(try await measure(engine: "kitten", chunks: chunks) { try await kitten.render(text: $0) })
     // The fast-start head the player plays first after a fallback (a warm session).
     let head = NarrationChunkPlanner.splittingFirstChunk(
@@ -86,7 +86,7 @@ do {
 }
 do {
     let supertonic = try SupertonicNarrationRenderer(
-        assets: SupertonicAssetLocation(rootURL: root.appending(path: "Supertonic")), outputDirectory: output)
+        assets: SupertonicAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Supertonic")), outputDirectory: output)
     reports.append(try await measure(engine: "supertonic", chunks: chunks) { try await supertonic.render(text: $0) })
     await supertonic.unload()
 } catch {
