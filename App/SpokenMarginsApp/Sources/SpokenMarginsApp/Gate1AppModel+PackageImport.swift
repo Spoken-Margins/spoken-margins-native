@@ -45,6 +45,8 @@ extension Gate1AppModel {
         }
     }
 
+    var shareLinkOpener: ShareLinkOpener { packageImport.shareLinkOpener }
+
     /// A tapped share link (https on the share host): download, unseal, then the usual import review (#488).
     func openShareLink(_ url: URL) {
         guard let link = ShareLinkURL(url: url) else {

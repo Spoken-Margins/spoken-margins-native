@@ -282,7 +282,6 @@ final class Gate1AppModel: ObservableObject {
     @Published var isImportingSpokenMarginsPackage = false { didSet { packageImport.adoptIsImportingFromViews(isImportingSpokenMarginsPackage) } }
     @Published var spokenMarginsPackageImportError: String? { didSet { packageImport.adoptErrorFromViews(spokenMarginsPackageImportError) } }
     private(set) lazy var packageImport = SpokenMarginsPackageImportCoordinator(environment: .live(model: self))
-    let shareLinkOpener = ShareLinkOpener()
     @Published var pendingImportedCommentary: ImportedCommentaryPrompt? {
         didSet {
             if oldValue?.id != pendingImportedCommentary?.id {
@@ -2384,9 +2383,7 @@ final class Gate1AppModel: ObservableObject {
     func handleIncomingURL(_ url: URL) {
         if let marginLink = MarginDeepLink(url: url) { openMargin(marginLink); return }
         if ShareLinkURL.isOnShareHost(url) { openShareLink(url); return }
-        if url.isFileURL, url.pathExtension.lowercased() == "json" {
-            importListeningEditionFile(url); return
-        }
+        if url.isFileURL, url.pathExtension.lowercased() == "json" { importListeningEditionFile(url); return }
         if url.scheme == "spokenmargins", url.host == "listening-edition" {
             do {
                 let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value ?? ""
