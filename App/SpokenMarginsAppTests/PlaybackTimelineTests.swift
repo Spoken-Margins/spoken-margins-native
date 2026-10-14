@@ -56,7 +56,7 @@ final class PlaybackTimelineTests: XCTestCase {
                       "An audio transcript must not become source text without time mapping")
     }
 
-    func testTimelineKeepsTypedSourceElementsAndOmitsOnlyGenericPassages() {
+    func testTimelineKeepsOnlySupportedRichSourceElementsAlongsideNavigation() {
         let roles = StructuredDocument.Role.allCases
         let text = roles.map { $0.rawValue + "." }.joined(separator: "\n\n")
         var start = 0
@@ -74,7 +74,8 @@ final class PlaybackTimelineTests: XCTestCase {
             guard case .sourceText(let source) = entry.action else { return nil }
             return source.role
         }
-        XCTAssertEqual(displayed, roles.filter { $0 != .body && $0 != .unknown })
+        XCTAssertEqual(displayed, [.caption, .table, .footnote, .reference, .figureText],
+                       "Pictures/embeds/link payloads are not retained by this schema; metadata and headings are not scenes")
         XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
     }
 
