@@ -254,17 +254,87 @@ def audits(comments: list[dict]) -> list[dict]:
     return found
 
 
-def armed_since(events: list[dict]) -> str | None:
-    """When `automerge` was last added, if it is still on (from the PR's label events)."""
-    armed = None
+def label_since(events: list[dict], name: str) -> str | None:
+    """When a label was last added, if it is still on (from the PR's or issue's label events)."""
+    since = None
     for event in events:
-        if (event.get('label') or {}).get('name') != 'automerge':
+        if (event.get('label') or {}).get('name') != name:
             continue
         if event.get('event') == 'labeled':
-            armed = event.get('created_at')
+            since = event.get('created_at')
         elif event.get('event') == 'unlabeled':
-            armed = None
-    return armed
+            since = None
+    return since
+
+
+def armed_since(events: list[dict]) -> str | None:
+    """When `automerge` was last added, if it is still on."""
+    return label_since(events, 'automerge')
+
+
+HANDOFF = 'Handing to the Mac finisher:'
+RUNNER_ID = re.compile(r'(pr\d+-r\d+|integration-|journeys-)', re.I)   # desk-batch.py: the runner's report ids
+
+
+def is_desk_report(comment: dict) -> bool:
+    """A Test Desk report: a non-runner comment whose first line is `Lane report <id> — PASS|FAIL|INCONCLUSIVE`
+    or `Lane report (T4): …` (the same test scripts/desk-batch.py uses to say a T4 request was answered)."""
+    if comment_user(comment) == LANE_BOT:
+        return False
+    first = next((text.strip().strip('*_#` ') for text in (comment.get('body') or '').splitlines() if text.strip()), '')
+    match = DESK_REPORT.match(first)
+    if not match:
+        return False
+    named = re.match(r'(?i:Lane report)\s+(\S+)', first)
+    return not (named and RUNNER_ID.match(named.group(1)))
+
+
+def waiting_t4(comments: list[dict]) -> dict | None:
+    """The newest `/lane T4` request with no Test Desk report after it, or None."""
+    asked = [r for r in lane_requests(comments) if r['tier'] == 'T4']
+    if not asked:
+        return None
+    last = asked[-1]
+    if any(is_desk_report(c) for c in comments[last['index'] + 1:]):
+        return None
+    return {'at': last['at'], 'commit7': last['commit'][:7]}
+
+
+def mac_handoff(pull: dict, comments: list[dict], events: list[dict], head_committed_at: str | None) -> dict | None:
+    """For a `needs-mac` PR: when it went to the Mac finisher and when the finisher last did anything.
+
+    The hand-off is the newest "Handing to the Mac finisher:" comment (else the time the label went on). The
+    finisher's activity is any comment after it that is not the runner's and not another hand-off, or a head commit
+    committed after it. The finisher and the coordinator post as the same account, so any such comment counts.
+    """
+    if 'needs-mac' not in [label['name'] for label in pull.get('labels', [])]:
+        return None
+    handoffs = [c for c in comments if (c.get('body') or '').lstrip().startswith(HANDOFF)]
+    since = handoffs[-1]['created_at'] if handoffs else label_since(events, 'needs-mac')
+    seen = []
+    if since:
+        seen = [c['created_at'] for c in comments if c['created_at'] > since and comment_user(c) != LANE_BOT
+                and not (c.get('body') or '').lstrip().startswith(HANDOFF)]
+        if head_committed_at and head_committed_at > since:
+            seen.append(head_committed_at)
+    return {'since': since, 'finisher_active_at': max(seen) if seen else None}
+
+
+REFERENCE = re.compile(r'\b(?:refs?|part of|for|see)\s+#(\d+)', re.I)
+TITLE_ISSUE = re.compile(r'\(#(\d+)\)')
+
+
+def linked_issues(pull: dict) -> list[int]:
+    """Every issue the PR visibly works on: closing words, its `ws/<n>-` branch, "(#n)" in the title and "refs/for/part
+    of #n" in the text. The wake sweep never releases a claim that any open PR links, so this errs toward more."""
+    text = f'{pull.get("title") or ""}\n{pull.get("body") or ""}'
+    found = [int(n) for n in CLOSING.findall(text)]
+    branch = BRANCH_ISSUE.match((pull.get('head') or {}).get('ref') or '')
+    if branch:
+        found.append(int(branch.group(1)))
+    found += [int(n) for n in TITLE_ISSUE.findall(pull.get('title') or '')]
+    found += [int(n) for n in REFERENCE.findall(text)]
+    return list(dict.fromkeys(found))
 
 
 def linked_issue(pull: dict) -> int | None:
@@ -331,7 +401,11 @@ def fetch_bundle(api, summary: dict, sleep=time.sleep) -> dict:
         sleep(2)   # GitHub works out mergeability in the background on the first read
         pull = read('pull', f'pulls/{number}', default=pull) or pull
     head = (pull.get('head') or {}).get('sha') or (summary.get('head') or {}).get('sha') or ''
-    return {'pull': pull,
+    committed = None
+    if head and any(label['name'] == 'needs-mac' for label in pull.get('labels', [])):
+        info = read('head_commit', f'commits/{head}', default={}) or {}   # only the Mac hand-off check needs it
+        committed = ((info.get('commit') or {}).get('committer') or {}).get('date')
+    return {'pull': pull, 'head_committed_at': committed,
             'comments': read('comments', f'issues/{number}/comments', paged=True, default=[]),
             'events': read('events', f'issues/{number}/events', paged=True, default=[]),
             'files': read('files', f'pulls/{number}/files', paged=True, default=[]),
@@ -459,13 +533,15 @@ def analyse(bundle: dict, classify=None) -> dict:
     return {'number': pull.get('number'), 'title': pull.get('title') or '', 'url': pull.get('html_url') or '',
             'head': head, 'head7': head7, 'draft': bool(pull.get('draft')), 'mergeable': word,
             'labels': [label for label in SHOWN_LABELS if label in labels], 'issue': linked_issue(pull),
+            'issues': linked_issues(pull),
             'lane': short(lane), 't3': short(t3),
             'lane_elsewhere': short(reports[-1]) if reports and not on_head else None,
             'audit': ({'verdict': 'clean' if audit['clean'] else 'blocking', 'who': audit['who'], 'at': audit['at']}
                       if audit else None),
             'audit_needed': scope.get('audit_kinds', []) if scope.get('known') else [],
             'checks': checks, 'scope_tier': scope.get('tier'), 't3_requested': bool(t3_requests),
-            'armed': armed, 'armed_at': armed_at, 'flags': flags}
+            'armed': armed, 'armed_at': armed_at, 't4_waiting': waiting_t4(comments),
+            'mac': mac_handoff(pull, comments, bundle['events'], bundle.get('head_committed_at')), 'flags': flags}
 
 
 # ---- The snapshot ---------------------------------------------------------------------------------------
