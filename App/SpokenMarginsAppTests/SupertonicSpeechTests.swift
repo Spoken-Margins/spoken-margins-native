@@ -1609,7 +1609,8 @@ final class SupertonicSpeechTests: XCTestCase {
     /// `iOSVoiceWarmUpWait` is noted and left running; the writes are serial, so the test's own
     /// renders queue behind it with 30 s timeouts each, and a service that never starts fails that
     /// test and every later stand-in test with their "guard never reported" messages. Cost: such a
-    /// failure now names the stand-in test, not the warm-up, so the note below goes in the first test's log and activity list.
+    /// failure now names the stand-in test, not the warm-up, so the timeout note goes in the first
+    /// test's log and activity list.
     /// The wait leaves 60 s of the first test's 180 s for its own renders and waits.
     private let iOSVoiceWarmUpWait: TimeInterval = 120
 
