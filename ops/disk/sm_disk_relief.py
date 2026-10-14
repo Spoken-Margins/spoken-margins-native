@@ -473,6 +473,8 @@ def busy_paths(paths: List[Path], procs: List[Proc]) -> set:
 
 # ---------- planning ----------
 
+NO_ACCESS = 'macOS will not let this job read it (no Full Disk Access, by design); skipped'
+
 @dataclass
 class Candidate:
     step: str            # 'worktree', 'cache', 'session-scratch', 'tmp', 'device-support' or 'move'
@@ -513,7 +515,11 @@ def plan_caches(cfg: Config, machine: Machine, trees: List[Worktree], busy: dict
     for tree in trees:
         if tree.path in removing or is_protected(tree.path, protected):
             continue
-        dirs = cache_dirs(tree.path)
+        try:
+            dirs = cache_dirs(tree.path)
+        except PermissionError:
+            plan.skipped.append(f'caches in {tree.path}: {NO_ACCESS}')
+            continue
         if not dirs:
             continue
         if tree.path in busy:
@@ -879,12 +885,23 @@ def make_plan(cfg: Config, machine: Machine) -> Plan:
     procs = machine.processes()
     trees = list_worktrees(cfg, machine)
     busy = busy_worktrees(trees, procs, machine)
-    removing = plan_worktrees(cfg, machine, trees, protected, busy, plan)
-    plan_caches(cfg, machine, trees, busy, protected, plan, removing)
-    plan_session_scratch(cfg, machine, procs, protected, plan)
-    plan_tmp(cfg, machine, procs, protected, plan)
-    plan_device_support(cfg, procs, protected, plan)
-    plan_moves(cfg, machine, procs, protected, plan)
+
+    # A folder macOS won't let this job read skips that step, not the whole run: the job
+    # runs without Full Disk Access by the owner's choice (see README), and one blocked
+    # folder used to crash every run before anything was freed (2026-10-11 to 10-14).
+    def step(name, plan_step, *args):
+        try:
+            return plan_step(*args)
+        except PermissionError as error:
+            plan.skipped.append(f'{name}: {error.filename or "a folder"}: {NO_ACCESS}')
+            return None
+
+    removing = step('worktrees', plan_worktrees, cfg, machine, trees, protected, busy, plan) or set()
+    step('caches', plan_caches, cfg, machine, trees, busy, protected, plan, removing)
+    step('session scratch', plan_session_scratch, cfg, machine, procs, protected, plan)
+    step('tmp', plan_tmp, cfg, machine, procs, protected, plan)
+    step('device support', plan_device_support, cfg, procs, protected, plan)
+    step('moves', plan_moves, cfg, machine, procs, protected, plan)
     return plan
 
 
