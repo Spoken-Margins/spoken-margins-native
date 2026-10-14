@@ -50,6 +50,29 @@ public enum PreparedAudioEnqueue {
         return PreparedSpeechText(item: item, document: document)?.text
     }
 
+    /// Identical canonical text can adopt a document while paused. Retire preparation whose
+    /// speech or offsets change, without moving the held item's text, map or listening positions.
+    static func saveStructuredDocument(
+        _ document: StructuredDocument, itemId: String,
+        repository: any (SessionRepository & StructuredDocumentRepository)
+    ) throws {
+        let save = {
+            let item = try repository.loadItem(id: itemId)
+            let old = try repository.loadStructuredDocument(itemId: itemId)
+            if PreparedSpeechText(item: item, document: old) != PreparedSpeechText(item: item, document: document) {
+                for manifest in try repository.loadPreparedAudioManifests(itemId: itemId) {
+                    try repository.deletePreparedAudioManifest(id: manifest.id)
+                }
+                for job in try repository.loadAudioPreparationJobs() where job.itemId == itemId {
+                    try repository.deleteAudioPreparationJob(id: job.id)
+                }
+            }
+            try repository.saveStructuredDocument(document, itemId: itemId)
+        }
+        if let store = repository as? any SessionRepositoryTransaction { try store.withSessionTransaction(save) }
+        else { try save() }
+    }
+
     public enum Request: Sendable {
         case startup(maximumChunkCount: Int, requestedAt: Date?)
         case explicit

@@ -945,7 +945,9 @@ public final class SessionEngine {
 
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
         guard let document, let store = repository as? StructuredDocumentRepository else { return }
-        try store.saveStructuredDocument(document, itemId: itemId)
+        if let store = store as? any (SessionRepository & StructuredDocumentRepository) {
+            try PreparedAudioEnqueue.saveStructuredDocument(document, itemId: itemId, repository: store)
+        } else { try store.saveStructuredDocument(document, itemId: itemId) }
         forgetDocumentCaches(itemId: itemId)
     }
 
@@ -4175,7 +4177,9 @@ public final class SessionEngine {
             // Margin anchors. Retain the original edition and give changed text its
             // own identity.
             if let existing = try existingItem(id: itemId), existing.text != text ||
-                document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId)) != $0 }) == true {
+                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId)) != $0 }) == true
+                 && !(existing.text == text && (currentSession?.itemId == existing.id || currentItem?.id == existing.id)
+                      && !snapshot.status.isPlaybackActive && existing.media?.sourceType != .generatedTTSPrerendered)) {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
                 // existing item to it when every Margin and position lands on the same
                 // words (I13 rule 1d). Otherwise it stays, and the new text becomes
