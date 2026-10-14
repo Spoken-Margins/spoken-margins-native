@@ -162,6 +162,87 @@ final class PublisherAudioDetectorTests: XCTestCase {
         }
     }
 
+    // MARK: Followed posts with only Substack's automatic voice (#1616)
+
+    private func followedEntry(_ canonicalURL: String, words: Int = 720) -> FeedEntry {
+        FeedEntry(id: "e", subscriptionId: "s", canonicalURL: canonicalURL, title: "Article", bodyWordCount: words, publisherPlatform: "substack")
+    }
+
+    /// The owner's call (2026-10-14): a followed post plays Substack's automatic voice when it has one, as a shared post does.
+    func testAFollowedPostWithOnlyTheAutomaticVoiceKeepsItMarkedAsGenerated() throws {
+        let html = String(decoding: try Self.fixture("substack-generated-voice-only-page.html"), as: UTF8.self)
+        let entry = followedEntry("https://captured.example/p/generated-voice")
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(entry, html: html))
+        XCTAssertEqual(confirmed.audioURL, "https://recordings.example/tts/en-US-AlloyTurboMultilingualNeural.mp3")
+        XCTAssertEqual(confirmed.publisherNarrationConfirmed, true)
+        XCTAssertEqual(confirmed.publisherNarrationGenerated, true)
+        XCTAssertEqual(PublisherAudioDetector.kind(of: confirmed), .articleWithPublisherAudio, "an article with the audio beside it, not a podcast episode")
+        XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: confirmed, itemId: "item"), PublisherAudio(
+            itemId: "item", audioURL: "https://recordings.example/tts/en-US-AlloyTurboMultilingualNeural.mp3", durationMs: nil,
+            detectedFrom: "substack_post_generated_voice"
+        ))
+    }
+
+    func testAFollowedPostWithBothKeepsTheAuthorsVoiceover() throws {
+        let html = String(decoding: try Self.fixture("substack-voiceover-and-generated-voice-page.html"), as: UTF8.self)
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(
+            followedEntry("https://captured.example/p/voiceover-and-generated-voice"), html: html))
+        XCTAssertEqual(confirmed.audioURL, "https://api.recordings.example/api/v1/audio/upload/11111111-2222-3333-4444-555555555555/src")
+        XCTAssertEqual(confirmed.audioDurationMs, 1_136_378)
+        XCTAssertNil(confirmed.publisherNarrationGenerated, "it is the author's voice")
+        XCTAssertEqual(PublisherAudioDetector.publisherAudio(for: confirmed, itemId: "item")?.detectedFrom, "substack_post_voiceover")
+    }
+
+    func testAFollowedPaidPostReadWithoutASubscriptionKeepsNothing() throws {
+        let html = String(decoding: try Self.fixture("substack-paid-post-page.html"), as: UTF8.self)
+        XCTAssertNil(PublisherNarrationEvidence.confirmedEntry(followedEntry("https://captured.example/p/paid-post"), html: html))
+    }
+
+    /// Neighbouring pages for the automatic voice: another post's page, a podcast post, an unfinished or unusable recording.
+    func testTheAutomaticVoiceNeedsTheSamePostACompletedRecordingAndANewsletterPost() throws {
+        let html = String(decoding: try Self.fixture("substack-generated-voice-only-page.html"), as: UTF8.self)
+        let entry = followedEntry("https://captured.example/p/generated-voice")
+        XCTAssertNotNil(PublisherNarrationEvidence.confirmedEntry(entry, html: html))
+        for (name, invalid) in [
+            ("another post's page", html.replacingOccurrences(of: "https://captured.example/p/generated-voice", with: "https://captured.example/p/other")),
+            ("a podcast post", html.replacingOccurrences(of: "newsletter", with: "podcast")),
+            ("still processing", html.replacingOccurrences(of: "completed", with: "processing")),
+            ("not https", html.replacingOccurrences(of: "https://recordings.example", with: "http://recordings.example")),
+            ("another post's recording", html.replacingOccurrences(of: #"post_id\":1"#, with: #"post_id\":2"#)),
+            ("no audio address", html.replacingOccurrences(of: #"audio_url\":\"https://recordings.example/tts/en-US-AlloyTurboMultilingualNeural.mp3\""#, with: #"audio_url\":null"#)),
+            ("not a publisher page", "not a publisher page")
+        ] {
+            XCTAssertNil(PublisherNarrationEvidence.confirmedEntry(entry, html: invalid), name)
+        }
+        XCTAssertNotEqual(html, html.replacingOccurrences(of: #"audio_url\":\"https://recordings.example/tts/en-US-AlloyTurboMultilingualNeural.mp3\""#, with: #"audio_url\":null"#),
+                          "the edit above applies to the fixture")
+    }
+
+    /// A real podcast feed's episodes are not Substack posts with narration: with no page evidence they import as before.
+    func testPodcastEpisodesAreUnchangedByTheAutomaticVoice() throws {
+        let episode = try XCTUnwrap(try FeedParser().parse(data: Self.fixture("substack-transcript-podcast.rss")).items.first)
+        XCTAssertEqual(PublisherAudioDetector.kind(of: episode), .podcastEpisode)
+        let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: episode.url, audioURL: episode.audioURL, title: episode.title,
+                              bodyWordCount: PublisherAudioDetector.bodyWordCount(of: episode))
+        XCTAssertNil(entry.publisherNarrationGenerated)
+        XCTAssertNil(PublisherAudioDetector.publisherAudio(for: entry, itemId: "item"))
+        let podcastPage = String(decoding: try Self.fixture("substack-generated-voice-only-page.html"), as: UTF8.self)
+            .replacingOccurrences(of: "newsletter", with: "podcast")
+        XCTAssertNil(PublisherNarrationEvidence.confirmedEntry(followedEntry("https://captured.example/p/generated-voice"), html: podcastPage))
+    }
+
+    func testTheGeneratedMarkSurvivesSQLiteAndOldEntriesDecodeWithoutIt() throws {
+        let store = try SQLiteSessionStore(path: temporary.appendingPathComponent("generated.sqlite").path)
+        let html = String(decoding: try Self.fixture("substack-generated-voice-only-page.html"), as: UTF8.self)
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(followedEntry("https://captured.example/p/generated-voice"), html: html))
+        try store.saveFeedEntry(confirmed)
+        let reopened = try SQLiteSessionStore(path: temporary.appendingPathComponent("generated.sqlite").path)
+        XCTAssertEqual(try reopened.loadFeedEntries(subscriptionId: "s"), [confirmed])
+
+        let old = Data(#"{"id":"e","subscriptionId":"s","canonicalURL":"https://example.com/p/1","title":"Post","state":"unseen","publisherNarrationConfirmed":true}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(FeedEntry.self, from: old).publisherNarrationGenerated)
+    }
+
     func testNarrationConfirmationCannotRestoreARemovedEntryOrOverwriteARefresh() throws {
         let store = try SQLiteSessionStore(path: temporary.appendingPathComponent("confirmation.sqlite").path)
         let original = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://captured.example/p/voiceover",
