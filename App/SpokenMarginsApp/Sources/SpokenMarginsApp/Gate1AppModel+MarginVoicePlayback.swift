@@ -248,7 +248,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String) {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
               let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
-              played.itemId == itemID, snapshot.status.isPlaybackActive,
+              played.itemId == itemID,
               played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
         let spoken = inlineSpokenMargins(itemId: itemID, store: store)
         let playedIdentity = Self.marginIdentity(played)
