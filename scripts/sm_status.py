@@ -320,6 +320,23 @@ def mac_handoff(pull: dict, comments: list[dict], events: list[dict], head_commi
     return {'since': since, 'finisher_active_at': max(seen) if seen else None}
 
 
+REFERENCE = re.compile(r'\b(?:refs?|part of|for|see)\s+#(\d+)', re.I)
+TITLE_ISSUE = re.compile(r'\(#(\d+)\)')
+
+
+def linked_issues(pull: dict) -> list[int]:
+    """Every issue the PR visibly works on: closing words, its `ws/<n>-` branch, "(#n)" in the title and "refs/for/part
+    of #n" in the text. The wake sweep never releases a claim that any open PR links, so this errs toward more."""
+    text = f'{pull.get("title") or ""}\n{pull.get("body") or ""}'
+    found = [int(n) for n in CLOSING.findall(text)]
+    branch = BRANCH_ISSUE.match((pull.get('head') or {}).get('ref') or '')
+    if branch:
+        found.append(int(branch.group(1)))
+    found += [int(n) for n in TITLE_ISSUE.findall(pull.get('title') or '')]
+    found += [int(n) for n in REFERENCE.findall(text)]
+    return list(dict.fromkeys(found))
+
+
 def linked_issue(pull: dict) -> int | None:
     match = CLOSING.search(pull.get('body') or '') or CLOSING.search(pull.get('title') or '')
     if match:
@@ -516,6 +533,7 @@ def analyse(bundle: dict, classify=None) -> dict:
     return {'number': pull.get('number'), 'title': pull.get('title') or '', 'url': pull.get('html_url') or '',
             'head': head, 'head7': head7, 'draft': bool(pull.get('draft')), 'mergeable': word,
             'labels': [label for label in SHOWN_LABELS if label in labels], 'issue': linked_issue(pull),
+            'issues': linked_issues(pull),
             'lane': short(lane), 't3': short(t3),
             'lane_elsewhere': short(reports[-1]) if reports and not on_head else None,
             'audit': ({'verdict': 'clean' if audit['clean'] else 'blocking', 'who': audit['who'], 'at': audit['at']}

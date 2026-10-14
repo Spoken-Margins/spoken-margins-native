@@ -58,6 +58,9 @@ T4_WAIT = dt.timedelta(hours=1)
 FINISHER_WAIT = dt.timedelta(hours=1)
 DESK_QUIET = dt.timedelta(hours=1)
 TICK_STALE = dt.timedelta(hours=3)           # dial_gate.USAGE_MAX_AGE: past this the Mac counts as offline
+USAGE_WINDOW = dt.timedelta(hours=12)         # dial_gate.main reads #337 this far back for the usage breaker
+SNAPSHOT_MAX_AGE = dt.timedelta(minutes=10)  # --apply refuses a saved snapshot older than this
+FINISHER_BUSY = 30                           # minutes: a finisher active more recently than this means the Mac is working
 COMMENT_WINDOW = dt.timedelta(hours=24)      # the Dial gate's own window for claim and stop notes
 SKIP_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked'}
 HOLD_LABELS = {'blocked', 'needs-owner', 'deferred'}   # a released claim isn't made `ready` with one of these
@@ -208,10 +211,11 @@ def release(api, issue, why, now, window=STALE_AFTER):
         names = {label['name'] for label in current.get('labels', [])}
         if current.get('state') != 'open' or 'in-progress' not in names:
             return 'skipped: no longer an open in-progress issue'
-        api.delete(f'issues/{number}/labels/{urllib.parse.quote("in-progress", safe="")}')
+        # in-progress comes off last, so a failed step leaves the claim in place for the next sweep to retry
         if not names & HOLD_LABELS:
             api.post(f'issues/{number}/labels', {'labels': ['ready']})
         api.post(f'issues/{number}/comments', {'body': release_note({'labels': sorted(names)}, why, window)})
+        api.delete(f'issues/{number}/labels/{urllib.parse.quote("in-progress", safe="")}')
         return 'released'
     except sm_status.GitHubError as error:
         return f'error: {error}'
@@ -227,7 +231,7 @@ def collect(api, now, snapshot=None):
     dial = dial_gate.parse_dial(dial_body)
     dial['codex_threads'] = codex_slots(dial_body)
     status_comments = api.pages(f'issues/{DIAL_ISSUE}/comments?since={iso(now - dt.timedelta(hours=3))}')
-    tick_comments = api.pages(f'issues/{TICK_ISSUE}/comments?since={iso(now - dt.timedelta(hours=8))}')
+    tick_comments = api.pages(f'issues/{TICK_ISSUE}/comments?since={iso(now - USAGE_WINDOW)}')
     usage = dial_gate.parse_usage(tick_comments)
 
     comments_complete = True
@@ -245,7 +249,9 @@ def collect(api, now, snapshot=None):
     for comment in comments:
         number = dial_gate.issue_number(comment)
         if number is not None:
-            last_comment[number] = max(last_comment.get(number, ''), comment['created_at'])
+            # an edited comment is a sign of life too (the pre-write re-check reads by update time)
+            last_comment[number] = max(last_comment.get(number, ''), comment['created_at'],
+                                       comment.get('updated_at') or '')
         if sm_status.is_desk_report(comment) or (number == DESK_ISSUE and
                                                  sm_status.comment_user(comment) != sm_status.LANE_BOT):
             desk_seen = max(desk_seen or '', comment['created_at'])
@@ -258,7 +264,8 @@ def collect(api, now, snapshot=None):
     active = [t for t in dial_gate.of_provider(threads) if t['state'] == 'active']
     codex_active = [t for t in dial_gate.of_provider(threads, 'codex') if t['state'] == 'active']
     ctx = {'last_comment': last_comment, 'comments_complete': comments_complete,
-           'pr_for_issue': {row['issue']: row['number'] for row in snapshot['prs'] if row['issue']},
+           'pr_for_issue': {n: row['number'] for row in snapshot['prs']
+                            for n in (row.get('issues') or ([row['issue']] if row.get('issue') else []))},
            'thread_for_issue': {n: t['title'] for t in active + codex_active for n in t['issues']}}
     claims = []
     for issue in in_progress:
@@ -308,7 +315,7 @@ def decide(facts, window=STALE_AFTER):
 
     tick = facts['tick']
     if tick is None or now - when(tick['at']) > TICK_STALE:
-        act('mac-tick-stale', LOOK, ('no Mac tick on #337 in 8 hours' if tick is None
+        act('mac-tick-stale', LOOK, ('no Mac tick on #337 in 12 hours' if tick is None
                                      else f'the latest Mac tick is {ago(now, when(tick["at"]))} old') +
             ': the Mac may be offline, so the usage breaker and the Mac queue can\'t be read.')
 
@@ -324,6 +331,9 @@ def decide(facts, window=STALE_AFTER):
 
     mac_ready = [i for i in ready if 'where:mac' in i['labels']]
     mac_busy = [c for c in live if 'where:mac' in c['labels']]
+    finisher = (tick or {}).get('finisher_idle_minutes')
+    if finisher is not None and finisher < FINISHER_BUSY:
+        mac_busy.append({'number': 0})     # the Mac finisher is working a hand-off
     if mac_ready and not mac_busy:
         act('mac-idle', LOOK, f'the Mac is idle with {len(mac_ready)} Mac-only ready issue(s) ' +
             ', '.join(f'#{i["number"]}' for i in mac_ready[:6]) + ('…' if len(mac_ready) > 6 else '') +
@@ -347,8 +357,9 @@ def decide(facts, window=STALE_AFTER):
 
     waiting = [row for row in facts['snapshot']['prs']
                if row.get('t4_waiting') and now - when(row['t4_waiting']['at']) >= T4_WAIT]
-    go = bool(tick and tick['test_desk'] == 'GO')
     desk_running = bool(facts['desk_seen']) and now - when(facts['desk_seen']) < DESK_QUIET
+    # a GO older than the desk's last sign has been acted on
+    go = bool(tick and tick['test_desk'] == 'GO' and not (facts['desk_seen'] and facts['desk_seen'] > tick['at']))
     if (waiting or go) and not desk_running:
         why = [f'/lane T4 on #{row["number"]} waiting {ago(now, when(row["t4_waiting"]["at"]))}' for row in waiting]
         if go:
@@ -413,6 +424,9 @@ def main(argv=None, api=None, now=None):
             else:
                 with open(args.status_json) as handle:
                     saved = json.load(handle)
+        if args.apply and args.status_json and now - when(saved.get('as_of') or '1970-01-01T00:00:00Z') > SNAPSHOT_MAX_AGE:
+            raise ValueError('--apply with --status-json needs a snapshot taken in the last 10 minutes: a stale one '
+                             'cannot see PRs opened since, and their claims would look abandoned')
         facts = collect(api, now, saved)
         actions, slot = decide(facts)
         if args.apply:

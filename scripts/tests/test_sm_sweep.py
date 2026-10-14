@@ -289,27 +289,35 @@ class FreeSlots(unittest.TestCase):
 
 class MacIdle(unittest.TestCase):
     MAC = [issue(40, ['ready', 'where:mac']), issue(41, ['ready', 'where:mac'])]
+    QUIET_FINISHER = TICK_BODY.replace('Mac finisher last active 25 min ago', 'Mac finisher last active 95 min ago')
+
+    def test_the_fixture_tick_has_a_finisher_active_25_minutes_ago(self):
+        self.assertIn('Mac finisher last active 25 min ago', TICK_BODY)
+
+    def test_a_finisher_active_in_the_last_half_hour_means_the_mac_is_working(self):
+        actions, _ = sweep.decide(facts_of(world(ready=self.MAC)))     # the live tick: finisher active 25 min ago
+        self.assertNotIn('mac-idle', rules(actions))
 
     def test_mac_only_ready_issues_with_nothing_in_progress_there_is_idle(self):
-        actions, _ = sweep.decide(facts_of(world(ready=self.MAC)))
+        actions, _ = sweep.decide(facts_of(world(ready=self.MAC, tick=self.QUIET_FINISHER)))
         idle = next(a for a in actions if a['rule'] == 'mac-idle')
         self.assertEqual(idle['issues'], [40, 41])
 
     def test_a_live_mac_claim_means_the_mac_is_working(self):
         busy = [issue(42, ['in-progress', 'where:mac'])]
-        actions, _ = sweep.decide(facts_of(world(ready=self.MAC, in_progress=busy,
+        actions, _ = sweep.decide(facts_of(world(ready=self.MAC, in_progress=busy, tick=self.QUIET_FINISHER,
                                                  comments=[note(42, 'on it', at(hours=1))])))
         self.assertNotIn('mac-idle', rules(actions))
 
     def test_a_stale_mac_claim_does_not_count_as_work(self):
         stale = [issue(42, ['in-progress', 'where:mac'])]
-        router = world(ready=self.MAC, in_progress=stale, events={42: [label_event(at(days=2))]})
+        router = world(ready=self.MAC, in_progress=stale, events={42: [label_event(at(days=2))]}, tick=self.QUIET_FINISHER)
         actions, _ = sweep.decide(facts_of(router))
         self.assertIn('mac-idle', rules(actions))
         self.assertIn('stale-claim', rules(actions))
 
     def test_no_mac_only_ready_issues_is_not_idle(self):
-        actions, _ = sweep.decide(facts_of(world(ready=[issue(10, ['ready'])])))
+        actions, _ = sweep.decide(facts_of(world(ready=[issue(10, ['ready'])], tick=self.QUIET_FINISHER)))
         self.assertNotIn('mac-idle', rules(actions))
 
     def test_an_old_or_missing_tick_is_reported(self):
@@ -362,6 +370,12 @@ class TestDeskWaiting(unittest.TestCase):
     def test_a_go_line_in_the_tick_starts_a_desk_even_with_no_open_t4_request(self):
         tick = TICK_BODY + '\n- Test Desk: GO'
         self.assertIn('start-desk', rules(sweep.decide(facts_of(world(tick=tick)))[0]))
+
+    def test_a_go_the_desk_has_already_answered_is_not_acted_on_twice(self):
+        tick = TICK_BODY + '\n- Test Desk: GO'
+        reported = note(9, 'Lane report t4-j1 — PASS\ncommit abc1234', at(minutes=80))   # after the tick, 80 min ago
+        router = world(tick=tick, tick_at=at(hours=2), comments=[reported])
+        self.assertNotIn('start-desk', rules(sweep.decide(facts_of(router))[0]))
 
 
 class NeedsMacStuck(unittest.TestCase):
@@ -420,6 +434,28 @@ class HandOffReading(unittest.TestCase):
         self.assertIsNone(sm_status.waiting_t4([desk]))
 
 
+class OpenPrProtection(unittest.TestCase):
+    def pull(self, title, body, ref):
+        return {'title': title, 'body': body, 'head': {'ref': ref}}
+
+    def test_every_issue_a_pr_visibly_works_on_is_linked(self):
+        cases = [(self.pull('x', 'Part of #15. Fixes #99', 'ws/15-a'), [99, 15]),
+                 (self.pull('x', 'Closes #12 and closes #13', 'claude/x'), [12, 13]),
+                 (self.pull('AGENTS.md: calls (#1556)', 'refs #14', 'claude/x'), [1556, 14]),
+                 (self.pull('x', 'Handles it (for #77)', 'claude/x'), [77]),
+                 (self.pull('x', 'nothing here', 'claude/x'), [])]
+        for pull, expected in cases:
+            with self.subTest(body=pull['body']):
+                self.assertEqual(sorted(sm_status.linked_issues(pull)), sorted(expected))
+
+    def test_a_claim_with_any_linked_open_pr_is_never_released(self):
+        row = pr(60, issue_number=99)
+        row['issues'] = [99, 15]
+        router = world(in_progress=[issue(15, ['in-progress'])], events={15: [label_event(at(days=2))]})
+        actions, _ = sweep.decide(facts_of(router, [row]))
+        self.assertNotIn('stale-claim', rules(actions))
+
+
 class ReleasingClaims(unittest.TestCase):
     """--apply: the only write, and only for claims the 6-hour rule calls stale."""
 
@@ -458,6 +494,23 @@ class ReleasingClaims(unittest.TestCase):
         comment = next(body for method, path, body in self.router.writes if path == 'issues/50/comments')
         self.assertIn('no commit, open PR or comment for 6 hours', comment['body'])
         self.assertIn('[released]', text)
+
+    def test_in_progress_comes_off_last_so_a_failed_step_leaves_the_claim_in_place(self):
+        self.run_main('--apply')
+        writes = [w for w in self.router.writes if w[1].startswith('issues/50')]
+        self.assertEqual([w[0] + ' ' + w[1] for w in writes],
+                         ['POST issues/50/labels', 'POST issues/50/comments', 'DELETE issues/50/labels/in-progress'])
+
+        class FailingComment(Router):
+            def post(self, path, body):
+                if path.endswith('/comments'):
+                    raise sm_status.GitHubError('HTTP 502')
+                return super().post(path, body)
+        failing = FailingComment()
+        failing.rules = self.router.rules
+        with contextlib.redirect_stdout(io.StringIO()):
+            sweep.main(['--apply'], api=failing, now=NOW)
+        self.assertNotIn('DELETE', [w[0] for w in failing.writes if w[1].startswith('issues/50')])
 
     def test_a_blocked_issue_loses_in_progress_but_is_not_made_ready(self):
         self.run_main('--apply')
@@ -519,6 +572,36 @@ class Output(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn('armed-red', [a['rule'] for a in data['actions']])
         self.assertEqual(data['slots']['claude_allowed'], 2)
+
+    def test_apply_refuses_a_stale_saved_snapshot_but_takes_a_fresh_one(self):
+        saved = FIXTURES / 'status-stale.json'
+        try:
+            for age, expected in ((dict(minutes=30), 2), (dict(minutes=2), 0)):
+                saved.write_text(json.dumps(dict(snapshot(), as_of=at(**age))))
+                router = world()
+                out, err = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                    code = sweep.main(['--apply', '--status-json', str(saved)], api=router, now=NOW)
+                self.assertEqual(code, expected, age)
+                if expected == 2:
+                    self.assertEqual(router.writes, [])
+                    self.assertIn('snapshot taken in the last 10 minutes', err.getvalue())
+        finally:
+            saved.unlink()
+
+    def test_the_usage_breaker_is_read_as_far_back_as_the_dial_gate_reads_it(self):
+        router = world()
+        facts_of(router)
+        since = next(path for path in router.reads if path.startswith('issues/337/comments'))
+        self.assertIn(f'since={at(hours=12)}', since)
+        self.assertEqual(sweep.USAGE_WINDOW, dt.timedelta(hours=12))
+
+    def test_an_edited_comment_is_a_sign_of_life(self):
+        edited = note(7, 'status', at(days=3))
+        edited['updated_at'] = at(hours=1)
+        router = world(in_progress=[issue(7, ['in-progress'])], comments=[edited])
+        actions, _ = sweep.decide(facts_of(router))
+        self.assertNotIn('stale-claim', rules(actions))
 
     def test_an_unreadable_dial_exits_2_and_prints_no_action_list(self):
         router = world()
