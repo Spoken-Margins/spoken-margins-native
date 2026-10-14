@@ -616,6 +616,60 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertEqual(model.snapshot.itemId, "real-source")
     }
 
+    /// #474 review: a Margin voice already playing when a review starts stops, instead of playing over it, and its
+    /// end no longer owes the source back, which would resume the episode mid-review.
+    func testStartingAReviewStopsTheMarginVoiceAlreadyPlaying() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 2_500)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.endMarginMoment(); model.stopInterjectionAudioPlayback(); model.pause() }
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+        try waitUntil("its voice plays") { model.importedCommentaryPhase == .playing }
+        XCTAssertTrue(model.sharedMarginReturn.heldByVoice, "the voice paused the playing episode and owes it back")
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: false)
+        XCTAssertEqual(model.marginMoment?.isReview, true)
+        XCTAssertNil(model.playingImportedCommentary, "the voice already playing gives way to the review")
+        XCTAssertFalse(model.sharedMarginReturn.heldByVoice, "its end can't resume the episode mid-review")
+    }
+
+    /// #474 review: a shared-Margin card waiting when a review starts is cleared, so it can't play over the review.
+    func testStartingAReviewClearsAWaitingSharedMarginCard() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 2_500)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.endMarginMoment(); model.pause() }
+        model.pendingImportedCommentary = ImportedCommentaryPrompt(layer: fixture.layer, interjection: fixture.record, index: 1, count: 2)
+        model.sharedMarginReturn.promptShown(sourceWasPlaying: true)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: false)
+        XCTAssertEqual(model.marginMoment?.isReview, true)
+        XCTAssertNil(model.pendingImportedCommentary, "the waiting card gives way to the review")
+        XCTAssertFalse(model.sharedMarginReturn.heldByPrompt, "the dismissed card no longer owes the episode back")
+    }
+
+    /// #474 review: the lead-in to a new Margin can cross one already heard. It isn't offered over the review, which
+    /// would pause the episode and stall it; the review plays the new Margin.
+    func testNoSharedMarginIsOfferedOverAReview() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, secondMarginAtMs: 2_500)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.markSharedMarginHeard(fixture.record)
+        XCTAssertEqual(model.newSharedMargins(itemId: "real-source").map(\.interjection.id), ["note2"])
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: false)
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertLessThan(model.snapshot.currentMediaTimeMs ?? 0, 1_000, "the review plays through the heard Margin at 1 s")
+        var offered: String?
+        try waitUntil("the new Margin's voice plays", timeout: 10) {
+            offered = offered ?? model.pendingImportedCommentary?.interjection.id
+            return try fixture.storedRecord("note2")?.firstHeardAt != nil
+        }
+        XCTAssertNil(offered, "nothing is offered over the review")
+    }
+
     /// #1308 (ANC-08): the host test drives the real player through pause and resume closures it wrote itself. This
     /// one goes through the app's own: the episode stands still while their voice plays, then plays on by itself.
     func testTheEpisodePlaysOnAfterASharedMarginsMoment() throws {
