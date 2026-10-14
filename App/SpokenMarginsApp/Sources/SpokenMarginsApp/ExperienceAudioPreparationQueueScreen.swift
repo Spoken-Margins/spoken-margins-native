@@ -282,6 +282,9 @@ private struct AudioPreparationQueueItemRow: View {
         let progress = row.plannedChunkCount > 0
             ? "\(row.completedChunkCount) of \(row.plannedChunkCount)"
             : "Waiting"
+        if row.failureCode == OfflinePreparationRecovery.waitingForSystem {
+            return "Background time ended; will retry when iOS allows while charging · \(progress)"
+        }
         if let failureCode = row.failureCode, !failureCode.isEmpty {
             return "Waiting after \(failureCode.replacingOccurrences(of: "_", with: " ")) · \(progress)"
         }
