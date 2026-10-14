@@ -174,7 +174,7 @@ extension Gate1AppModel {
             ))
         }
         #if canImport(BackgroundTasks) && canImport(UIKit)
-        AudioPreparationBackgroundController.shared.submitIfEnabled(!candidates.isEmpty)
+        scheduleAudioPreparationBackgroundTask()
         #endif
     }
 }
@@ -216,4 +216,3 @@ extension Gate1AppModel: EpisodeMapPreparerHost {
         if itemId == activeItemId { reportFailure(error, context: "Episode map preparation failed", itemId: itemId) }
     }
 }
-
