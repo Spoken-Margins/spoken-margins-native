@@ -58,6 +58,9 @@ extension Gate1AppModel {
         if let renderer = supertonicRenderer {
             Task { await renderer.unload() }
         }
+        if let renderer = kittenRenderer {
+            Task { await renderer.unload() }
+        }
         if navigateHome {
             screen = .home
         }

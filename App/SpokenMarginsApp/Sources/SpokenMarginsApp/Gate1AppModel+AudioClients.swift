@@ -87,6 +87,7 @@ extension Gate1AppModel {
                 diskCache: diskCache,
                 preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
                 voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
+                pressureRenderer: makeKittenRenderer(),
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
                         self?.handleSpeechPlaybackInterruption(event)
@@ -201,6 +202,24 @@ extension Gate1AppModel {
             outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory)
         )
         supertonicRenderer = renderer
+        return renderer
+    }
+
+    /// The bundled Kitten voice that takes over when Supertonic isn't allowed (#849). nil when its files can't be
+    /// opened: the iOS voice covers the passage then, as before.
+    func makeKittenRenderer() -> KittenNarrationRenderer? {
+        if let kittenRenderer { return kittenRenderer }
+        guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory),
+              let cachesDirectory = try? FileManager.default.url(
+                  for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true),
+              let renderer = try? KittenNarrationRenderer(
+                  assets: KittenAssetLocation(rootURL: resourceRoot),
+                  outputDirectory: cachesDirectory.appending(path: "KittenPlayback", directoryHint: .isDirectory))
+        else {
+            diagnostics["kittenFallbackVoice"] = "unavailable"
+            return nil
+        }
+        kittenRenderer = renderer
         return renderer
     }
 

@@ -480,6 +480,8 @@ final class Gate1AppModel: ObservableObject {
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
     var supertonicRenderer: SupertonicNarrationRenderer?
+    /// The bundled fallback voice, built on first use when Supertonic isn't allowed (#849).
+    var kittenRenderer: KittenNarrationRenderer?
     var preparedAudioCoordinator: PreparedAudioCoordinator?
     var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
         didSet { if let digest = currentSupertonicRenderSignature?.digest, digest != oldValue?.digest { Task { [ledger = offlineStorageLedger] in _ = try? await ledger?.markSupersededPreparedChunks(currentSignatureDigest: digest) } } }

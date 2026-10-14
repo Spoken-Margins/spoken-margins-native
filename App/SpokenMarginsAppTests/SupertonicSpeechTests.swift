@@ -2018,6 +2018,60 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #849: with Supertonic refused (heat, Low Power Mode, memory), the bundled Kitten voice renders the chunks
+    /// and the iOS voice is never asked. The first chunk is split in two so audio starts quickly.
+    func testResourcePressureRendersWithTheBundledKittenVoiceNotTheIOSVoice() async throws {
+        let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
+        let output = FileManager.default.temporaryDirectory.appending(path: "kitten-client-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output)
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let log = KittenClientLog()
+        let started = expectation(description: "audio started")
+        started.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                started.fulfill()
+            },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: kitten,
+            fallbackClient: fallback,
+            onGenerationProgress: { log.record($0) },
+            onFallback: { reason, _, _ in log.recordFallback(reason) }
+        )
+        let text = (0..<4).map { _ in
+            "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
+        }.joined(separator: " ")
+        let plannedChunks = NarrationChunkPlanner.spokenPlan(
+            spokenText: SpeechTextNormalizer.normalize(text), articleText: nil, articleSpokenStart: 0).chunks.count
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "pressure-kitten")
+
+        await fulfillment(of: [started], timeout: 60)
+        let deadline = ContinuousClock.now + .seconds(120)
+        while log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0, "Supertonic is refused")
+        XCTAssertEqual(fallback.playedOffsets, [], "the iOS voice is never asked")
+        XCTAssertEqual(log.fallbacks, [])
+        XCTAssertEqual(log.totalChunks, plannedChunks + 1, "the first chunk is split in two")
+        XCTAssertEqual(log.completedChunks, log.totalChunks)
+        let kittenDiagnostics = await kitten.diagnostics()
+        XCTAssertEqual(kittenDiagnostics.sessionLoadCount, 1)
+        try client.stop()
+        await kitten.unload()
+    }
+
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -3863,6 +3917,19 @@ private struct FixedAudioSupertonicRenderer: SupertonicRendering {
     }
 
     func discardGeneratedAudio(at url: URL) async {}
+}
+
+/// What a client built with the bundled fallback voice reported while it generated (#849).
+private final class KittenClientLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var progress = RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0)
+    private var fallbackReasons: [String] = []
+
+    func record(_ value: RenderedSpeechGenerationProgress) { lock.withLock { progress = value } }
+    func recordFallback(_ reason: String) { lock.withLock { fallbackReasons.append(reason) } }
+    var completedChunks: Int { lock.withLock { progress.completedChunks } }
+    var totalChunks: Int { lock.withLock { progress.totalChunks } }
+    var fallbacks: [String] { lock.withLock { fallbackReasons } }
 }
 
 private actor CountingAudioSupertonicRenderer: SupertonicRendering {

@@ -23,6 +23,9 @@ targets:
       - path: App/SpokenMarginsApp/Resources/Supertonic
         type: folder
         buildPhase: resources
+      - path: App/SpokenMarginsApp/Resources/Kitten
+        type: folder
+        buildPhase: resources
       - path: App/SpokenMarginsApp/Resources/Legal
         type: folder
         buildPhase: resources

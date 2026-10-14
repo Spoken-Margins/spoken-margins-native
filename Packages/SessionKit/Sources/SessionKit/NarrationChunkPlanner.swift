@@ -62,6 +62,14 @@ public enum NarrationChunkPlanner {
         public var text: String
         public var boundary: RenderedSpeechChunkBoundary
         public var articleIndex: Int?
+
+        public init(startOffset: Int, sourceLength: Int, text: String, boundary: RenderedSpeechChunkBoundary, articleIndex: Int? = nil) {
+            self.startOffset = startOffset
+            self.sourceLength = sourceLength
+            self.text = text
+            self.boundary = boundary
+            self.articleIndex = articleIndex
+        }
     }
 
     public struct SpokenPlan: Equatable, Sendable {
