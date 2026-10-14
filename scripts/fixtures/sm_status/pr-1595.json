@@ -1,0 +1,121 @@
+{
+ "check_runs": [
+  {
+   "conclusion": "skipped",
+   "id": 116047796126,
+   "name": "lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116047795724,
+   "name": "lane-open-lane",
+   "status": "completed"
+  },
+  {
+   "conclusion": null,
+   "id": 116047794053,
+   "name": "automerge",
+   "status": "in_progress"
+  },
+  {
+   "conclusion": "skipped",
+   "id": 116047701341,
+   "name": "release",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116047699189,
+   "name": "sessionkit-core",
+   "status": "completed"
+  },
+  {
+   "conclusion": "success",
+   "id": 116047698999,
+   "name": "route",
+   "status": "completed"
+  }
+ ],
+ "comments": [
+  {
+   "body": "Lane report pr1595-r38610693713 \u2014 PASS\ncommit 094206d (tested merged with next at 5c615e7) \u00b7 tier auto \u00b7 host only \u00b7 15m24s\nran: host tests (--plan fast): passed\nran beside a simulator job (trial): memory pressure normal, 36 GiB free\n<!-- lane-checks: {\"commit\": \"094206d6295292e1a2c5e18f73f12148270ab788\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"ran\": \"host tests (--plan fast): passed\", \"where\": \"host only\"} -->\n<!-- lane-request: {\"commit\": \"094206d6295292e1a2c5e18f73f12148270ab788\", \"next\": \"5c615e7a49c24099f1a0cd2b41cb848e239f3e54\", \"tests\": [], \"tier\": \"auto\"} -->",
+   "created_at": "2026-10-14T18:57:40Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1595#issuecomment-6175975149",
+   "id": 6175975149,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1595",
+   "user": {
+    "login": "github-actions[bot]"
+   }
+  },
+  {
+   "body": "**Claude audit on `094206d`**\n\n**Blocking: the PR description has no \"Cost and catch\" section.** AGENTS.md requires one for any PR that adds or changes a recurring cost, and this PR changes several:\n",
+   "created_at": "2026-10-14T19:04:55Z",
+   "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1595#issuecomment-6176115351",
+   "id": 6176115351,
+   "issue_url": "https://api.github.com/repos/uncomposed/spoken-margins-native/issues/1595",
+   "user": {
+    "login": "uncomposed"
+   }
+  }
+ ],
+ "errors": {},
+ "events": [
+  {
+   "created_at": "2026-10-14T17:54:51Z",
+   "event": "labeled",
+   "label": {
+    "name": "automerge"
+   }
+  },
+  {
+   "created_at": "2026-10-14T18:57:42Z",
+   "event": "labeled",
+   "label": {
+    "name": "lane:done"
+   }
+  }
+ ],
+ "files": [
+  {
+   "filename": ".github/workflows/lane.yml"
+  },
+  {
+   "filename": "scripts/lane-runner.py"
+  },
+  {
+   "filename": "scripts/test-scope.py"
+  },
+  {
+   "filename": "scripts/tests/test_lane_hosted.py"
+  },
+  {
+   "filename": "scripts/tests/test_lane_runner.py"
+  },
+  {
+   "filename": "scripts/tests/test_test_scope.py"
+  }
+ ],
+ "pull": {
+  "body": "<!-- claude-projects-attribution: {\"github_login\":\"uncomposed\"} -->\n_Requested by **Cole** \u00b7 [project thread](https://claude.ai/code/project/chan_01UBdF2E351rapQhVv1irt5B?thread=cmsg_01UBdF2E351rapQhVv1irt5BMdghoMQsPezSqZbrGWabaL)_\n\n**Needs Cole's merge tap.** This changes `.github/workflows/lane.ym",
+  "draft": false,
+  "head": {
+   "ref": "ws/861-hosted-lane-docs-ops",
+   "sha": "48b346e395fdd2c8e81d0c369ae1956153a4dd56"
+  },
+  "html_url": "https://github.com/uncomposed/spoken-margins-native/pull/1595",
+  "labels": [
+   {
+    "name": "lane:done"
+   },
+   {
+    "name": "automerge"
+   }
+  ],
+  "mergeable": true,
+  "mergeable_state": "unstable",
+  "number": 1595,
+  "state": "open",
+  "title": "Lane: run docs-only and ops-only automerge checks off the Mac (#861)"
+ }
+}
