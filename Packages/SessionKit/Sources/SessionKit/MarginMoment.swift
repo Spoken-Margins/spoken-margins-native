@@ -66,7 +66,27 @@ public struct MarginMomentSequence: Sendable, Equatable {
         ).sourceStartPosition
         startMediaTimeMs = start
         let others = otherMargins.filter { $0.marginId != target.marginId && $0.mediaTimeMs >= start }
-        unplayed = ([target] + others).sorted { lhs, rhs in
+        unplayed = Self.inPlaybackOrder([target] + others)
+    }
+
+    /// The listener heard one of their own Margins from its detail and the source is coming back where it was (#1538).
+    /// There is no lead-in and nothing to seek to: the item keeps playing from `position`, and its spoken Margins
+    /// after that play as playback reaches them. `playedMargin` is the one just heard, so it never plays again.
+    public init(
+        itemId: String,
+        resumingAtMediaTimeMs position: Int,
+        playedMargin: MarginMomentAnchor,
+        otherMargins: [MarginMomentAnchor]
+    ) {
+        self.itemId = itemId
+        target = playedMargin
+        startMediaTimeMs = position
+        phase = .listening
+        unplayed = Self.inPlaybackOrder(otherMargins.filter { $0.marginId != playedMargin.marginId && $0.mediaTimeMs > position })
+    }
+
+    private static func inPlaybackOrder(_ margins: [MarginMomentAnchor]) -> [MarginMomentAnchor] {
+        margins.sorted { lhs, rhs in
             lhs.mediaTimeMs == rhs.mediaTimeMs ? lhs.marginId < rhs.marginId : lhs.mediaTimeMs < rhs.mediaTimeMs
         }
     }

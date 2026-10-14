@@ -1312,10 +1312,7 @@ final class Gate1AppModel: ObservableObject {
     /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
     private func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
         guard interjection.isInlineSpokenMargin, let anchorMs = interjection.anchor.mediaTimeMs else { return }
-        let sessions: [Session] = (try? store.loadSessions(itemId: interjection.itemId)) ?? []
-        let spoken: [Interjection] = sessions
-            .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
-            .filter(\.isInlineSpokenMargin)
+        let spoken = inlineSpokenMargins(itemId: interjection.itemId, store: store)
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
@@ -1370,15 +1367,31 @@ final class Gate1AppModel: ObservableObject {
         screen = .playback
     }
 
-    private func startMarginMoment(
+    /// The listener's spoken Margins on the item, from every session, in no particular order.
+    func inlineSpokenMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
+        let sessions: [Session] = (try? store.loadSessions(itemId: itemId)) ?? []
+        return sessions
+            .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
+            .filter(\.isInlineSpokenMargin)
+    }
+
+    /// `resumingAtMediaTimeMs` starts the moment already listening (#1538): no lead-in, no seek, `target` is the
+    /// Margin just heard and only Margins after that position play.
+    func startMarginMoment(
         itemId: String,
         target: MarginMomentAnchor,
         otherMargins: [MarginMomentAnchor],
         voiceURLs: [String: URL],
         title: String,
-        isApproximate: Bool
+        isApproximate: Bool,
+        resumingAtMediaTimeMs: Int? = nil
     ) {
-        let sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins)
+        let sequence: MarginMomentSequence
+        if let position = resumingAtMediaTimeMs {
+            sequence = MarginMomentSequence(itemId: itemId, resumingAtMediaTimeMs: position, playedMargin: target, otherMargins: otherMargins)
+        } else {
+            sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins)
+        }
         let conductor = MarginMomentConductor(
             sequence: sequence,
             source: .init(
@@ -1409,8 +1422,16 @@ final class Gate1AppModel: ObservableObject {
         marginMomentConductor = conductor
         marginMomentTitle = title
         marginMomentPositionIsApproximate = isApproximate
-        conductor.start()
+        if resumingAtMediaTimeMs != nil {
+            conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
+        } else {
+            conductor.start()
+        }
         diagnostics["marginMoment.chime"] = nil
+        if resumingAtMediaTimeMs != nil {
+            diagnostics["marginMoment"] = "started:listening;later=\(sequence.unplayed.count)"
+            return
+        }
         diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
     }
 

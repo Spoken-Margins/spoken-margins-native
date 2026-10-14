@@ -59,6 +59,39 @@ final class MarginMomentTests: XCTestCase {
         XCTAssertTrue(sequence.unplayed.isEmpty)
     }
 
+    /// #1538: the listener heard one of their own Margins from its detail and the source comes back where it was.
+    func testResumingAfterAHeardMarginPlaysOnlyTheLaterMarginsWithNoLeadIn() {
+        let heard = MarginMomentAnchor(marginId: "ij-003", mediaTimeMs: 20_000)
+        let earlier = MarginMomentAnchor(marginId: "ij-001", mediaTimeMs: 10_000)
+        let sameSpot = MarginMomentAnchor(marginId: "ij-002", mediaTimeMs: 60_000)
+        let later = MarginMomentAnchor(marginId: "ij-004", mediaTimeMs: 90_000)
+        let latest = MarginMomentAnchor(marginId: "ij-005", mediaTimeMs: 150_000)
+        var sequence = MarginMomentSequence(
+            itemId: "ep", resumingAtMediaTimeMs: 60_000, playedMargin: heard,
+            otherMargins: [latest, heard, later, sameSpot, earlier]
+        )
+        XCTAssertEqual(sequence.phase, .listening, "no lead-in")
+        XCTAssertEqual(sequence.startMediaTimeMs, 60_000, "it carries on from where the source is, not from a lead-in")
+        XCTAssertNil(sequence.msUntilTarget(currentMediaTimeMs: 59_000))
+        XCTAssertEqual(sequence.unplayed.map(\.marginId), ["ij-004", "ij-005"],
+                       "not the Margin just heard, and not ones at or before the resume point")
+
+        XCTAssertNil(sequence.progressed(from: 60_000, to: 60_500))
+        XCTAssertEqual(sequence.progressed(from: 89_800, to: 90_300), later)
+        sequence.marginFinished()
+        XCTAssertEqual(sequence.phase, .listening, "the Margin just heard is never ahead again")
+        XCTAssertEqual(sequence.progressed(from: 149_800, to: 150_300), latest)
+        sequence.marginFinished()
+        XCTAssertTrue(sequence.unplayed.isEmpty)
+    }
+
+    func testResumingWithNothingLaterLeavesNothingToPlay() {
+        let heard = MarginMomentAnchor(marginId: "ij-003", mediaTimeMs: 20_000)
+        let sequence = MarginMomentSequence(itemId: "ep", resumingAtMediaTimeMs: 60_000, playedMargin: heard, otherMargins: [heard])
+        XCTAssertTrue(sequence.unplayed.isEmpty)
+        XCTAssertEqual(sequence.phase, .listening)
+    }
+
     func testCrossingMatchesSharedMarginSemanticsWithoutALimit() {
         XCTAssertTrue(PlaybackAnchorCrossing.isCrossed(anchor: 5, before: 5, after: 6))
         XCTAssertTrue(PlaybackAnchorCrossing.isCrossed(anchor: 6, before: 5, after: 6))

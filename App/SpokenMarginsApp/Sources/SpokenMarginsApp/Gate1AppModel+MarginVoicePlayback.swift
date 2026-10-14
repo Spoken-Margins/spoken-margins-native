@@ -37,6 +37,9 @@ extension Gate1AppModel {
             reportFailure("This Margin's audio is unavailable.")
             return
         }
+        // The source comes back when this Margin ends if playing it is what paused it (#1538); read before the pause.
+        let returnsSource = snapshot.status.isPlaybackActive
+            || (playingImportedCommentary != nil && sharedMarginReturn.heldByVoice)
         if snapshot.status.isPlaybackActive {
             pause()
         }
@@ -47,6 +50,7 @@ extension Gate1AppModel {
                 url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
                 rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
             )
+            sharedMarginReturn.voiceStarted(returnToSource: returnsSource)
             reportConfirmation("Playing your Margin.")
         } catch {
             stopInterjectionAudioPlayback()
@@ -226,8 +230,43 @@ extension Gate1AppModel {
 extension Gate1AppModel: MarginVoicePlayerHost {
     var marginVoiceMixesWithOtherAudio: Bool { mixesWithOtherAudio }
 
+    /// Your Margin played to its end. When playing it paused the source, the source plays again, and on a podcast the
+    /// item's later spoken Margins follow as playback reaches them (owner's call on #1538). A stop the listener asks
+    /// for, a recording or a failure never gets here, so none of them resumes anything.
     func marginVoiceOwnPlaybackEnded() {
+        let playedID = playingInterjectionAudioId, playedSessionID = playingInterjectionAudioSessionID
+        let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
         stopInterjectionAudioPlayback()
+        guard returnsSource, snapshot.status == .paused else { return }
+        resumePlayback()
+        if let playedID, let playedSessionID {
+            continueWithLaterMargins(afterOwnMarginID: playedID, sessionID: playedSessionID)
+        }
+    }
+
+    /// A podcast has no later Margins to wait for unless the listener recorded some. An article just resumes.
+    private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String) {
+        guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
+              let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
+              played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
+        let spoken = inlineSpokenMargins(itemId: itemID, store: store)
+        let playedIdentity = Self.marginIdentity(played)
+        let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
+        guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
+        var voiceURLs: [String: URL] = [:]
+        for margin in spoken {
+            if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
+        }
+        endMarginMoment()
+        startMarginMoment(
+            itemId: itemID,
+            target: MarginMomentAnchor(marginId: playedIdentity, mediaTimeMs: playedMs),
+            otherMargins: anchors,
+            voiceURLs: voiceURLs,
+            title: "Your Margin",
+            isApproximate: false,
+            resumingAtMediaTimeMs: position
+        )
     }
 
     func marginVoiceOwnPlaybackFailed() {

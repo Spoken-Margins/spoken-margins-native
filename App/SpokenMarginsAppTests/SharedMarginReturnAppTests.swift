@@ -172,6 +172,98 @@ final class SharedMarginReturnAppTests: XCTestCase {
         model.dismissPendingImportedCommentary()
         try await fixture.waitUntil("the source plays again") { model.snapshot.status == .playing }
     }
+
+    // #1538 (owner's call): your own Margin, played from its detail, ends and the source plays again by itself,
+    // then the item's later spoken Margins follow as playback reaches them.
+    func testAnOwnMarginThatPausedTheSourceBringsItBackAndLaterMarginsFollow() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 100, voiceSeconds: 1)
+        let later = try fixture.addOwnMargin(id: "own-later", atMediaTimeMs: 3_500, voiceSeconds: 1)
+        _ = try fixture.addOwnMargin(id: "own-earlier", atMediaTimeMs: 0, voiceSeconds: 1)
+
+        model.toggleInterjectionAudioPlayback(heard)
+        XCTAssertEqual(model.snapshot.status, .paused, "playing your Margin from its detail pauses the source")
+        XCTAssertTrue(model.isPlayingInterjectionAudio(heard))
+
+        try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
+        try await fixture.waitUntil("the source plays again") { model.snapshot.status == .playing }
+        let moment = try XCTUnwrap(model.marginMoment, "the later Margin is waiting for playback to reach it")
+        XCTAssertEqual(moment.phase, .listening)
+        XCTAssertEqual(moment.unplayed.map(\.marginId), [Gate1AppModel.marginIdentity(later)],
+                       "the Margin just heard and the one before the resume point never play again")
+
+        try await fixture.waitUntil("playback reaches the later Margin and it plays", timeout: 10) { model.marginMoment?.isPlayingMargin == true }
+        try await fixture.waitUntil("the source carries on after it", timeout: 10) {
+            model.snapshot.status == .playing && model.marginMoment == nil
+        }
+    }
+
+    // #1538: the listener had paused the source themselves, so a Margin that ends owes it nothing.
+    func testAnOwnMarginPlayedOverAPausedSourceLeavesItPausedWhenItEnds() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 100, voiceSeconds: 1)
+        model.pause()
+        XCTAssertEqual(model.snapshot.status, .paused)
+
+        model.toggleInterjectionAudioPlayback(heard)
+        try await fixture.waitUntil("the Margin ends", timeout: 10) { !model.isPlayingInterjectionAudio(heard) }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNil(model.marginMoment)
+    }
+
+    // #1538: stopping your Margin yourself is not it ending, so the source stays where the listener left it.
+    func testStoppingAnOwnMarginYourselfLeavesTheSourcePaused() async throws {
+        let fixture = try await ReturnFixture.make(sourcePlaying: true)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 100, voiceSeconds: 5)
+
+        model.toggleInterjectionAudioPlayback(heard)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        model.toggleInterjectionAudioPlayback(heard)
+        XCTAssertFalse(model.isPlayingInterjectionAudio(heard))
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertNil(model.marginMoment)
+    }
+
+    // #1538: an article has no media clock for later Margins to wait on, so the source resumes and nothing more starts.
+    func testAnOwnMarginOnAnArticleBringsTheSourceBackWithoutAMarginMoment() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-return-article-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: db)
+        model.resetAndSeed()
+        defer { model.stopInterjectionAudioPlayback(); model.pause() }
+        model.startItem(id: "item-pill")
+        let sessionID = try XCTUnwrap(model.snapshot.sessionId, "terms gate: \(model.diagnostics["termsGate"] ?? "none"), \(model.statusMessage)")
+        XCTAssertEqual(model.snapshot.status, .playing)
+        let voice = root.appending(path: "own.wav")
+        try FileManager.default.moveItem(at: try ReturnFixture.makeWAV(duration: 1), to: voice)
+        let own = Interjection(
+            id: "own-article", itemId: "item-pill", sessionId: sessionID,
+            targetType: .item, targetId: "item-pill", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .text, startChar: 10, endChar: 20, anchorBefore: "Before", anchorAfter: "After"),
+            audioPath: voice.path, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
+        )
+        try SQLiteSessionStore(path: db.path).saveInterjection(own)
+
+        model.toggleInterjectionAudioPlayback(own)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own))
+        let deadline = Date().addingTimeInterval(10)
+        while model.isPlayingInterjectionAudio(own), Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(model.isPlayingInterjectionAudio(own), "the Margin reached its end")
+        XCTAssertEqual(model.snapshot.status, .playing, "the article is playing again by itself")
+        XCTAssertNil(model.marginMoment)
+    }
 }
 
 @MainActor
@@ -219,6 +311,21 @@ private struct ReturnFixture {
         return ReturnFixture(model: model, layer: layer, record: record, root: root, files: [sourceURL, voiceURL])
     }
 
+    /// One of your own spoken Margins on the source's current session, with a short voice and its place in the source.
+    func addOwnMargin(id: String, atMediaTimeMs mediaTimeMs: Int, voiceSeconds: TimeInterval) throws -> Interjection {
+        let voice = root.appending(path: "\(id).wav")
+        try FileManager.default.moveItem(at: try Self.makeWAV(duration: voiceSeconds), to: voice)
+        let own = Interjection(
+            id: id, itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),
+            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: mediaTimeMs),
+            audioPath: voice.path, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
+        )
+        try SQLiteSessionStore(path: root.appending(path: "library.sqlite").path).saveInterjection(own)
+        return own
+    }
+
     func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !condition() {
@@ -234,7 +341,7 @@ private struct ReturnFixture {
         for url in files + [root] { try? FileManager.default.removeItem(at: url) }
     }
 
-    private static func makeWAV(duration: TimeInterval) throws -> URL {
+    fileprivate static func makeWAV(duration: TimeInterval) throws -> URL {
         let url = FileManager.default.temporaryDirectory.appending(path: "margin-return-\(UUID().uuidString).wav")
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))
         let frames = AVAudioFrameCount(44_100 * duration)
