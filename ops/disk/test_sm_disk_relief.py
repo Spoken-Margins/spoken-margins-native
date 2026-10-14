@@ -265,6 +265,49 @@ class Idle(Base):
         self.assertNotIn(busy, paths)
 
 
+class NoAccess(Base):
+    """The job runs without Full Disk Access by the owner's choice, so macOS refuses it some folders.
+    2026-10-11 to 10-14 one refused .build folder crashed every run before anything was freed."""
+
+    def lock(self, folder: Path) -> None:
+        folder.chmod(0)
+        # Before tearDown removes the temporary folder (cleanups run after tearDown).
+        self.restore = getattr(self, 'restore', []) + [folder]
+
+    def tearDown(self):
+        for folder in getattr(self, 'restore', []):
+            if folder.exists():
+                folder.chmod(0o755)
+        super().tearDown()
+
+    def test_an_unreadable_build_folder_is_skipped_and_the_rest_still_goes(self):
+        _, (blocked, free) = self.make_repo('a', 'b')
+        kept = self.cache(blocked, MiB)
+        gone = self.cache(free, MiB)
+        self.lock(blocked / '.build')
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(gone.exists())
+        blocked.joinpath('.build').chmod(0o755)
+        self.assertTrue(kept.exists())
+        self.assertTrue(any(line.startswith('skip caches in') and str(blocked) in line and 'Full Disk Access' in line
+                            for line in self.log.lines), self.log.lines)
+
+    def test_an_unreadable_folder_in_one_step_does_not_stop_the_others(self):
+        _, (w,) = self.make_repo('a')
+        gone = self.cache(w, MiB)
+        project = self.cfg.claude_tmp / '-Users-someone-Documents-x'
+        project.mkdir(parents=True)
+        self.lock(project)
+        m = FakeMachine(self.cfg, base_free=10 * MiB)
+        result = d.run(self.cfg, m, self.log)
+        self.assertTrue(result.acted)
+        self.assertFalse(gone.exists())
+        self.assertTrue(any(line.startswith('skip session scratch') and 'Full Disk Access' in line
+                            for line in self.log.lines), self.log.lines)
+
+
 class NeverTouch(Base):
     def test_runner_dirs_come_from_their_launch_agents(self):
         agents = self.cfg.launch_agents
