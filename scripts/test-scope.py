@@ -284,11 +284,16 @@ def classify(paths, diffs=None, root=ROOT):
 HOSTED_RUNNER = ['sm-vps-t1']  # runs-on for the off-Mac automerge job; lane.yml and lane-runner.py key on it
 
 
+# Ops folders whose tests skip themselves on Linux (ops/power's amph is AppleScript): a pass there proves nothing.
+MAC_ONLY_OPS = ('ops/power/',)
+
+
 def hosted_automerge(scope):
     """Only T0 and ops plus docs can run without the Mac. Lane/app inputs always stay there."""
     files = scope['files']
     paths = [f['path'] for f in files]
-    if not paths or any(is_lane_path(p) or p.startswith(('App/', 'Packages/', 'Contracts/')) for p in paths):
+    if not paths or any(is_lane_path(p) or p.startswith(('App/', 'Packages/', 'Contracts/') + MAC_ONLY_OPS)
+                        for p in paths):
         return False
     if scope['tier'] == 'T0':
         return True

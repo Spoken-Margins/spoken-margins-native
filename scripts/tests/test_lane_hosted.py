@@ -41,7 +41,7 @@ class HostedRoutingTests(unittest.TestCase):
         for path in sorted(scope.LANE_FILES) + ['.github/workflows/lane.yml', 'scripts/lane_new.py',
                 'scripts/tests/test_lane_runner.py', 'scripts/validate-contracts.py', 'App/README.md',
                 'Packages/README.md', 'Contracts/docs/a.md', 'App/A.swift', 'project.yml',
-                'research/B4/server.go']:
+                'research/B4/server.go', 'ops/power/amph', 'ops/power/test_amph.py']:
             with self.subTest(path=path):
                 self.assertIn('self-hosted', self.route(['ops/dial/a.py', path])['automerge'])
 
