@@ -193,6 +193,41 @@ final class SpokenMarginsPackageHandoffTests: XCTestCase {
         XCTAssertNil(model.spokenMarginsPackageImportReview)
     }
 
+    /// Audit on 39b55b5: a replaced link whose server answered "gone" after the listener tapped a second link
+    /// still showed "This link has expired", because only the generic catch checked for cancellation.
+    @MainActor
+    func testAReplacedLinkThatFailsLateShowsNoErrorForTheLinkThatReplacedIt() async throws {
+        let firstAnswer = ShareLinkAnswerGate()
+        let firstID = Self.shareLinkID
+        let secondID = "fedcba9876543210fedcba9876543210"
+        let opener = ShareLinkOpener(downloader: ShareLinkPacketDownloader { url, _ in
+            if url.absoluteString.contains(firstID) {
+                await firstAnswer.wait()
+            }
+            return (410, Data())
+        })
+        let failures = ShareLinkFailureLog()
+        let base = "https://spokenmargins.proximitytoprogress.com/l/"
+        let first = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + firstID)!, key: .random()))))
+        let second = try XCTUnwrap(ShareLinkURL(url: try XCTUnwrap(ShareLinkSealing.linkURL(base: URL(string: base + secondID)!, key: .random()))))
+
+        opener.open(first, stage: { _ in XCTFail("the first link has no packet") }, fail: { failures.first.append($0) })
+        for _ in 0..<250 where !firstAnswer.isWaiting {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(firstAnswer.isWaiting, "the first link's download never started")
+        opener.open(second, stage: { _ in XCTFail("the second link has no packet") }, fail: { failures.second.append($0) })
+        firstAnswer.answer()
+        for _ in 0..<250 where failures.second.isEmpty || !firstAnswer.answered {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        // Give the replaced task time to reach its catch on the main actor.
+        try await Task.sleep(for: .milliseconds(200))
+
+        XCTAssertEqual(failures.second, ["This link has expired or can't be reached."])
+        XCTAssertEqual(failures.first, [], "the replaced link must not show an error over the link the listener tapped next")
+    }
+
     @MainActor
     func testALinkOnTheShareHostThatIsNotAShareLinkIsRefusedWithoutADownload() async throws {
         let root = try temporaryDirectory(named: "spoken-margins-share-link-foreign-path")
@@ -1124,6 +1159,47 @@ private final class ArticlePackageExtractor: ReadablePageExtracting {
         let handoff = try outcome.get()
         lastExtractor = "recorded"
         return handoff
+    }
+}
+
+@MainActor
+private final class ShareLinkFailureLog {
+    var first: [String] = []
+    var second: [String] = []
+}
+
+/// Holds a stub download until the test answers it. The wait ignores cancellation on purpose: it stands
+/// for a server reply that is already on its way when the listener taps another link.
+private final class ShareLinkAnswerGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var waiting = false
+    private var released = false
+
+    var isWaiting: Bool { lock.lock(); defer { lock.unlock() }; return waiting }
+    var answered: Bool { lock.lock(); defer { lock.unlock() }; return released }
+
+    func wait() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            lock.lock()
+            if released {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            self.continuation = continuation
+            waiting = true
+            lock.unlock()
+        }
+    }
+
+    func answer() {
+        lock.lock()
+        released = true
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume()
     }
 }
 

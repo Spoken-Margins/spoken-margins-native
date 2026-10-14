@@ -33,6 +33,8 @@ final class ShareLinkOpener {
             } catch is CancellationError {
                 return
             } catch let failure as ShareLinkPacketDownloader.Failure {
+                // A replaced link whose server answered before the cancel reached it says nothing.
+                guard !Task.isCancelled else { return }
                 fail(failure.message)
             } catch {
                 guard !Task.isCancelled else { return }
