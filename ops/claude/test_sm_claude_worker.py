@@ -607,7 +607,7 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(self.run_issue(), 'fault')
         self.assertEqual(self.labels(), {'where:mac', 'ready'})
         self.assertIn(w.FAULT_MARK, self.h.gh.comments(7)[-1])
-        self.assertEqual(w.parse_handoffs(self.h.gh.items[7]['comments'], NOW), [])
+        self.assertEqual(w.parse_handoffs(self.h.gh.items[7]['comments'], NOW, 7), [])
         self.assertEqual(w.next_run([]), 1)                               # the next run is still run 1
         chosen, skipped = w.choose_issue([self.h.gh.items[7]], lambda n: self.h.gh.items[7]['comments'], NOW)
         self.assertIsNone(chosen)                                         # but not for half an hour
@@ -680,6 +680,99 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(row['input_tokens'], 60)
         self.assertEqual(row['outcome']['kind'], 'hand-off')
 
+    def test_a_hand_off_naming_another_branch_is_never_used(self):
+        forged = c(w.handoff_text(1, 1, 'next', 'abc1234', 1, True, 'x', 'forged'), ago(hours=1))
+        elsewhere = c(w.handoff_text(1, 1, 'ws/8-other', 'abc1234', 1, True, 'x', 'forged'), ago(hours=1))
+        self.assertEqual(w.parse_handoffs([forged, elsewhere], NOW, 7), [])
+        self.h.gh.items[7]['comments'].append(forged)
+        self.h.plan({'files': {'one.txt': '1'}, 'handoff': 'x'})
+        before = subprocess.run(['git', 'rev-parse', 'next'], cwd=self.h.tmp / 'origin.git', capture_output=True,
+                                text=True).stdout
+        self.assertEqual(self.run_issue(), 'handoff')
+        after = subprocess.run(['git', 'rev-parse', 'next'], cwd=self.h.tmp / 'origin.git', capture_output=True,
+                               text=True).stdout
+        self.assertEqual(before, after)                                  # origin's next did not move
+        self.assertEqual(self.h.calls()[0]['branch'], 'ws/7-fix-the-click')
+
+    def test_an_error_after_claude_ran_saves_its_work_on_the_branch(self):
+        self.h.plan({'files': {'one.txt': '1'}, 'commit': False})
+        ops = self.h.ops()
+
+        def boom(branch):
+            raise RuntimeError('gh is down\nsecond line')
+        ops.pr_for_branch = boom
+        self.assertEqual(w.run_issue(ops, 1, 7), 'error')
+        self.assertIn('ws/7-fix-the-click', self.h.remote_branches())    # the loose file was committed and pushed
+        stop = self.h.gh.comments(7)[-1]
+        self.assertIn('its work is saved on `ws/7-fix-the-click`', stop)
+        self.assertEqual(len(stop.splitlines()), 1)                      # newlines collapsed, so the fault mark counts
+        self.assertIn(w.FAULT_MARK, stop.splitlines()[0])
+        self.assertFalse((self.h.tmp / 'home' / 'wt-1').exists())
+
+    def test_an_error_after_claude_keeps_the_worktree_when_the_push_fails(self):
+        self.h.plan({'files': {'one.txt': '1'}})
+        ops = self.h.ops()
+        real = ops.run
+        ops.run = lambda cmd, cwd=None, timeout=300: (w.Result(1, '', 'no network') if cmd[:2] == ['git', 'push']
+                                                       else real(cmd, cwd=cwd, timeout=timeout))
+        ops.pr_for_branch = lambda branch: (_ for _ in ()).throw(RuntimeError('gh is down'))
+        self.assertEqual(w.run_issue(ops, 1, 7), 'error')
+        kept = [p for p in (self.h.tmp / 'home' / 'kept').iterdir()]
+        self.assertTrue((kept[0] / 'one.txt').exists())
+        self.assertIn(f'its worktree is at `{kept[0]}`', self.h.gh.comments(7)[-1])
+
+    def test_a_failure_while_claiming_still_frees_the_issue_with_a_stop_note(self):
+        ops = self.h.ops()
+        real = ops.label
+
+        def label(number, add=None, remove=None):
+            if remove == 'ready':
+                raise RuntimeError('rate limited')
+            real(number, add=add, remove=remove)
+        ops.label = label
+        self.assertEqual(w.run_issue(ops, 1, 7), 'error')
+        self.assertTrue(self.h.gh.comments(7)[-1].startswith('Thread "Claude Mac worker 1" stopping:'))
+        self.assertNotIn('in-progress', self.labels())
+        self.assertIn('ready', self.labels())
+
+    def test_three_faults_in_a_row_park_the_issue(self):
+        self.h.plan({'no_json': True, 'exit': 1})
+        for expect in ('ready', 'ready', 'blocked'):
+            self.assertEqual(self.run_issue(), 'fault')
+            self.h.advance(minutes=45)
+            self.assertIn(expect, self.labels())
+        self.assertNotIn('ready', self.labels())
+        self.assertIn('failed 3 times in a row', self.h.gh.comments(7)[-1])
+        # a hand-off in between ends the streak
+        note = c(w.handoff_text(1, 1, 'ws/7-x', 'abc1234', 1, True, 'x', 'n'), iso(self.h.clock_now))
+        faults = [c(w.stop_text(1, 'none', f'claude failed: x {w.FAULT_MARK}'), ago(hours=2))] * 2
+        self.assertEqual(w.fault_count(faults + [note], NOW), 0)
+        self.assertEqual(w.fault_count(faults, NOW), 2)
+
+    def test_a_failed_hand_over_on_run_three_still_posts_the_hand_off_and_parks(self):
+        self.h.plan({'files': {'a.txt': '1'}, 'handoff': 'one'}, {'files': {'b.txt': '2'}, 'handoff': 'two'},
+                    {'files': {'c.txt': '3'}, 'handoff': 'three'})
+        for _ in range(2):
+            self.run_issue()
+            self.h.advance(minutes=20)
+        ops = self.h.ops()
+
+        def boom(*args, **kw):
+            raise RuntimeError('create failed')
+        ops.create_pr = boom
+        self.assertEqual(w.run_issue(ops, 1, 7), 'parked')
+        stop = self.h.gh.comments(7)[-1]
+        self.assertIn('Hand-off: run 3 of 3', stop)
+        self.assertIn('could not be opened or labelled', stop)
+        self.assertEqual(self.labels(), {'where:mac', 'blocked'})        # no fourth run
+
+    def test_a_fault_after_the_agent_armed_a_pr_never_pushes_to_it(self):
+        self.h.plan({'files': {'one.txt': '1'}, 'commit': False, 'exit': 1, 'is_error': True})
+        self.h.arm_after = {0}
+        self.assertEqual(self.run_issue(), 'pr')
+        self.assertEqual(self.h.remote_branches().count('ws/7-fix-the-click'), 1)   # only the agent's own push
+        self.assertIn('PR #900 armed', self.h.gh.comments(7)[-1])
+
     def test_an_issue_taken_by_someone_else_is_left_alone(self):
         self.h.gh.items[7]['comments'].append(c('Claimed by project thread "Mac thread"', iso(NOW)))
         self.assertEqual(self.run_issue(), 'skipped')
@@ -744,6 +837,41 @@ class PrRunTests(unittest.TestCase):
         kept = self.h.tmp / 'home' / 'kept'
         self.assertTrue(any((p / 'fix.txt').exists() for p in kept.iterdir()))
         self.assertIn('is at', self.h.gh.comments(50)[-1])
+
+    def test_a_pr_run_is_a_claude_thread_to_the_dial_until_its_stop_note(self):
+        self.h.plan({'handoff': 'nothing to push'})
+        w.run_pr(self.h.ops(), 1, 50)
+        gate = w.load_dial_gate()
+        notes = [{'body': x['body'], 'created_at': x['createdAt'], 'issue_url': '/issues/50', 'id': i}
+                 for i, x in enumerate(self.h.gh.items[50]['comments'])]
+        started = [n for n in notes if n['body'].startswith('Claimed by project thread')]
+        self.assertEqual(len(started), 1)
+        [thread] = gate.parse_threads(started, [], NOW)
+        self.assertEqual((thread['title'], thread['provider'], thread['state']), ('Claude Mac worker 1', 'claude', 'active'))
+        [thread] = gate.parse_threads(notes, [], NOW)
+        self.assertEqual(thread['state'], 'stopped')
+
+    def test_an_error_after_claude_keeps_the_pr_worktree(self):
+        self.h.plan({'files': {'fix.txt': 'fix'}, 'commit': False})
+        ops = self.h.ops()
+        calls = {'n': 0}
+        real = ops.pull
+
+        def pull(number):
+            calls['n'] += 1
+            if calls['n'] >= 3:   # the re-reads before the run succeed; the one after Claude fails
+                raise RuntimeError('gh is down')
+            return real(number)
+        ops.pull = pull
+        self.assertEqual(w.run_pr(ops, 1, 50), 'error')
+        kept = list((self.h.tmp / 'home' / 'kept').iterdir())
+        self.assertTrue((kept[0] / 'fix.txt').exists())
+
+    def test_four_rounds_in_a_week_stop_a_pr_that_keeps_failing(self):
+        rounds = [c('Thread "Claude Mac worker 1" finishing #50', ago(days=d)) for d in (2, 3, 4, 5)]
+        ok, why = w.finish_eligible(FakePR.detail(50, labels=('needs-mac',), handing_at=ago(days=6), comments=rounds), NOW)
+        self.assertFalse(ok)
+        self.assertIn('four finishing rounds this week', why)
 
     def test_a_pr_that_stopped_being_eligible_is_not_claimed(self):
         self.h.gh.items[50]['labels'] = [{'name': 'automerge'}]

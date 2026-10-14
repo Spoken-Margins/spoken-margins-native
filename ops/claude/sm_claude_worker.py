@@ -77,9 +77,9 @@ MAX_TURNS = os.environ.get('SM_CLAUDE_WORKER_MAX_TURNS', '250')
 BUDGET_USD = os.environ.get('SM_CLAUDE_WORKER_BUDGET_USD', '25')
 TOOLS = 'Bash,Read,Edit,Write,Grep,Glob,Agent'
 # Best-effort denials on top of the prompt's rules and the repo's own hooks (the lane guard).
-DENIED = ['Bash(git push --force*)', 'Bash(git push -f*)', 'Bash(git push * --force*)',
-          'Bash(git push * main*)', 'Bash(git push * next*)', 'Bash(git push origin HEAD:main*)',
-          'Bash(git push origin HEAD:next*)', 'Bash(git reset --hard origin/main*)',
+DENIED = ['Bash(git push --force*)', 'Bash(git push -f*)', 'Bash(git push*--force*)', 'Bash(git push*--delete*)',
+          'Bash(git push* main)', 'Bash(git push* next)', 'Bash(git push*:main)', 'Bash(git push*:next)',
+          'Bash(git push*/main)', 'Bash(git push*/next)', 'Bash(git reset --hard origin/main*)',
           'Bash(xcodebuild*)', 'Bash(xcrun simctl boot*)', 'Bash(sudo*)', 'Bash(rm -rf /*)', 'Bash(rm -rf ~*)']
 
 MAX_RUNS = 3               # runs per issue before the Mac finisher takes the branch
@@ -92,7 +92,10 @@ FOCUS_MILESTONE = os.environ.get('SM_CLAUDE_WORKER_FOCUS_MILESTONE', 'Solid Grou
 CLAIM_STALE = dt.timedelta(hours=6)      # another thread's claim this old and quiet is released
 STALL_GRACE = dt.timedelta(hours=1)      # the Mac finisher gets this long on a stalled PR first
 FAULT_COOLDOWN = dt.timedelta(minutes=30)
+MAX_FAULTS = 3             # faults in a row (within FAULT_WINDOW) before an issue is parked as blocked
+FAULT_WINDOW = dt.timedelta(hours=24)
 MAX_FINISH_ROUNDS = 2
+MAX_WEEKLY_ROUNDS = 4      # finishing rounds per PR in a week, so a PR the worker can't fix stops costing runs
 ROUND_WINDOW = dt.timedelta(hours=24)
 OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
 
@@ -254,8 +257,10 @@ def handoff_text(slot: int, run: int, branch: str, head: str, commits: int, prog
             f'{notes.strip() or "(the run left no notes)"}\n')
 
 
-def parse_handoffs(comments: list, now: dt.datetime) -> list:
-    """Hand-offs in the window, oldest first: {run, branch, head, commits, progress, notes, at}."""
+def parse_handoffs(comments: list, now: dt.datetime, issue_number: int) -> list:
+    """Hand-offs in the window, oldest first: {run, branch, head, commits, progress, notes, at}. A hand-off
+    whose branch is not `ws/<this issue>-...` is ignored: the worker deletes and pushes that branch, so a
+    comment must never be able to name `next` or someone else's branch."""
     found = []
     for c in sorted(comments or [], key=comment_time):
         body = (c.get('body') or '').strip()
@@ -263,7 +268,7 @@ def parse_handoffs(comments: list, now: dt.datetime) -> list:
             continue
         run = re.search(r'^Hand-off: run (\d+) of \d+\s*$', body, re.M)
         branch = re.search(r'^Branch: `([^`]+)`', body, re.M)
-        if not run or not branch:
+        if not run or not branch or not branch.group(1).startswith(f'ws/{issue_number}-'):
             continue
         at = comment_time(c)
         try:
@@ -289,6 +294,28 @@ def next_run(handoffs: list) -> int:
 def two_empty_runs(handoffs: list, this_progress: bool) -> bool:
     """The waste signal: this run and the one before it both added no commit."""
     return not this_progress and bool(handoffs) and not handoffs[-1]['progress']
+
+
+def fault_count(comments: list, now: dt.datetime) -> int:
+    """Faults in the window with no worker note of another kind after them (a hand-off or an armed PR ends the streak)."""
+    count = 0
+    for c in sorted(comments or [], key=comment_time):
+        body = (c.get('body') or '').strip()
+        if not HANDOFF_STOP_RE.match(body):
+            continue
+        if FAULT_MARK not in body.splitlines()[0]:
+            count = 0
+            continue
+        try:
+            if not comment_time(c) or now - parse_time(comment_time(c)) < FAULT_WINDOW:
+                count += 1
+        except ValueError:
+            count += 1
+    return count
+
+
+def one_line(text, limit: int = 200) -> str:
+    return ' '.join(str(text).split())[:limit]
 
 
 def recent_fault(comments: list, now: dt.datetime) -> bool:
@@ -374,7 +401,7 @@ def choose_issue(issues: list, comments_for: Callable[[int], list], now: dt.date
         return cache[n]
 
     def pending(issue: dict) -> bool:
-        hands = parse_handoffs(comments(issue['number']), now)
+        hands = parse_handoffs(comments(issue['number']), now, issue['number'])
         return bool(hands) and hands[-1]['run'] < MAX_RUNS
 
     # A pending hand-off outranks everything, so every candidate's comments are read (a handful of
@@ -388,7 +415,7 @@ def choose_issue(issues: list, comments_for: Callable[[int], list], now: dt.date
         if recent_fault(comments(n), now):
             skipped.append((n, 'the last run was a fault less than 30 min ago'))
             continue
-        hands = parse_handoffs(comments(n), now)
+        hands = parse_handoffs(comments(n), now, n)
         if hands and hands[-1]['run'] >= MAX_RUNS:
             skipped.append((n, f'already used its {MAX_RUNS} runs'))
             continue
@@ -511,6 +538,8 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
         return False, f'{why}, but its time is unreadable'
     if within(comments, FINISH_MARK_RE, now, ROUND_WINDOW, count=True) >= MAX_FINISH_ROUNDS:
         return False, 'two finishing rounds in the last 24 h; leaving this PR for a human'
+    if within(comments, FINISH_MARK_RE, now, dt.timedelta(days=7), count=True) >= MAX_WEEKLY_ROUNDS:
+        return False, 'four finishing rounds this week; leaving this PR for a human'
     if any(OTHER_FINISHER_CLAIM_RE.match(c.get('body') or '') and (
             not comment_time(c) or now - parse_time(comment_time(c)) < OTHER_FINISHER_HOLD) for c in comments):
         return False, 'another finisher claimed it in the last 2 h'
@@ -670,7 +699,9 @@ def claude_command(out_dir: Path) -> list:
     cmd = [str(CLAUDE), '-p', '-', '--output-format', 'json', '--model', MODEL, '--effort', EFFORT,
            '--permission-mode', 'dontAsk', '--tools', TOOLS, '--allowedTools', TOOLS,
            '--strict-mcp-config', '--setting-sources', 'project', '--add-dir', str(out_dir),
-           '--max-turns', str(MAX_TURNS), '--max-budget-usd', str(BUDGET_USD)]
+           '--max-budget-usd', str(BUDGET_USD)]
+    if MAX_TURNS:   # SM_CLAUDE_WORKER_MAX_TURNS= (empty) leaves the turn cap off; wall time and budget still cap
+        cmd += ['--max-turns', str(MAX_TURNS)]
     for pattern in DENIED:
         cmd += ['--disallowedTools', pattern]
     return cmd
@@ -983,6 +1014,23 @@ def read_notes(out_dir: Path, name: str = 'handoff.md') -> str:
     return path.read_text(errors='replace').strip() if path.exists() else ''
 
 
+def rescue(ops: Ops, wt: Path, branch: Optional[str], run: int, number: int, run_dir: Path) -> tuple:
+    """After a wrapper error that follows a Claude run: commit loose work and push the branch, else move the
+    worktree out of the slot. Returns (note, wt_still_to_remove, keep_branch)."""
+    try:
+        if ops.run(['git', 'status', '--porcelain'], cwd=wt).stdout.strip():
+            ops.run(['git', 'add', '-A'], cwd=wt)
+            ops.run(['git', 'commit', '--quiet', '-m', f'WIP: Claude Mac worker run {run} on #{number}, saved after a '
+                     'wrapper error\n\nCo-Authored-By: Claude <noreply@anthropic.com>'], cwd=wt)
+        if branch and ops.run(['git', 'push', '--quiet', '-u', 'origin', f'HEAD:refs/heads/{branch}'], cwd=wt,
+                              timeout=600).returncode == 0:
+            return f'; its work is saved on `{branch}`', True, False
+    except Exception as exc:
+        ops.log(f'#{number}: rescue push failed: {exc}')
+    kept = keep_worktree(ops, wt, run_dir.name)
+    return f'; its worktree is at `{kept}` for a human', False, True
+
+
 def run_issue(ops: Ops, slot: int, number: int) -> str:
     """Claim, run Claude, then record an armed PR or a hand-off. Returns the outcome word."""
     lock = ops.home / f'slot-{slot}.lock'
@@ -990,7 +1038,7 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
     now = ops.now()
     run_dir = ops.home / 'runs' / f"{number}-{now.strftime('%Y%m%dT%H%M%SZ')}"
     out_dir = run_dir / 'out'
-    claimed = stopped = wt_added = False
+    claimed = stopped = wt_added = claude_done = False
     branch: Optional[str] = None
     usage_run = None
     keep_branch = False
@@ -1029,16 +1077,16 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
         if why or open_claim(comments, now):
             ops.log(f'#{number} slot {slot}: not claimed on re-check: {why or "claimed by an active thread"}')
             return 'skipped'
-        handoffs = parse_handoffs(comments, now)
+        handoffs = parse_handoffs(comments, now, number)
         run = next_run(handoffs)
         if run > MAX_RUNS:
             ops.log(f'#{number} slot {slot}: not claimed: {MAX_RUNS} runs already used')
             return 'skipped'
         previous = handoffs[-1] if handoffs else None
+        claimed = True   # from the first label on, a failure must still leave a stop note and free the issue
         ops.label(number, add='in-progress')
         ops.label(number, remove='ready')
         ops.comment(number, claim_text(slot, now, run))
-        claimed = True
         ops.log(f'#{number} slot {slot}: claimed as "{worker_title(slot)}", run {run} of {MAX_RUNS}')
 
         ops.must(['git', 'fetch', '--quiet', 'origin', BASE_BRANCH], cwd=ops.repo_root, timeout=600)
@@ -1075,6 +1123,8 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
             kind, why = ops.claude(wt, prompt, transcript, out_dir)
         finally:
             usage_run.model_finished()
+        claude_done = True
+        why = one_line(why)
         usage_run.checkpoint(model_result={'ok': kind != 'fault', 'reason': why})
         ops.log(f'#{number} slot {slot}: Claude finished in {int(time.time() - t0) // 60} min: {kind}, {why}')
 
@@ -1092,13 +1142,17 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
         notes = read_notes(out_dir)
 
         pr = ops.pr_for_branch(branch)
-        if pr and 'automerge' in label_names(pr) and kind != 'fault':
+        if pr and 'automerge' in label_names(pr):   # armed on GitHub: never push to it, even after a fault
             stop(f'PR #{pr["number"]} armed', 'done', remove=(), kind='PR armed')
             return 'pr'
 
         if kind == 'fault' and not progress:
-            stop('none', f'claude failed: {why} {FAULT_MARK}', add='ready',
-                 body=stop_text(slot, 'none', f'claude failed: {why} {FAULT_MARK}'))
+            streak = fault_count(comments, now) + 1
+            if streak >= MAX_FAULTS:
+                stop('none', f'claude failed {streak} times in a row ({why}); parked as `blocked` for a human '
+                             f'{FAULT_MARK}', add='blocked')
+            else:
+                stop('none', f'claude failed: {why} {FAULT_MARK}', add='ready')
             return 'fault'
 
         # No armed PR: push the branch (if there is anything on it) and hand off.
@@ -1133,8 +1187,12 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
         return 'handoff'
     except Exception as exc:
         ops.log(f'#{number} slot {slot}: wrapper error: {exc}')
+        saved = ''
+        if claude_done and wt_added:
+            # Claude may have worked for an hour: push what it left, or keep the worktree, before cleanup.
+            saved, wt_added, keep_branch = rescue(ops, wt, branch, run, number, run_dir)
         if claimed and not stopped:
-            stop('none', f'wrapper error: {str(exc)[:200]} {FAULT_MARK}', add='ready')
+            stop('none', f'wrapper error: {one_line(exc)}{saved} {FAULT_MARK}', add='ready')
         return 'error'
     finally:
         if usage_run:
@@ -1155,27 +1213,40 @@ def hand_to_finisher(ops: Ops, slot: int, number: int, issue: dict, branch: str,
         stop('no PR armed', f'{MAX_RUNS} runs used and no commit to hand over; parked as `blocked` for a human',
              body=body, add='blocked', kind='no commit')
         return 'parked'
-    pr = ops.pr_for_branch(branch)
-    if pr:
-        number_pr = pr['number']
-        ops.label(number_pr, add='needs-mac')
-        for label in ('automerge', 'lane:queued'):
-            if label in label_names(pr):
-                ops.label(number_pr, remove=label)
-    else:
-        pr_body = (f'Closes #{number}\n\nOpened by the Claude Mac worker after {MAX_RUNS} runs without an armed PR. '
-                   f'What is left is in the hand-off comment on #{number}.\n')
-        number_pr = ops.create_pr(branch, f'{issue.get("title") or "Issue " + str(number)} (#{number})', pr_body,
-                                  ['needs-mac'], wt)
-    if number_pr:
-        ops.comment(number_pr,
-                    f'Handing to the Mac finisher: the Claude Mac worker used {MAX_RUNS} runs on #{number} without '
-                    f'arming a PR. What is done and what is left is in the hand-off on #{number}.\n\n'
-                    f"Done when: the issue's Done when list.\nMust not break: the issue's Must not break list.\n"
-                    f"Lane tier after the fix: whatever the diff needs (T3 for app tests).\n\n{notes[:1500]}")
+    number_pr, problem = None, ''
+    try:
+        pr = ops.pr_for_branch(branch)
+        if pr:
+            number_pr = pr['number']
+            ops.label(number_pr, add='needs-mac')
+            for label in ('automerge', 'lane:queued'):
+                if label in label_names(pr):
+                    ops.label(number_pr, remove=label)
+        else:
+            pr_body = (f'Closes #{number}\n\nOpened by the Claude Mac worker after {MAX_RUNS} runs without an armed '
+                       f'PR. What is left is in the hand-off comment on #{number}.\n')
+            number_pr = ops.create_pr(branch, f'{issue.get("title") or "Issue " + str(number)} (#{number})', pr_body,
+                                      ['needs-mac'], wt)
+        if number_pr:
+            ops.comment(number_pr,
+                        f'Handing to the Mac finisher: the Claude Mac worker used {MAX_RUNS} runs on #{number} '
+                        f'without arming a PR. What is done and what is left is in the hand-off on #{number}.\n\n'
+                        f"Done when: the issue's Done when list.\nMust not break: the issue's Must not break list.\n"
+                        f"Lane tier after the fix: whatever the diff needs (T3 for app tests).\n\n{notes[:1500]}")
+    except Exception as exc:
+        problem = one_line(exc, 160)
+        ops.log(f'#{number}: could not hand PR #{number_pr or "?"} to the Mac finisher: {problem}')
+    # The run-3 hand-off is always posted, so a failed hand-over can't buy a fourth run.
+    if problem or not number_pr:
+        body = handoff_text(slot, run, branch, head, commits, progress,
+                            f'{MAX_RUNS} runs used, but the PR could not be opened or labelled ({problem or "no PR number"}); '
+                            f'branch `{branch}` is pushed, parked as `blocked` for a human', notes)
+        stop('no PR armed', f'{MAX_RUNS} runs used; could not hand the branch to the Mac finisher ({problem}); '
+                            'parked as `blocked`', body=body, add='blocked', kind='hand-off')
+        return 'parked'
     body = handoff_text(slot, run, branch, head, commits, progress,
-                        f'{MAX_RUNS} runs used, so it is handed to the Mac finisher as PR #{number_pr or "?"}', notes)
-    stop('no PR armed', f'{MAX_RUNS} runs used; handed to the Mac finisher as PR #{number_pr or "?"}', body=body,
+                        f'{MAX_RUNS} runs used, so it is handed to the Mac finisher as PR #{number_pr}', notes)
+    stop('no PR armed', f'{MAX_RUNS} runs used; handed to the Mac finisher as PR #{number_pr}', body=body,
          remove=(), kind='hand-off')
     return 'finisher'
 
@@ -1187,7 +1258,7 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
     now = ops.now()
     run_dir = ops.home / 'runs' / f"pr-{number}-{now.strftime('%Y%m%dT%H%M%SZ')}"
     out_dir = run_dir / 'out'
-    claimed = wt_added = keep = False
+    claimed = wt_added = keep = claude_done = False
     original: set = set()
     usage_run = None
 
@@ -1215,8 +1286,11 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
             ops.log(f'PR #{number}: not claimed on re-check: {why}')
             return 'skipped'
         original = label_names(pr)
-        ops.comment(number, f'{OWN_FINISHER_CLAIM}\n\nThread "{worker_title(slot)}" finishing #{number}')
         claimed = True
+        ops.comment(number, f'{OWN_FINISHER_CLAIM}\n\nThread "{worker_title(slot)}" finishing #{number}')
+        # The Dial gate counts a run from a claim note like this one (it reads PR comments too), and its
+        # stop note below ends it; without it a PR run would be invisible to the Dial's Claude slots.
+        ops.comment(number, claim_text(slot, now, 1).replace(' Run 1 of 3.', ''))
         ops.label(number, remove='automerge')
         if 'automerge' in label_names(ops.pull(number)):
             raise RuntimeError('automerge still present after disarming')
@@ -1248,19 +1322,21 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
             kind, why_run = ops.claude(wt, prompt, transcript, out_dir)
         finally:
             usage_run.model_finished()
+        claude_done = True
+        why_run = one_line(why_run)
         usage_run.checkpoint(model_result={'ok': kind != 'fault', 'reason': why_run})
 
         dirty = ops.must(['git', 'status', '--porcelain'], cwd=wt).stdout.strip()
-        unpushed = ops.run(['git', 'rev-list', '--count', f'origin/{branch}..HEAD'], cwd=wt).stdout.strip()
+        unpushed = ops.must(['git', 'rev-list', '--count', f'origin/{branch}..HEAD'], cwd=wt).stdout.strip()
         fresh = ops.pull(number)
         moved = fresh.get('headRefOid') != head
-        if (dirty or (unpushed not in ('', '0'))) and not moved:
+        if (dirty or unpushed != '0') and not moved:
             keep = True
             kept = keep_worktree(ops, wt, run_dir.name)
             wt_added = False
             stop(f'the run ended with work not on GitHub; its worktree is at `{kept}` for a human')
             return 'kept'
-        if moved and 'automerge' in label_names(fresh) and kind != 'fault':
+        if moved and 'automerge' in label_names(fresh):   # armed on GitHub, whatever Claude's exit said
             if 'needs-mac' in label_names(fresh):
                 ops.label(number, remove='needs-mac')
             if usage_run:
@@ -1275,8 +1351,12 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
         return 'no-push'
     except Exception as exc:
         ops.log(f'PR #{number} slot {slot}: wrapper error: {exc}')
+        where = ''
+        if claude_done and wt_added:   # Claude may have left work here that is not on GitHub: keep it
+            keep, wt_added = True, False
+            where = f'; its worktree is at `{keep_worktree(ops, wt, run_dir.name)}` for a human'
         if claimed:
-            stop(f'wrapper error: {exc}')
+            stop(f'wrapper error: {one_line(exc)}{where}')
         return 'error'
     finally:
         if usage_run:
@@ -1298,10 +1378,13 @@ def check(ops: Ops) -> int:
     else:
         help_text = ops.run([str(CLAUDE), '--help'], timeout=60)
         text = (help_text.stdout or '') + (help_text.stderr or '')
-        for flag in ('--max-turns', '--max-budget-usd', '--permission-mode', '--allowedTools',
-                     '--disallowedTools', '--setting-sources', '--add-dir', '--effort'):
+        for flag in ('--max-budget-usd', '--permission-mode', '--allowedTools', '--disallowedTools',
+                     '--setting-sources', '--add-dir', '--effort'):
             if flag not in text:
                 problems.append(f'`claude --help` does not list {flag}')
+        if '--max-turns' not in text:   # may be hidden from --help yet work; a first run shows which
+            print('NOTE: `claude --help` does not list --max-turns. If the first run is a fault that names it, '
+                  'If the first run is a fault that names it, set SM_CLAUDE_WORKER_MAX_TURNS= (empty) in the plist.')
     if not keychain_token():
         problems.append(f'no Claude token in the Keychain (service {KEYCHAIN_SERVICE})')
     for tool in ('gh', 'git'):
