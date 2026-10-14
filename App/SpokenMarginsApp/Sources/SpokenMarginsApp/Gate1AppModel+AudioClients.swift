@@ -205,6 +205,16 @@ extension Gate1AppModel {
         return renderer
     }
 
+    /// Unloads both narration voices' sessions: Supertonic and the bundled Kitten fallback (#849).
+    func unloadNarrationRenderers(removingGeneratedAudio: Bool = true) {
+        if let renderer = supertonicRenderer {
+            Task { await renderer.unload(removingGeneratedAudio: removingGeneratedAudio) }
+        }
+        if let renderer = kittenRenderer {
+            Task { await renderer.unload(removingGeneratedAudio: removingGeneratedAudio) }
+        }
+    }
+
     /// The bundled Kitten voice that takes over when Supertonic isn't allowed (#849). nil when its files can't be
     /// opened: the iOS voice covers the passage then, as before.
     func makeKittenRenderer() -> KittenNarrationRenderer? {

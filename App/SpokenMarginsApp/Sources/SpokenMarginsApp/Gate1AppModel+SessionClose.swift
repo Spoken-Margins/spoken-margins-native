@@ -55,12 +55,7 @@ extension Gate1AppModel {
         streamingSpeechQueue.stopAndClear()
         gate2CompactControls.endLiveActivities()
         resetMixWithOtherAudioForNewSession()
-        if let renderer = supertonicRenderer {
-            Task { await renderer.unload() }
-        }
-        if let renderer = kittenRenderer {
-            Task { await renderer.unload() }
-        }
+        unloadNarrationRenderers()
         if navigateHome {
             screen = .home
         }
