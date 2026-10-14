@@ -457,7 +457,7 @@ class Paging(unittest.TestCase):
 
         def request(self, method, path, body=None):
             self.asked.append(path)
-            page = int(re.search(r'page=(\d+)', path).group(1))
+            page = int(re.search(r'[&?]page=(\d+)', path).group(1))
             start = (page - 1) * 100
             return list(range(start, min(start + 100, self.total))), {}
 
