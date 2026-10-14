@@ -281,6 +281,9 @@ def classify(paths, diffs=None, root=ROOT):
             'app_tests': app_tests, 'lane_paths': lane_paths}
 
 
+HOSTED_RUNNER = ['sm-vps-t1']  # runs-on for the off-Mac automerge job; lane.yml and lane-runner.py key on it
+
+
 def hosted_automerge(scope):
     """Only T0 and ops plus docs can run without the Mac. Lane/app inputs always stay there."""
     files = scope['files']
@@ -293,7 +296,7 @@ def hosted_automerge(scope):
             and all(p.startswith(('ops/', 'docs/')) or p.endswith('.md') for p in paths))
 
 
-def runner_routing(pr, file_pages, runner_pages, root=ROOT):
+def runner_routing(pr, file_pages, runner_pages, root=ROOT, offmac=True):
     """Choose queue labels, never capacity. API errors/incomplete diffs keep today's queues.
 
     Inputs are the event's PR and gh api --paginate --slurp responses. Busy online runners
@@ -328,12 +331,17 @@ def runner_routing(pr, file_pages, runner_pages, root=ROOT):
         if not all(isinstance(p, str) and p for p in paths):
             return normal
         labelled = any(label['name'] == 'priority' for label in pr['labels'])
-        if complete and hosted_automerge(classify(paths, root=root)):
-            # Explicit /lane requests still belong on the Mac, even for a docs PR.
-            return dict(normal, automerge=['ubuntu-latest'])
 
         def names(runner):
             return {label['name'] for label in runner['labels']}
+
+        # The free GitHub-hosted Linux minutes ran out (#1023), so "hosted" is the VPS runner that already runs PR
+        # code in isolation (linux-t1.yml). With it offline or unlisted the job would wait forever: stay on the Mac.
+        if offmac and complete and hosted_automerge(classify(paths, root=root)) \
+                and any(r['status'] == 'online' and HOSTED_RUNNER[0] in names(r) for r in runners):
+            # Only the automerge job leaves the Mac: explicit /lane requests keep the Mac routing they had.
+            return dict(runner_routing(pr, file_pages, runner_pages, root, offmac=False),
+                        automerge=list(HOSTED_RUNNER))
 
         # Only an explicit busy=false is idle: a runner whose state is missing or unreadable is not.
         def idle(runner, wanted):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The lane's deterministic tiers: run a T2 or T3 request from a PR and post the report.
 
-Run by .github/workflows/lane.yml on the Mac, or GitHub-hosted Linux for T0/ops-only automerge (#861).
+Run by .github/workflows/lane.yml on the Mac, or, for T0/ops-only automerge, on the VPS Linux runner (--hosted, #861).
 The workflow checks out the PR's
 head in --tree and runs this script as taken from the base branch (next); the script merges the
 newest next into the tree itself, so a report tests the PR against the current next even when
@@ -283,7 +283,7 @@ def duration(seconds: float) -> str:
 def report(request_id: str, verdict: str, head: str, base: str, tier: str, where: str, seconds: float,
            ran: str, details: list[str], crashes: str, evidence: str, not_verified: str, wanted: dict,
            cc: str = '', base_name: str = 'next', hosted: bool = False) -> str:
-    location = 'on GitHub-hosted runner' if hosted else 'on the Mac'
+    location = 'on the VPS runner' if hosted else 'on the Mac'
     lines = [f'Lane report {request_id} — {verdict}',
              f'commit {head[:7]} (tested merged with {base_name} at {base[:7]}) · tier {tier} · {where} · {duration(seconds)}',
              f'ran: {ran}', *details, f'crashes: {crashes}', f'evidence: {evidence} ({location})',
@@ -716,7 +716,7 @@ def run_automerge(scope: dict, evidence: Path, fast=run_fast,
             'nothing here reaches the host tests or the app (docs or research notes only)']
     if hosted:
         verdict, more = run_ops(evidence)
-        return verdict, 'GitHub-hosted runner', 'ops folder tests: ' + verdict.lower(), details + more
+        return verdict, 'VPS runner', 'ops folder tests: ' + verdict.lower(), details + more
     verdict, more = fast(evidence, changed=changed())
     if verdict == 'FAIL' and recheck:
         verdict, more = recheck(evidence, more)
@@ -1186,7 +1186,7 @@ def run_auto(github, pull: dict, pr: int, base: str, head: str, base_sha: str, e
             # Recheck with the current base's policy on every merge attempt, including reused checks.
             policy = base_policy(ROOT, base, 'scripts/test-scope.py')
             if not policy.hosted_automerge(diff_scope(ROOT, base)):
-                return 'INCONCLUSIVE', 'GitHub-hosted runner', 'nothing', [
+                return 'INCONCLUSIVE', 'VPS runner', 'nothing', [
                     'The current diff requires the Mac; remove and re-add automerge to route it again.']
         if skipped is None:
             tried.mkdir(parents=True, exist_ok=True)

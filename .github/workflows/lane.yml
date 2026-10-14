@@ -3,7 +3,7 @@
 #
 # A stream asks by commenting `/lane T2` or `/lane T3` on its PR into next and adding the
 # lane:queued label. The automerge label asks for the checks a finished PR needs without a comment:
-# --plan fast for Mac diffs; T0 and ops plus docs use a hosted job (#861), with no app build, again on
+# --plan fast for Mac diffs; T0 and ops plus docs run on the VPS runner (#861), with no app build, again on
 # every push while the label stays. On PASS the runner merges the PR itself (decision 3, approved by
 # the owner): it tests the exact merge commit, next first, and pushes it to next, unless the PR
 # is an audio, persistence, packet or lane change with no clean Codex audit of its head yet
@@ -213,7 +213,8 @@ jobs:
 
   automerge:
     needs: route
-    # T0 and ops plus docs run on ubuntu-latest (#861); everything else stays on the Mac.
+    # T0 and ops plus docs run on the VPS runner sm-vps-t1 (#861; GitHub-hosted minutes ran out, #1023);
+    # everything else stays on the Mac.
     # A routing failure leaves the normal Mac default below. Explicit lane requests always stay on Mac.
     # The build-only runner waits for room first (lane-runner.py, wait_for_room_to_test_on_host).
     if: >-
@@ -238,7 +239,7 @@ jobs:
       EVENT_HEAD: ${{ github.event.pull_request.head.sha }}
       BASE_REF: ${{ github.event.pull_request.base.ref }}
       RUN_ID: ${{ github.run_id }}
-      HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') && '--hosted' || '' }}
+      HOSTED_ARGS: ${{ contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') && '--hosted' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -246,10 +247,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           # Mac host tests need the LFS models; hosted T0/ops checks read none of them.
-          lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'ubuntu-latest') }}
+          lfs: ${{ !contains(fromJSON(needs.route.outputs.automerge || '[]'), 'sm-vps-t1') }}
       - name: Prepare hosted evidence
         if: env.HOSTED_ARGS == '--hosted'
         run: |
+          echo "GIT_LFS_SKIP_SMUDGE=1" >> "$GITHUB_ENV"
           echo "SM_LANE_EVIDENCE_DIR=$RUNNER_TEMP/lane-evidence" >> "$GITHUB_ENV"
           echo "SM_LANE_STATE_DIR=$RUNNER_TEMP/lane-evidence/state" >> "$GITHUB_ENV"
       - name: Take the lane runner from the base branch
