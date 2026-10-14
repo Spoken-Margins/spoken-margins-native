@@ -1,3 +1,4 @@
+import SessionKit
 import SwiftUI
 
 struct ExperienceWrittenMarginScreen: View {
@@ -28,6 +29,14 @@ struct ExperienceWrittenMarginScreen: View {
                     .foregroundStyle(AppColors.secondaryText)
                     .accessibilityLabel("Saved position for \(draft.itemTitle), \(draft.targetDescription), \(draft.progressPercent) percent")
                     .accessibilityIdentifier("writtenMargin.anchor")
+
+                    if let reply = draft.reply {
+                        Label(reply.caption, systemImage: "arrowshape.turn.up.left.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("writtenMargin.replyCaption.label")
+                    }
 
                     TextEditor(text: text)
                         .font(.body)

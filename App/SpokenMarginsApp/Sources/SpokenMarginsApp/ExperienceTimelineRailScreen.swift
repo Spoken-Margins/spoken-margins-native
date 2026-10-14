@@ -248,7 +248,8 @@ struct ExperienceTimelineRailScreen: View {
                     title: TimelineTextPresentation.excerpt(margin.approvedTranscript, characterLimit: TimelineTextPresentation.marginCharacterLimit),
                     detail: "Shared by \(row.collectionLabel) · \(row.positionDescription)",
                     action: .sharedMargin(row),
-                    isNew: row.isNew
+                    isNew: row.isNew,
+                    reference: .imported(margin.id)
                 ))
             }
         }
@@ -270,10 +271,12 @@ struct ExperienceTimelineRailScreen: View {
                         characterLimit: TimelineTextPresentation.marginCharacterLimit
                     ),
                     detail: row.needsAttention ? row.attentionDescription : "Captured at \(position)%",
-                    action: .margin(row)
+                    action: .margin(row),
+                    reference: .local(row.interjection.id)
                 )
             )
         }
+        result = threadingReplies(in: result, item: item)
 
         var children: [String: [TimelineRailEntry]] = [:]
         for (turnIndex, turn) in item.turns.enumerated() {
@@ -338,6 +341,45 @@ struct ExperienceTimelineRailScreen: View {
 
     private func refreshEntries(from item: ItemDetailState) {
         entries = Self.makeEntries(from: item, sessionID: model.snapshot.sessionId, playbackDurationMs: model.snapshot.currentPlaybackDurationMs)
+    }
+
+    /// Replies sit directly under the Margin they answer, indented, at that Margin's place on the rail (#473).
+    /// The thread is the one `MarginThreadPresentation` builds for the Margins list, so both screens agree.
+    static func threadingReplies(in entries: [TimelineRailEntry], item: ItemDetailState) -> [TimelineRailEntry] {
+        guard entries.contains(where: { $0.reference != nil }) else { return entries }
+        let rows = MarginThreadPresentation.rows(
+            itemId: item.id,
+            localMargins: item.interjections,
+            layers: item.importedCommentaryLayers,
+            importedMargins: item.importedCommentaryLayers.flatMap { item.importedCommentaryInterjections[$0.id, default: []] }
+        )
+        let positions = Dictionary(entries.compactMap { entry in entry.reference.map { ($0, entry.position) } }, uniquingKeysWith: { first, _ in first })
+        struct Place { let order: Int; let depth: Int; let rootPosition: Int?; let parentLabel: String?; let note: String? }
+        var places: [MarginReference: Place] = [:]
+        var path: [String] = []
+        var rootPosition: Int?
+        for (index, row) in rows.enumerated() {
+            if row.depth == 0 { rootPosition = positions[row.reference] }
+            path = Array(path.prefix(row.depth))
+            places[row.reference] = Place(
+                order: index + 1, depth: row.depth, rootPosition: rootPosition,
+                parentLabel: row.depth > 0 ? path.last : nil, note: row.note
+            )
+            path.append(row.senderLabel)
+        }
+        return entries.map { entry in
+            guard let place = entry.reference.flatMap({ places[$0] }) else { return entry }
+            var threaded = entry
+            threaded.threadOrder = place.order
+            threaded.depth = place.depth
+            if place.depth > 0 {
+                threaded.position = place.rootPosition ?? entry.position
+                threaded.detail = "Reply to \(place.parentLabel ?? "a Margin") · \(entry.detail)"
+            } else if let note = place.note {
+                threaded.detail = "\(note.prefix(1).uppercased())\(note.dropFirst()) · \(entry.detail)"
+            }
+            return threaded
+        }
     }
 
     private static func currentSessionMargins(in item: ItemDetailState, sessionID: String?) -> [MarginRow] {
@@ -447,17 +489,23 @@ struct TimelineRailEntry: Identifiable, Equatable {
     }
 
     let id: String
-    let position: Int
+    var position: Int
     let rank: Int
     let provenance: TimelineProvenance
     let title: String
-    let detail: String
+    var detail: String
     let action: Action
     /// A shared Margin the listener hasn't heard yet (#469).
     var isNew = false
+    /// The Margin this entry shows, when it is one that can be part of a conversation (#473).
+    var reference: MarginReference? = nil
+    /// 0 for a Margin that starts a conversation, 1 for a reply to it, and so on.
+    var depth = 0
+    /// Where the entry falls among the Margins at one place: a conversation in order, parent first.
+    var threadOrder = 0
 
     var sortKey: TimelineRailSortKey {
-        TimelineRailSortKey(position: position, rank: rank, id: id)
+        TimelineRailSortKey(position: position, rank: rank, threadOrder: threadOrder, id: id)
     }
 
     var accessibilityIdentifier: String {
@@ -543,6 +591,7 @@ private struct TimelineRailRow: View, Equatable {
                 }
             }
             .buttonStyle(.plain)
+            .padding(.leading, CGFloat(min(entry.depth, 3)) * 20)
             .padding(.bottom, 12)
         }
         .accessibilityElement(children: .combine)
