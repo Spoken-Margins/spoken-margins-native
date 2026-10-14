@@ -274,6 +274,9 @@ enum SupertonicResourcePolicy {
 final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unchecked Sendable {
     typealias FallbackHandler = @Sendable (_ reason: String, _ charOffset: Int, _ targetId: String) -> Void
     typealias RestoreHandler = @Sendable (_ targetId: String) -> Void
+    /// The bundled voice took a passage: `block` is the resource that refused Supertonic when Kitten took the
+    /// generation (nil when it had cleared by then), not what the phone reports when the passage plays (#849 audit).
+    typealias BundledVoiceHandler = @Sendable (_ block: SpeechFallbackReason?, _ charOffset: Int, _ targetId: String) -> Void
     /// A stall or its end, with the audio session's and player's state then (#288).
     typealias StallHandler = @Sendable (_ kind: String, _ fields: [String: String]) -> Void
     /// A pause, or a missing resume, the listener didn't ask for, with its cause (#538).
@@ -439,6 +442,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var bundledVoiceGeneration: UUID?
     /// The generation whose listener was told the bundled voice took over (#849 audit, I14: a visible, logged reason).
     private var bundledVoiceNoticeGeneration: UUID?
+    /// What refused Supertonic when the bundled voice took `bundledVoiceGeneration`, for the notice (#849 audit).
+    private var bundledVoiceBlock: SpeechFallbackReason?
     /// The playhead chunk as the article plan has it, keyed by its start, when a fallback play split it for a quick
     /// start (#849 audit): saved Supertonic audio for the whole chunk still plays when there is some.
     private var fastStartOriginals: [Int: RenderRequest] = [:]
@@ -456,9 +461,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// which starts that queue then (#540 audit).
     private var heldRenderQueueGeneration: UUID?
     private let onRestore: RestoreHandler?
-    /// Told when the bundled Kitten voice starts playing in place of Supertonic (#849 audit, I14), with the same
-    /// code a refused render reports, so the listener sees why and diagnostics log it. `onRestore` clears it.
-    private let onBundledVoice: FallbackHandler?
+    /// Told when the bundled Kitten voice starts playing in place of Supertonic (#849 audit, I14), with the resource
+    /// that refused Supertonic when Kitten took over, so the listener sees why and diagnostics log it. Never after a
+    /// play released the voice. `onRestore` clears it.
+    private let onBundledVoice: BundledVoiceHandler?
     private let onStall: StallHandler?
     private let onSystemPause: SystemPauseHandler?
     private let onRenderPace: RenderPaceHandler?
@@ -570,7 +576,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
-        onBundledVoice: FallbackHandler? = nil,
+        onBundledVoice: BundledVoiceHandler? = nil,
         onStall: StallHandler? = nil,
         onSystemPause: SystemPauseHandler? = nil,
         stallThreshold: Duration = .seconds(5),
@@ -761,6 +767,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let told = bundledVoiceNoticeGeneration != nil
             bundledVoiceGeneration = nil
             bundledVoiceNoticeGeneration = nil
+            bundledVoiceBlock = nil
             let order = generationRenderOrder
             guard let first = order.firstIndex(where: {
                 $0.startOffset > spokenOffset && bundledVoiceOffsets.contains($0.startOffset)
@@ -794,7 +801,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Kitten renders the rest of `generation` from here on, until a play releases it (#849 audit).
     private func holdBundledVoice(for generation: UUID) {
-        lock.withLock { if self.generation == generation { bundledVoiceGeneration = generation } }
+        let block = SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+        lock.withLock {
+            guard self.generation == generation else { return }
+            if bundledVoiceGeneration != generation { bundledVoiceBlock = block }
+            bundledVoiceGeneration = generation
+        }
     }
 
     /// I14: the chosen voice comes back once the condition that forced the fallback clears.
@@ -2024,14 +2036,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
         if cueLeadIn > 0, let voiceChangeCue { voiceChangeCue() }
         // I14: the first bundled-voice passage of a generation tells the listener why the voice changed (#849 audit).
-        let announcesBundledVoice = lock.withLock { () -> Bool in
-            guard bundledVoiceOffsets.contains(request.startOffset),
-                  bundledVoiceNoticeGeneration != request.generation else { return false }
+        // Only while the bundled voice still holds the generation: a Kitten chunk that was still rendering when a play
+        // released the voice must not announce it again, on a phone that has cooled (#849 audit).
+        let bundledNotice = lock.withLock { () -> (announces: Bool, block: SpeechFallbackReason?) in
+            guard bundledVoiceGeneration == request.generation,
+                  bundledVoiceOffsets.contains(request.startOffset),
+                  bundledVoiceNoticeGeneration != request.generation else { return (false, nil) }
             bundledVoiceNoticeGeneration = request.generation
-            return true
+            return (true, bundledVoiceBlock)
         }
-        if announcesBundledVoice {
-            onBundledVoice?("supertonic_resource_pressure", sourceOffset(forSpokenOffset: request.startOffset), request.targetId)
+        if bundledNotice.announces {
+            onBundledVoice?(bundledNotice.block, sourceOffset(forSpokenOffset: request.startOffset), request.targetId)
         }
         let delay = requestedDelay + (voiceChangeCue == nil ? 0 : cueLeadIn)
         do {

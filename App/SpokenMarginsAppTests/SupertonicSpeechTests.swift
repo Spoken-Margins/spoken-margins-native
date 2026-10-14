@@ -2046,7 +2046,7 @@ final class SupertonicSpeechTests: XCTestCase {
             fallbackClient: fallback,
             onGenerationProgress: { log.record($0) },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
-            onBundledVoice: { reason, _, _ in log.recordNotice(reason) }
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
         )
         let text = (0..<4).map { _ in
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
@@ -2065,7 +2065,7 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(supertonicRenders, 0, "Supertonic is refused")
         XCTAssertEqual(fallback.playedOffsets, [], "the iOS voice is never asked")
         XCTAssertEqual(log.fallbacks, [])
-        XCTAssertEqual(log.notices, ["supertonic_resource_pressure"], "I14: the listener is told once why the voice changed")
+        XCTAssertEqual(log.notices, ["bundled_voice"], "I14: the listener is told once why the voice changed")
         XCTAssertEqual(log.totalChunks, plannedChunks + 1, "the first chunk is split in two")
         XCTAssertEqual(log.completedChunks, log.totalChunks)
         let kittenDiagnostics = await kitten.diagnostics()
@@ -2109,7 +2109,7 @@ final class SupertonicSpeechTests: XCTestCase {
             },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
             onRestore: { _ in log.recordRestore() },
-            onBundledVoice: { reason, _, _ in log.recordNotice(reason) }
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
         )
         let text = (0..<4).map { _ in
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
@@ -2127,7 +2127,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let rendersDuringGeneration = await supertonic.renderCount
         XCTAssertEqual(rendersDuringGeneration, 0, "no chunk of the generation switches back to Supertonic mid-play")
         XCTAssertEqual(fallback.playedOffsets, [])
-        XCTAssertEqual(log.notices, ["supertonic_resource_pressure"])
+        XCTAssertEqual(log.notices, ["bundled_voice"])
 
         // A play releases the generation: the listener's notice is cleared and Supertonic renders what is left.
         try client.pause()
@@ -2140,6 +2140,74 @@ final class SupertonicSpeechTests: XCTestCase {
             rendersAfterPlay = await supertonic.renderCount
         }
         XCTAssertGreaterThan(rendersAfterPlay, 0, "Supertonic takes the chunks after the playhead again")
+        try client.stop()
+        await kitten.unload()
+    }
+
+    /// #849 audit (I14): a Kitten chunk still rendering when a play releases the voice finishes in Kitten, and must not
+    /// tell the listener about the backup voice again, just after the notice was cleared, on a phone that has cooled.
+    /// Before the fix it announced a second time when it played.
+    func testAKittenChunkRenderingAtTheReleaseDoesNotAnnounceTheBackupVoiceAgain() async throws {
+        let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
+        let output = FileManager.default.temporaryDirectory.appending(path: "kitten-release-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: output) }
+        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output)
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let log = KittenClientLog()
+        let allowed = KittenAllowedFlag()
+        let started = expectation(description: "audio started")
+        started.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                started.fulfill()
+            },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { allowed.value },
+            pressureRenderer: kitten,
+            fallbackClient: fallback,
+            onGenerationProgress: { log.record($0) },
+            onFallback: { reason, _, _ in log.recordFallback(reason) },
+            onRestore: { _ in log.recordRestore() },
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
+        )
+        let text = (0..<4).map { _ in
+            "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
+        }.joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "kitten-release")
+
+        await fulfillment(of: [started], timeout: 60)
+        // The first Kitten passage is playing and told the listener; the chunk after it is still rendering.
+        let noticeDeadline = ContinuousClock.now + .seconds(60)
+        while log.notices.isEmpty, ContinuousClock.now < noticeDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(log.notices, ["bundled_voice"])
+        let renderedAtRelease = log.completedChunks
+        let totalChunks = log.totalChunks
+        try XCTSkipUnless(renderedAtRelease < totalChunks, "the chain had already rendered everything: no chunk was in flight")
+        // The phone cools; the listener pauses and plays inside the first passage, so the generation is released.
+        allowed.value = true
+        let releaseOffset = try XCTUnwrap(client.currentCharOffset())
+        try client.pause()
+        try client.play(targetId: "kitten-release", from: releaseOffset)
+        XCTAssertEqual(log.restores, 1, "the play releases the bundled voice and clears the notice")
+
+        // Let the playhead move into the passage that was rendering at the release.
+        let playDeadline = ContinuousClock.now + .seconds(60)
+        while (client.currentCharOffset() ?? 0) < releaseOffset + 80, ContinuousClock.now < playDeadline {
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(log.notices, ["bundled_voice"], "the released voice is not announced again")
+        XCTAssertEqual(log.fallbacks, [])
         try client.stop()
         await kitten.unload()
     }

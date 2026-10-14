@@ -167,8 +167,8 @@ extension Gate1AppModel {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
-                onBundledVoice: { [weak self] code, offset, _ in
-                    Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(code: code, offset: offset) }
+                onBundledVoice: { [weak self] block, offset, _ in
+                    Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(block: block, offset: offset) }
                 },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
@@ -220,10 +220,12 @@ extension Gate1AppModel {
 
     /// I14 for the bundled Kitten voice (#849 audit): the listener sees why the voice changed, and the event is logged
     /// with the power state beside it. Preparation is left alone: Supertonic picks up again at the next play.
-    func reportBundledVoiceTookOver(code: String, offset: Int) {
+    /// `block` is what refused Supertonic when the bundled voice took over, so the notice names that cause even if the
+    /// condition has cleared by the time the passage plays; the power state logged beside it is the current one.
+    func reportBundledVoiceTookOver(block: SpeechFallbackReason?, offset: Int) {
+        let code = "supertonic_resource_pressure"
         let conditions = currentResourceConditions()
-        let reason = SpeechFallbackReason(
-            supertonicCode: code, resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(conditions))
+        let reason = SpeechFallbackReason(supertonicCode: code, resourceBlock: block)
         recordSupertonicFallbackEvent(code: "\(code):\(KittenNarrationRenderer.engine)", reason: reason,
                                       conditions: conditions, offset: offset)
         diagnostics["supertonicFallback"] = "\(code):\(KittenNarrationRenderer.engine)"
