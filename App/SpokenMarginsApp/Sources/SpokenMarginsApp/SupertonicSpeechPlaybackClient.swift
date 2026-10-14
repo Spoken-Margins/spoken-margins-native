@@ -22,6 +22,15 @@ protocol SupertonicRendering: Sendable {
 
 extension SupertonicNarrationRenderer: SupertonicRendering {}
 
+/// The bundled voice that renders a chunk when Supertonic isn't allowed (#849). A seam so a test can hold one render
+/// open while a play releases the voice; the app passes `KittenNarrationRenderer`.
+protocol BundledVoiceRendering: Sendable {
+    func render(text: String) async throws -> SupertonicNarrationResult
+    func discardGeneratedAudio(at url: URL) async
+}
+
+extension KittenNarrationRenderer: BundledVoiceRendering {}
+
 /// Background preparation's view of the shared renderer: every render is paced, whatever the
 /// app's state, without touching the pacing the listener's live narration gets (#377).
 struct BackgroundPreparationRenderer: SupertonicRendering {
@@ -379,7 +388,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// The bundled Kitten voice (#849): renders a chunk when `onDeviceRenderingAllowed` refuses Supertonic, so a
     /// hot, low-power or memory-pressed phone keeps one steady voice instead of dropping to the iOS voice.
     /// nil in tests that exercise the iOS-voice fallback.
-    private let pressureRenderer: KittenNarrationRenderer?
+    private let pressureRenderer: (any BundledVoiceRendering)?
     /// Plays the cue that introduces the iOS voice when it takes over a passage (#934). nil in tests that don't listen.
     private let voiceChangeCue: (@Sendable () -> Void)?
     private let lock = NSLock()
@@ -563,7 +572,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         observesPlayerLifecycle: Bool = true,
         voiceChangeCue: (@Sendable () -> Void)? = nil,
         onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { SupertonicResourcePolicy.allowsRendering() },
-        pressureRenderer: KittenNarrationRenderer? = nil,
+        pressureRenderer: (any BundledVoiceRendering)? = nil,
         fallbackClient: AudioPlaybackClient? = nil,
         interruptionHandler: InterruptionHandler? = nil,
         onGenerationStateChange: GenerationStateHandler? = nil,

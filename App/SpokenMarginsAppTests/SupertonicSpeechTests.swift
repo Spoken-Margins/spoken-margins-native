@@ -2144,17 +2144,16 @@ final class SupertonicSpeechTests: XCTestCase {
         await kitten.unload()
     }
 
-    /// #849 audit (I14): a Kitten chunk still rendering when a play releases the voice finishes in Kitten, and must not
-    /// tell the listener about the backup voice again, just after the notice was cleared, on a phone that has cooled.
-    /// Before the fix it announced a second time when it played.
-    func testAKittenChunkRenderingAtTheReleaseDoesNotAnnounceTheBackupVoiceAgain() async throws {
-        let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
-        let output = FileManager.default.temporaryDirectory.appending(path: "kitten-release-\(UUID().uuidString)")
-        defer { try? FileManager.default.removeItem(at: output) }
-        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output)
-        let template = try makeTestWAV(duration: 0.2)
+    /// #849 audit (I14): a bundled-voice chunk still rendering when a play releases the voice finishes in that voice,
+    /// and must not tell the listener about the backup voice again, just after the notice was cleared, on a phone that
+    /// has cooled. Before the fix it announced a second time when it played. The test holds that render open, so the
+    /// chunk is in flight at the release every time.
+    func testABundledVoiceChunkRenderingAtTheReleaseDoesNotAnnounceTheBackupVoiceAgain() async throws {
+        let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
         let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 2, gate: gate)
         let fallback = RecordingFallbackAudioClient()
         let log = KittenClientLog()
         let allowed = KittenAllowedFlag()
@@ -2170,7 +2169,7 @@ final class SupertonicSpeechTests: XCTestCase {
             },
             observesPlayerLifecycle: false,
             onDeviceRenderingAllowed: { allowed.value },
-            pressureRenderer: kitten,
+            pressureRenderer: bundled,
             fallbackClient: fallback,
             onGenerationProgress: { log.record($0) },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
@@ -2181,37 +2180,40 @@ final class SupertonicSpeechTests: XCTestCase {
             "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
         }.joined(separator: " ")
         _ = try client.prepareSpeechText(text)
-        try client.play(targetId: "kitten-release")
+        try client.play(targetId: "bundled-release")
 
-        await fulfillment(of: [started], timeout: 60)
-        // The first Kitten passage is playing and told the listener; the chunk after it is still rendering.
-        let noticeDeadline = ContinuousClock.now + .seconds(60)
-        while log.notices.isEmpty, ContinuousClock.now < noticeDeadline {
+        // The first bundled passage plays and tells the listener, while the render after it is held open.
+        await fulfillment(of: [started], timeout: 30)
+        let heldDeadline = ContinuousClock.now + .seconds(30)
+        var rendersStarted = await bundled.renderCount
+        while (log.notices.isEmpty || rendersStarted < 2), ContinuousClock.now < heldDeadline {
             try await Task.sleep(for: .milliseconds(10))
+            rendersStarted = await bundled.renderCount
         }
         XCTAssertEqual(log.notices, ["bundled_voice"])
-        let renderedAtRelease = log.completedChunks
-        // The chain renders one chunk at a time, so with only the split head done the next chunk is rendering now.
-        try XCTSkipUnless(renderedAtRelease == 1, "the chain was not between the head and the next chunk: nothing was in flight")
+        XCTAssertGreaterThanOrEqual(rendersStarted, 2, "the render after the first passage is in flight")
+
         // The phone cools; the listener pauses and plays inside the first passage, so the generation is released.
         allowed.value = true
         let releaseOffset = try XCTUnwrap(client.currentCharOffset())
         try client.pause()
-        try client.play(targetId: "kitten-release", from: releaseOffset)
+        try client.play(targetId: "bundled-release", from: releaseOffset)
         XCTAssertEqual(log.restores, 1, "the play releases the bundled voice and clears the notice")
 
-        // Let the playhead move into the passage that was rendering at the release.
-        let playDeadline = ContinuousClock.now + .seconds(60)
-        while (client.currentCharOffset() ?? 0) < releaseOffset + 80, ContinuousClock.now < playDeadline {
+        // The held render finishes in the bundled voice and plays; the rest of the item renders in Supertonic.
+        openGate.finish()
+        let doneDeadline = ContinuousClock.now + .seconds(60)
+        while client.playbackTransportState(targetId: "bundled-release") != .stopped, ContinuousClock.now < doneDeadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        try await Task.sleep(for: .milliseconds(500))
-        XCTAssertGreaterThanOrEqual(client.currentCharOffset() ?? 0, releaseOffset + 80,
-                                    "the playhead reached the passage that was rendering at the release")
+        XCTAssertEqual(client.playbackTransportState(targetId: "bundled-release"), .stopped, "the item played to its end")
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertGreaterThan(supertonicRenders, 0, "Supertonic took the chunks after the held one")
         XCTAssertEqual(log.notices, ["bundled_voice"], "the released voice is not announced again")
+        XCTAssertEqual(log.restores, 1)
         XCTAssertEqual(log.fallbacks, [])
+        XCTAssertEqual(fallback.playedOffsets, [])
         try client.stop()
-        await kitten.unload()
     }
 
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
@@ -4158,6 +4160,47 @@ private actor CountingAudioSupertonicRenderer: SupertonicRendering {
         if generatedURLs.remove(url) != nil {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+}
+
+/// A bundled-voice stand-in: each render copies a template file and reports it as the bundled voice's. One render
+/// waits on a gate the test controls, so a chunk can be in flight at the moment a play releases the voice (#849 audit).
+private actor GatedBundledVoiceRenderer: BundledVoiceRendering {
+    let templateURL: URL
+    let gatedRender: Int
+    let gate: AsyncStream<Void>
+    private(set) var renderCount = 0
+    private var generatedURLs: Set<URL> = []
+
+    init(templateURL: URL, gatedRender: Int, gate: AsyncStream<Void>) {
+        self.templateURL = templateURL
+        self.gatedRender = gatedRender
+        self.gate = gate
+    }
+
+    func render(text: String) async throws -> SupertonicNarrationResult {
+        renderCount += 1
+        if renderCount == gatedRender {
+            for await _ in gate {}
+            try Task.checkCancellation()
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "bundled-stand-in-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        generatedURLs.insert(url)
+        let audio = try AVAudioFile(forReading: url)
+        return SupertonicNarrationResult(
+            audioURL: url,
+            duration: Double(audio.length) / audio.processingFormat.sampleRate,
+            sampleRate: Int(audio.processingFormat.sampleRate.rounded()),
+            renderDuration: 0.01,
+            sessionLoadCount: 1,
+            engine: KittenNarrationRenderer.engine
+        )
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        if generatedURLs.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
     }
 }
 
