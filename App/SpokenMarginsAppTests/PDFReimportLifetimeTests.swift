@@ -282,6 +282,12 @@ final class PDFReimportLifetimeTests: XCTestCase {
         try await coordinator.commit(itemId: item.id, signature: signature(), plan: plan, sourceText: text, audioURL: revised, durationMs: 100)
         let newChunk = try XCTUnwrap(store.loadPreparedAudioManifest(id: manifest.id)?.chunks.first)
         XCTAssertNotEqual(newChunk.relativePath, oldChunk.relativePath)
+        XCTAssertNotEqual(newChunk.id, oldChunk.id)
+        let reservation = try await ledger.reserve(ownerId: "new-chunk", byteCount: 1_000_000)
+        let committed = try await ledger.commitPrepared(reservationId: reservation.id,
+                                                       asset: PreparedAudioCoordinator.ledgerAsset(for: newChunk, itemId: item.id), manifest: try XCTUnwrap(store.loadPreparedAudioManifest(id: manifest.id)))
+        XCTAssertTrue(committed)
+        XCTAssertTrue(try store.loadOwnedOfflineAssets().contains { $0.relativePath == "PreparedAudio/" + oldChunk.relativePath }, "the shared old file must retain its ledger row")
         XCTAssertEqual(try Data(contentsOf: shared), originalBytes, "the other item must keep its original audio bytes")
         XCTAssertEqual(try AVAudioFile(forReading: shared).length, 4_410)
     }

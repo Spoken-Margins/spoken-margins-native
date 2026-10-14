@@ -268,17 +268,18 @@ actor PreparedAudioCoordinator {
         let directory = rootDirectory
             .appending(path: safePath(itemId), directoryHint: .isDirectory)
             .appending(path: signature.digest, directoryHint: .isDirectory)
-            .appending(path: NarrationChunkPlanner.identity(ofArticle: sourceText), directoryHint: .isDirectory)
             .appending(path: "chunks", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = String(format: "%05d.wav", plan.index)
+        let articleIdentity = NarrationChunkPlanner.identity(ofArticle: sourceText)
+        // Keep the legacy directory layout; source-specific names spare files still used by another item.
+        let name = articleIdentity + "-" + String(format: "%05d.wav", plan.index)
         let destination = directory.appending(path: name)
         let temporary = directory.appending(path: ".\(name).\(UUID().uuidString).tmp")
         defer { try? fileManager.removeItem(at: temporary) }
         try fileManager.copyItem(at: audioURL, to: temporary)
         let data = try Data(contentsOf: temporary, options: [.mappedIfSafe])
         manifest.chunks.append(PreparedAudioChunk(
-            id: "\(manifestId)-chunk-\(plan.index)",
+            id: "\(manifestId)-\(articleIdentity)-chunk-\(plan.index)",
             index: plan.index,
             sourceRange: Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText),
             relativePath: relativePath(destination),
