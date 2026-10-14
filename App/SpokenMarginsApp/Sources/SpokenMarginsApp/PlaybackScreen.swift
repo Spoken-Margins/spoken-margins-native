@@ -916,7 +916,11 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.download.button")
         }
 
-        if model.snapshot.targetType == TargetType.itemTextTTS.rawValue {
+        if PlaybackTextReaderAvailability.isAvailable(
+            targetType: model.snapshot.targetType,
+            itemText: model.selectedItem.text,
+            itemHasNativeAudio: model.selectedItem.isNativeAudio
+        ) {
             Button(action: openSourceText) {
                 if usesVerbosePlaybackActions {
                     PlaybackControlLabel(title: "Text", systemImage: "doc.plaintext")
