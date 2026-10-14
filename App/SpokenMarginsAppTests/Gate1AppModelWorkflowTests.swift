@@ -144,6 +144,20 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.sharingState.drafts.map(\.interjection.sessionId), [first])
     }
 
+    /// #147: an item with no source Margins to share says so, as the sheet does, and opens nothing.
+    func testItemMarginsShareWithNoSourceMarginsExplainsInsteadOfOpeningTheSheet() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let screen = model.screen
+
+        model.openMarginItemExport(itemID: "item-pill")
+
+        XCTAssertFalse(model.isSharingInterjectionsPresented)
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.lastError, "Record at least one Margin on this item before sharing.")
+    }
+
     func testNextChapterUnavailableForFinalChapterAndDerivativePlayback() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         let first = Chapter(id: "a", title: "Opening", startChar: 0, endChar: 50, percent: 0)
