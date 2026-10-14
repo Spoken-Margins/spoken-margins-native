@@ -8,7 +8,7 @@ final class ListeningMomentTests: XCTestCase {
 
     func testEachUseHasItsOwnLeadInAndCarryOn() {
         let play = ListeningMoment(use: .playThisMoment, margin: margin, source: .media())
-        XCTAssertEqual(play.leadIn, .onPhone(.init(start: 90_000, end: 120_000)))
+        XCTAssertEqual(play.leadIn, .onPhone(.init(start: 112_000, end: 120_000)))
         XCTAssertEqual(play.carryOn, .sourceContinues)
 
         let cut = ListeningMoment(use: .friendsCut, margin: margin, source: .media())
@@ -22,8 +22,8 @@ final class ListeningMomentTests: XCTestCase {
         for moment in [play, cut, back] { XCTAssertNil(moment.leadInClamp) }
     }
 
-    func testPlayThisMomentKeepsTheSequencesLeadIn() {
-        XCTAssertEqual(MarginMomentSequence.defaultLeadInMs, 30_000)
+    func testPlayThisMomentUsesEightSecondsThroughTheSingleMomentRule() {
+        XCTAssertEqual(MarginMomentSequence.defaultLeadInMs, 8_000)
         XCTAssertEqual(ListeningMoment.rule(for: .playThisMoment).leadInMs, MarginMomentSequence.defaultLeadInMs)
     }
 
@@ -101,7 +101,7 @@ final class ListeningMomentTests: XCTestCase {
         )
         XCTAssertEqual(
             ListeningMoment(use: .playThisMoment, margin: margin, source: streamable).leadIn,
-            .stream(.init(start: 90_000, end: 120_000))
+            .stream(.init(start: 112_000, end: 120_000))
         )
         let cutOnStream = ListeningMoment(use: .friendsCut, margin: margin, source: streamable)
         XCTAssertEqual(cutOnStream.leadIn, .stream(.init(start: 100_000, end: 120_000)))
