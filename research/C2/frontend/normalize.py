@@ -17,6 +17,9 @@ SCALES = [(10**12, "trillion"), (10**9, "billion"), (10**6, "million"), (1000, "
 def int_words(n: int) -> str:
     if n < 0:
         return "minus " + int_words(-n)
+    if n >= 10**18:
+        # past 18 digits it's an identifier, not a quantity: read it digit by digit
+        return " ".join(ONES[int(c)] for c in str(n))
     if n < 20:
         return ONES[n]
     if n < 100:

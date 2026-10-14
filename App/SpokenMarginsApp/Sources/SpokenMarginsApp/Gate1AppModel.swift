@@ -480,6 +480,7 @@ final class Gate1AppModel: ObservableObject {
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
     var supertonicRenderer: SupertonicNarrationRenderer?
+    var kittenRenderer: KittenNarrationRenderer? // bundled fallback voice, built on first use (#849)
     var preparedAudioCoordinator: PreparedAudioCoordinator?
     var currentSupertonicRenderSignature: TTSRenderSignature? { // older prepared chunks go first when space is needed (#281)
         didSet { if let digest = currentSupertonicRenderSignature?.digest, digest != oldValue?.digest { Task { [ledger = offlineStorageLedger] in _ = try? await ledger?.markSupersededPreparedChunks(currentSignatureDigest: digest) } } }
@@ -1480,9 +1481,7 @@ final class Gate1AppModel: ObservableObject {
             }
         }
         diagnostics["supertonicMemoryPressure"] = "sessions_unloaded"
-        if let renderer = supertonicRenderer {
-            Task { await renderer.unload(removingGeneratedAudio: false) }
-        }
+        unloadNarrationRenderers(removingGeneratedAudio: false)
     }
 
     func makeAppOverviewSample() throws -> (Item, ListeningMap) {
@@ -1517,6 +1516,7 @@ final class Gate1AppModel: ObservableObject {
         do {
             if hasActiveSession || (!opensItem && !handoff.requestedContinuation.startSession) {
                 let itemId = try importBrowserTextInBackground(handoff)
+                if opensItem { openItem(id: itemId) } // #1437: a share shows its item whatever is in Now Playing; playback is untouched
                 reportAddedToLibrary(title: handoff.source.title, itemId: itemId)
                 return itemId
             }
@@ -2416,12 +2416,11 @@ final class Gate1AppModel: ObservableObject {
                 if let payloadID = Gate5BrowserTextHandoffURL.payloadID(from: url) {
                     let handoffStore = try resolvedBrowserTextHandoffStore()
                     let handoff = try Gate5BrowserTextHandoffURL.handoff(from: url, store: handoffStore)
-                    if hasActiveSession {
-                        try importBrowserTextInBackground(handoff)
+                    // With something in Now Playing the import still shows its item and never touches playback (#1437).
+                    let hadSession = hasActiveSession
+                    if importBrowserText(handoff) {
                         try? handoffStore.deletePayload(payloadID: payloadID)
-                        diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement"
-                    } else if importBrowserText(handoff) {
-                        try? handoffStore.deletePayload(payloadID: payloadID)
+                        if hadSession { diagnostics["lastBrowserTextPayloadCleanup"] = "imported_without_session_replacement" }
                     }
                 } else if let handoff = Gate5BrowserTextHandoffURL.handoff(from: url) {
                     importBrowserText(handoff)

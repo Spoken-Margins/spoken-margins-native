@@ -22,14 +22,10 @@ public enum PublisherNarrationEvidence {
 
     /// Reads `window._preloads` on a Substack post page: the post's own completed voiceover, or nil for a
     /// podcast post, a post without a voiceover, one still processing, or a page that isn't a post.
+    /// Substack's automatic narration (`audio_items` of type `tts`, the "Listen" button on a post whose
+    /// author recorded nothing) is not a voiceover: `has_voiceover` stays false for it.
     public static func voiceover(inPostPage html: String) -> PostVoiceover? {
-        let pattern = #"window\._preloads\s*=\s*JSON\.parse\((\"(?:\\.|[^\"\\])*\")\)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..<html.endIndex, in: html)),
-              let range = Range(match.range(at: 1), in: html),
-              let json = try? JSONDecoder().decode(String.self, from: Data(html[range].utf8)),
-              let root = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
-              let post = root["post"] as? [String: Any],
+        guard let post = post(inPostPage: html),
               post["type"] as? String == "newsletter", post["has_voiceover"] as? Bool == true,
               let canonicalURL = post["canonical_url"] as? String,
               let postID = post["id"] as? Int,
@@ -44,6 +40,49 @@ public enum PublisherNarrationEvidence {
         if let seconds = recording["duration"] as? Double, seconds.isFinite, seconds >= 0,
            seconds < Double(Int.max / 1_000) { durationMs = Int(seconds * 1_000) }
         return PostVoiceover(canonicalURL: canonicalURL, audioURL: audio, durationMs: durationMs)
+    }
+
+    /// Why a post page gives no voiceover, as a short token for diagnostics (#810), so "the post had none"
+    /// can be told from "the page wasn't read". The owner's post (2026-10-05) offered only Substack's own
+    /// automatic narration, `generated_voice_only`, which the Substack app also shows as listenable.
+    /// Meant for a page `voiceover(inPostPage:)` gave nothing for; for a page that does give one it returns
+    /// `voiceover_unreadable`.
+    public static func absence(inPostPage html: String) -> String {
+        guard let root = preloads(in: html) else { return "no_preloads" }
+        guard let post = root["post"] as? [String: Any] else { return "no_post" }
+        guard let type = post["type"] as? String else { return "not_a_newsletter_post" }
+        guard type == "newsletter" else { return type == "podcast" ? "podcast_post" : "not_a_newsletter_post" }
+        let recordings = post["audio_items"] as? [[String: Any]] ?? []
+        let postID = post["id"] as? Int
+        func status(_ item: [String: Any]) -> String {
+            // Page text goes into a diagnostic: keep it short and plain.
+            let token = String((item["status"] as? String ?? "").filter { $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_") }.prefix(32))
+            return token.isEmpty ? "unknown" : token
+        }
+        let voiceovers = recordings.filter { $0["type"] as? String == "voiceover" && $0["post_id"] as? Int == postID }
+        if let completed = voiceovers.first(where: { status($0) == "completed" }) {
+            if post["has_voiceover"] as? Bool != true { return "voiceover_flag_off" }
+            return completed["audio_url"] is String ? "voiceover_unreadable" : "no_audio_url"
+        }
+        if let unfinished = voiceovers.first { return "voiceover_\(status(unfinished))" }
+        if let generated = recordings.first(where: { $0["type"] as? String == "tts" }) {
+            return status(generated) == "completed" ? "generated_voice_only" : "generated_voice_\(status(generated))"
+        }
+        return post["has_voiceover"] as? Bool == true ? "no_recording_listed" : "no_recording"
+    }
+
+    /// `window._preloads` as a dictionary, decoded as data (publisher scripts never run).
+    private static func preloads(in html: String) -> [String: Any]? {
+        let pattern = #"window\._preloads\s*=\s*JSON\.parse\((\"(?:\\.|[^\"\\])*\")\)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..<html.endIndex, in: html)),
+              let range = Range(match.range(at: 1), in: html),
+              let json = try? JSONDecoder().decode(String.self, from: Data(html[range].utf8)) else { return nil }
+        return try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+    }
+
+    private static func post(inPostPage html: String) -> [String: Any]? {
+        preloads(in: html)?["post"] as? [String: Any]
     }
 
     public static func confirmedEntry(_ entry: FeedEntry, html: String) -> FeedEntry? {
@@ -66,6 +105,14 @@ public enum PublisherNarrationEvidence {
             itemId: itemId, audioURL: voiceover.audioURL, durationMs: voiceover.durationMs,
             detectedFrom: PublisherAudioDetector.detectedFromPublisherNarration
         )
+    }
+
+    /// `absence(inPostPage:)`, plus `other_post` for a page whose voiceover belongs to a different address
+    /// than the one it ended at.
+    public static func absence(postPage html: String, finalURL: URL) -> String {
+        if let voiceover = voiceover(inPostPage: html), let canonical = URL(string: voiceover.canonicalURL),
+           !samePage(canonical, finalURL) { return "other_post" }
+        return absence(inPostPage: html)
     }
 
     /// Whether a shared link's page is worth one fetch to look for a voiceover: an HTTPS Substack address

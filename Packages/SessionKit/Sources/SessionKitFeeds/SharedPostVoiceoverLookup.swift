@@ -39,7 +39,9 @@ public enum SharedPostVoiceoverLookup {
     public enum Outcome: Equatable, Sendable {
         case notSubstack
         case failed(String)
-        case none
+        /// The page was read and has no voiceover for this post. `reason` is a short token
+        /// (`PublisherNarrationEvidence.absence`), so diagnostics say why.
+        case noVoiceover(reason: String)
         case found(PublisherAudio)
     }
 
@@ -72,7 +74,9 @@ public enum SharedPostVoiceoverLookup {
                 return .failed(error.localizedDescription)
             }
         }
-        guard let audio = PublisherNarrationEvidence.publisherAudio(postPage: html, finalURL: finalURL, itemId: itemId) else { return .none }
+        guard let audio = PublisherNarrationEvidence.publisherAudio(postPage: html, finalURL: finalURL, itemId: itemId) else {
+            return .noVoiceover(reason: PublisherNarrationEvidence.absence(postPage: html, finalURL: finalURL))
+        }
         return .found(audio)
     }
 }

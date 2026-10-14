@@ -300,7 +300,18 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(model.statusMessage, "Imported browser text from Route Page.")
     }
 
+    /// #1437: with something paused in the mini player, a share opens its item as it does with nothing loaded,
+    /// and the paused item keeps its place.
     func testIncomingBrowserPayloadDoesNotReplacePlaybackFromLibraryRoot() throws {
+        try checkIncomingBrowserPayloadDuringPlayback(pausing: true)
+    }
+
+    /// The same share while the item plays: it shows the shared item and the audio carries on.
+    func testIncomingBrowserPayloadShowsItsItemWhileSomethingPlays() throws {
+        try checkIncomingBrowserPayloadDuringPlayback(pausing: false)
+    }
+
+    private func checkIncomingBrowserPayloadDuringPlayback(pausing: Bool) throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("spoken-margins-browser-route-\(UUID().uuidString)", isDirectory: true)
         temporaryDirectories.append(directory)
@@ -323,14 +334,23 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         let activeItemID = try XCTUnwrap(model.libraryItems.first?.id)
         model.startItem(id: activeItemID)
         let sessionID = model.snapshot.sessionId
+        if pausing { model.pause() }
+        let statusBefore = model.snapshot.status
+        XCTAssertEqual(statusBefore.isPlaybackActive, !pausing)
+        let positionBefore = model.snapshot.currentTextStart
         model.openHome()
 
         model.handleIncomingURL(Gate5BrowserTextHandoffURL.url(forPayloadID: payloadID))
 
-        XCTAssertEqual(model.screen, .home)
+        // #1437: the shared item opens as it does with nothing loaded; the paused item keeps its session.
+        XCTAssertEqual(model.screen, .item)
+        XCTAssertEqual(model.selectedItem.id, "item-browser-during-playback")
         XCTAssertEqual(model.snapshot.sessionId, sessionID)
         XCTAssertEqual(model.snapshot.itemId, activeItemID)
+        XCTAssertEqual(model.snapshot.status, statusBefore, "the share starts and stops nothing")
+        XCTAssertEqual(model.snapshot.currentTextStart, positionBefore)
         XCTAssertTrue(model.libraryItems.contains { $0.id == "item-browser-during-playback" })
+        XCTAssertEqual(model.statusMessage, "Added Shared During Playback to Library without changing Now Playing.")
         XCTAssertEqual(model.diagnostics["lastBrowserTextPayloadCleanup"], "imported_without_session_replacement")
         XCTAssertThrowsError(try browserStore.handoff(payloadID: payloadID))
     }

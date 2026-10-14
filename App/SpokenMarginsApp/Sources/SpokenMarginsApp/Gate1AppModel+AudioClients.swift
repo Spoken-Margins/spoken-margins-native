@@ -87,6 +87,7 @@ extension Gate1AppModel {
                 diskCache: diskCache,
                 preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
                 voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
+                pressureRenderer: makeKittenRenderer(),
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
                         self?.handleSpeechPlaybackInterruption(event)
@@ -166,6 +167,9 @@ extension Gate1AppModel {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
+                onBundledVoice: { [weak self] block, offset, _ in
+                    Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(block: block, offset: offset) }
+                },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
@@ -201,6 +205,53 @@ extension Gate1AppModel {
             outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory)
         )
         supertonicRenderer = renderer
+        return renderer
+    }
+
+    /// Unloads both narration voices' sessions: Supertonic and the bundled Kitten fallback (#849).
+    func unloadNarrationRenderers(removingGeneratedAudio: Bool = true) {
+        if let renderer = supertonicRenderer {
+            Task { await renderer.unload(removingGeneratedAudio: removingGeneratedAudio) }
+        }
+        if let renderer = kittenRenderer {
+            Task { await renderer.unload(removingGeneratedAudio: removingGeneratedAudio) }
+        }
+    }
+
+    /// I14 for the bundled Kitten voice (#849 audit): the listener sees why the voice changed, and the event is logged
+    /// with the power state beside it. Preparation is left alone: Supertonic picks up again at the next play.
+    /// `block` is what refused Supertonic when the bundled voice took over, so the notice names that cause even if the
+    /// condition has cleared by the time the passage plays; the power state logged beside it is the current one.
+    func reportBundledVoiceTookOver(block: SpeechFallbackReason?, offset: Int) {
+        let code = "supertonic_resource_pressure"
+        let conditions = currentResourceConditions()
+        let reason = SpeechFallbackReason(supertonicCode: code, resourceBlock: block)
+        recordSupertonicFallbackEvent(code: "\(code):\(KittenNarrationRenderer.engine)", reason: reason,
+                                      conditions: conditions, offset: offset)
+        diagnostics["supertonicFallback"] = "\(code):\(KittenNarrationRenderer.engine)"
+        diagnostics["supertonicFallbackReason"] = reason.rawValue
+        diagnostics["supertonicFallbackConditions"] = conditions.logDescription
+        diagnostics["supertonicFallbackOffset"] = "\(offset)"
+        let message = reason.bundledVoiceExplanation
+        statusMessage = message
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
+    }
+
+    /// The bundled Kitten voice that takes over when Supertonic isn't allowed (#849). nil when its files can't be
+    /// opened: the iOS voice covers the passage then, as before.
+    func makeKittenRenderer() -> KittenNarrationRenderer? {
+        if let kittenRenderer { return kittenRenderer }
+        guard let resourceRoot = Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory),
+              let cachesDirectory = try? FileManager.default.url(
+                  for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true),
+              let renderer = try? KittenNarrationRenderer(
+                  assets: KittenAssetLocation(rootURL: resourceRoot),
+                  outputDirectory: cachesDirectory.appending(path: "KittenPlayback", directoryHint: .isDirectory))
+        else {
+            diagnostics["kittenFallbackVoice"] = "unavailable"
+            return nil
+        }
+        kittenRenderer = renderer
         return renderer
     }
 
