@@ -403,6 +403,10 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
             .joined(separator: " ")
         let plan = PreparedChunkPlan.articlePlan(article)
         XCTAssertGreaterThan(plan.count, 1)
+        // Preparation checks the stored item's text in its transaction, so the item holds the article.
+        var articleItem = try fixture.store.loadItem(id: "item")
+        articleItem.text = article
+        try fixture.store.saveItem(articleItem)
         let manifestId = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature("one"), plan: plan).id
         let template = try makeHeatTestWAV()
         defer { try? FileManager.default.removeItem(at: template) }
