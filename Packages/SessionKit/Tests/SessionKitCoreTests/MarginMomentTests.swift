@@ -6,22 +6,56 @@ import XCTest
 final class MarginMomentTests: XCTestCase {
     private let target = MarginMomentAnchor(marginId: "ij-003", mediaTimeMs: 120_000)
 
-    func testStartsThirtySecondsBeforeTheMarginAndClampsAtTheStart() {
-        XCTAssertEqual(MarginMomentSequence(itemId: "ep", target: target, otherMargins: []).startMediaTimeMs, 90_000)
-        let early = MarginMomentAnchor(marginId: "ij-001", mediaTimeMs: 12_000)
+    func testStartsEightSecondsBeforeTheMarginAndClampsAtTheStart() {
+        XCTAssertEqual(MarginMomentSequence(itemId: "ep", target: target, otherMargins: []).startMediaTimeMs, 112_000)
+        let early = MarginMomentAnchor(marginId: "ij-001", mediaTimeMs: 5_000)
         XCTAssertEqual(MarginMomentSequence(itemId: "ep", target: early, otherMargins: []).startMediaTimeMs, 0)
     }
 
     func testPlaysTheMarginWhenPlaybackReachesItThenReturnsToListening() {
         var sequence = MarginMomentSequence(itemId: "ep", target: target, otherMargins: [])
-        XCTAssertEqual(sequence.msUntilTarget(currentMediaTimeMs: 90_000), 30_000)
-        XCTAssertNil(sequence.progressed(from: 90_000, to: 119_500))
+        XCTAssertEqual(sequence.msUntilTarget(currentMediaTimeMs: 112_000), 8_000)
+        XCTAssertNil(sequence.progressed(from: 112_000, to: 119_500))
         XCTAssertEqual(sequence.progressed(from: 119_500, to: 120_000), target)
         XCTAssertEqual(sequence.phase, .playingMargin("ij-003"))
         XCTAssertNil(sequence.progressed(from: 120_000, to: 120_500), "nothing else plays while a Margin plays")
         sequence.marginFinished()
         XCTAssertEqual(sequence.phase, .listening)
         XCTAssertNil(sequence.progressed(from: 119_000, to: 121_000), "a played Margin doesn't replay")
+    }
+
+    func testDefaultLeadInReachesTheChosenMarginWithinEightSecondsOfSourcePlayback() {
+        var sequence = MarginMomentSequence(itemId: "ep", target: target, otherMargins: [])
+        let start = sequence.startMediaTimeMs
+        XCTAssertEqual(target.mediaTimeMs - start, 8_000)
+        for elapsed in stride(from: 500, through: 7_500, by: 500) {
+            XCTAssertNil(sequence.progressed(from: start + elapsed - 500, to: start + elapsed))
+        }
+        XCTAssertEqual(sequence.progressed(from: start + 7_500, to: start + 8_000), target)
+        XCTAssertEqual(sequence.phase, .playingMargin(target.marginId))
+    }
+
+    func testComingUpCountdownFollowsSourceProgressAndDisappearsDuringTheMargin() {
+        var sequence = MarginMomentSequence(itemId: "ep", target: target, otherMargins: [])
+        let readings: [(Int?, String?)] = [
+            (nil, "0:08"), (112_000, "0:08"), (112_001, "0:08"),
+            (113_000, "0:07"), (119_001, "0:01"), (120_000, "0:00"), (120_001, nil)
+        ]
+        for (position, expected) in readings {
+            XCTAssertEqual(sequence.targetCountdown(currentMediaTimeMs: position), expected, "position: \(String(describing: position))")
+        }
+        XCTAssertEqual(sequence.jumpToTarget(), target)
+        XCTAssertNil(sequence.targetCountdown(currentMediaTimeMs: 120_000))
+        XCTAssertNil(sequence.targetCountdown(currentMediaTimeMs: nil))
+        sequence.marginFinished()
+        XCTAssertNil(sequence.targetCountdown(currentMediaTimeMs: 120_000))
+    }
+
+    func testComingUpCountdownUsesTheClampedLeadInNearTheSourceStart() {
+        let early = MarginMomentAnchor(marginId: "early", mediaTimeMs: 5_000)
+        let sequence = MarginMomentSequence(itemId: "ep", target: early, otherMargins: [])
+        XCTAssertEqual(sequence.targetCountdown(currentMediaTimeMs: nil), "0:05")
+        XCTAssertEqual(sequence.targetCountdown(currentMediaTimeMs: 2_500), "0:03")
     }
 
     func testSkippingOverTheMarginDoesNotPlayIt() {
@@ -32,7 +66,7 @@ final class MarginMomentTests: XCTestCase {
     }
 
     func testPlayItNowSkipsTheLeadInAndEarlierMargins() {
-        let during = MarginMomentAnchor(marginId: "ij-002", mediaTimeMs: 100_000)
+        let during = MarginMomentAnchor(marginId: "ij-002", mediaTimeMs: 116_000)
         let later = MarginMomentAnchor(marginId: "ij-004", mediaTimeMs: 200_000)
         var sequence = MarginMomentSequence(itemId: "ep", target: target, otherMargins: [during, later])
         XCTAssertEqual(sequence.jumpToTarget(), target)
@@ -43,12 +77,12 @@ final class MarginMomentTests: XCTestCase {
 
     func testOtherMarginsPlayAsTheyComeUpButNotOnesBeforeTheLeadIn() {
         let before = MarginMomentAnchor(marginId: "ij-001", mediaTimeMs: 10_000)
-        let during = MarginMomentAnchor(marginId: "ij-002", mediaTimeMs: 100_000)
+        let during = MarginMomentAnchor(marginId: "ij-002", mediaTimeMs: 116_000)
         let later = MarginMomentAnchor(marginId: "ij-004", mediaTimeMs: 200_000)
         var sequence = MarginMomentSequence(itemId: "ep", target: target, otherMargins: [later, before, during, target])
         XCTAssertEqual(sequence.unplayed.map(\.marginId), ["ij-002", "ij-003", "ij-004"])
 
-        XCTAssertEqual(sequence.progressed(from: 99_800, to: 100_300), during)
+        XCTAssertEqual(sequence.progressed(from: 115_800, to: 116_300), during)
         sequence.marginFinished()
         XCTAssertEqual(sequence.phase, .leadIn, "the chosen Margin is still ahead")
         XCTAssertEqual(sequence.progressed(from: 119_800, to: 120_300), target)
