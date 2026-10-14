@@ -180,8 +180,13 @@ final class SharedMarginReturnAppTests: XCTestCase {
         defer { fixture.cleanUp() }
         let model = fixture.model
         let heard = try fixture.addOwnMargin(id: "own-heard", atMediaTimeMs: 100, voiceSeconds: 1)
-        let later = try fixture.addOwnMargin(id: "own-later", atMediaTimeMs: 3_500, voiceSeconds: 1)
+        let later = try fixture.addOwnMargin(id: "own-later", atMediaTimeMs: 4_500, voiceSeconds: 1)
         _ = try fixture.addOwnMargin(id: "own-earlier", atMediaTimeMs: 0, voiceSeconds: 1)
+        // The fixture's shared Margin sits at 1 s and would pause the source for its own offer when playback crosses
+        // it after the resume. Start past it, so the only Margin ahead is the later one.
+        model.seekMedia(toMediaTimeMs: 1_500)
+        try await fixture.waitUntil("the source is past the shared Margin") { (model.snapshot.currentMediaTimeMs ?? 0) >= 1_400 }
+        XCTAssertEqual(model.snapshot.status, .playing)
 
         model.toggleInterjectionAudioPlayback(heard)
         XCTAssertEqual(model.snapshot.status, .paused, "playing your Margin from its detail pauses the source")
