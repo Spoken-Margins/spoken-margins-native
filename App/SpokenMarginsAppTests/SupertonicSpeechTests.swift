@@ -1604,7 +1604,7 @@ final class SupertonicSpeechTests: XCTestCase {
     /// a semaphore inside TextToSpeech while `axassetsd` loaded the synthesis provider. That is the
     /// simulator starting its speech service, not what these tests check, and it always landed on
     /// whichever stand-in test ran first. So each stand-in test first waits, once per run, for one
-    /// write to finish, with the longest allowance the plan permits (180 s).
+    /// write to finish, with a generous allowance (330 s; the plans cap a test at 360 s).
     ///
     /// #1622: the wait used to fail the test at 100 s, and 2 of 14 lane runs landed just past it
     /// (the others ran 0.9 to 98 s) while every later stand-in case passed: the service did start,
