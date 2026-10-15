@@ -182,6 +182,14 @@ class Reconciliation(unittest.TestCase):
                 self.assertEqual(api.routes['issues/7']['state'], 'open')
                 self.assertEqual(api.routes['issues/7']['labels'], issue(labels=labels)['labels'])
 
+    def test_agent_verify_and_validate_by_use_are_not_owner_checks(self):
+        for label in ('agent-verify', 'validate-by-use'):
+            with self.subTest(label=label):
+                api = API([issue(labels=['found-on-phone', label])], bundles=[merged()])
+                change = self.run_sync(api)['changes'][0]
+                self.assertEqual(change['status'], 'Checking')
+                self.assertIn(label, change['reason'])
+
     def test_705_later_beats_stale_claim_and_prior_merge(self):
         api = API([issue(labels=['in-progress'], milestone='Later')], bundles=[merged(paths=['scripts/tool.py'])])
         self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'Todo')
