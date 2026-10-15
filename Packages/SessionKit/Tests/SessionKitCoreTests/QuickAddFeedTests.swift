@@ -39,7 +39,9 @@ final class QuickAddFeedTests: XCTestCase {
                 canonicalURL: "https://example.com/\(id).xml",
                 host: "example.com",
                 title: title
-            )
+            ),
+            // Before every date these tests use, so no entry is the show's back catalogue (#1589).
+            createdAt: Date(timeIntervalSince1970: 0)
         )
     }
 

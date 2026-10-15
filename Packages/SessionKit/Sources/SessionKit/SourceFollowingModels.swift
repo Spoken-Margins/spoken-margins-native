@@ -96,8 +96,12 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
     public var audioDurationMs: Int?
     /// The feed's GUID as written; nil for entries saved before #177 until refresh.
     public var episodeGUID: String?
+    /// When this app first saw the entry (#1589). The entries a feed already had when it was followed
+    /// carry the follow moment itself, so even one with no publish date reads as back catalogue
+    /// (`FollowBaseline`). Nil for entries saved before; Build 29 and 30 ignore the key.
+    public var firstSeenAt: Date?
 
-    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, fullBody: String? = nil, publisherPlatform: String? = nil, publisherNarrationConfirmed: Bool? = nil, publisherNarrationGenerated: Bool? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil) {
+    public init(id: String, subscriptionId: String, canonicalURL: String, audioURL: String? = nil, title: String, author: String? = nil, summary: String? = nil, publishedAt: Date? = nil, state: FeedEntryState = .unseen, bodyWordCount: Int? = nil, fullBody: String? = nil, publisherPlatform: String? = nil, publisherNarrationConfirmed: Bool? = nil, publisherNarrationGenerated: Bool? = nil, audioDurationMs: Int? = nil, episodeGUID: String? = nil, firstSeenAt: Date? = nil) {
         self.id = id
         self.subscriptionId = subscriptionId
         self.canonicalURL = canonicalURL
@@ -114,6 +118,7 @@ public struct FeedEntry: Codable, Equatable, Sendable, Identifiable {
         self.bodyWordCount = bodyWordCount
         self.audioDurationMs = audioDurationMs
         self.episodeGUID = episodeGUID
+        self.firstSeenAt = firstSeenAt
     }
 
     /// Fills the episode identity an item added from this entry is missing: the GUID, the followed

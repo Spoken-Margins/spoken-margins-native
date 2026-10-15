@@ -132,6 +132,42 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().isEmpty, "Reopening/retrying compatible complete audio must not enqueue synthesis")
     }
 
+    func testCompletingNarrationOfTextTheItemNoLongerHasLeavesTheManifestUnready() async throws {
+        // #344 audit on 4d7d41f: complete() hashes the assembled file before saving, and a
+        // re-import can move the item to new text meanwhile; the manifest came back as ready.
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
+        let artifact = fixture.root.appending(path: "complete.wav")
+        try Data([1, 2, 3, 4, 5, 6]).write(to: artifact)
+        let prepared = PreparedTextAudio(
+            normalizedText: "First chunk. Second chunk.",
+            media: ItemMedia(sourceType: .generatedTTSPrerendered, url: artifact.absoluteString, durationMs: 2_000),
+            timeline: TranscriptTimeline(segments: [], chapters: [], durationMs: 2_000)
+        )
+        try fixture.store.saveItem(Item(id: "item", title: "PDF", mediaType: "pdf", text: "The upgraded text.", externalReference: nil, status: "ready"))
+        try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
+        XCTAssertNil(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.artifact)
+
+        // With the text it was made from, the same call makes it ready.
+        try fixture.store.saveItem(Item(id: "item", title: "PDF", mediaType: "pdf", text: "First chunk. Second chunk.", externalReference: nil, status: "ready"))
+        try await coordinator.complete(itemId: "item", signature: signature("one"), prepared: prepared)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.state, .readyOffline)
+    }
+
+    func testAChunkRenderedFromTextTheItemNoLongerHasIsNotSaved() async throws {
+        // #344 audit on 4d7d41f: commit() copies the chunk before saving, and a re-import
+        // can move the item to new text meanwhile; the old text's chunk was saved anyway.
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let manifest = try await coordinator.begin(itemId: "item", sourceText: "First chunk. Second chunk.", signature: signature("one"), plan: plans())
+        try fixture.store.saveItem(Item(id: "item", title: "PDF", mediaType: "pdf", text: "The upgraded text.", externalReference: nil, status: "ready"))
+        try await commit(plans()[0], data: Data([1, 2, 3]), coordinator: coordinator, fixture: fixture)
+        XCTAssertEqual(try fixture.store.loadPreparedAudioManifest(id: manifest.id)?.chunks.count ?? 0, 0)
+    }
+
     func testLivePlaybackCommitsWithoutCreatingSpeculativeJob() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -308,6 +344,9 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         let same = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[1], sourceText: original)
         XCTAssertNotNil(same, "the unchanged text still matches")
 
+        var editedItem = try fixture.store.loadItem(id: "item")
+        editedItem.text = edited
+        try fixture.store.saveItem(editedItem)
         let restarted = try await coordinator.begin(itemId: "item", sourceText: edited, signature: signature("one"), plan: plan)
         XCTAssertTrue(restarted.chunks.isEmpty, "preparing the edited text starts over")
 
@@ -328,6 +367,9 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
             .joined(separator: " ")
         let plan = PreparedChunkPlan.articlePlan(article)
         XCTAssertGreaterThan(plan.count, 1)
+        var articleItem = try fixture.store.loadItem(id: "item")
+        articleItem.text = article
+        try fixture.store.saveItem(articleItem)
         _ = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature("one"), plan: plan)
         for entry in plan {
             let input = fixture.root.appending(path: "input-\(entry.index).wav")
@@ -361,6 +403,10 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
             .joined(separator: " ")
         let plan = PreparedChunkPlan.articlePlan(article)
         XCTAssertGreaterThan(plan.count, 1)
+        // Preparation checks the stored item's text in its transaction, so the item holds the article.
+        var articleItem = try fixture.store.loadItem(id: "item")
+        articleItem.text = article
+        try fixture.store.saveItem(articleItem)
         let manifestId = try await coordinator.begin(itemId: "item", sourceText: article, signature: signature("one"), plan: plan).id
         let template = try makeHeatTestWAV()
         defer { try? FileManager.default.removeItem(at: template) }
@@ -802,7 +848,9 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
     private func makeFixture() throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "prepared-audio-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path))
+        let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
+        try store.saveItem(Item(id: "item", title: "Paper", mediaType: "pdf", text: "First chunk. Second chunk.", externalReference: nil, status: "ready"))
+        return Fixture(root: root, prepared: root.appending(path: "Prepared", directoryHint: .isDirectory), store: store)
     }
 }
 

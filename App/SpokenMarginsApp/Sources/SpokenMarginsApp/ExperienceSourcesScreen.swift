@@ -31,6 +31,8 @@ struct ExperienceSourcesScreen: View {
     /// Follows the top entry without redrawing the screen on every row that scrolls by (#479).
     @State private var scrollTracker = FollowingScrollTracker()
     @State private var restoredScroll = false
+    /// "Clear" on the New list asks first: it dismisses everything listed (#1589).
+    @State private var isConfirmingClear = false
 
     var body: some View {
         NavigationStack {
@@ -57,6 +59,18 @@ struct ExperienceSourcesScreen: View {
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
                 .animation(.smooth(duration: 0.24), value: orderedCandidates.map(\.id))
+                .confirmationDialog(
+                    "Clear the \(clearableEntryIDs.count) entries listed in New?",
+                    isPresented: $isConfirmingClear,
+                    titleVisibility: .visible
+                ) {
+                    Button("Clear \(clearableEntryIDs.count) entries", role: .destructive) {
+                        model.clearFollowedSourceEntries(ids: clearableEntryIDs)
+                    }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("Nothing is added to your Library. You can undo right after.")
+                }
                 .accessibilityIdentifier("sources.screen")
                 .navigationTitle("Following")
                 .navigationBarTitleDisplayMode(.inline)
@@ -234,12 +248,28 @@ struct ExperienceSourcesScreen: View {
                     .font(.headline)
                     .foregroundStyle(AppColors.text)
                 Spacer()
+                if clearableEntryIDs.count > 1 {
+                    Button("Clear") { isConfirmingClear = true }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(AppColors.evergreen)
+                        .frame(minWidth: 44, minHeight: 44)
+                        .accessibilityIdentifier("sources.clearNew")
+                        .accessibilityHint("Dismisses every followed entry listed, with Undo.")
+                }
                 Text("\(orderedCandidates.count)")
                     .font(.subheadline.monospacedDigit())
                     .foregroundStyle(AppColors.secondaryText)
             }
             .textCase(nil)
             .experienceListBlock(horizontalSizeClass: horizontalSizeClass, verticalPadding: 8)
+        }
+    }
+
+    /// The followed entries listed now, which Clear dismisses. Quick Folder files keep their own dismissal.
+    private var clearableEntryIDs: [String] {
+        orderedCandidates.compactMap { row -> String? in
+            guard case .followedSource(let entry) = row.candidate else { return nil }
+            return entry.id
         }
     }
 

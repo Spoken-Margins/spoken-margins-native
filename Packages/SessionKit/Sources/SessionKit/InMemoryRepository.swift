@@ -454,6 +454,8 @@ extension InMemorySessionRepository: StructuredDocumentRepository {
         mapsByItemId[upgrade.item.id] = upgrade.listeningMap
         upgrade.interjections.forEach { interjections[$0.id] = $0 }
         upgrade.sessions.forEach { sessions[$0.id] = $0 }
+        for manifest in try loadPreparedAudioManifests(itemId: upgrade.item.id) { try deletePreparedAudioManifest(id: manifest.id) }
+        for job in try loadAudioPreparationJobs() where job.itemId == upgrade.item.id { try deleteAudioPreparationJob(id: job.id) }
         try saveStructuredDocument(upgrade.document, itemId: upgrade.item.id)
     }
 }

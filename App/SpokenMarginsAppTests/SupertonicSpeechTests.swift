@@ -394,6 +394,8 @@ final class SupertonicSpeechTests: XCTestCase {
         let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
         let coordinator = PreparedAudioCoordinator(repository: store, rootDirectory: root.appending(path: "PreparedAudio", directoryHint: .isDirectory))
         let text = "Prepared audio must survive stopping playback."
+        // Preparation checks the stored item's text in its transaction, so the article must exist.
+        try store.saveItem(Item(id: "item-258", title: "Article", mediaType: "article", text: text, externalReference: nil, status: "ready"))
         let plan = PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: text.count, text: text)
         let signature = TTSRenderSignature(
             engine: "supertonic", modelRevision: "3", assetManifestHash: "assets", voiceStyleHash: "voice",

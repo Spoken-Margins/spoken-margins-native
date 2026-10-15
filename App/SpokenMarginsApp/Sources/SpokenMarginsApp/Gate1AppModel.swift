@@ -1488,16 +1488,6 @@ final class Gate1AppModel: ObservableObject {
         return engine
     }
 
-    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
-        libraryItems = try loadLibraryRows(store: try requireStore())
-        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
-        diagnostics["lastBackgroundBrowserTextImport"] = item.id
-        if let structure = item.documentStructure {
-            recordPDFExtractionDiagnostics(structure)
-        }
-        markOnboardingSteps(onboardingSteps(for: handoff))
-        return item.id
-    }
 
     @discardableResult
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
@@ -4476,7 +4466,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { feedSubscriptions = storedFeedSubscriptions(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
     }
 
     func requireLocalSourceImporter() throws -> LocalSourceImporter {

@@ -178,8 +178,10 @@ actor FollowedSourceCoordinator {
         let host = url.host?.lowercased() ?? candidate.source.host
         let canonical = URL(string: parsed.feedURL ?? url.absoluteString) ?? url
         let sourceId = "source-\(Self.digest(canonical.absoluteString.lowercased()))"
-        // Following a feed again keeps its new-item choice (#466).
-        let previousPolicy = try repository.loadFeedSubscriptions().first { $0.id == "subscription-\(sourceId)" }?.newItemPolicy
+        // Following a feed again keeps its new-item choice (#466) and its follow moment (#1589):
+        // a feed already followed has no new back catalogue, and its waiting entries stay New.
+        let previous = try repository.loadFeedSubscriptions().first { $0.id == "subscription-\(sourceId)" }
+        let previousPolicy = previous?.newItemPolicy
         let subscription = FeedSubscription(
             id: "subscription-\(sourceId)",
             source: SourceIdentity(
@@ -189,10 +191,13 @@ actor FollowedSourceCoordinator {
                 host: canonical.host?.lowercased() ?? host,
                 title: parsed.title
             ),
+            createdAt: previous?.createdAt ?? Date(),
             newItemPolicy: previousPolicy
         )
         try repository.saveFeedSubscription(subscription)
-        try save(entries: parsed.items, subscription: subscription)
+        // What a feed has the first time it is followed is its back catalogue: only entries it
+        // publishes after this moment are New (#1589). The entries are kept, stamped with it.
+        try save(entries: parsed.items, subscription: subscription, followMoment: previous == nil ? subscription.createdAt : nil)
         artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
         return subscription
     }
@@ -260,6 +265,31 @@ actor FollowedSourceCoordinator {
         guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
               entry.state == .dismissed else { return }
         try setEntryState(id: id, state: previous)
+    }
+
+    /// Dismisses every entry in `ids` that is not dismissed already, for "Clear" on the New list
+    /// (#1589). Returns the state each had, for one Undo. Imported entries stay imported.
+    func dismissEntries(ids: [String]) throws -> [String: FeedEntryState] {
+        let wanted = Set(ids)
+        var previous: [String: FeedEntryState] = [:]
+        for var entry in try repository.loadFeedEntries(subscriptionId: nil)
+        where wanted.contains(entry.id) && entry.state != .dismissed && entry.state != .imported {
+            previous[entry.id] = entry.state
+            entry.state = .dismissed
+            try repository.saveFeedEntry(entry)
+        }
+        return previous
+    }
+
+    /// Puts entries cleared by `dismissEntries` back in the state each had. One that has moved on
+    /// since, for instance imported from another screen, is left alone.
+    func undoDismissEntries(restoring previous: [String: FeedEntryState]) throws {
+        for var entry in try repository.loadFeedEntries(subscriptionId: nil)
+        where entry.state == .dismissed {
+            guard let state = previous[entry.id] else { continue }
+            entry.state = state
+            try repository.saveFeedEntry(entry)
+        }
     }
 
     /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
@@ -487,7 +517,7 @@ actor FollowedSourceCoordinator {
 
     /// Returns the retained entries as saved, and the entries the feed had before this save.
     @discardableResult
-    private func save(entries: [ParsedFeedItem], subscription: FeedSubscription) throws -> (entries: [FeedEntry], previous: [FeedEntry]) {
+    private func save(entries: [ParsedFeedItem], subscription: FeedSubscription, followMoment: Date? = nil) throws -> (entries: [FeedEntry], previous: [FeedEntry]) {
         let existingEntries = try repository.loadFeedEntries(subscriptionId: subscription.id)
         let existing = Dictionary(uniqueKeysWithValues: existingEntries.map { ($0.id, $0) })
         let retainedItems = entries.enumerated()
@@ -525,7 +555,8 @@ actor FollowedSourceCoordinator {
                 fullBody: item.content,
                 publisherPlatform: item.publisherPlatform,
                 audioDurationMs: item.durationMs,
-                episodeGUID: item.guid
+                episodeGUID: item.guid,
+                firstSeenAt: FollowBaseline.firstSeenAt(existing: existing[id], followMoment: followMoment, now: seenAt)
             )
             try repository.saveFeedEntry(entry)
             saved.append(entry)

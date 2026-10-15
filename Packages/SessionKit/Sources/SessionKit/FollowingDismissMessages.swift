@@ -17,4 +17,13 @@ public enum FollowingDismissMessages {
         let name = title.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return name.isEmpty ? "Undo Dismiss" : "Undo Dismiss, \(name)"
     }
+
+    /// "Clear" on the New list (#1589): one banner, one Undo for all of them.
+    public static func cleared(count: Int) -> String {
+        "Cleared \(count) \(count == 1 ? "entry" : "entries") from New."
+    }
+
+    public static func clearUndoAccessibilityLabel(count: Int) -> String {
+        "Undo Clear, \(count) \(count == 1 ? "entry" : "entries")"
+    }
 }
