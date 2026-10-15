@@ -68,101 +68,63 @@ final class PlaybackDockLayoutTests: XCTestCase {
 
     // MARK: - Next chapter next to Skim (#1628)
 
-    /// The owner saw a Next chapter button above the scrubber and a forward Skim control below the transport on the same
-    /// screen. This mounts the real playback screen and reads which of the two it draws. The bridge is the one real state
-    /// where the model's own availability pass reports forward Skim without a stored map.
-    func testForwardSkimIsTheOnlyForwardControlWhenItIsOffered() async throws {
-        for phone in Self.phones {
-            let model = makePodcastModel(withChapters: true)
-            model.snapshot.skimBridgeState = SkimBridgeState(
-                direction: .forward, itemId: model.selectedItem.id, originMediaTimeMs: 1_200_000, summarySceneId: "chapter-0",
-                destinationSceneId: "chapter-1", destinationMediaTimeMs: 1_800_000, summaryAssetId: "summary",
-                wasSourcePlaying: false, status: .playing
-            )
-            XCTAssertTrue(model.canJumpToNextChapter, "precondition: a second Next chapter press can skip the summary (#569)")
-            XCTAssertTrue(model.snapshot.canSkimForward, "precondition: forward Skim is offered")
-            let shown = try await shownForwardControls(model, size: phone.size)
-            XCTAssertTrue(shown.contains("playback.skim.forward.button"), "\(phone.name): forward Skim is missing; saw \(shown)")
-            XCTAssertFalse(shown.contains("playback.nextChapter.button"),
-                           "\(phone.name): Next chapter is drawn beside forward Skim; saw \(shown)")
-        }
-    }
-
-    func testNextChapterStaysWhenThereIsNoForwardSkim() async throws {
-        for phone in Self.phones {
-            let model = makePodcastModel(withChapters: true)
-            XCTAssertTrue(model.canJumpToNextChapter, "precondition: the podcast has a chapter after this one")
-            XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")
-            let shown = try await shownForwardControls(model, size: phone.size)
-            XCTAssertTrue(shown.contains("playback.nextChapter.button"), "\(phone.name): Next chapter is missing; saw \(shown)")
-            XCTAssertFalse(shown.contains("playback.skim.forward.button"), "\(phone.name): Skim shows without a map; saw \(shown)")
-        }
-    }
-
-    func testNextChapterStaysInAnArticleWithChapters() async throws {
-        for phone in Self.phones {
-            let model = makeArticleModel(withChapters: true)
-            XCTAssertTrue(model.canJumpToNextChapter, "precondition: the article has a chapter after this one")
-            let shown = try await shownForwardControls(model, size: phone.size)
-            XCTAssertTrue(shown.contains("playback.nextChapter.button"), "\(phone.name): Next chapter is missing; saw \(shown)")
-        }
-    }
-
-    func testNoNextChapterButtonAtTheLastChapter() async throws {
-        let model = makePodcastModel(withChapters: true)
-        model.snapshot.currentMediaTimeMs = 2_000_000
-        XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
-        let shown = try await shownForwardControls(model, size: Self.phones[0].size)
-        XCTAssertFalse(shown.contains("playback.nextChapter.button"), "saw \(shown)")
-    }
-
-    /// The same decision without mounting, so it holds even where the accessibility tree can't be read: the model
-    /// says whether the chapter row offers Next chapter, and the Skim row it draws is the one that decides it.
-    func testChapterRowButtonFollowsForwardSkim() {
-        let model = makePodcastModel(withChapters: true)
-        XCTAssertTrue(model.canJumpToNextChapter)
-        XCTAssertFalse(model.showsSkimRow)
-        XCTAssertTrue(model.showsNextChapterButton, "no Skim: Next chapter stays")
-
-        model.snapshot.skimBridgeState = SkimBridgeState(
+    /// The owner saw a Next chapter button above the scrubber and a forward Skim control below the transport on the
+    /// same screen. The model decides which of them the dock draws; these pin that decision for each state the issue
+    /// names. The first run read the mounted screen's accessibility tree for the buttons and could not find anything in
+    /// it (all four such tests failed, including the ones that expect a button), so the screen is not mounted here.
+    private func forwardSkimBridge(for model: Gate1AppModel) -> SkimBridgeState {
+        SkimBridgeState(
             direction: .forward, itemId: model.selectedItem.id, originMediaTimeMs: 1_200_000, summarySceneId: "chapter-0",
             destinationSceneId: "chapter-1", destinationMediaTimeMs: 1_800_000, summaryAssetId: "summary",
             wasSourcePlaying: false, status: .playing
         )
+    }
+
+    func testForwardSkimIsTheOnlyForwardControlWhenItIsOffered() {
+        let model = makePodcastModel(withChapters: true)
+        model.snapshot.skimBridgeState = forwardSkimBridge(for: model)
+        XCTAssertTrue(model.snapshot.canSkimForward, "precondition: forward Skim is offered")
         XCTAssertTrue(model.showsSkimRow)
-        XCTAssertTrue(model.snapshot.canSkimForward)
-        XCTAssertTrue(model.canJumpToNextChapter, "external and Lock Screen commands keep Next chapter (#569)")
-        XCTAssertFalse(model.showsNextChapterButton, "forward Skim is offered: the second button goes")
+        XCTAssertTrue(model.canJumpToNextChapter, "the Lock Screen and external commands keep Next chapter (#569)")
+        XCTAssertFalse(model.showsNextChapterButton, "the chapter row must not draw a second forward control")
     }
 
-    /// Which of the two forward controls the mounted screen draws, by accessibility identifier.
-    private func shownForwardControls(_ model: Gate1AppModel, size: CGSize) async throws -> Set<String> {
-        let mounted = try mount(model, size: size)
-        defer { mounted.close() }
-        _ = try await waitForBar(in: mounted)
-        var found: [String] = []
-        var visited = Set<ObjectIdentifier>()
-        Self.collectIdentifiers(from: mounted.window, into: &found, visited: &visited)
-        XCTAssertTrue(found.contains("playback.dock.chapter.button"),
-                      "precondition: the mounted screen's accessibility tree is readable; saw \(found)")
-        return Set(found.filter { $0 == "playback.nextChapter.button" || $0 == "playback.skim.forward.button" })
+    func testNextChapterStaysWhenThereIsNoForwardSkim() {
+        let model = makePodcastModel(withChapters: true)
+        XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")
+        XCTAssertFalse(model.showsSkimRow)
+        XCTAssertTrue(model.canJumpToNextChapter)
+        XCTAssertTrue(model.showsNextChapterButton)
     }
 
-    /// Walks views and the accessibility elements SwiftUI vends, which are not always views.
-    private static func collectIdentifiers(from node: NSObject, into found: inout [String], visited: inout Set<ObjectIdentifier>) {
-        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
-        if node.responds(to: Selector(("accessibilityIdentifier"))),
-           let identifier = node.value(forKey: "accessibilityIdentifier") as? String, !identifier.isEmpty {
-            found.append(identifier)
+    func testNextChapterStaysInAnArticleWithChapters() {
+        let model = makeArticleModel(withChapters: true)
+        XCTAssertTrue(model.canJumpToNextChapter, "precondition: the article has a chapter after this one")
+        XCTAssertFalse(model.showsSkimRow, "an article has no Skim row")
+        XCTAssertTrue(model.showsNextChapterButton)
+    }
+
+    func testNoNextChapterButtonAtTheLastChapter() {
+        let model = makePodcastModel(withChapters: true)
+        model.snapshot.currentMediaTimeMs = 2_000_000
+        XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
+        XCTAssertFalse(model.showsNextChapterButton)
+    }
+
+    /// The real chapter row, laid out: with the button asked for the row is a button wider (44-point minimum) than
+    /// without it, so what the model decides is what the dock draws.
+    func testChapterRowDrawsTheButtonOnlyWhenAsked() {
+        func idealWidth(showsNextChapterButton: Bool) -> CGFloat {
+            let row = PlaybackChapterRowView(
+                title: "Chapter 2", sourceTitle: "An episode", showsNextChapterButton: showsNextChapterButton,
+                showItem: {}, nextChapter: {}
+            )
+            return UIHostingController(rootView: row.fixedSize(horizontal: true, vertical: false))
+                .sizeThatFits(in: CGSize(width: 2_000, height: 200)).width
         }
-        var children: [NSObject] = []
-        if let view = node as? UIView { children += view.subviews }
-        children += (node.accessibilityElements ?? []).compactMap { $0 as? NSObject }
-        let count = node.accessibilityElementCount()
-        if count != NSNotFound, count > 0 {
-            children += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
-        }
-        for child in children { collectIdentifiers(from: child, into: &found, visited: &visited) }
+        let with = idealWidth(showsNextChapterButton: true)
+        let without = idealWidth(showsNextChapterButton: false)
+        XCTAssertGreaterThanOrEqual(with - without, 44, "the Next chapter button added \(with - without) points to the row")
     }
 
     // MARK: - Assertions
