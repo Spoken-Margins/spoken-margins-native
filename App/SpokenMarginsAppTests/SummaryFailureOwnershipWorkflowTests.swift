@@ -17,6 +17,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let database: URL
         let a: String
         let b: String
+        let noteA: String
+        let noteB: String?
     }
 
     private func fixture(bHasSummary: Bool) async throws -> Fixture {
@@ -35,7 +37,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
             await provider.cancelAll()
             model.pause()
             preferences.restore()
-            try? FileManager.default.removeItem(at: root)
+            // Detached app readers can still hold SQLite connections here. The lane removes
+            // this disposable app container; never unlink a database while it is open.
         }
         model.resetAndSeed()
         model.declineCurrentTerms() // Select the system voice; this test never renders bundled speech.
@@ -45,19 +48,22 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let a = try XCTUnwrap(model.snapshot.sessionId)
         model.beginWrittenMargin()
         model.saveWrittenMargin(text: originalNote)
+        let noteA = try XCTUnwrap(store.loadInterjections(sessionId: a).last?.id)
         XCTAssertTrue(model.canSummarizeInterjections)
         model.summarize()
         try await waitForRequests(1, provider)
         model.startItem(id: "summary-b")
         let b = try XCTUnwrap(model.snapshot.sessionId)
         XCTAssertNotEqual(a, b)
+        var noteB: String?
         if bHasSummary {
             model.beginWrittenMargin()
             model.saveWrittenMargin(text: "B_ONLY: keep this request pending while A fails.")
+            noteB = try XCTUnwrap(store.loadInterjections(sessionId: b).last?.id)
             model.summarize()
             try await waitForRequests(2, provider)
         }
-        return Fixture(model: model, provider: provider, database: database, a: a, b: b)
+        return Fixture(model: model, provider: provider, database: database, a: a, b: b, noteA: noteA, noteB: noteB)
     }
 
     private func waitForRequests(_ count: Int, _ provider: HeldSummaryProvider) async throws {
@@ -72,7 +78,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
     private func failA(_ f: Fixture) async throws -> UserFeedbackEvent.Retry {
         let initialRequests = await f.provider.requests
         let aRequest = try XCTUnwrap(initialRequests.first)
-        XCTAssertTrue(aRequest.context.contains(originalNote), "The held request must actually belong to A")
+        XCTAssertEqual(try summaryNoteIDs(in: aRequest.context), [f.noteA], "The held request must actually belong to A")
         try await f.provider.fail(aRequest.id)
         for _ in 0..<500 {
             if f.model.diagnostics["lastSummaryMode"] == "apple_foundation_failed" { break }
@@ -102,8 +108,9 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         try await waitForRequests(3, f.provider)
         let requests = await f.provider.requests
         let request = try XCTUnwrap(requests.last)
-        XCTAssertTrue(request.context.contains(originalNote))
-        XCTAssertFalse(request.context.contains("B_ONLY"))
+        let retryNoteIDs = try summaryNoteIDs(in: request.context)
+        XCTAssertEqual(retryNoteIDs, [f.noteA])
+        XCTAssertFalse(retryNoteIDs.contains(try XCTUnwrap(f.noteB)))
         XCTAssertEqual(try reopened.loadAIJobs(sessionId: f.a).last?.status, "pending")
         XCTAssertEqual(try reopened.loadAIJobs(sessionId: f.b).last?.status, "pending")
     }
@@ -129,7 +136,7 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let originalJob = try XCTUnwrap(store.loadAIJobs(sessionId: f.a).last)
         let originalTurn = try XCTUnwrap(store.loadTurns(sessionId: f.a).last)
         let originalTitle = try store.loadItem(id: "item-pill").title
-        let originalNoteID = try XCTUnwrap(store.loadInterjections(sessionId: f.a).first?.id)
+        let originalNoteID = f.noteA
         f.model.startItem(id: "item-pill")
         let turn = ConversationTurn(id: "another-target", sessionId: f.a, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "A different discussion target.", rawText: nil, sourceInterjectionIds: [])
         try store.saveTurn(turn)
@@ -172,9 +179,10 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         }
         let requests = await f.provider.requests
         let added = Array(requests.dropFirst(beforeRequests))
-        XCTAssertFalse(added.contains { $0.context.contains(otherNote) }, "A stale Retry must never silently summarize the different target")
+        let submittedNoteIDs = try added.flatMap { try summaryNoteIDs(in: $0.context) }
+        XCTAssertFalse(submittedNoteIDs.contains(otherNoteID), "A stale Retry must never silently summarize the different target")
         if !added.isEmpty {
-            XCTAssertTrue(added.contains { $0.context.contains(originalNote) }, "A resubmitted request must retain A's original context")
+            XCTAssertTrue(submittedNoteIDs.contains(originalNoteID), "A resubmitted request must retain A's original context")
             let pending = try XCTUnwrap(store.loadAIJobs(sessionId: f.a).last { $0.status == "pending" })
             XCTAssertEqual(pending.itemId, "item-pill")
             let pendingTurn = try XCTUnwrap(store.loadTurns(sessionId: f.a).first { $0.id == pending.turnId })
@@ -189,6 +197,13 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         }
         XCTAssertTrue(try store.loadAIJobs(sessionId: f.b).isEmpty)
         XCTAssertTrue(try store.loadTurns(sessionId: f.b).isEmpty)
+    }
+
+    /// Request identity is in JSON IDs. The production note cleaner intentionally removes
+    /// final punctuation, so searching for the whole original sentence is a false premise.
+    private func summaryNoteIDs(in context: String) throws -> [String] {
+        try JSONDecoder().decode(LocalInterjectionSummaryPayload.self, from: Data(context.utf8))
+            .interjections.map(\.id)
     }
 
     private func isExplicitOriginalScopeRefusal(_ event: UserFeedbackEvent, itemTitle: String) -> Bool {
