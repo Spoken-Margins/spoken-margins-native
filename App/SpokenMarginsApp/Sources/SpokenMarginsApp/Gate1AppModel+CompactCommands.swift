@@ -109,19 +109,16 @@ extension Gate1AppModel {
 
     /// The Live Activity card was tapped while it showed playback. What the card shows is the app's own session, so
     /// a session in the snapshot opens straight to its playback screen. With none, the card is stale or the snapshot
-    /// lost its session: say so instead of silently showing the Library (#1337). The record names no item.
+    /// lost its session: say so instead of silently showing the Library (#1337). Both outcomes are handled, so the
+    /// URL router doesn't add "Unsupported compact control URL." over the message. The record names no item.
     private func openPlaybackFromLiveActivity() -> Bool {
-        let hasSession = hasActiveSession
+        let screenBefore = String(describing: screen)
+        if hasActiveSession { openPlayback() } else { reportFailure("Nothing is playing right now.") }
         recordDeveloperDiagnostic("liveActivity.tap", [
-            "outcome": hasSession ? "opened_playback" : "no_session",
+            "outcome": screen == .playback && hasActiveSession ? "opened_playback" : (hasActiveSession ? "not_opened" : "no_session"),
             "narrationClientPlaying": String(snapshot.status.isPlaybackActive),
-            "screenBefore": String(describing: screen),
+            "screenBefore": screenBefore,
         ])
-        guard hasSession else {
-            reportFailure("Nothing is playing right now.")
-            return false
-        }
-        openPlayback()
         return true
     }
 }

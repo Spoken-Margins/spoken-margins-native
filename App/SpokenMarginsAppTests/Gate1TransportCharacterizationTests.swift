@@ -233,13 +233,15 @@ final class Gate1TransportCharacterizationTests: XCTestCase {
         XCTAssertNil(model.lastError)
     }
 
-    func testTheOpenPlaybackLinkWithNoSessionReportsInsteadOfStayingSilent() {
+    func testTheOpenPlaybackLinkWithNoSessionReportsItAndNothingElse() {
         let model = makeModel()
         XCTAssertFalse(model.hasActiveSession)
+        let screen = model.screen
 
-        XCTAssertFalse(model.handleGate2CompactApplicationCommand(Gate2CompactApplicationCommand.openPlayback))
+        model.handleGate2CompactURL(Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.openPlayback))
 
-        XCTAssertEqual(model.lastError, "Nothing is playing right now.")
+        XCTAssertEqual(model.lastError, "Nothing is playing right now.", "the URL router must not overwrite it")
+        XCTAssertEqual(model.screen, screen)
     }
 }
 
