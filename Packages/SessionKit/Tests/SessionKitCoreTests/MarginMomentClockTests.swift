@@ -41,10 +41,12 @@ final class MarginMomentClockTests: XCTestCase {
         }
     }
 
-    func testOnlyATextClockTicksBySentences() {
+    func testATextClockHasARoomierLimitThanAMediaClockButAShortOneAllTheSame() {
         XCTAssertEqual(MarginMomentClock.media.tickAdvanceLimitMs, MarginMomentSequence.maxTickAdvanceMs)
-        XCTAssertGreaterThanOrEqual(clock.tickAdvanceLimitMs, 20_000, "a long sentence, about 300 characters, is one tick")
-        XCTAssertLessThan(clock.tickAdvanceLimitMs, ListeningMoment.rule(for: .playThisMoment).leadInMs)
+        // Word-by-word speech reports a few characters a tick, so the text limit only has to cover a late tick; a
+        // longer one would take a sentence skip over a Margin for playback (#1646).
+        XCTAssertGreaterThan(clock.tickAdvanceLimitMs, MarginMomentSequence.maxTickAdvanceMs)
+        XCTAssertLessThanOrEqual(clock.tickAdvanceLimitMs, 6_000)
     }
 
     // MARK: The lead-in rule on the narration clock
@@ -74,25 +76,36 @@ final class MarginMomentClockTests: XCTestCase {
         XCTAssertEqual(sequence.targetCountdown(currentMediaTimeMs: nil), "0:05")
     }
 
-    /// Sentence-sized progress readings, as on-device speech gives them, play the Margin when reading reaches it. The
-    /// media clock's half-second limit read every one of them as a skip, so the Margin never played.
-    func testSentenceSizedReadingsReachTheMarginOnTheNarrationClockButNotTheMediaLimit() {
-        let sentenceStarts = Array(stride(from: 794, through: 1_334, by: 90)) // 794, 884, ..., 1_334
+    /// Progress readings from on-device speech, a word or a few words a tick, reach the Margin on the narration
+    /// clock. The media clock's 4 s limit is 56 characters at this rate, so the text clock needs a limit of its own.
+    func testWordSizedReadingsReachTheMarginOnTheNarrationClock() {
         let target = MarginMomentAnchor(marginId: "s::ij-1", mediaTimeMs: clock.position(forTextOffset: 1_214))
-
-        func play(limit: Int) -> MarginMomentAnchor? {
+        for step in [7, 14, 30, 60] { // half a second at 1x, a second, 2x to 3x speech, and a late tick
             var sequence = MarginMomentSequence(
-                itemId: "article", target: target, otherMargins: [], tickAdvanceLimitMs: limit)
-            for (before, after) in zip(sentenceStarts, sentenceStarts.dropFirst()) {
-                if let played = sequence.progressed(
-                    from: clock.position(forTextOffset: before), to: clock.position(forTextOffset: after)
-                ) { return played }
+                itemId: "article", target: target, otherMargins: [], tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+            var played: MarginMomentAnchor?
+            for before in stride(from: 1_100, to: 1_300, by: step) where played == nil {
+                played = sequence.progressed(
+                    from: clock.position(forTextOffset: before), to: clock.position(forTextOffset: before + step))
             }
-            return nil
+            XCTAssertEqual(played, target, "readings \(step) characters apart")
         }
+    }
 
-        XCTAssertEqual(play(limit: clock.tickAdvanceLimitMs), target)
-        XCTAssertNil(play(limit: MarginMomentSequence.maxTickAdvanceMs), "why a text clock needs its own limit")
+    /// Skipping forward by a sentence or two (over a hundred characters) past the next Margin must not play it
+    /// (#1646): "skipping over a Margin shouldn't play it", as on a podcast.
+    func testSkippingForwardBySentencesOverAMarginDoesNotPlayIt() {
+        let played = MarginMomentAnchor(marginId: "s::ij-1", mediaTimeMs: clock.position(forTextOffset: 1_214))
+        let next = MarginMomentAnchor(marginId: "s::ij-2", mediaTimeMs: clock.position(forTextOffset: 1_300))
+        for (from, to) in [(1_250, 1_380), (1_240, 1_400), (1_290, 1_450)] { // 130 to 160 characters
+            var sequence = MarginMomentSequence(
+                itemId: "article", resumingAtMediaTimeMs: clock.position(forTextOffset: from), playedMargin: played,
+                otherMargins: [next], tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+            XCTAssertNil(
+                sequence.progressed(from: clock.position(forTextOffset: from), to: clock.position(forTextOffset: to)),
+                "a skip from \(from) to \(to)")
+            XCTAssertEqual(sequence.unplayed, [next], "the skipped-over Margin still waits, from \(from)")
+        }
     }
 
     /// A reading at the Margin's own place right after the lead-in starts (a stale reading from the speech client, or a
@@ -142,14 +155,14 @@ final class MarginMomentClockTests: XCTestCase {
 
     func testOnTheNarrationClockEveryMarginIsPlacedByItsTextOffset() throws {
         let played = margin("ij-2", startChar: 1_214)
-        let earlier = margin("ij-1", startChar: 700)
+        let earlier = margin("ij-1", startChar: 910)
         let later = margin("ij-3", session: "s2", startChar: 2_800)
         let written = margin("ij-4", startChar: 1_500, kind: .written)
         let anchors = try XCTUnwrap(MarginMomentPlanner.anchors(
             played: played, among: [earlier, played, later, written], clock: clock, targetMediaTimeMs: nil))
         XCTAssertEqual(anchors.target, MarginMomentAnchor(marginId: "s::ij-2", mediaTimeMs: 86_714))
         XCTAssertEqual(anchors.others.map(\.marginId), ["s::ij-1", "s2::ij-3"], "the chosen Margin is not its own follower")
-        XCTAssertEqual(anchors.others.map(\.mediaTimeMs), [50_000, 200_000])
+        XCTAssertEqual(anchors.others.map(\.mediaTimeMs), [65_000, 200_000])
     }
 
     func testAMarginsMomentIdentityIsItsSessionAndId() {
@@ -192,6 +205,47 @@ final class MarginMomentClockTests: XCTestCase {
         XCTAssertNil(MarginMomentPlanner.anchors(played: written, among: [written], clock: clock, targetMediaTimeMs: nil))
     }
 
+    /// The lead-in starts on a sentence (#1646): a Margin in the stretch before that start is not part of the moment,
+    /// or reading never crosses it and the card stays until Stop.
+    func testAMarginBeforeTheSnappedLeadInStartIsNotPartOfTheMoment() throws {
+        let text = String(repeating: "Words go here and there. ", count: 80) // a sentence starts every 25 characters
+        let played = margin("ij-played", startChar: 1_214)
+        // The lead-in would start at 794; the first sentence start after it is 800.
+        let inTheGap = margin("ij-gap", startChar: 796)
+        let atTheStart = margin("ij-start", startChar: 800)
+        let before = margin("ij-before", startChar: 700)
+        let after = margin("ij-after", startChar: 1_500)
+        let anchors = try XCTUnwrap(MarginMomentPlanner.anchors(
+            played: played, among: [before, inTheGap, atTheStart, played, after], clock: clock,
+            targetMediaTimeMs: nil, text: text))
+        XCTAssertEqual(anchors.others.map(\.marginId), ["s::ij-start", "s::ij-after"])
+        XCTAssertEqual(clock.leadInStartOffset(forTargetPosition: anchors.target.mediaTimeMs, in: text), 800)
+
+        // Reading from the snapped start through the end of the moment: the card ends after the last Margin.
+        var sequence = MarginMomentSequence(
+            itemId: "article", target: anchors.target, otherMargins: anchors.others,
+            tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+        var heard: [String] = []
+        for before in stride(from: 800, to: 1_600, by: 14) {
+            if let reached = sequence.progressed(
+                from: clock.position(forTextOffset: before), to: clock.position(forTextOffset: before + 14)) {
+                heard.append(reached.marginId)
+                sequence.marginFinished()
+            }
+        }
+        XCTAssertEqual(heard, ["s::ij-start", "s::ij-played", "s::ij-after"])
+        XCTAssertTrue(sequence.unplayed.isEmpty, "the card goes away once the last Margin has played")
+    }
+
+    func testWithNoTextTheMomentKeepsTheMarginsTheUnsnappedLeadInWouldPlay() throws {
+        let played = margin("ij-played", startChar: 1_214)
+        let inTheGap = margin("ij-gap", startChar: 796)
+        let anchors = try XCTUnwrap(MarginMomentPlanner.anchors(
+            played: played, among: [inTheGap], clock: clock, targetMediaTimeMs: nil))
+        XCTAssertEqual(anchors.others.map(\.marginId), ["s::ij-gap"], "no sentence to snap to: the lead-in starts at 794")
+        XCTAssertEqual(clock.leadInStartOffset(forTargetPosition: anchors.target.mediaTimeMs, in: ""), 794)
+    }
+
     // MARK: Starting the lead-in on a sentence
 
     func testTheLeadInStartsAtTheNextSentenceStart() {
@@ -232,6 +286,41 @@ final class MarginMomentClockTests: XCTestCase {
         XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: 5, before: 100, in: "No stops at all in this text"), 5)
         XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: 5, before: 100, in: "Ends here."), 5)
         XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: -4, before: 100, in: "A. B."), 0)
+    }
+
+    /// #1646: neighbouring inputs. Each row starts looking at offset 1 (inside the first sentence) and names the word
+    /// the lead-in should start on.
+    func testSentenceStartsAcrossQuotesBracketsAbbreviationsEllipsesAndBreaks() throws {
+        let rows: [(text: String, starts: String, note: String)] = [
+            ("He said \"Go.\" Then left. Done.", "Then", "a closing quote after the full stop"),
+            ("He said \u{201C}Go.\u{201D} Then left. Done.", "Then", "closing curly quotes"),
+            ("She left (quietly.) Then he did. Done.", "Then", "a closing bracket"),
+            ("He asked \"Why?\" She left. Done.", "She", "a question mark inside a quote"),
+            ("Really?! Yes it was. Fine.", "Yes", "two marks in a row"),
+            ("Mr. Smith left. Then Dr. Jones arrived.", "Then", "titles are not sentence ends"),
+            ("See e.g. the notes. Then more.", "Then", "e.g. is not a sentence end"),
+            ("That is, i.e. the end. Then more.", "Then", "i.e. is not a sentence end"),
+            ("J. K. Rowling wrote it. Then more.", "Then", "initials"),
+            ("It starts at 5 p.m. today. Next one.", "Next", "an abbreviation before a lower-case word"),
+            ("Wait... then he left. Next one.", "Next", "an ellipsis inside a sentence"),
+            ("Wait\u{2026} then he left. Next one.", "Next", "an ellipsis character inside a sentence"),
+            ("Wait... Then he left. Next one.", "Then", "an ellipsis before a capital ends the sentence"),
+            ("Chapter One\n\nIt began here. Later.", "It began", "a heading with no punctuation"),
+            ("Heading\r\n\r\nBody here. More.", "Body", "a heading before Windows line breaks"),
+            ("Hello.\nWorld here. End.", "World", "a single line break after a full stop"),
+            ("First line\n  \nSecond block. End.", "Second", "a blank line with spaces in it"),
+        ]
+        for row in rows {
+            let expected = try XCTUnwrap(row.text.range(of: row.starts)).lowerBound
+            XCTAssertEqual(
+                MarginMomentClock.sentenceStart(atOrAfter: 1, before: row.text.count, in: row.text),
+                row.text.distance(from: row.text.startIndex, to: expected), row.note)
+        }
+    }
+
+    func testASingleLineBreakInsideASentenceIsNotAStart() {
+        let wrapped = "A sentence that was wrapped\nonto a second line. Then another."
+        XCTAssertEqual(MarginMomentClock.sentenceStart(atOrAfter: 1, before: wrapped.count, in: wrapped), 48)
     }
 
     func testSentenceStartOnAVeryLongText() {
