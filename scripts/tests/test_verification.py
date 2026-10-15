@@ -1375,6 +1375,65 @@ class VerificationTests(unittest.TestCase):
                 found = verification.stall_evidence(device, folder)
             self.assertEqual(found['diagnosis'], 'host app idle in its run loop; XCTest never injected')
 
+    # Lines as xcodebuild writes them in the attempt's Staging session log (pr1647-r38684087699, 2026-10-15).
+    SESSION_LOG = (
+        '00:03:35.197 xcodebuild[49404:1] X: Installing app at path: /x/SpokenMarginsApp.app\n'
+        '00:03:36.651 xcodebuild[49404:1] X: Installed app at path: /x/SpokenMarginsApp.app\n'
+        '00:03:36.654 xcodebuild[49404:1] X: Launching app with identifier: com.spokenmargins.native and options: {\n'
+        '    "wait_for_debugger" = 1;\n}\n'
+        '00:03:37.143 xcodebuild[49404:1] X: Launched app with identifier: com.spokenmargins.native (pid = 101)\n'
+        '00:03:37.615 xcodebuild[49404:1] Test process runnable PID is 101.\n'
+        '00:03:37.615 xcodebuild[49404:1] XCTHTestOperationStateMachine: Transitioning from state Initial to AcquiredPID\n')
+
+    def stalled_bundle(self, root, session_log):
+        bundle = root / 'tests.xcresult'
+        run = bundle / 'Staging/1_Test/Diagnostics/SpokenMarginsAppTests-A-Configuration-Default-Iteration-1/SpokenMarginsAppTests-B'
+        run.mkdir(parents=True)
+        if session_log is not None:
+            (run / 'Session-SpokenMarginsAppTests-2026-10-15_000334-W3zi1U.log').write_text(session_log)
+        return bundle
+
+    def test_stall_evidence_says_whether_it_sampled_xcodebuilds_own_launch(self):
+        # #705: the idle, uninjected host app was the very pid xcodebuild launched, so the simulator dropped that
+        # launch's settings; a different pid would mean something else launched the app first.
+        device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+        text = self.stall_sample(self.RUN_LOOP, self.APP_IMAGES)
+        for pid, expected in [('101', "host app idle in its run loop; XCTest never injected; xcodebuild's own launch; "
+                                      'session log ends at "Transitioning from state Initial to AcquiredPID"'),
+                              ('202', 'host app idle in its run loop; XCTest never injected; not the pid xcodebuild '
+                                      'launched (101); session log ends at "Transitioning from state Initial to AcquiredPID"')]:
+            with self.subTest(pid=pid), tempfile.TemporaryDirectory() as temporary:
+                bundle = self.stalled_bundle(Path(temporary), self.SESSION_LOG)
+                listing = f'  {pid} 01:30 Ss /x/Devices/{device}/data/Y/SpokenMarginsApp.app/SpokenMarginsApp\n'
+
+                def run_(args, **kwargs):
+                    if args[0] == 'sample':
+                        Path(args[args.index('-file') + 1]).write_text(text)
+                    return subprocess.CompletedProcess(args, 0, stdout=listing)
+
+                with patch.object(verification.subprocess, 'run', side_effect=run_):
+                    found = verification.stall_evidence(device, Path(temporary) / 'stall', result_bundle=bundle)
+                self.assertEqual(found['diagnosis'], expected)
+                self.assertEqual(found['launched_pid'], 101)
+
+    def test_stall_evidence_with_no_host_app_names_the_launch_step_it_reached(self):
+        # 14 of the 40 kept stalled result bundles (2026-10-15) had no host process; their session logs end at
+        # "Launching app", "Installing app" or "Installed app", or are empty. Each stall now says which.
+        device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+        listing = f'  90 05:10 S /x/Devices/{device}/data/usr/libexec/launchd_sim\n'
+        cut = self.SESSION_LOG.index('00:03:37.143')
+        for session_log, expected in [
+                (self.SESSION_LOG[:cut], {'session_last_step': 'Launching app',
+                                          'diagnosis': f'{verification.NO_HOST_APP}; session log ends at "Launching app"'}),
+                ('', {'session_last_step': None, 'diagnosis': verification.NO_HOST_APP}),
+                (None, {'diagnosis': verification.NO_HOST_APP})]:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as temporary:
+                bundle = self.stalled_bundle(Path(temporary), session_log)
+                with patch.object(verification.subprocess, 'run',
+                                  return_value=subprocess.CompletedProcess([], 0, stdout=listing)):
+                    found = verification.stall_evidence(device, Path(temporary) / 'stall', result_bundle=bundle)
+                self.assertEqual(found, {'processes': 1, **expected})
+
     def simulator_listings(self, *runners):
         """simctl listings, one per call: an iOS 26 iPhone template plus the Test Runner named in each."""
         runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-26-0'
