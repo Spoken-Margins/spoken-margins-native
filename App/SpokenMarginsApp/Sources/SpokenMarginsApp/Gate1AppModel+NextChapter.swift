@@ -14,6 +14,23 @@ extension Gate1AppModel {
                 nextChapterStartMs: mediaChapter?.startMs)
     }
 
+    /// Whether the Skim row under the transport is on screen. `PlaybackScreen` draws the row from this, and
+    /// `showsNextChapterButton` reads it, so the two controls cannot disagree (#1628).
+    var showsSkimRow: Bool {
+        isMediaPlaybackSnapshot
+            && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil)
+    }
+
+    /// Whether the chapter row above the scrubber shows its Next chapter button. A forward Skim control that can
+    /// be pressed already offers forward navigation, so the second button is hidden; with no forward Skim target
+    /// (no ready map, or the end of it) Next chapter stays. Only the button depends on Skim: the Lock Screen and
+    /// external commands go by `canJumpToNextChapter`, and the second press of #569 still works through Skim,
+    /// which ends the playing summary the same way (#1628).
+    var showsNextChapterButton: Bool {
+        NextChapterSummaryRule.showsChapterRowButton(
+            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward)
+    }
+
     private var playingSummaryForNextChapter: NextChapterSummaryRule.PlayingSummary? {
         snapshot.skimBridgeState.map { .init(direction: $0.direction, landsAtMs: $0.destinationMediaTimeMs) }
     }

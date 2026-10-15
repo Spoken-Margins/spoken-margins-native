@@ -4,7 +4,7 @@ import SessionKit
 struct PlaybackChapterRowView: View {
     let title: String?
     let sourceTitle: String
-    let canJumpToNextChapter: Bool
+    let showsNextChapterButton: Bool
     /// What the silence is while playback starts. It takes the title's place in this fixed-height row, so the
     /// dock never changes height while the listener scrubs or starts a source (#357, #430).
     var waitingText: String?
@@ -28,7 +28,7 @@ struct PlaybackChapterRowView: View {
                 }
                 .accessibilityIdentifier("playback.dock.chapter.button")
             }
-            if canJumpToNextChapter {
+            if showsNextChapterButton {
                 Button(action: nextChapter) {
                     Image(systemName: "forward.end")
                         .frame(minWidth: 44, minHeight: 44)

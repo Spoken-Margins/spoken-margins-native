@@ -1,4 +1,4 @@
-import SessionKit
+@testable import SessionKit
 import SwiftUI
 import UIKit
 import XCTest
@@ -46,7 +46,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
     /// Starting playback is a status the dock must show without changing its height, so the bar stays where it was.
     func testStartingPlaybackDoesNotMoveTheDock() async throws {
         for phone in Self.phones {
-            for build in [self.makeArticleModel, self.makePodcastModel] {
+            let builds: [() -> Gate1AppModel] = [{ self.makeArticleModel() }, { self.makePodcastModel() }]
+            for build in builds {
                 let model = build()
                 let mounted = try mount(model, size: phone.size)
                 defer { mounted.close() }
@@ -63,6 +64,71 @@ final class PlaybackDockLayoutTests: XCTestCase {
                                "\(phone.name): the bar moved from \(restingTop) to \(startingTop) while playback was starting")
             }
         }
+    }
+
+    // MARK: - Next chapter next to Skim (#1628)
+
+    /// The owner saw a Next chapter button above the scrubber and a forward Skim control below the transport on the
+    /// same screen. The model decides which of them the dock draws; these pin that decision for each state the issue
+    /// names. The first run read the mounted screen's accessibility tree for the buttons and could not find anything in
+    /// it (all four such tests failed, including the ones that expect a button), so the screen is not mounted here.
+    private func forwardSkimBridge(for model: Gate1AppModel) -> SkimBridgeState {
+        SkimBridgeState(
+            direction: .forward, itemId: model.selectedItem.id, originMediaTimeMs: 1_200_000, summarySceneId: "chapter-0",
+            destinationSceneId: "chapter-1", destinationMediaTimeMs: 1_800_000, summaryAssetId: "summary",
+            wasSourcePlaying: false, status: .playing
+        )
+    }
+
+    func testForwardSkimIsTheOnlyForwardControlWhenItIsOffered() {
+        let model = makePodcastModel(withChapters: true)
+        model.snapshot.skimBridgeState = forwardSkimBridge(for: model)
+        XCTAssertTrue(model.snapshot.canSkimForward, "precondition: forward Skim is offered")
+        XCTAssertTrue(model.showsSkimRow)
+        XCTAssertTrue(model.canJumpToNextChapter, "the Lock Screen and external commands keep Next chapter (#569)")
+        XCTAssertFalse(model.showsNextChapterButton, "the chapter row must not draw a second forward control")
+    }
+
+    // The end-of-map state (Skim row up for Skim Back, forward off, a feed chapter still ahead) is pinned by the
+    // truth table in NextChapterSummaryTests. It can't be set up here: the snapshot observer recomputes the Skim
+    // flags from the store on every change, so a hand-set `canSkimBackward` without a real map is reset at once.
+
+    func testNextChapterStaysWhenThereIsNoForwardSkim() {
+        let model = makePodcastModel(withChapters: true)
+        XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")
+        XCTAssertFalse(model.showsSkimRow)
+        XCTAssertTrue(model.canJumpToNextChapter)
+        XCTAssertTrue(model.showsNextChapterButton)
+    }
+
+    func testNextChapterStaysInAnArticleWithChapters() {
+        let model = makeArticleModel(withChapters: true)
+        XCTAssertTrue(model.canJumpToNextChapter, "precondition: the article has a chapter after this one")
+        XCTAssertFalse(model.showsSkimRow, "an article has no Skim row")
+        XCTAssertTrue(model.showsNextChapterButton)
+    }
+
+    func testNoNextChapterButtonAtTheLastChapter() {
+        let model = makePodcastModel(withChapters: true)
+        model.snapshot.currentMediaTimeMs = 2_000_000
+        XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
+        XCTAssertFalse(model.showsNextChapterButton)
+    }
+
+    /// The real chapter row, laid out: with the button asked for the row is a button wider (44-point minimum) than
+    /// without it, so what the model decides is what the dock draws.
+    func testChapterRowDrawsTheButtonOnlyWhenAsked() {
+        func idealWidth(showsNextChapterButton: Bool) -> CGFloat {
+            let row = PlaybackChapterRowView(
+                title: "Chapter 2", sourceTitle: "An episode", showsNextChapterButton: showsNextChapterButton,
+                showItem: {}, nextChapter: {}
+            )
+            return UIHostingController(rootView: row.fixedSize(horizontal: true, vertical: false))
+                .sizeThatFits(in: CGSize(width: 2_000, height: 200)).width
+        }
+        let with = idealWidth(showsNextChapterButton: true)
+        let without = idealWidth(showsNextChapterButton: false)
+        XCTAssertGreaterThanOrEqual(with - without, 44, "the Next chapter button added \(with - without) points to the row")
     }
 
     // MARK: - Assertions
@@ -93,25 +159,38 @@ final class PlaybackDockLayoutTests: XCTestCase {
         return Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
     }
 
-    private func makeArticleModel() -> Gate1AppModel {
+    private func makeArticleModel(withChapters: Bool = false) -> Gate1AppModel {
         let model = makeModel()
         let text = (1...60).map { "Sentence number \($0) of a long article that keeps going." }.joined(separator: " ")
-        model.selectedItem = ItemDetailState(id: "dock-article", title: "A long article", text: text)
-            .includingTimelineSource(nil)
+        var article = ItemDetailState(id: "dock-article", title: "A long article", text: text)
+        if withChapters {
+            article.chapters = [
+                Chapter(id: "a", title: "Opening", startChar: 0, endChar: text.count / 2, percent: 0),
+                Chapter(id: "b", title: "Ending", startChar: text.count / 2, endChar: text.count, percent: 50),
+            ]
+        }
+        model.selectedItem = article.includingTimelineSource(nil)
         var snapshot = SessionSnapshot()
         snapshot.itemId = model.selectedItem.id
         snapshot.targetType = TargetType.itemTextTTS.rawValue
         snapshot.status = .paused
         snapshot.currentTextStart = text.count / 2
+        if withChapters { snapshot.chapterTitle = "Opening" }
         model.snapshot = snapshot
         return model
     }
 
-    private func makePodcastModel() -> Gate1AppModel {
+    private func makePodcastModel(withChapters: Bool = false) -> Gate1AppModel {
         let model = makeModel()
         var item = ItemDetailState(id: "dock-podcast", title: "An episode", text: "")
         item.isNativeAudio = true
         item.mediaDurationMs = 3_600_000
+        if withChapters {
+            // The snapshot sits at 1,200,000 ms, so the next chapter starts at 1,800,000 ms.
+            item.mediaChapters = [("chapter-0", 0), ("chapter-1", 1_800_000)].map {
+                MediaTimelineChapter(id: $0.0, title: "Chapter \($0.0)", startMs: $0.1, transcriptSegmentId: "segment-\($0.0)")
+            }
+        }
         model.selectedItem = item.includingTimelineSource(nil)
         var snapshot = SessionSnapshot()
         snapshot.itemId = model.selectedItem.id
