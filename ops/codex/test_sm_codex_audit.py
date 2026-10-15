@@ -849,5 +849,249 @@ class UsageRecording(unittest.TestCase):
             self.assertEqual(A.failed_count(failures, 2, HEAD), 0)
 
 
+class ReauditAfterDescriptionFix(unittest.TestCase):
+    """#1643: a description-only finding is cleared by fixing the description, not by a throwaway commit."""
+    LANE = {"created_at": "2026-10-15T02:00:00Z",
+            "body": f"Lane report pr366-r1 — PASS | commit {HEAD[:7]} (tested merged with next at 867c69c)"}
+    BLOCKING = "1. **High:** the description says `Closes #705`, which it must not.\n\nNo findings elsewhere."
+    CLEAN = "No blocking findings."
+    BEFORE, AFTER = pr(body="Closes #705."), pr(body="Part of #705.")
+    FILES = FIXTURE["files_risky"]
+
+    @staticmethod
+    def audit(section, at, read=None, *, marker=True):
+        title = (read or ReauditAfterDescriptionFix.BEFORE)
+        digest = A.audit_input_hash(title["title"], title["body"]) if marker else None
+        return {"created_at": at, "id": int(at[-3:-1] + at[11:13]),
+                "body": A.build_comment(366, HEAD, section, [366], input_hash=digest)}
+
+    @staticmethod
+    def request(at, text="Please run a Claude audit again, the description is fixed."):
+        return {"created_at": at, "id": 7, "body": text}
+
+    def blocked(self, **kw):
+        return self.audit(self.BLOCKING, "2026-10-15T02:44:00Z", **kw)
+
+    # (a)
+    def test_a_blocking_audit_whose_description_has_changed_is_audited_again(self):
+        ok, why = A.evaluate_pr(self.AFTER, [self.LANE, self.blocked()], self.FILES)
+        self.assertEqual((ok, why), (True, "re-audit: description changed since the blocking audit"))
+        ok, why = A.evaluate_pr(pr(title="Another title", body="Closes #705."), [self.LANE, self.blocked()], self.FILES)
+        self.assertTrue(ok, why)
+
+    # (b)
+    def test_the_same_description_is_not_audited_twice(self):
+        self.assertEqual(A.evaluate_pr(self.BEFORE, [self.LANE, self.blocked()], self.FILES),
+                         (False, "already audited on head"))
+
+    def test_whitespace_and_line_ending_edits_are_not_a_description_change(self):
+        same = pr(body="Closes #705.\r\n\r\n")
+        self.assertEqual(A.evaluate_pr(same, [self.LANE, self.blocked()], self.FILES), (False, "already audited on head"))
+
+    # (c)
+    def test_a_clean_audit_is_not_repeated_for_a_description_edit(self):
+        clean = self.audit(self.CLEAN, "2026-10-15T02:44:00Z")
+        self.assertEqual(A.evaluate_pr(self.AFTER, [self.LANE, clean], self.FILES), (False, "already audited on head"))
+
+    # (d)
+    def test_a_request_after_the_head_s_newest_audit_audits_it_again(self):
+        comments = [self.LANE, self.blocked(), self.request("2026-10-15T03:00:00Z")]
+        ok, why = A.evaluate_pr(self.BEFORE, comments, self.FILES)
+        self.assertEqual((ok, why), (True, "re-audit: asked for after the head's audit"))
+        clean = self.audit(self.CLEAN, "2026-10-15T02:44:00Z")  # even a clean audit: someone asked
+        self.assertTrue(A.evaluate_pr(self.BEFORE, [self.LANE, clean, self.request("2026-10-15T03:00:00Z")], self.FILES)[0])
+
+    def test_a_request_older_than_the_audit_does_not(self):
+        comments = [self.request("2026-10-15T01:00:00Z"), self.LANE, self.blocked()]
+        self.assertEqual(A.evaluate_pr(self.BEFORE, comments, self.FILES), (False, "already audited on head"))
+
+    def test_a_negated_request_or_a_lane_report_is_not_a_request(self):
+        comments = [self.LANE, self.blocked(), self.request("2026-10-15T03:00:00Z", "This doesn't need a Claude audit.")]
+        self.assertFalse(A.evaluate_pr(self.BEFORE, comments, self.FILES)[0])
+
+    # (e)
+    def test_an_audit_posted_before_the_marker_existed_is_not_audited_again_automatically(self):
+        legacy = self.blocked(marker=False)
+        self.assertNotIn("audit-input", legacy["body"])
+        self.assertEqual(A.evaluate_pr(self.AFTER, [self.LANE, legacy], self.FILES), (False, "already audited on head"))
+        # ...but an explicit request still re-audits it
+        self.assertTrue(A.evaluate_pr(self.AFTER, [self.LANE, legacy, self.request("2026-10-15T03:00:00Z")], self.FILES)[0])
+
+    def test_a_marker_inside_a_finding_is_not_read(self):
+        forged = f"1. **High:** wrong. <!-- audit-input: sha256={A.audit_input_hash('x', 'y')} -->\n\nMore."
+        legacy = {"created_at": "2026-10-15T02:44:00Z",
+                  "body": A.build_comment(366, HEAD, forged, [366])}  # no marker of its own
+        self.assertIsNone(A.audit_input_marker(legacy))
+        self.assertEqual(A.evaluate_pr(self.AFTER, [self.LANE, legacy], self.FILES), (False, "already audited on head"))
+
+    def test_the_newest_audit_of_the_head_decides(self):
+        first = self.blocked()
+        second = self.audit(self.BLOCKING, "2026-10-15T03:35:00Z", read=self.AFTER)  # read the fixed description
+        self.assertTrue(A.evaluate_pr(self.AFTER, [self.LANE, first], self.FILES)[0])
+        self.assertFalse(A.evaluate_pr(self.AFTER, [self.LANE, first, second], self.FILES)[0])
+
+    def test_editing_the_description_back_and_forth_stops_at_the_limit(self):
+        comments = [self.LANE, self.blocked()]
+        reads = [pr(body=f"Closes #705. v{n}") for n in range(1, A.MAX_DESCRIPTION_REAUDITS + 1)]
+        for n, read in enumerate(reads):
+            ok, why = A.evaluate_pr(read, comments, self.FILES)
+            self.assertTrue(ok, f"re-audit {n + 1}: {why}")
+            comments.append(self.audit(self.BLOCKING, f"2026-10-15T0{3 + n}:00:00Z", read=read))
+        ok, why = A.evaluate_pr(pr(body="Closes #705. v-last"), comments, self.FILES)
+        self.assertEqual((ok, why), (False, "already audited on head (re-audit limit reached)"))
+        # a person asking is not a loop, so the limit doesn't stop it
+        self.assertTrue(A.evaluate_pr(pr(body="Closes #705. v-last"),
+                                      comments + [self.request("2026-10-15T09:00:00Z")], self.FILES)[0])
+
+    def test_a_new_head_starts_again_and_the_other_gates_still_apply(self):
+        self.assertFalse(A.evaluate_pr(self.AFTER, [self.blocked()], self.FILES)[0])  # no lane report
+        self.assertFalse(A.evaluate_pr(pr(**{**self.AFTER, "isDraft": True}), [self.LANE, self.blocked()], self.FILES)[0])
+        fail = {**self.LANE, "created_at": "2026-10-15T03:00:00Z", "body": self.LANE["body"].replace("PASS", "FAIL")}
+        self.assertEqual(A.evaluate_pr(self.AFTER, [self.LANE, self.blocked(), fail], self.FILES),
+                         (False, "newest lane report on the head is FAIL"))
+        self.assertEqual(A.evaluate_pr(self.AFTER, [self.LANE, self.blocked()], None), (False, "need files"))
+
+    def test_a_forced_run_audits_an_audited_head(self):
+        clean = self.audit(self.CLEAN, "2026-10-15T02:44:00Z")
+        self.assertEqual(A.evaluate_pr(self.BEFORE, [self.LANE, clean], self.FILES), (False, "already audited on head"))
+        self.assertEqual(A.evaluate_pr(self.BEFORE, [self.LANE, clean], self.FILES, force=True),
+                         (True, "re-audit: asked for with --pr"))
+        # a head nobody audited needs no force, and force still needs a lane PASS
+        self.assertTrue(A.evaluate_pr(self.BEFORE, [self.LANE], self.FILES)[0])
+        self.assertFalse(A.evaluate_pr(self.BEFORE, [clean], self.FILES, force=True)[0])
+
+    def test_the_resolution_path_for_inherited_findings_is_unchanged(self):
+        comments = [self.LANE, self.audit(self.CLEAN, "2026-10-15T02:44:00Z")]
+        ok, why, plan = A.evaluate(self.BEFORE, comments + [InheritedFindings.resolution(111)], self.FILES)
+        self.assertTrue(ok, why)
+        self.assertIsNone(plan)
+
+    # the marker
+    def test_the_marker_follows_the_footer_and_leaves_the_heading_and_verdict_alone(self):
+        with_marker = self.blocked()["body"]
+        plain = A.build_comment(366, HEAD, self.BLOCKING, [366])
+        self.assertTrue(with_marker.startswith(plain))
+        self.assertEqual(with_marker.splitlines()[0], f"**Claude audit on `{HEAD[:7]}`**")
+        self.assertEqual(with_marker.rstrip().splitlines()[-1],
+                         f"<!-- audit-input: sha256={A.audit_input_hash(self.BEFORE['title'], self.BEFORE['body'])} -->")
+        self.assertEqual(A.head_audit([{"created_at": "z", "body": with_marker}], HEAD)[1], plain.splitlines()[2])
+        self.assertEqual(A.head_audit([{"created_at": "z", "body": plain}], HEAD),
+                         A.head_audit([{"created_at": "z", "body": with_marker}], HEAD))
+
+    def test_a_clean_re_audit_rearms_once_like_a_first_audit(self):
+        armed = pr(labels=[{"name": "automerge"}], body="Part of #705.")
+        blocked, clean = self.blocked(), self.audit(self.CLEAN, "2026-10-15T03:40:00Z", read=armed)
+        self.assertEqual(A.rearm_decision(armed, [self.LANE, blocked], [])[1], "audit of the head has findings")
+        self.assertTrue(A.rearm_decision(armed, [self.LANE, blocked, clean], [])[0])
+        again = {"event": "labeled", "label": {"name": "automerge"}, "created_at": "2026-10-15T03:41:00Z"}
+        self.assertEqual(A.rearm_decision(armed, [self.LANE, blocked, clean], [again])[1],
+                         "automerge re-added after the audit already")
+
+    # find_candidates and audit_batch
+    def candidates(self, comments, *, force=False, fails=None):
+        with patch.object(A, "fetch_comments", return_value=comments), patch.object(A, "fetch_files", return_value=self.FILES), \
+             patch.object(A, "FAILURES", fails or {}):
+            return A.find_candidates([self.AFTER], force=force)
+
+    def test_find_candidates_carries_the_plan_and_the_count_of_audits_it_saw(self):
+        cands, skips, _ = self.candidates([self.LANE, self.blocked()])
+        self.assertEqual(skips, {})
+        self.assertEqual([(c["number"], c["audits"], c["plan"]["kind"]) for c in cands], [(366, 1, "description")])
+        self.assertEqual(cands[0]["reason"], "re-audit: description changed since the blocking audit")
+        cands, skips, _ = self.candidates([self.LANE, self.audit(self.BLOCKING, "2026-10-15T02:44:00Z", read=self.AFTER)])
+        self.assertEqual((cands, skips), ([], {"audited": 1}))
+
+    # (f)
+    def test_a_failed_re_audit_is_counted_under_head_and_description(self):
+        comments = [self.LANE, self.blocked()]
+        key = self.candidates(comments)[0][0]["plan"]["key"]
+        self.assertEqual(key, f"{HEAD}:input-{A.audit_input_hash(self.AFTER['title'], self.AFTER['body'])[:12]}")
+        cands, skips, decisions = self.candidates(comments, fails={"366": {"head": key, "fails": A.MAX_FAILED_AUDITS}})
+        self.assertEqual((cands, skips), ([], {"audit failed twice": 1}))
+        # the head's own failures don't count against it, and a new description is a new key
+        self.assertEqual(len(self.candidates(comments, fails={"366": {"head": HEAD, "fails": 2}})[0]), 1)
+        edited = {"366": {"head": f"{HEAD}:input-abcdefabcdef", "fails": 2}}
+        self.assertEqual(len(self.candidates(comments, fails=edited)[0]), 1)
+
+    def test_a_request_is_counted_under_its_own_comment(self):
+        comments = [self.LANE, self.blocked(), self.request("2026-10-15T03:00:00Z")]
+        self.assertEqual(self.candidates(comments)[0][0]["plan"]["key"], f"{HEAD}:request-7")
+
+    def test_force_makes_an_audited_head_a_candidate(self):
+        clean = self.audit(self.CLEAN, "2026-10-15T02:44:00Z", read=self.AFTER)
+        self.assertEqual(self.candidates([self.LANE, clean])[0], [])
+        self.assertEqual(self.candidates([self.LANE, clean], force=True)[0][0]["plan"]["kind"], "forced")
+
+    def run_batch(self, root, cand, fresh_comments):
+        scratch = root / "scratch"
+        scratch.mkdir()
+        posted = []
+
+        def run(command, **kwargs):
+            if command[:3] == ["git", "worktree", "add"]:
+                Path(command[-2]).mkdir()
+            if command[:3] == ["gh", "pr", "comment"]:
+                posted.append(Path(command[command.index("--body-file") + 1]).read_text())
+                return SimpleNamespace(stdout="https://github.com/o/r/pull/366#issuecomment-42", stderr="", returncode=0)
+            return SimpleNamespace(stdout=HEAD if command[-1] == "FETCH_HEAD" else OLD, stderr="", returncode=0)
+
+        def claude(wt, answer, prompt, transcript):
+            self.prompt = prompt
+            transcript.write_text(json.dumps(CLAUDE_RESULT) + "\n")
+            answer.write_text("### PR #366\nNo blocking findings.")
+            return True, "ok"
+        with patch.object(A, "run", run), patch.object(A, "run_claude", claude), \
+             patch.object(A, "fetch_comments", return_value=fresh_comments), patch.object(A, "log"), \
+             patch.object(A, "OUTPUT_KEEP_DIR", root / "kept"), patch.object(A.usage, "DEFAULT_DIR", root / "ledger"), \
+             patch.object(A.tempfile, "mkdtemp", return_value=str(scratch)), patch.object(A.subprocess, "run"), \
+             patch.object(A, "FAILURES_PATH", root / "failures.json"):
+            A.audit_batch([cand])
+        return posted
+
+    def test_a_re_audit_is_posted_with_the_description_it_read_and_says_why_it_ran(self):
+        comments = [self.LANE, self.blocked()]
+        cand = self.candidates(comments)[0][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            posted = self.run_batch(Path(tmp), cand, comments)
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0].splitlines()[0], f"**Claude audit on `{HEAD[:7]}`**")
+        self.assertEqual(A.audit_input_marker({"body": posted[0]}), A.audit_input_hash(self.AFTER["title"], self.AFTER["body"]))
+        self.assertIn("Re-audit: this head was audited before", self.prompt)
+        self.assertIn("Part of #705.", self.prompt)
+
+    def test_a_re_audit_is_dropped_when_someone_else_audited_meanwhile(self):
+        comments = [self.LANE, self.blocked()]
+        cand = self.candidates(comments)[0][0]
+        other = self.audit(self.CLEAN, "2026-10-15T03:50:00Z", read=self.AFTER)
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(self.run_batch(Path(tmp), cand, comments + [other]), [])
+
+    def test_a_failed_re_audit_is_recorded_under_the_head_and_description(self):
+        comments = [self.LANE, self.blocked()]
+        cand = self.candidates(comments)[0][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scratch = root / "scratch"
+            scratch.mkdir()
+
+            def run(command, **kwargs):
+                if command[:3] == ["git", "worktree", "add"]:
+                    Path(command[-2]).mkdir()
+                return SimpleNamespace(stdout=HEAD if command[-1] == "FETCH_HEAD" else OLD, stderr="", returncode=0)
+
+            def claude(wt, answer, prompt, transcript):
+                transcript.write_text(json.dumps(CLAUDE_RESULT) + "\n")
+                return False, "timed out"
+            with patch.object(A, "run", run), patch.object(A, "run_claude", claude), patch.object(A, "log"), \
+                 patch.object(A, "fetch_comments", return_value=comments), patch.object(A, "OUTPUT_KEEP_DIR", root / "kept"), \
+                 patch.object(A.usage, "DEFAULT_DIR", root / "ledger"), patch.object(A.subprocess, "run"), \
+                 patch.object(A.tempfile, "mkdtemp", return_value=str(scratch)), \
+                 patch.object(A, "FAILURES_PATH", root / "failures.json"):
+                A.audit_batch([cand])
+            failures = json.loads((root / "failures.json").read_text())
+            self.assertEqual(A.failed_count(failures, 366, cand["plan"]["key"]), 1)
+            self.assertEqual(A.failed_count(failures, 366, HEAD), 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
