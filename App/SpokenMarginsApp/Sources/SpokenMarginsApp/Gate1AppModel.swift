@@ -1093,8 +1093,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
-        if entersBackground { narrationStartupProtection.appEnteredBackground() }
-        reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
+        if entersBackground { narrationStartupProtection.appEnteredBackground() }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         syncPlaybackProgressForLifecycle()
@@ -1117,8 +1116,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
-        narrationStartupProtection.appEnteredForeground()
-        reconcileNarrationOwnership(trigger: "foreground")
+        narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
