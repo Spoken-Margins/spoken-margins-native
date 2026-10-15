@@ -64,5 +64,26 @@ final class MarginMomentConductorTests: XCTestCase {
         conductor.observe(mediaTimeMs: 5_200)
         XCTAssertEqual(unavailable, ["ij-009:recording_missing"])
     }
+
+    /// #1646 audit: the app reports every seek to `sourceMoved()`, including the lead-in's own, which must not wipe
+    /// the baseline: the first reading after the lead-in starts still crosses a Margin just after the start.
+    func testTheLeadInsOwnSeekDoesNotCostTheFirstReadingItsBaseline() throws {
+        var unavailable: [String] = []
+        var conductorBox: MarginMomentConductor?
+        let conductor = MarginMomentConductor(
+            sequence: MarginMomentSequence(
+                itemId: "episode", target: MarginMomentAnchor(marginId: "target", mediaTimeMs: 40_000),
+                otherMargins: [MarginMomentAnchor(marginId: "early", mediaTimeMs: 10_200)]
+            ),
+            source: .init(pause: {}, resume: {}, seek: { _ in conductorBox?.sourceMoved() }),
+            voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/voice.m4a") }
+        )
+        conductorBox = conductor
+        conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
+        XCTAssertEqual(conductor.sequence.startMediaTimeMs, 10_000)
+        conductor.start()
+        conductor.observe(mediaTimeMs: 10_450)
+        XCTAssertEqual(unavailable, ["early:recording_missing"], "10.0 s to 10.45 s crosses the Margin at 10.2 s")
+    }
 }
 #endif

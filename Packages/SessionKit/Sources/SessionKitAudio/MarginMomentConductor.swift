@@ -99,8 +99,9 @@ public final class MarginMomentConductor {
 
     /// Starts the lead-in: seeks the source to the sequence's start.
     public func start() {
-        lastObservedMs = sequence.startMediaTimeMs
         source.seek(sequence.startMediaTimeMs)
+        // After the seek: the app tells `sourceMoved()` about every seek, which would clear this baseline (#1646).
+        lastObservedMs = sequence.startMediaTimeMs
         onChange?()
     }
 
