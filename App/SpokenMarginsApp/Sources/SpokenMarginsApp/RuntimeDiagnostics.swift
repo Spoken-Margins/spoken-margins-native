@@ -5,8 +5,9 @@ import SessionKit
 @MainActor
 final class RuntimeDiagnostics: ObservableObject {
     @Published var values: [String: String] = [:] {
-        didSet { putBackLongestHandOverGap() }
+        didSet { putBackLongestHandOverGap(); putBackKept() }
     }
+    private var kept: [String: String] = [:]
     private var longestHandOverGap = LongestChunkHandOverGap()
     private static let handOverGapKey = "longestChunkHandOverGap"
 
@@ -21,5 +22,16 @@ final class RuntimeDiagnostics: ObservableObject {
     private func putBackLongestHandOverGap() {
         guard let summary = longestHandOverGap.gap?.summary, values[Self.handOverGapKey] != summary else { return }
         values[Self.handOverGapKey] = summary
+    }
+
+    /// An entry that survives Refresh Diagnostics and `resetAndSeed()`: a log the owner reads after the fact, like
+    /// the Margin voice starts and stops (#1671), would otherwise vanish on the very tap that shows it.
+    func keep(_ key: String, _ value: String) {
+        kept[key] = value
+        values[key] = value
+    }
+
+    private func putBackKept() {
+        for (key, value) in kept where values[key] != value { values[key] = value }
     }
 }
