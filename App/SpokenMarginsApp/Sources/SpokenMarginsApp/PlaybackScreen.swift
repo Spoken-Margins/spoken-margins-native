@@ -234,6 +234,8 @@ struct PlaybackScreen: View {
                 title: model.playbackChapterHeaderTitle,
                 sourceTitle: model.playbackItemHeaderTitle,
                 canJumpToNextChapter: model.canJumpToNextChapter,
+                waitingText: model.snapshot.status == .starting
+                    ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
                 showItem: model.openCurrentPlaybackItem,
                 nextChapter: model.jumpToNextChapter
             )
@@ -878,14 +880,6 @@ struct PlaybackScreen: View {
                 .disabled(!model.hasActiveSession)
                 .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
                 .accessibilityIdentifier("playback.forward.button")
-            }
-
-            if model.snapshot.status == .starting {
-                // #357: say what the silence is, instead of a bare spinner.
-                Text(PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .accessibilityIdentifier("playback.starting.label")
             }
 
             if model.isMediaPlaybackSnapshot,
