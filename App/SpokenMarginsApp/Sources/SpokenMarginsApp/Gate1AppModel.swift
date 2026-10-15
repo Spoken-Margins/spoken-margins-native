@@ -528,6 +528,7 @@ final class Gate1AppModel: ObservableObject {
     var preparingLocalAudioMapItems = Set<String>()
     #endif
     var sharedMarginOffers = SharedMarginOfferQueue()
+    var reviewPlaces = ReviewReturnPlaces() // the place a "Review new Margins" owes the listener, kept across launches (#474)
     var sharedMarginReturn = SharedMarginReturnClaim() // who owes the source back after a shared Margin (#997)
     var importedCommentaryAutoPlayTask: Task<Void, Never>?
     private var bulkSharePreparationTask: Task<Void, Never>?
@@ -2175,6 +2176,7 @@ final class Gate1AppModel: ObservableObject {
             stopImportedCommentaryPlayback(resumeSource: false)
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)
+            keepReviewPlaceForRecording()
             endMarginMoment()
         } else if let playingID = playingInterjectionAudioId {
             // Your own Margin heard from its detail: it sits where it was recorded.
@@ -2192,7 +2194,7 @@ final class Gate1AppModel: ObservableObject {
         case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
         case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
         }
-        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is.") }
+        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is."); restoreOwedReviewPlace() }
         return moved
     }
 

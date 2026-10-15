@@ -95,6 +95,7 @@ extension Gate1AppModel {
             } else {
                 selectedItem = ItemDetailState()
             }
+            settleReviewPlacesAtLaunch()
             refreshMarginRows()
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"

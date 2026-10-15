@@ -70,6 +70,8 @@ extension Gate1AppModel {
               ) else { return }
         // The review plays these voices; the automatic shared-Margin prompts mustn't play them again.
         entries.forEach { sharedMarginOffers.markAnnounced($0.interjection.id) }
+        // Written down before the review first moves the source, for the endings it can't give the place back at.
+        if let place = ReviewReturnPlace(sequence: sequence) { reviewPlaces.owe(place) }
         var voiceURLs: [String: URL] = [:]
         var heard: [String: ImportedCommentaryInterjection] = [:]
         for entry in entries {
@@ -98,10 +100,42 @@ extension Gate1AppModel {
     /// saved wherever the review had got to and the next Continue lands there. Called first whenever a moment ends.
     /// The source only moves while it is still on the review's item: once another item has taken the player, the
     /// place belongs to the item that was left, not to the new one.
+    /// Add Margin during a Margin's voice is the exception: it needs the source at that Margin, so the place stays
+    /// owed (`keepReviewPlaceForRecording`) and goes back when the recording is over (`restoreOwedReviewPlace`).
     func giveBackUnfinishedReview() {
-        guard let conductor = marginMomentConductor, conductor.sequence.isUnfinishedReview else { return }
+        guard let conductor = marginMomentConductor, conductor.sequence.isReview else { return }
+        let itemId = conductor.sequence.itemId
+        guard conductor.sequence.isUnfinishedReview else { return reviewPlaces.clear(itemId: itemId) }
         releaseUnplayedReviewMargins()
-        if snapshot.itemId == conductor.sequence.itemId { conductor.stopReview() }
+        if reviewPlaces.owed(itemId: itemId)?.keptForRecording == true { return }
+        if snapshot.itemId == itemId { conductor.stopReview() }
+        reviewPlaces.clear(itemId: itemId)
+    }
+
+    /// Add Margin is about to end a review at a Margin's voice, to record there: the place stays owed until the
+    /// recording is saved or cancelled, however the app ends in between.
+    func keepReviewPlaceForRecording() {
+        guard let sequence = marginMomentConductor?.sequence, sequence.isUnfinishedReview else { return }
+        reviewPlaces.keepForRecording(itemId: sequence.itemId)
+    }
+
+    /// Puts the source back at the listener's place when a review's own ending didn't: once Add Margin is over (saved,
+    /// cancelled or never started), and at launch when the app was ended mid-review (the saved session is wherever the
+    /// review had got to). A position outside the stretch the review covers is left alone, because the listener got
+    /// there themselves. Safe to call at any time: it does nothing unless this item owes a place.
+    func restoreOwedReviewPlace(atLaunch: Bool = false) {
+        guard !snapshot.isRecording, marginMomentConductor == nil, let itemId = snapshot.itemId,
+              let place = reviewPlaces.owed(itemId: itemId), atLaunch || place.keptForRecording else { return }
+        reviewPlaces.clear(itemId: itemId)
+        guard place.needsRestoring(from: snapshot.currentMediaTimeMs) else { return }
+        seekMedia(toMediaTimeMs: place.returnToMediaTimeMs)
+    }
+
+    /// The saved session of a review the app never finished is put back at the listener's place, and no other place
+    /// stays owed.
+    func settleReviewPlacesAtLaunch() {
+        restoreOwedReviewPlace(atLaunch: true)
+        if marginMomentConductor == nil { reviewPlaces.removeAll() }
     }
 
     /// For the places that stop the player or start another session before they end a moment (opening, resuming or

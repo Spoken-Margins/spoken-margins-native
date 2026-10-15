@@ -36,6 +36,9 @@ extension Gate1AppModel {
         captureWatcher.stop()
         recordingCaptureHealth = .capturing
         gate2CompactControls.setMicrophone(.capturing)
+        // A recording that ended any way (saved, cancelled, cut off) gives back the place a review was holding (#474).
+        // After this change of the snapshot has finished: putting the source back changes it again.
+        Task { @MainActor [weak self] in self?.restoreOwedReviewPlace() }
     }
 
     private func captureHealthChanged(_ health: MarginCaptureSupervisor.Health, restarts: Int) {
@@ -189,6 +192,7 @@ extension Gate1AppModel {
                 return
             case .denied:
                 reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
+                restoreOwedReviewPlace()
             case .granted:
                 startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
             }
@@ -214,6 +218,7 @@ extension Gate1AppModel {
         guard !snapshot.isRecording else { return }
         marginCapture.clearPresentationContext()
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
+        restoreOwedReviewPlace()
     }
 
     /// Add a Margin ignores taps while a save is under way and until the listening screen has been drawn and has
@@ -262,6 +267,7 @@ extension Gate1AppModel {
     func cancelInterjection() {
         if isRequestingRecordingPermission && !snapshot.isRecording {
             marginCapture.abandonVoiceRequest()
+            restoreOwedReviewPlace()
             return
         }
         recordFinalCaptureDiagnostics("cancelled")
