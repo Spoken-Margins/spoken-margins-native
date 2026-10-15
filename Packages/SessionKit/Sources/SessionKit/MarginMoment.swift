@@ -167,3 +167,17 @@ extension Interjection {
         isSpokenItemMargin && anchor.mediaTimeMs != nil
     }
 }
+
+extension CompactControlCommand {
+    /// The command changes where the source stands (a skip, a scrub, a chapter jump). Lock Screen, headphone, Watch and
+    /// CarPlay commands arrive through the compact controls rather than the app's own skip and seek methods, so the
+    /// app tells a running Margin moment about each of these (#1656): the next reading is a new place, not playback
+    /// reaching a Margin it jumped over. Listed without a default so a new command has to choose.
+    public var movesPlaybackPosition: Bool {
+        switch self {
+        case .skipBack, .skipForward, .skimBackward, .skimForward, .seekToMediaTime, .jumpToChapter: true
+        case .play, .pause, .togglePlayPause, .setPlaybackRate, .beginInterjection, .finishInterjection,
+             .cancelInterjection, .generateInterjectionSummary, .submitFollowup: false
+        }
+    }
+}

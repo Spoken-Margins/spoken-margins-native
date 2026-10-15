@@ -66,6 +66,11 @@ extension Gate1AppModel {
         }
     }
 
+    /// The streaming speech anchor catches up before a compact control (Lock Screen, headphones, Watch, CarPlay) runs.
+    func synchronizeSpeechAnchorForCompactCommand(_ command: CompactControlCommand, canonicalTransport: Bool) {
+        if command == .beginInterjection || canonicalTransport { synchronizeStreamingSpeechAnchorIfNeeded() }
+    }
+
     func mediaSkipSettingsChanged() {
         mediaSkipBackSeconds = MediaSkipRule.validated(mediaSkipBackSeconds)
         mediaSkipForwardSeconds = MediaSkipRule.validated(mediaSkipForwardSeconds)
