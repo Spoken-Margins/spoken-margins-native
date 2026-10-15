@@ -541,6 +541,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { model.endMarginMoment(); model.stopInterjectionAudioPlayback(); model.pause() }
         model.playMarginMomentNow()
         XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true, "precondition: the moment's voice is playing")
+        model.refreshDiagnostics() // the tap that shows Diagnostics must not wipe the log
+        XCTAssertEqual(model.diagnostics["marginVoice.events"], "start:moment")
 
         let own = Interjection(
             id: "own-margin", itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),

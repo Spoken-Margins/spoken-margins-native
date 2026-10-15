@@ -180,7 +180,8 @@ extension Gate1AppModel {
         // Margins crossed together are offered one after another (#918).
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
-            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil,
+            canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil
+                && marginMomentConductor?.isPlayingVoice != true, // a moment's voice is not cut mid-sentence (#1671)
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
@@ -242,7 +243,7 @@ extension Gate1AppModel {
     /// player stops first, then the audio session is set for speech (#1671).
     func prepareMarginMomentVoice() throws {
         if playingImportedCommentary != nil || playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
-        recordMarginVoiceEvent("start", player: "moment")
+        if marginMomentConductor?.isPlayingVoice != true { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
@@ -253,7 +254,7 @@ extension Gate1AppModel {
     /// moment), oldest first, so a report of two voices at once names the two players (#1671).
     func recordMarginVoiceEvent(_ event: String, player: String) {
         let events = (diagnostics["marginVoice.events"]?.components(separatedBy: " | ") ?? []) + ["\(event):\(player)"]
-        diagnostics["marginVoice.events"] = events.suffix(10).joined(separator: " | ")
+        runtimeDiagnostics.keep("marginVoice.events", events.suffix(10).joined(separator: " | "))
     }
 
     nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
