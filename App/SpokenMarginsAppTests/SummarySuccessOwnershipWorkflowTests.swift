@@ -20,6 +20,10 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         try await qualifyLateSuccess(bHasSummary: false, sameItemNewSession: true)
     }
 
+    func testLateASuccessAfterRuntimeRebuildKeepsReplacementEngineAndBActive() async throws {
+        try await qualifyLateSuccess(bHasSummary: true, rebuildRuntime: true)
+    }
+
     func testActiveSummarySuccessStillPlaysOrQueuesItsOriginalTurn() async throws {
         let preferences = VoicePreferencesSnapshot.capture()
         let database = FileManager.default.temporaryDirectory.appending(path: "active-summary-\(UUID().uuidString).sqlite")
@@ -54,7 +58,7 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
                       "Normal active success must retain the existing play-or-queue behavior")
     }
 
-    private func qualifyLateSuccess(bHasSummary: Bool, sameItemNewSession: Bool = false) async throws {
+    private func qualifyLateSuccess(bHasSummary: Bool, sameItemNewSession: Bool = false, rebuildRuntime: Bool = false) async throws {
         let preferences = VoicePreferencesSnapshot.capture()
         let directory = FileManager.default.temporaryDirectory.appending(path: "summary-success-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -91,6 +95,11 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let requestA = try XCTUnwrap(initialRequests.first)
         XCTAssertEqual(try noteIDs(requestA.context), [noteA])
 
+        if rebuildRuntime {
+            let originalEngine = try XCTUnwrap(model.engine)
+            XCTAssertTrue(model.rebuildEngineForCurrentSettings())
+            XCTAssertFalse(model.engine === originalEngine, "The real runtime rebuild must install a replacement engine")
+        }
         let destinationItemId = sameItemNewSession ? "item-pill" : "success-b"
         if sameItemNewSession { model.startNewSession(id: destinationItemId) }
         else { model.startItem(id: destinationItemId) }
@@ -107,6 +116,8 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         }
         let jobsB = try store.loadAIJobs(sessionId: b)
         let turnsB = try store.loadTurns(sessionId: b)
+        let installedEngine = try XCTUnwrap(model.engine)
+        XCTAssertEqual(installedEngine.currentSession?.id, b)
         let targetB = model.snapshot.targetId
         let statusB = model.statusMessage
         let queueB = model.diagnostics["pendingAutoPlayTurnId"]
@@ -134,6 +145,8 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(finalTurnA.sourceInterjectionIds, [noteA])
         XCTAssertEqual(try reopened.loadAIJobs(sessionId: b), jobsB, "A's success must not settle B's pending job")
         XCTAssertEqual(try reopened.loadTurns(sessionId: b), turnsB, "A's content must not be written into B")
+        XCTAssertTrue(model.engine === installedEngine)
+        XCTAssertEqual(installedEngine.currentSession?.id, b, "The installed engine must still own B")
         XCTAssertEqual(model.snapshot.sessionId, b)
         XCTAssertEqual(model.snapshot.itemId, destinationItemId)
         XCTAssertEqual(model.snapshot.targetId, targetB)
