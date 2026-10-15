@@ -68,18 +68,6 @@ enum Gate2LiveActivityCopy {
 }
 
 extension Gate2LiveActivityAttributes.ContentState {
-    /// Paused and not recording, or past its stale date (the app sets one only while paused).
-    /// The card then says how to resume instead of looking like a frozen player.
-    func offersResume(isStale: Bool) -> Bool {
-        guard !isRecording, sharedMarginSenderLabel == nil else { return false }
-        return isStale || status == "paused"
-    }
-
-    /// Tapping a paused card opens the app and resumes; otherwise it just opens the app.
-    func tapURL(isStale: Bool) -> URL? {
-        offersResume(isStale: isStale) ? Gate2CompactCommandURL.url(command: "play") : nil
-    }
-
     /// The card says REC only while the microphone is really taking in sound (#937). The words and the
     /// symbol change with it, not only the colour.
     var recordingWord: String {
