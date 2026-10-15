@@ -1369,12 +1369,7 @@ final class Gate1AppModel: ObservableObject {
             voiceURL: leveledVoiceURL(voiceURLs, itemId: itemId, margins: [target] + otherMargins)
         )
         conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
-        conductor.prepareAudioSession = {
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-        }
+        conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
             self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
@@ -1383,6 +1378,7 @@ final class Gate1AppModel: ObservableObject {
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
             self.marginMoment = conductor.sequence
             self.marginMomentVoiceIsPaused = conductor.isVoicePaused
+            if !conductor.isPlayingVoice { self.recordMarginMomentVoiceEnded() }
             // Nothing left to play inline: the card goes away and the item simply continues.
             if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty { self.endMarginMoment() }
         }
@@ -1410,6 +1406,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
+        recordMarginMomentVoiceEnded()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
         marginMoment = nil
