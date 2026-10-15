@@ -175,7 +175,9 @@ extension Gate1AppModel {
                 onResumeDecision: { [weak self] fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("supertonic.resume", fields) } },
                 onRenderPace: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["onDeviceRenderPace"] = summary } },
                 handOverHold: handOverBackgroundHold,
-                interruptionHold: makeInterruptionBackgroundHold()
+                interruptionHold: makeInterruptionBackgroundHold(),
+                applicationIsActive: SupertonicSpeechPlaybackClient.isApplicationActive,
+                onBackgroundSeams: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["backgroundSeams"] = summary } }
             )
         }
         diagnostics["sessionTTS"] = "System speech"
