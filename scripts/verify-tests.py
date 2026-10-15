@@ -494,6 +494,30 @@ PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
 RUNNER_TESTS_TIMEOUT = 600
 
+# #705: the startup stall below follows the simulator having just been busy. On 2026-10-14, in the lane's artifacts:
+# - 18 of the 20 app-plan stalls launched the host app 1-16 s after the simulator finished booting (median 5 s, from
+#   boot-events.log and the stall folders' launchd_sim ages); the 375 runs that did not stall launched it no earlier than
+#   about 8 s after the boot finished, and mostly minutes after, because a build ran in between;
+# - an adapters plan that began 8 s or less after the app plan's xcodebuild ended on the same simulator stalled in 18
+#   of 46 runs; one that began later stalled in 2 of 57 (the second plan always starts about 3-7 s after the first).
+# So the host app is not launched until the simulator has been quiet for 20 s: since its boot finished (lane_sim.boot
+# marks it) or its last app-hosted test run ended (below). The cause inside Xcode or the simulator is still unknown;
+# this removes the window where it shows. The wait is the remainder, usually none: a device with no marker (booted by
+# hand) or a retry 90 s later waits 0 s.
+SETTLE_SECONDS = 20
+SETTLE_LIMIT_SECONDS = 60  # a clock jump or a bad marker never holds a run longer than this
+
+
+def settle_before_tests(udid, sleep=time.sleep):
+    """Wait out the window where the host app stalls at startup (#705). Returns what it saw and how long it waited."""
+    quiet_for = lane_sim.seconds_quiet(udid)
+    wait = 0.0 if quiet_for is None else min(max(0.0, SETTLE_SECONDS - quiet_for), SETTLE_LIMIT_SECONDS)
+    if wait > 0:
+        print(f'settling the simulator for {wait:.0f}s before launching the host app '
+              f'(quiet for {quiet_for:.0f}s)', flush=True)
+        sleep(wait)
+    return {'seconds_quiet': None if quiet_for is None else round(quiet_for, 1), 'waited_seconds': round(wait, 1)}
+
 
 # #705: on intermittent runs the AudioAdapters step launched the app (AcquiredPID) and then sat until its 5m00s
 # budget with no test-runner handshake: no "Test Suite" line, 0 tests, exit 124, an unreadable xcresult. Runs that
@@ -1062,12 +1086,17 @@ class Run:
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
                        'diagnose': lambda folder: stall_evidence(chosen['udid'], folder),
                        'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
+            if startup is not None:
+                self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
+                self.save()
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                          'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
                          '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
                          timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
         finally:
+            if scheme == 'SpokenMarginsAppBehavior':
+                lane_sim.mark_quiet(chosen['udid'])
             self.audio_pin_udid = None
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.
