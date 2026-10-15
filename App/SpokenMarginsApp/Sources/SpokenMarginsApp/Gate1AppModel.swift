@@ -2486,14 +2486,6 @@ final class Gate1AppModel: ObservableObject {
         latestPendingJob(kind: "interjection_summary") != nil
     }
 
-    var canRetryLocalSummary: Bool {
-        guard !remoteProviderExperienceEnabled,
-              hasActiveSession,
-              let sessionId = snapshot.sessionId,
-              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else { return false }
-        return jobs.contains { $0.kind == "interjection_summary" && $0.status == "retryable" }
-    }
-
     var summaryActionTitle: String {
         if isSummarizingInterjections { return "Summarizing" }
         return canRetryLocalSummary ? "Retry Summary" : "Summarize Notes"
