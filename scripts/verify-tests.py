@@ -510,12 +510,14 @@ class StartupStall(Exception):
 
 
 # #1161: the 32 stall folders read on 2026-10-14 showed three shapes, none of them the app's own startup code.
-# 19 host apps had started and sat idle in the run loop with no XCTest library loaded (xcodebuild's
-# DYLD_INSERT_LIBRARIES never took effect, so nothing in the app could connect to the test runner); 1 was
-# still suspended at _dyld_start, never resumed after launch; 12 had no host app process at all (the session
-# log ends at "Launching app"). Each stall now records which shape it was.
+# 19 host apps had started and sat idle in the run loop with no XCTest library loaded (none of the libraries in
+# xcodebuild's DYLD_INSERT_LIBRARIES, so nothing in the app could connect to the test runner); 12 had no host
+# app process at all (the session log ends at "Launching app"); 1 had launched late (the simulator took about 70 s
+# to launch it) and was still in dyld, stopped for the debugger, when the watchdog sampled it. Each stall now
+# records which shape it was.
 XCTEST_INJECTED = re.compile(r'libXCTestBundleInject|XCTestCore\b|/XCTest\.framework/')
 NO_HOST_APP = 'no host app process: the launch into the simulator never completed'
+LAUNCHED_LATE = 'host app launched late and still starting in dyld when sampled (slow launch into the simulator)'
 
 
 def stall_diagnosis(sample_text, state=''):
@@ -525,17 +527,19 @@ def stall_diagnosis(sample_text, state=''):
     # The first thread in the call graph is the main thread; its block ends where the next thread starts.
     main = re.search(r'^Call graph:\n(\s+)(\d+) Thread_.*\n((?:\1[ +!:|].*\n)*)', graph[0], re.M)
     block = main.group(3) if main else ''
-    if state.startswith('T') or re.match(r'\s+\d+ _dyld_start ', block):
-        return 'host app suspended before it started (stopped at _dyld_start, never resumed after launch)'
+    if state.startswith('T'):
+        return LAUNCHED_LATE
     if not block:
         return 'host app sample unreadable (no main thread in its call graph)'
-    injected = 'XCTest loaded' if XCTEST_INJECTED.search(images) else 'XCTest never injected'
-    if not images:
-        injected = 'XCTest load unknown (no image list)'
 
     def most(pattern):  # a frame seen in at least half the main thread's samples, not a one-off branch
         return any(int(count) * 2 >= int(main.group(2))
                    for count in re.findall(rf'^[\s+!:|]*(\d+) [^\n]*(?:{pattern})', block, re.M))
+    if most(r'_dyld_start|dyld4::prepare'):
+        return LAUNCHED_LATE
+    injected = 'XCTest loaded' if XCTEST_INJECTED.search(images) else 'XCTest never injected'
+    if not images:
+        injected = 'XCTest load unknown (no image list)'
     idle = most('__CFRunLoopServiceMachPort') and \
         not most('semaphore_wait|_dispatch_sync_f_slow|__ulock_wait|psynch_mutexwait|psynch_cvwait')
     return f'host app {"idle in its run loop" if idle else "busy or blocked on its main thread"}; {injected}'

@@ -1329,9 +1329,12 @@ class VerificationTests(unittest.TestCase):
              'host app idle in its run loop; XCTest never injected'),
             (sample(['start', 'Gate1AppModel.init', 'dispatch_sync', '_dispatch_sync_f_slow', '__ulock_wait'],
                     self.APP_IMAGES + self.INJECT), 'S', 'host app busy or blocked on its main thread; XCTest loaded'),
-            # 1 of 32: process state Ts, still at _dyld_start.
-            (sample(['_dyld_start'], ''), 'Ts', 'host app suspended before it started'),
-            (sample(self.RUN_LOOP, self.APP_IMAGES), 'T', 'host app suspended before it started'),
+            # 1 of 32: launched about 70 s late, so the sample caught it in dyld, stopped for the debugger (Ts).
+            (sample(['_dyld_start'], ''), 'Ts', 'host app launched late and still starting in dyld'),
+            (sample(self.RUN_LOOP, self.APP_IMAGES), 'T', 'host app launched late and still starting in dyld'),
+            # A later one had already resumed when sampled: running, but most samples still in dyld's set-up.
+            (sample(['start', 'dyld4::prepareSim', 'dyld4::APIs::runAllInitializersForMain'], ''), 'S',
+             'host app launched late and still starting in dyld'),
             (sample(self.RUN_LOOP, ''), 'S', 'host app idle in its run loop; XCTest load unknown'),
             ('', 'S', 'host app sample unreadable'),
             ('sample: process 101 does not exist\n', '', 'host app sample unreadable'),
