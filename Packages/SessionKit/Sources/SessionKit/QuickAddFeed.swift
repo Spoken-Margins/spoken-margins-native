@@ -58,7 +58,8 @@ public struct QuickAddImportedItem: Sendable, Equatable {
 public enum QuickAddFeed {
     /// Quick Folder files and followed episodes in one list, newest first (ties by id ascending).
     /// A file whose dismissal key was dismissed is hidden. A followed episode is hidden when a Library
-    /// item has the same normalized source URL, or the same show and episode title key.
+    /// item has the same normalized source URL, or the same show and episode title key. A followed
+    /// show's back catalogue, what it had before it was followed, is never listed (#1589).
     public static func candidates(
         folderFiles: [QuickAccessFile],
         followedEntries: [FeedEntry],
@@ -74,7 +75,7 @@ public enum QuickAddFeed {
             ($0.id, $0.source.title ?? $0.source.host)
         })
         let eligibleFiles = folderFiles.filter { !dismissedFileKeys.contains($0.dismissalKey) }
-        let eligibleEntries = followedEntries.filter { entry in
+        let eligibleEntries = FollowBaseline.newEntries(followedEntries, subscriptions: subscriptions).filter { entry in
             if let url = normalizedURL(entry.canonicalURL), importedURLs.contains(url) {
                 return false
             }

@@ -205,8 +205,7 @@ public struct FollowingEdition: Equatable, Sendable {
             newestByShow[entry.subscriptionId] = entry
         }
         func isBackCatalogue(_ entry: FeedEntry, of show: FeedSubscription) -> Bool {
-            guard let date = entry.publishedAt else { return false }
-            return date < show.createdAt
+            FollowBaseline.isBackCatalogue(entry, of: show)
         }
         // New on the show's page: waiting, inside the pick window (or undated), not back catalogue.
         func isNew(_ entry: FeedEntry, of show: FeedSubscription) -> Bool {
