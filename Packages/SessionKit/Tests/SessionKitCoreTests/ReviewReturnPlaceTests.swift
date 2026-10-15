@@ -13,11 +13,12 @@ final class ReviewReturnPlaceTests: XCTestCase {
         )!
     }
 
-    private func isolatedDefaults() -> UserDefaults {
-        let suite = "ReviewReturnPlaceTests-\(UUID().uuidString)"
+    /// A defaults suite of its own, removed afterwards, so no test reads or leaves what another wrote.
+    private func withIsolatedDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
+        let suite = "ReviewReturnPlaceTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
-        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
-        return defaults
+        defer { defaults.removePersistentDomain(forName: suite) }
+        try body(defaults)
     }
 
     func testAReviewOwesThePlaceTheListenerLeftOff() throws {
@@ -53,60 +54,67 @@ final class ReviewReturnPlaceTests: XCTestCase {
     }
 
     func testThePlaceSurvivesALaunchAndIsKeptPerItem() throws {
-        let defaults = isolatedDefaults()
-        ReviewReturnPlaces(defaults: defaults).owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
-        let afterRelaunch = ReviewReturnPlaces(defaults: defaults)
-        XCTAssertEqual(afterRelaunch.owed(itemId: "ep")?.returnToMediaTimeMs, 12_000)
-        XCTAssertNil(afterRelaunch.owed(itemId: "another"))
+        try withIsolatedDefaults { defaults in
+            ReviewReturnPlaces(defaults: defaults).owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
+            let afterRelaunch = ReviewReturnPlaces(defaults: defaults)
+            XCTAssertEqual(afterRelaunch.owed(itemId: "ep")?.returnToMediaTimeMs, 12_000)
+            XCTAssertNil(afterRelaunch.owed(itemId: "another"))
+        }
     }
 
     func testKeepingForRecordingSurvivesALaunchAndClearingForgetsIt() throws {
-        let defaults = isolatedDefaults()
-        let places = ReviewReturnPlaces(defaults: defaults)
-        places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
-        places.keepForRecording(itemId: "ep")
-        XCTAssertEqual(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep")?.keptForRecording, true)
-        places.clear(itemId: "ep")
-        XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
-        XCTAssertNil(defaults.data(forKey: "spokenmargins.reviewReturnPlaces"), "nothing left behind")
+        try withIsolatedDefaults { defaults in
+            let places = ReviewReturnPlaces(defaults: defaults)
+            places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
+            places.keepForRecording(itemId: "ep")
+            XCTAssertEqual(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep")?.keptForRecording, true)
+            places.clear(itemId: "ep")
+            XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
+            XCTAssertNil(defaults.data(forKey: "spokenmargins.reviewReturnPlaces"), "nothing left behind")
+        }
     }
 
     func testRemovingAllForgetsEveryItemsPlace() throws {
-        let defaults = isolatedDefaults()
-        let places = ReviewReturnPlaces(defaults: defaults)
-        places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
-        let other = try XCTUnwrap(MarginMomentSequence(
-            itemId: "other", reviewing: [MarginMomentAnchor(marginId: "x", mediaTimeMs: 9_000)], returnToMediaTimeMs: 2_000
-        ))
-        places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: other)))
-        places.removeAll()
-        XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
-        XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "other"))
+        try withIsolatedDefaults { defaults in
+            let places = ReviewReturnPlaces(defaults: defaults)
+            places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
+            let other = try XCTUnwrap(MarginMomentSequence(
+                itemId: "other", reviewing: [MarginMomentAnchor(marginId: "x", mediaTimeMs: 9_000)], returnToMediaTimeMs: 2_000
+            ))
+            places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: other)))
+            places.removeAll()
+            XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "ep"))
+            XCTAssertNil(ReviewReturnPlaces(defaults: defaults).owed(itemId: "other"))
+        }
     }
 
     func testKeepingAnItemThatOwesNothingChangesNothing() {
-        let defaults = isolatedDefaults()
-        let places = ReviewReturnPlaces(defaults: defaults)
-        places.keepForRecording(itemId: "ep")
-        XCTAssertNil(places.owed(itemId: "ep"))
-        XCTAssertNil(defaults.data(forKey: "spokenmargins.reviewReturnPlaces"))
+        withIsolatedDefaults { defaults in
+            let places = ReviewReturnPlaces(defaults: defaults)
+            places.keepForRecording(itemId: "ep")
+            XCTAssertNil(places.owed(itemId: "ep"))
+            XCTAssertNil(defaults.data(forKey: "spokenmargins.reviewReturnPlaces"))
+        }
     }
 
     func testAnotherReviewOfTheSameItemReplacesThePlace() throws {
-        let places = ReviewReturnPlaces(defaults: isolatedDefaults())
-        places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 12_000))))
-        places.keepForRecording(itemId: "ep")
-        places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 3_000))))
-        XCTAssertEqual(places.owed(itemId: "ep")?.returnToMediaTimeMs, 3_000)
-        XCTAssertEqual(places.owed(itemId: "ep")?.keptForRecording, false)
+        try withIsolatedDefaults { defaults in
+            let places = ReviewReturnPlaces(defaults: defaults)
+            places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 12_000))))
+            places.keepForRecording(itemId: "ep")
+            places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review(returnTo: 3_000))))
+            XCTAssertEqual(places.owed(itemId: "ep")?.returnToMediaTimeMs, 3_000)
+            XCTAssertEqual(places.owed(itemId: "ep")?.keptForRecording, false)
+        }
     }
 
     func testGarbageInTheStoreIsIgnored() throws {
-        let defaults = isolatedDefaults()
-        defaults.set(Data("not json".utf8), forKey: "spokenmargins.reviewReturnPlaces")
-        let places = ReviewReturnPlaces(defaults: defaults)
-        XCTAssertNil(places.owed(itemId: "ep"))
-        places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
-        XCTAssertEqual(places.owed(itemId: "ep")?.returnToMediaTimeMs, 12_000)
+        try withIsolatedDefaults { defaults in
+            defaults.set(Data("not json".utf8), forKey: "spokenmargins.reviewReturnPlaces")
+            let places = ReviewReturnPlaces(defaults: defaults)
+            XCTAssertNil(places.owed(itemId: "ep"))
+            places.owe(try XCTUnwrap(ReviewReturnPlace(sequence: review())))
+            XCTAssertEqual(places.owed(itemId: "ep")?.returnToMediaTimeMs, 12_000)
+        }
     }
 }
