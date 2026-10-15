@@ -138,9 +138,10 @@ class LaneAudioTests(unittest.TestCase):
         self.assertEqual(len(self.mac.sets), sets)
         after = 1010.0 + lane_audio.REPIN_YIELD + 1
         self.assertEqual(len(self.refresh_after_airpods_reclaim(after)), 3)  # the yield is over: pinned again
-        # The AirPods were never pinned away from at boot, so settle must not resurrect them as a restore target.
+        # The boot pin saved the AirPods, so the last shutdown puts them back.
         self.booted.clear()
         self.settle()
+        self.assertEqual(self.mac.defaults, {'input': 112, 'output': 106, 'system': 106})
 
     def test_reclaims_spread_over_time_are_still_pinned(self):
         with mock.patch('time.time', return_value=1000.0):
