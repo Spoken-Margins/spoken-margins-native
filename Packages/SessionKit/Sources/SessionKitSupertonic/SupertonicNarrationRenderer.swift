@@ -165,7 +165,7 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     public init(
         assets: SupertonicAssetLocation,
         outputDirectory: URL,
-        governor: OnDeviceVoiceGovernor = OnDeviceVoiceGovernor(),
+        governor: OnDeviceVoiceGovernor,
         fileManager: FileManager = .default
     ) throws {
         try assets.validate(fileManager: fileManager)

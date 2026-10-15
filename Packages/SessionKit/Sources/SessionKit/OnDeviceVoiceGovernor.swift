@@ -13,9 +13,11 @@ public enum OnDeviceRenderPacing: Equatable, Sendable {
 /// Kitten rendered flat out in the background and iOS stopped the app for using too much CPU.
 ///
 /// One instance holds the app's state for every voice: whether the app is in the background, and what the device
-/// reports (heat, Low Power Mode, a recent memory warning). A voice renderer takes the instance, runs each inference
-/// through `measureInference(_:)` and then calls `rest(after:pacing:shouldContinue:)`; it needs nothing else to be
-/// paced.
+/// reports (heat, Low Power Mode, a recent memory warning). The app keeps one; every renderer requires it, so a voice
+/// can't be built without pacing. A renderer runs each inference through `measureInference(_:)`, then either rests
+/// at once (`rest(after:pacing:shouldContinue:)`, Supertonic between its steps) or notes `nextInference(after:pacing:)`
+/// and waits it out at the start of its next render (`waitForNextInference`, Kitten and Pocket), so a rest never
+/// delays the chunk just made and a cancelled render doesn't sit through one.
 public final class OnDeviceVoiceGovernor: @unchecked Sendable {
     /// What one inference cost: wall time, and the process's CPU time over it when known. A voice that runs inference
     /// on several threads (Kitten uses two) spends more CPU than wall time, and iOS's background limit counts CPU.
@@ -119,9 +121,24 @@ public final class OnDeviceVoiceGovernor: @unchecked Sendable {
         try rest(after: InferenceCost(wall: inference), pacing: pacing, shouldContinue: shouldContinue)
     }
 
-    /// Rests after an inference that cost `cost`, until the rest is over or the app comes to the front.
-    public func rest(after cost: InferenceCost, pacing: OnDeviceRenderPacing) {
-        rest(after: cost, pacing: pacing, shouldContinue: { true })
+    /// When the voice's next inference may start after one that cost `cost`; nil when it needn't wait.
+    public func nextInference(after cost: InferenceCost, pacing: OnDeviceRenderPacing) -> TimeInterval? {
+        let delay = pacingDelay(after: cost, for: pacing)
+        #if DEBUG
+        lock.withLock { records.append((pacing, cost.wall, delay)) }
+        #endif
+        return delay > 0 ? now() + delay : nil
+    }
+
+    /// Waits until `notBefore` (from `nextInference(after:pacing:)`) before the next inference. Time spent idle since
+    /// counts. Ends early once a render with `pacing` is no longer paced (the app came to the front) or
+    /// `shouldContinue` says to stop; it throws what `shouldContinue` throws, such as a cancellation.
+    public func waitForNextInference(
+        notBefore: TimeInterval, pacing: OnDeviceRenderPacing, shouldContinue: () throws -> Bool
+    ) rethrows {
+        try OnDeviceInferencePacingPolicy.wait(for: notBefore - now(), now: now, sleep: sleep) {
+            try shouldContinue() && isPaced(pacing)
+        }
     }
 
     /// Rests after an inference that cost `cost`, on the caller's thread, so the voice's next inference waits.

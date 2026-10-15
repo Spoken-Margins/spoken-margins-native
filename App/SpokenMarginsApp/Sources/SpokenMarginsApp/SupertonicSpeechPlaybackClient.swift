@@ -856,7 +856,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Kitten renders the rest of `generation` from here on, until a play releases it (#849 audit).
     private func holdBundledVoice(for generation: UUID) {
-        let block = SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+        let block = OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         lock.withLock {
             guard self.generation == generation else { return }
             if bundledVoiceGeneration != generation { bundledVoiceBlock = block }
@@ -1943,7 +1943,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // The stop names why the iOS voice took over, so the player's line needs nothing else (#314).
         let stopReason = SpeechFallbackReason(
             supertonicCode: reason,
-            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+            resourceBlock: OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         ).rawValue
         var cancelledRenderQueue = false
         do {

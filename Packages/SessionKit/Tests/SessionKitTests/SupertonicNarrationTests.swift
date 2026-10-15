@@ -26,7 +26,7 @@ final class SupertonicNarrationTests: XCTestCase {
         for voice in SupertonicVoiceID.allCases {
             _ = FileManager.default.createFile(atPath: assets.voiceStyleURL(for: voice).path, contents: Data())
         }
-        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root.appending(path: "output"))
+        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root.appending(path: "output"), governor: OnDeviceVoiceGovernor())
 
         renderer.setBackgroundInferencePacingEnabled(false)
         XCTAssertGreaterThan(renderer.pacingDelay(afterInferenceDuration: 10, for: .always), 0,
@@ -52,7 +52,7 @@ final class SupertonicNarrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-real-pacing-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root)
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         func render(_ text: String, _ pacing: SupertonicRenderPacing) async throws {
             let result = try await renderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 5, pacing: pacing)
             await renderer.discardGeneratedAudio(at: result.audioURL)
@@ -90,7 +90,7 @@ final class SupertonicNarrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-real-trim-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root)
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         let result = try await renderer.render(
             text: "The listener hears this sentence now.", voice: .m2, language: "en", speed: 1,
             synthesisSteps: 5, pacing: .whenAppBackgrounded
@@ -173,7 +173,8 @@ final class SupertonicNarrationTests: XCTestCase {
         }
         let renderer = try SupertonicNarrationRenderer(
             assets: assets,
-            outputDirectory: root.appending(path: "output", directoryHint: .isDirectory)
+            outputDirectory: root.appending(path: "output", directoryHint: .isDirectory),
+            governor: OnDeviceVoiceGovernor()
         )
 
         do {
@@ -204,7 +205,7 @@ final class SupertonicNarrationTests: XCTestCase {
         let durable = root.appending(path: "PreparedAudio/item/chunk-0001.wav")
         try FileManager.default.createDirectory(at: durable.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("durable prepared chunk".utf8).write(to: durable)
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root.appending(path: "Playback"))
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root.appending(path: "Playback"), governor: OnDeviceVoiceGovernor())
 
         await renderer.discardGeneratedAudio(at: durable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: durable.path), "a prepared chunk the renderer didn't make survives")

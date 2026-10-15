@@ -37,7 +37,7 @@ final class SupertonicChunkingTests: XCTestCase {
         let output = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-chunking-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
-        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: output)
+        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: output, governor: OnDeviceVoiceGovernor())
         let plan = RenderedSpeechChunker.sourceSlices(from: SpeechTextNormalizer.normalize(Self.tableSpan))
         var durations: [String] = []
         for planned in plan {
@@ -101,7 +101,7 @@ final class SupertonicChunkingTests: XCTestCase {
         let output = FileManager.default.temporaryDirectory
             .appending(path: "system-voice-chunk-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
-        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: output)
+        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: output, governor: OnDeviceVoiceGovernor())
         let text = "Latency 12.4 s 3.8 s 0.9 s 0.27 s Cost $0.021 $0.004 $0.0007 per query, n = 1,024, p < 0.001."
         let supertonic = try await renderer.render(text: text, voice: .m2, speed: 1, synthesisSteps: 8)
         await renderer.unload(removingGeneratedAudio: false)

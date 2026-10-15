@@ -101,17 +101,43 @@ final class OnDeviceVoiceGovernorTests: XCTestCase {
         let shared = governor(clock)
         let inference = OnDeviceVoiceGovernor.InferenceCost(wall: 1, cpu: 1.8)
 
-        shared.rest(after: inference, pacing: .whenAppBackgrounded)
-        XCTAssertEqual(clock.sleptTotal, 0, "live narration in front is never held back")
+        XCTAssertNil(shared.nextInference(after: inference, pacing: .whenAppBackgrounded),
+                     "live narration in front is never held back")
 
         shared.setAppBackgrounded(true)
-        shared.rest(after: inference, pacing: .whenAppBackgrounded)
+        let notBefore = shared.nextInference(after: inference, pacing: .whenAppBackgrounded)
+        XCTAssertEqual(notBefore ?? 0, 1.8 / 0.65 - 1, accuracy: 0.001)
+        shared.waitForNextInference(notBefore: notBefore ?? 0, pacing: .whenAppBackgrounded) { true }
         XCTAssertEqual(clock.sleptTotal, 1.8 / 0.65 - 1, accuracy: 0.001, "a backgrounded render waits before the next")
 
         shared.setAppBackgrounded(false)
         let before = clock.sleptTotal
-        shared.rest(after: inference, pacing: .always)
+        shared.rest(afterInference: 1, pacing: .always) { true }
         XCTAssertGreaterThan(clock.sleptTotal - before, 0, "background preparation is paced in front too (#377)")
+    }
+
+    // The rest is waited out at the start of the next render: time the voice spent idle since counts, coming to the
+    // front ends it, and a cancelled render doesn't sit through it.
+    func testTheNextInferenceWaitCountsIdleTimeAndEndsOnForegroundOrCancel() {
+        let clock = FakeClock()
+        let shared = governor(clock)
+        shared.setAppBackgrounded(true)
+        let notBefore = shared.nextInference(after: .init(wall: 2), pacing: .whenAppBackgrounded) ?? 0
+        clock.run(wall: 0.5, cpu: 0) // idle between renders
+        shared.waitForNextInference(notBefore: notBefore, pacing: .whenAppBackgrounded) { true }
+        XCTAssertEqual(clock.sleptTotal, 2 / 0.65 - 2 - 0.5, accuracy: 0.001)
+
+        let later = shared.nextInference(after: .init(wall: 2), pacing: .whenAppBackgrounded) ?? 0
+        shared.setAppBackgrounded(false)
+        let beforeForeground = clock.sleptTotal
+        shared.waitForNextInference(notBefore: later, pacing: .whenAppBackgrounded) { true }
+        XCTAssertEqual(clock.sleptTotal, beforeForeground, "in front the next render starts at once")
+
+        shared.setAppBackgrounded(true)
+        let cancelled = shared.nextInference(after: .init(wall: 2), pacing: .whenAppBackgrounded) ?? 0
+        XCTAssertThrowsError(try shared.waitForNextInference(notBefore: cancelled, pacing: .whenAppBackgrounded) {
+            throw CancellationError()
+        })
     }
 
     func testMeasureInferenceReportsWallAndProcessCPU() {

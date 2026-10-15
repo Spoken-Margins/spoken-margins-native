@@ -54,6 +54,13 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
     static let styleRowCount = 400
     static let styleWidth = 256
 
+    private final class CancellationFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        var isCancelled: Bool { lock.withLock { cancelled } }
+        func cancel() { lock.withLock { cancelled = true } }
+    }
+
     private final class Runtime {
         let environment: ORTEnv
         let session: ORTSession
@@ -88,11 +95,14 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
     private var runtime: Runtime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
+    /// When the next inference may start, from the last one's cost (#1679). Read and written on `renderQueue` only.
+    private var nextInferenceNotBefore: TimeInterval?
 
     /// Two threads measured 6.7x against 5.8x on one (C2 M2), and leave the rest of the CPU to playback.
+    /// `governor` paces inference in the background; the app passes its one shared governor.
     public init(
         assets: KittenAssetLocation, outputDirectory: URL, threads: Int = 2,
-        governor: OnDeviceVoiceGovernor = OnDeviceVoiceGovernor(), fileManager: FileManager = .default
+        governor: OnDeviceVoiceGovernor, fileManager: FileManager = .default
     ) throws {
         try assets.validate(fileManager: fileManager)
         try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
@@ -118,39 +128,51 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { throw KittenNarrationError.emptyText }
         try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation { continuation in
-            renderQueue.async { [self] in
-                var cost: OnDeviceVoiceGovernor.InferenceCost?
-                autoreleasepool {
-                    do {
-                        let startedAt = Date()
-                        let (samples, inferenceCost) = try governor.measureInference {
-                            try synthesize(spoken, with: loadRuntimeIfNeeded())
+        let cancellation = CancellationFlag()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                renderQueue.async { [self] in
+                    autoreleasepool {
+                        do {
+                            // The rest the last inference earned, waited out here under this render's own pacing and
+                            // cancellation: in the background Kitten stays under iOS's CPU limit, which it ran
+                            // straight past before (#1679), and a chunk is never held back once it is made.
+                            if let notBefore = nextInferenceNotBefore {
+                                try governor.waitForNextInference(notBefore: notBefore, pacing: pacing) {
+                                    guard !cancellation.isCancelled else { throw CancellationError() }
+                                    return true
+                                }
+                                nextInferenceNotBefore = nil
+                            }
+                            guard !cancellation.isCancelled else { throw CancellationError() }
+                            let startedAt = Date()
+                            // Loading the session is paid once and isn't counted as inference.
+                            let runtime = try loadRuntimeIfNeeded()
+                            let (samples, cost) = try governor.measureInference { try synthesize(spoken, with: runtime) }
+                            nextInferenceNotBefore = governor.nextInference(after: cost, pacing: pacing)
+                            let rate = Self.sampleRate
+                            let kept = SpeechSilenceTrim.speechRange(in: samples, sampleRate: rate).map { Array(samples[$0]) } ?? samples
+                            let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
+                            let audioURL = outputDirectory.appending(path: "kitten-\(UUID().uuidString).wav")
+                            try writeWavFile(audioURL.path, kept, rate)
+                            generatedAudioURLs.insert(audioURL)
+                            continuation.resume(returning: SupertonicNarrationResult(
+                                audioURL: audioURL,
+                                duration: TimeInterval(kept.count) / TimeInterval(rate),
+                                sampleRate: rate,
+                                renderDuration: Date().timeIntervalSince(startedAt),
+                                sessionLoadCount: sessionLoadCount,
+                                engine: Self.engine,
+                                trimmedSilence: trimmedSilence
+                            ))
+                        } catch {
+                            continuation.resume(throwing: error)
                         }
-                        cost = inferenceCost
-                        let rate = Self.sampleRate
-                        let kept = SpeechSilenceTrim.speechRange(in: samples, sampleRate: rate).map { Array(samples[$0]) } ?? samples
-                        let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
-                        let audioURL = outputDirectory.appending(path: "kitten-\(UUID().uuidString).wav")
-                        try writeWavFile(audioURL.path, kept, rate)
-                        generatedAudioURLs.insert(audioURL)
-                        continuation.resume(returning: SupertonicNarrationResult(
-                            audioURL: audioURL,
-                            duration: TimeInterval(kept.count) / TimeInterval(rate),
-                            sampleRate: rate,
-                            renderDuration: Date().timeIntervalSince(startedAt),
-                            sessionLoadCount: sessionLoadCount,
-                            engine: Self.engine,
-                            trimmedSilence: trimmedSilence
-                        ))
-                    } catch {
-                        continuation.resume(throwing: error)
                     }
                 }
-                // The chunk is already handed back; the rest holds the queue, so the next render waits. In the
-                // background this keeps Kitten under iOS's CPU limit, which it ran straight past before (#1679).
-                if let cost { governor.rest(after: cost, pacing: pacing) }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 

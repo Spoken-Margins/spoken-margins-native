@@ -52,7 +52,7 @@ final class KittenRendererTests: XCTestCase {
     }
 
     func testRendersASentenceAsAReadableWavWithTheKittenEngineTag() async throws {
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory)
+        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
         let result = try await renderer.render(text: Self.prose[0])
         XCTAssertEqual(result.engine, "kitten")
         XCTAssertEqual(result.sampleRate, 24_000)
@@ -75,7 +75,7 @@ final class KittenRendererTests: XCTestCase {
     }
 
     func testEmptyAndPunctuationOnlyTextFailsWithoutCrashing() async throws {
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory)
+        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
         do { _ = try await renderer.render(text: "  \n "); XCTFail("empty text must throw") } catch { XCTAssertEqual(error as? KittenNarrationError, .emptyText) }
         for text in ["...", "—", "42", "🎧", "A", "Mr. Dr. St. etc."] {
             if let result = try? await renderer.render(text: text) { XCTAssertGreaterThan(result.duration, 0.05, text) }
@@ -84,15 +84,16 @@ final class KittenRendererTests: XCTestCase {
 
     func testMissingAssetsAreNamed() throws {
         let empty = KittenAssetLocation(rootURL: outputDirectory)
-        XCTAssertThrowsError(try KittenNarrationRenderer(assets: empty, outputDirectory: outputDirectory)) {
+        XCTAssertThrowsError(try KittenNarrationRenderer(assets: empty, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())) {
             XCTAssertEqual($0 as? KittenNarrationError, .missingAsset("kitten_tts_nano_v0_8.onnx"))
         }
     }
 
     // #1679: heat hands narration to Kitten, and Kitten used to render flat out in the background, so iOS stopped the
-    // app for its CPU use about a minute after the phone was locked. A backgrounded Kitten render now rests before the
-    // next one by the shared governor's rule; a render with the app in front does not.
-    func testABackgroundedRenderRestsBeforeTheNextAndAForegroundOneDoesNot() async throws {
+    // app for its CPU use about a minute after the phone was locked. A backgrounded Kitten render now waits out the
+    // rest its last inference earned, by the shared governor's rule, before the next inference; with the app in front
+    // nothing waits.
+    func testABackgroundedRenderWaitsBeforeTheNextInferenceAndAForegroundOneDoesNot() async throws {
         final class Slept: @unchecked Sendable {
             private let lock = NSLock()
             private var total: TimeInterval = 0
@@ -105,17 +106,19 @@ final class KittenRendererTests: XCTestCase {
         let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: governor)
 
         _ = try await renderer.render(text: Self.prose[0])
-        _ = await renderer.diagnostics() // queued behind any rest
-        XCTAssertEqual(slept.seconds, 0, "a render with the app in front is not slowed down")
+        _ = try await renderer.render(text: Self.prose[1])
+        XCTAssertEqual(slept.seconds, 0, "with the app in front a render is not slowed down")
 
         governor.setAppBackgrounded(true)
-        let background = try await renderer.render(text: Self.prose[1])
-        _ = await renderer.diagnostics()
+        let background = try await renderer.render(text: Self.prose[2])
         let paced = try XCTUnwrap(governor.debugPacingRecords.last)
         XCTAssertGreaterThan(paced.delay, 0, "\(governor.debugPacingRecords)")
         XCTAssertGreaterThanOrEqual(paced.delay, paced.inference * (1 / OnDeviceInferencePacingPolicy.backgroundWorkDutyCycle - 1) - 0.000_1,
                                     "at least the wall-time rest Supertonic gets")
-        XCTAssertEqual(slept.seconds, paced.delay, accuracy: 0.05, "the next render waited out the rest")
+        XCTAssertEqual(slept.seconds, 0, "the chunk itself is handed back at once")
+        _ = try await renderer.render(text: Self.prose[3])
+        XCTAssertGreaterThan(slept.seconds, paced.delay * 0.8, "the next inference waited out the rest")
+        XCTAssertLessThanOrEqual(slept.seconds, paced.delay + 0.000_1)
         XCTAssertLessThan(paced.inference + paced.delay, background.duration,
                           "paced, Kitten still renders faster than the chunk plays (#1673)")
     }
@@ -131,7 +134,7 @@ final class KittenRendererTests: XCTestCase {
         let spoken = NarrationChunkPlanner.spokenPlan(spokenText: SpeechTextNormalizer.normalize(text), articleText: text, articleSpokenStart: 0)
         let chunks = NarrationChunkPlanner.splittingFirstChunk(
             of: spoken.chunks, spokenText: SpeechTextNormalizer.normalize(text), playheadOffset: 0)
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory)
+        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
 
         var renderedChunks = 0, rendered = 0.0, audio = 0.0, ends = 0.0, longestPause = 0.0, firstReady = 0.0, memoryAfterFirst = 0.0, peak = 0.0
         for (index, chunk) in chunks.enumerated() {
