@@ -28,7 +28,7 @@ extension Gate1AppModel {
     /// which ends the playing summary the same way (#1628).
     var showsNextChapterButton: Bool {
         NextChapterSummaryRule.showsChapterRowButton(
-            isAvailable: canJumpToNextChapter, forwardSkimOffered: showsSkimRow && snapshot.canSkimForward)
+            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward)
     }
 
     private var playingSummaryForNextChapter: NextChapterSummaryRule.PlayingSummary? {

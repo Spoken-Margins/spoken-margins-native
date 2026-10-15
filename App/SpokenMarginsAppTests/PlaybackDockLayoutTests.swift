@@ -89,6 +89,10 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertFalse(model.showsNextChapterButton, "the chapter row must not draw a second forward control")
     }
 
+    // The end-of-map state (Skim row up for Skim Back, forward off, a feed chapter still ahead) is pinned by the
+    // truth table in NextChapterSummaryTests. It can't be set up here: the snapshot observer recomputes the Skim
+    // flags from the store on every change, so a hand-set `canSkimBackward` without a real map is reset at once.
+
     func testNextChapterStaysWhenThereIsNoForwardSkim() {
         let model = makePodcastModel(withChapters: true)
         XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")

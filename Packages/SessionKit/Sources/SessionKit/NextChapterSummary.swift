@@ -43,9 +43,10 @@ public enum NextChapterSummaryRule {
     /// Whether the chapter row above the scrubber draws its Next chapter button (#1628). A forward Skim control
     /// the listener can press already offers forward navigation, so the second button is hidden; with no forward
     /// Skim target (no ready map, a map that has ended, an article) Next chapter stays. This is only about the
-    /// button: the Lock Screen and external commands go by `isAvailable`.
-    public static func showsChapterRowButton(isAvailable: Bool, forwardSkimOffered: Bool) -> Bool {
-        isAvailable && !forwardSkimOffered
+    /// button: the Lock Screen and external commands go by `isAvailable`. The Skim row can be on screen for Skim
+    /// Back alone, so forward Skim counts only when the row is shown and its forward control is enabled.
+    public static func showsChapterRowButton(isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool) -> Bool {
+        isAvailable && !(skimRowShown && canSkimForward)
     }
 
     /// - Parameters:

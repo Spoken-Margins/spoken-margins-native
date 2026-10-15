@@ -85,12 +85,20 @@ final class NextChapterSummaryTests: XCTestCase {
     // MARK: the chapter row's button next to Skim (#1628)
 
     func testChapterRowButtonIsHiddenOnlyWhenForwardSkimIsOffered() {
-        // chapters + a forward Skim target: Skim is the one forward control
-        XCTAssertFalse(Rule.showsChapterRowButton(isAvailable: true, forwardSkimOffered: true))
-        // chapters only, a missing or unready map, no forward target (including the end of the map)
-        XCTAssertTrue(Rule.showsChapterRowButton(isAvailable: true, forwardSkimOffered: false))
-        // no next chapter: nothing to show whether or not Skim is offered
-        XCTAssertFalse(Rule.showsChapterRowButton(isAvailable: false, forwardSkimOffered: false))
-        XCTAssertFalse(Rule.showsChapterRowButton(isAvailable: false, forwardSkimOffered: true))
+        func shows(_ isAvailable: Bool, row: Bool, forward: Bool) -> Bool {
+            Rule.showsChapterRowButton(isAvailable: isAvailable, skimRowShown: row, canSkimForward: forward)
+        }
+        // chapters + a Skim row with forward enabled: Skim is the one forward control
+        XCTAssertFalse(shows(true, row: true, forward: true))
+        // chapters only, a missing or unready map: no Skim row
+        XCTAssertTrue(shows(true, row: false, forward: false))
+        // the end of the map: the row stays for Skim Back, forward is off, so Next chapter stays
+        XCTAssertTrue(shows(true, row: true, forward: false))
+        // forward can't be pressed without the row (a stale flag must not hide the button)
+        XCTAssertTrue(shows(true, row: false, forward: true))
+        // no next chapter: nothing to show whatever Skim does
+        for row in [false, true] {
+            for forward in [false, true] { XCTAssertFalse(shows(false, row: row, forward: forward)) }
+        }
     }
 }
