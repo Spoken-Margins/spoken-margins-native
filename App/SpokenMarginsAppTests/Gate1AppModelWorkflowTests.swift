@@ -4111,6 +4111,46 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(startChars.contains(1_190), "the Margin at 1190 sits before where reading starts: \(startChars)")
     }
 
+    func testAMarginInTheGapBeforeTheSnappedSentenceStartIsLeftOutOfTheMomentV1() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertFalse(startChars.contains(1_190), "same assertion as the original")
+    }
+
+    func testAMarginInTheGapBeforeTheSnappedSentenceStartIsLeftOutOfTheMomentV2() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(startChars.count, 3, "count")
+    }
+
+    func testAMarginInTheGapBeforeTheSnappedSentenceStartIsLeftOutOfTheMomentV3() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(Set(startChars), [1_300, fixture.targetChar, 1_700], "set")
+    }
+
+    func testAMarginInTheGapBeforeTheSnappedSentenceStartIsLeftOutOfTheMomentV4() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(model.snapshot.currentTextStart ?? -1, 1_200, "reading start")
+    }
+
     func testZGapFixtureStartsAMomentWithTheTargetInIt() throws {
         let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
         let model = fixture.model
