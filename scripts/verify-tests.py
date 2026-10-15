@@ -509,6 +509,42 @@ class StartupStall(Exception):
     pass
 
 
+# #1161: the 32 stall folders read on 2026-10-14 showed three shapes, none of them the app's own startup code.
+# 19 host apps had started and sat idle in the run loop with no XCTest library loaded (none of the libraries in
+# xcodebuild's DYLD_INSERT_LIBRARIES, so nothing in the app could connect to the test runner); 12 had no host
+# app process at all (the session log ends at "Launching app"); 1 had launched late (the simulator took about 70 s
+# to launch it) and was still in dyld, stopped for the debugger, when the watchdog sampled it. Each stall now
+# records which shape it was.
+XCTEST_INJECTED = re.compile(r'libXCTestBundleInject|XCTestCore\b|/XCTest\.framework/')
+NO_HOST_APP = 'no host app process: the launch into the simulator never completed'
+LAUNCHED_LATE = 'host app launched late and still starting in dyld when sampled (slow launch into the simulator)'
+
+
+def stall_diagnosis(sample_text, state=''):
+    """One line naming what a stalled host app was doing, from its `sample` output and its ps state."""
+    graph = sample_text.split('Binary Images:', 1)
+    images = graph[1].strip() if len(graph) == 2 else ''
+    # The first thread in the call graph is the main thread; its block ends where the next thread starts.
+    main = re.search(r'^Call graph:\n(\s+)(\d+) Thread_.*\n((?:\1[ +!:|].*\n)*)', graph[0], re.M)
+    block = main.group(3) if main else ''
+    if state.startswith('T'):
+        return LAUNCHED_LATE
+    if not block:
+        return 'host app sample unreadable (no main thread in its call graph)'
+
+    def most(pattern):  # a frame seen in at least half the main thread's samples, not a one-off branch
+        return any(int(count) * 2 >= int(main.group(2))
+                   for count in re.findall(rf'^[\s+!:|]*(\d+) [^\n]*(?:{pattern})', block, re.M))
+    if most(r'_dyld_start|dyld4::prepare'):
+        return LAUNCHED_LATE
+    injected = 'XCTest loaded' if XCTEST_INJECTED.search(images) else 'XCTest never injected'
+    if not images:
+        injected = 'XCTest load unknown (no image list)'
+    idle = most('__CFRunLoopServiceMachPort') and \
+        not most('semaphore_wait|_dispatch_sync_f_slow|__ulock_wait|psynch_mutexwait|psynch_cvwait')
+    return f'host app {"idle in its run loop" if idle else "busy or blocked on its main thread"}; {injected}'
+
+
 def stall_evidence(udid, folder, sample_seconds=3):
     """Best effort: which processes of this simulator are alive and what the host app is doing. Never raises."""
     folder.mkdir(parents=True, exist_ok=True)
@@ -518,13 +554,21 @@ def stall_evidence(udid, folder, sample_seconds=3):
         mine = [line for line in ps.splitlines() if udid and udid in line]
         (folder / 'processes.txt').write_text('\n'.join(mine) + '\n')
         found['processes'] = len(mine)
+        diagnoses = []
         for line in mine:
             fields = line.split(None, 3)
             if len(fields) == 4 and 'SpokenMarginsApp.app/SpokenMarginsApp' in fields[3]:
                 pid = fields[0]
-                sampled = subprocess.run(['sample', pid, str(sample_seconds), '-file', str(folder / f'sample-{pid}.txt')],
+                path = folder / f'sample-{pid}.txt'
+                sampled = subprocess.run(['sample', pid, str(sample_seconds), '-file', str(path)],
                                          capture_output=True, text=True, timeout=sample_seconds + 30)
                 found.setdefault('samples', []).append({'pid': int(pid), 'exit': sampled.returncode})
+                try:
+                    text = path.read_text(errors='replace') if path.is_file() else ''
+                except OSError:
+                    text = ''
+                diagnoses.append(stall_diagnosis(text, fields[2]))
+        found['diagnosis'] = '; '.join(diagnoses) if diagnoses else NO_HOST_APP
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         found['error'] = repr(error)
     return found
@@ -630,7 +674,8 @@ class Run:
                             continue
                         entry.setdefault('startup_stalls', []).append(stall)
                         print(f'warning: {name} printed no test output {stall["after_seconds"]}s after launch '
-                              f'(last log line: {stall["last_log_line"]}); attempt {attempt}', flush=True)
+                              f'(last log line: {stall["last_log_line"]}; {stall.get("diagnosis", "no diagnosis")}); '
+                              f'attempt {attempt}', flush=True)
                         stop_process_group(process)
                         if attempt > startup['retries']:
                             raise StartupStall()
@@ -667,7 +712,8 @@ class Run:
             last = entry['startup_stalls'][-1]
             if result and last['attempt'] == attempt:  # the final launch itself stalled
                 errors.append(f'Test runner printed no test output in {attempt} launch(es) of {startup["seconds"]}s '
-                              f'(last log line: {last["last_log_line"]}); host-app samples under {name}-stall-*/')
+                              f'(last log line: {last["last_log_line"]}; {last.get("diagnosis", "no diagnosis")}); '
+                              f'host-app samples under {name}-stall-*/')
             elif not result and len(entry['startup_stalls']) == 1:
                 # #705, owner's call 2026-10-11: one stall that the first retry recovered, with every requested
                 # test then passing (the checks below still hold the step to that), counts as a PASS. The stall
@@ -678,7 +724,7 @@ class Run:
             elif not result:
                 # More than one stall before a pass is not covered by that call: the step stays INCONCLUSIVE.
                 errors.append(f'Recovered after {len(entry["startup_stalls"])} startup stall(s) of {startup["seconds"]}s; '
-                              f'the tests passed on launch {attempt} but the stalls are undiagnosed, so this is not a PASS '
+                              f'the tests passed on launch {attempt} but the stalls\' cause is unknown, so this is not a PASS '
                               f'(samples under {name}-stall-*/)')
         if tests:
             records = record_source() if record_source else test_records(text)
