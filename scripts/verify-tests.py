@@ -494,6 +494,30 @@ PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # head (#1110). Its own limit leaves headroom for load and for the suite to keep growing.
 RUNNER_TESTS_TIMEOUT = 600
 
+# #705: the startup stall below follows the simulator having just been busy. On 2026-10-14, in the lane's artifacts:
+# - 18 of the 20 app-plan stalls launched the host app 1-16 s after the simulator finished booting (median 5 s, from
+#   boot-events.log and the stall folders' launchd_sim ages); the 375 runs that did not stall launched it no earlier than
+#   about 8 s after the boot finished, and mostly minutes after, because a build ran in between;
+# - an adapters plan that began 8 s or less after the app plan's xcodebuild ended on the same simulator stalled in 18
+#   of 46 runs; one that began later stalled in 2 of 57 (the second plan always starts about 3-7 s after the first).
+# So the host app is not launched until the simulator has been quiet for 20 s: since its boot finished (lane_sim.boot
+# marks it) or its last app-hosted test run ended (below). The cause inside Xcode or the simulator is still unknown;
+# this removes the window where it shows. The wait is the remainder, usually none: a device with no marker (booted by
+# hand) or a retry 90 s later waits 0 s.
+SETTLE_SECONDS = 20
+SETTLE_LIMIT_SECONDS = 60  # a clock jump or a bad marker never holds a run longer than this
+
+
+def settle_before_tests(udid, sleep=time.sleep):
+    """Wait out the window where the host app stalls at startup (#705). Returns what it saw and how long it waited."""
+    quiet_for = lane_sim.seconds_quiet(udid)
+    wait = 0.0 if quiet_for is None else min(max(0.0, SETTLE_SECONDS - quiet_for), SETTLE_LIMIT_SECONDS)
+    if wait > 0:
+        print(f'settling the simulator for {wait:.0f}s before launching the host app '
+              f'(quiet for {quiet_for:.0f}s)', flush=True)
+        sleep(wait)
+    return {'seconds_quiet': None if quiet_for is None else round(quiet_for, 1), 'waited_seconds': round(wait, 1)}
+
 
 # #705: on intermittent runs the AudioAdapters step launched the app (AcquiredPID) and then sat until its 5m00s
 # budget with no test-runner handshake: no "Test Suite" line, 0 tests, exit 124, an unreadable xcresult. Runs that
@@ -545,10 +569,36 @@ def stall_diagnosis(sample_text, state=''):
     return f'host app {"idle in its run loop" if idle else "busy or blocked on its main thread"}; {injected}'
 
 
-def stall_evidence(udid, folder, sample_seconds=3):
+# #705, read on 2026-10-15: in all 26 kept stalled result bundles whose host app was running, the session log's
+# "Launched app ... (pid = N)" was the pid the watchdog sampled, so no other launcher raced xcodebuild. In
+# pr1647-r38684087699 that launch asked for DYLD_INSERT_LIBRARIES and started 45 ms after "Launching app", yet none of
+# those libraries were loaded. Our inference: the simulator's launch of that very process lost its settings. Each
+# stall now records how far xcodebuild's session log got and whose launch it sampled.
+SESSION_STEP = re.compile(r'Installing app|Installed app|Launching app|Launched app with identifier: \S+ \(pid = (\d+)\)'
+                          r'|Transitioning from state \w+ to \w+')
+
+
+def session_progress(result_bundle):
+    """The last launch step in xcodebuild's session log for this attempt, and the pid it launched; {} without a log."""
+    try:
+        logs = list(Path(result_bundle).rglob('Session-*.log')) if result_bundle else []
+        text = max(logs, key=lambda log: log.stat().st_mtime).read_text(errors='replace') if logs else ''
+    except OSError:
+        return {}
+    steps = list(SESSION_STEP.finditer(text))
+    if not steps:
+        return {'session_last_step': None} if logs else {}
+    found = {'session_last_step': steps[-1].group(0)}
+    launched = [step.group(1) for step in steps if step.group(1)]
+    if launched:
+        found['launched_pid'] = int(launched[-1])
+    return found
+
+
+def stall_evidence(udid, folder, sample_seconds=3, result_bundle=None):
     """Best effort: which processes of this simulator are alive and what the host app is doing. Never raises."""
     folder.mkdir(parents=True, exist_ok=True)
-    found = {}
+    found = session_progress(result_bundle)
     try:
         ps = subprocess.run(['ps', '-axo', 'pid=,etime=,stat=,command='], capture_output=True, text=True, timeout=20).stdout
         mine = [line for line in ps.splitlines() if udid and udid in line]
@@ -567,8 +617,14 @@ def stall_evidence(udid, folder, sample_seconds=3):
                     text = path.read_text(errors='replace') if path.is_file() else ''
                 except OSError:
                     text = ''
-                diagnoses.append(stall_diagnosis(text, fields[2]))
+                diagnosis = stall_diagnosis(text, fields[2])
+                if 'launched_pid' in found:
+                    diagnosis += ('; xcodebuild\'s own launch' if found['launched_pid'] == int(pid)
+                                  else f'; not the pid xcodebuild launched ({found["launched_pid"]})')
+                diagnoses.append(diagnosis)
         found['diagnosis'] = '; '.join(diagnoses) if diagnoses else NO_HOST_APP
+        if found.get('session_last_step'):
+            found['diagnosis'] += f'; session log ends at "{found["session_last_step"]}"'
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         found['error'] = repr(error)
     return found
@@ -1060,14 +1116,19 @@ class Run:
 
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
-                       'diagnose': lambda folder: stall_evidence(chosen['udid'], folder),
+                       'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
                        'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
+            if startup is not None:
+                self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
+                self.save()
             self.command('xcode-tests', base + [f'-only-testing:{s}' for s in selectors] + [
                          'test-without-building', '-parallel-testing-enabled', 'NO',
                          '-collect-test-diagnostics', 'never',
                          '-test-timeouts-enabled', 'YES', '-resultBundlePath', str(result_bundle)],
                          timeout=timeout, expected=expected, tests=True, probation=on_probation, startup=startup)
         finally:
+            if scheme == 'SpokenMarginsAppBehavior':
+                lane_sim.mark_quiet(chosen['udid'])
             self.audio_pin_udid = None
             if booted_here:
                 # Don't leave an idle simulator holding memory after the run.

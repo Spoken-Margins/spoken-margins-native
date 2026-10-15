@@ -131,10 +131,14 @@ extension Gate1AppModel {
         reportFailure("Nothing was recorded, so no Margin was saved. The microphone didn't pick up any sound. Try again, or write the Margin instead.")
     }
 
-    /// The line after a spoken Margin is saved. A recording the microphone cut short says so.
+    /// Reports interrupted, unexpectedly short or unverified saved audio without claiming a capture cause.
     func reportMarginSaved(_ verdict: MarginCaptureSupervisor.SaveVerdict) {
-        if verdict == .saveCutShort {
-            reportWarning("Margin saved, but part of it may be missing. The microphone stopped early.")
+        let integrity = engine?.finalizedRecordingIntegrity()
+        if let integrity { recordDeveloperDiagnostic("margin.capture.finalized", integrity.diagnosticFields) }
+        if let integrity, integrity.fileMs == nil {
+            reportWarning("Margin saved, but its recording could not be checked. Please play it back.")
+        } else if (integrity?.qualifying(verdict) ?? verdict) == .saveCutShort {
+            reportWarning("Margin saved, but part of it may be missing.")
         } else {
             reportConfirmation("Margin saved. Transcription is continuing in the background.")
         }

@@ -157,7 +157,12 @@ class VerificationTests(unittest.TestCase):
         self.addCleanup(state.cleanup)
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.dict(os.environ, {'SM_LANE_STATE_DIR': state.name}),
-                        patch.object(verification.sessionkit_pass, 'toolchain', return_value=None)):
+                        patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
+                        # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
+                        # device: the first call marks it quiet in this shared state folder. Tests of the settle
+                        # itself patch it again or inject sleep= (SimulatorSettleTests).
+                        patch.object(verification, 'settle_before_tests',
+                                     return_value={'seconds_quiet': None, 'waited_seconds': 0.0})):
             patcher.start()
             self.addCleanup(patcher.stop)
 
@@ -1370,6 +1375,65 @@ class VerificationTests(unittest.TestCase):
                 found = verification.stall_evidence(device, folder)
             self.assertEqual(found['diagnosis'], 'host app idle in its run loop; XCTest never injected')
 
+    # Lines as xcodebuild writes them in the attempt's Staging session log (pr1647-r38684087699, 2026-10-15).
+    SESSION_LOG = (
+        '00:03:35.197 xcodebuild[49404:1] X: Installing app at path: /x/SpokenMarginsApp.app\n'
+        '00:03:36.651 xcodebuild[49404:1] X: Installed app at path: /x/SpokenMarginsApp.app\n'
+        '00:03:36.654 xcodebuild[49404:1] X: Launching app with identifier: com.spokenmargins.native and options: {\n'
+        '    "wait_for_debugger" = 1;\n}\n'
+        '00:03:37.143 xcodebuild[49404:1] X: Launched app with identifier: com.spokenmargins.native (pid = 101)\n'
+        '00:03:37.615 xcodebuild[49404:1] Test process runnable PID is 101.\n'
+        '00:03:37.615 xcodebuild[49404:1] XCTHTestOperationStateMachine: Transitioning from state Initial to AcquiredPID\n')
+
+    def stalled_bundle(self, root, session_log):
+        bundle = root / 'tests.xcresult'
+        run = bundle / 'Staging/1_Test/Diagnostics/SpokenMarginsAppTests-A-Configuration-Default-Iteration-1/SpokenMarginsAppTests-B'
+        run.mkdir(parents=True)
+        if session_log is not None:
+            (run / 'Session-SpokenMarginsAppTests-2026-10-15_000334-W3zi1U.log').write_text(session_log)
+        return bundle
+
+    def test_stall_evidence_says_whether_it_sampled_xcodebuilds_own_launch(self):
+        # #705: the idle, uninjected host app was the very pid xcodebuild launched, so the simulator dropped that
+        # launch's settings; a different pid would mean something else launched the app first.
+        device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+        text = self.stall_sample(self.RUN_LOOP, self.APP_IMAGES)
+        for pid, expected in [('101', "host app idle in its run loop; XCTest never injected; xcodebuild's own launch; "
+                                      'session log ends at "Transitioning from state Initial to AcquiredPID"'),
+                              ('202', 'host app idle in its run loop; XCTest never injected; not the pid xcodebuild '
+                                      'launched (101); session log ends at "Transitioning from state Initial to AcquiredPID"')]:
+            with self.subTest(pid=pid), tempfile.TemporaryDirectory() as temporary:
+                bundle = self.stalled_bundle(Path(temporary), self.SESSION_LOG)
+                listing = f'  {pid} 01:30 Ss /x/Devices/{device}/data/Y/SpokenMarginsApp.app/SpokenMarginsApp\n'
+
+                def run_(args, **kwargs):
+                    if args[0] == 'sample':
+                        Path(args[args.index('-file') + 1]).write_text(text)
+                    return subprocess.CompletedProcess(args, 0, stdout=listing)
+
+                with patch.object(verification.subprocess, 'run', side_effect=run_):
+                    found = verification.stall_evidence(device, Path(temporary) / 'stall', result_bundle=bundle)
+                self.assertEqual(found['diagnosis'], expected)
+                self.assertEqual(found['launched_pid'], 101)
+
+    def test_stall_evidence_with_no_host_app_names_the_launch_step_it_reached(self):
+        # 14 of the 40 kept stalled result bundles (2026-10-15) had no host process; their session logs end at
+        # "Launching app", "Installing app" or "Installed app", or are empty. Each stall now says which.
+        device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+        listing = f'  90 05:10 S /x/Devices/{device}/data/usr/libexec/launchd_sim\n'
+        cut = self.SESSION_LOG.index('00:03:37.143')
+        for session_log, expected in [
+                (self.SESSION_LOG[:cut], {'session_last_step': 'Launching app',
+                                          'diagnosis': f'{verification.NO_HOST_APP}; session log ends at "Launching app"'}),
+                ('', {'session_last_step': None, 'diagnosis': verification.NO_HOST_APP}),
+                (None, {'diagnosis': verification.NO_HOST_APP})]:
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as temporary:
+                bundle = self.stalled_bundle(Path(temporary), session_log)
+                with patch.object(verification.subprocess, 'run',
+                                  return_value=subprocess.CompletedProcess([], 0, stdout=listing)):
+                    found = verification.stall_evidence(device, Path(temporary) / 'stall', result_bundle=bundle)
+                self.assertEqual(found, {'processes': 1, **expected})
+
     def simulator_listings(self, *runners):
         """simctl listings, one per call: an iOS 26 iPhone template plus the Test Runner named in each."""
         runtime = 'com.apple.CoreSimulator.SimRuntime.iOS-26-0'
@@ -1519,6 +1583,55 @@ class VerificationTests(unittest.TestCase):
                     patch.object(run, 'command', return_value=''):
                 run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
             self.assertEqual([kw.get('first_boot') for kw in boots], [True])
+
+    def run_xcode_plan(self, plan, order, fail_tests=False):
+        """run.xcode(plan) with every boundary stubbed; `order` collects settle, tests and marker calls in sequence."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            run = verification.Run(Path(temporary) / 'run', plan)
+            run.manifest['input_sha256'] = 'inputs'
+            booted = {'udid': 'sim-1', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Lane'}
+
+            def command(name, *args, **kwargs):
+                order.append(name)
+                if name == 'xcode-tests' and fail_tests:
+                    raise RuntimeError('tests failed')
+                return ''
+
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='stub'), \
+                    patch.object(run, 'simulator', return_value=(booted, False)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification, 'acquire_simulator_slot', return_value=None), \
+                    patch.object(verification, 'settle_before_tests',
+                                 side_effect=lambda udid: order.append(f'settle {udid}') or {'waited_seconds': 3.0}), \
+                    patch.object(verification.lane_sim, 'mark_quiet', side_effect=lambda udid: order.append(f'marked {udid}')), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=command):
+                try:
+                    run.xcode(plan, None, rebuild=True, only=['SpeechTests'])
+                except RuntimeError:
+                    pass
+            return run.manifest
+
+    def test_app_hosted_plan_settles_the_simulator_before_its_tests_and_marks_their_end(self):
+        # #705: the host app stalled when launched soon after boot or after another test run on the simulator.
+        for plan in ('app', 'adapters'):
+            with self.subTest(plan=plan):
+                order = []
+                manifest = self.run_xcode_plan(plan, order)
+                self.assertEqual([step for step in order if step in ('settle sim-1', 'xcode-tests', 'marked sim-1')],
+                                 ['settle sim-1', 'xcode-tests', 'marked sim-1'])
+                self.assertEqual(manifest['settle_before_tests'], {'waited_seconds': 3.0})
+
+    def test_a_failed_test_step_still_marks_the_end_so_the_next_plan_waits(self):
+        order = []
+        self.run_xcode_plan('adapters', order, fail_tests=True)
+        self.assertEqual(order[-1], 'marked sim-1')
 
     def test_unclassified_trace_and_fixture_and_empty_selection_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -1678,6 +1791,48 @@ class VerificationTests(unittest.TestCase):
             self.assertTrue(inventory.scripted_journey_errors(root))
             listing.unlink()
             self.assertTrue(inventory.scripted_journey_errors(root))
+
+
+class SimulatorSettleTests(unittest.TestCase):
+    """#705: don't launch the host app in the window where it stalls at startup."""
+    UDID = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+
+    def settle(self, quiet_for):
+        slept = []
+        with patch.object(verification.lane_sim, 'seconds_quiet', return_value=quiet_for):
+            seen = verification.settle_before_tests(self.UDID, sleep=slept.append)
+        return seen, slept
+
+    def test_a_simulator_that_was_just_busy_waits_for_the_rest_of_20_seconds(self):
+        # The app plan stalled 1-16 s after boot; the adapters plan starts 3-7 s after the app plan on the same device.
+        seen, slept = self.settle(5)
+        self.assertEqual(slept, [15])
+        self.assertEqual(seen, {'seconds_quiet': 5, 'waited_seconds': 15.0})
+
+    def test_a_quiet_simulator_is_launched_at_once(self):
+        for quiet_for in (20, 25, 4000):
+            with self.subTest(quiet_for=quiet_for):
+                seen, slept = self.settle(quiet_for)
+                self.assertEqual((slept, seen['waited_seconds']), ([], 0.0))
+
+    def test_a_simulator_nobody_marked_never_holds_the_run(self):
+        seen, slept = self.settle(None)
+        self.assertEqual((slept, seen), ([], {'seconds_quiet': None, 'waited_seconds': 0.0}))
+
+    def test_a_marker_dated_in_the_future_is_capped(self):
+        # Clock set back: quiet for -10000 s would otherwise be a wait of hours.
+        _, slept = self.settle(-10_000)
+        self.assertEqual(slept, [verification.SETTLE_LIMIT_SECONDS])
+
+    def test_it_reads_the_marker_the_lane_writes(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}):
+            lane_sim = verification.lane_sim
+            lane_sim.mark_quiet(self.UDID)
+            slept = []
+            seen = verification.settle_before_tests(self.UDID, sleep=slept.append)
+            self.assertEqual(len(slept), 1)
+            self.assertAlmostEqual(slept[0], verification.SETTLE_SECONDS, delta=2)
+            self.assertLess(seen['seconds_quiet'], 2)
 
 
 class InheritedSimulatorSlotTests(unittest.TestCase):

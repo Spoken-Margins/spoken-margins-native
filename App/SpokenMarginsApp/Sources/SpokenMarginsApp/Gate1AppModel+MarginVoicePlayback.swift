@@ -38,9 +38,11 @@ extension Gate1AppModel {
             reportFailure("This Margin's audio is unavailable.")
             return
         }
+        // A moment's voice that has the floor stops first (#1671); the item it was holding paused carries on after.
+        let cutMomentVoice = endMarginMomentVoiceIfPlaying()
         // The source comes back when this Margin ends if playing it is what paused it (#1538); read before the pause.
         // A voice that is already playing (another of your Margins, or a shared one) holds the promise made for it.
-        let returnsSource = snapshot.status.isPlaybackActive || sharedMarginReturn.heldByVoice
+        let returnsSource = snapshot.status.isPlaybackActive || sharedMarginReturn.heldByVoice || cutMomentVoice
         if snapshot.status.isPlaybackActive {
             pause()
         }
@@ -51,6 +53,8 @@ extension Gate1AppModel {
                 url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
                 rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
             )
+            recordMarginVoiceRate("own")
+            recordMarginVoiceEvent("start", player: "own") // after the start call, so a start that throws logs no start
             sharedMarginReturn.voiceStarted(returnToSource: returnsSource)
             reportConfirmation("Playing your Margin.")
         } catch {
@@ -71,6 +75,8 @@ extension Gate1AppModel {
 
     func stopInterjectionAudioPlayback() {
         let hadImportedMargin = playingImportedCommentary != nil
+        if hadImportedMargin { recordMarginVoiceEvent("stop", player: "shared") }
+        else if playingInterjectionAudioId != nil { recordMarginVoiceEvent("stop", player: "own") }
         marginVoicePlayer.resetSharedState()
         sharedMarginReturn.voiceStopped()
         if hadImportedMargin {
@@ -124,8 +130,9 @@ extension Gate1AppModel {
         }
         importedCommentaryAutoPlayTask?.cancel()
         importedCommentaryAutoPlayTask = nil
+        let cutMomentVoice = endMarginMomentVoiceIfPlaying() // one Margin voice at a time (#1671)
         let shouldResumeSource = sharedMarginReturn.listenRequested(
-            sourceIsPlaying: snapshot.status.isPlaybackActive,
+            sourceIsPlaying: snapshot.status.isPlaybackActive || cutMomentVoice,
             voiceIsPlaying: playingImportedCommentary != nil
         )
         if snapshot.status.isPlaybackActive { pause() }
@@ -140,11 +147,13 @@ extension Gate1AppModel {
                 lowersBackgroundAudio: lowersBackgroundAudio,
                 mixedPlaybackVolume: mixedPlaybackVolume
             )
+            recordMarginVoiceEvent("start", player: "shared") // after the start call, so a start that throws logs no start
             pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)
             gate2CompactControls.endLiveActivities()
             marginVoicePlayer.beginShared(installRemoteControls: !mixesWithOtherAudio)
+            recordMarginVoiceRate("shared")
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
@@ -175,7 +184,8 @@ extension Gate1AppModel {
         guard let prompt = sharedMarginOffers.nextOffer(
             previous: previous, current: current, selectedItemID: selectedItem.id,
             canOffer: pendingImportedCommentary == nil && playingImportedCommentary == nil
-                && marginMomentConductor?.sequence.isReview != true,
+                && marginMomentConductor?.sequence.isReview != true
+                && marginMomentConductor?.isPlayingVoice != true, // a moment's voice is not cut mid-sentence (#1671)
             prompts: importedCommentaryPrompts(includeAnnounced: true)
         ) else { return }
         presentImportedCommentaryPrompt(prompt, sourceWasPlaying: current.status.isPlaybackActive)
@@ -221,6 +231,70 @@ extension Gate1AppModel {
         screen = .playback
         diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
         return true
+    }
+
+    /// Only one Margin voice sounds at a time (#1671). A moment's voice is the conductor's own player, apart from
+    /// `marginVoicePlayer`, so starting a Margin through the other route has to stop it. True when the voice was
+    /// sounding, so the source it held paused is the Margin's to bring back; a voice the listener had paused leaves
+    /// everything paused, as before (#1538). The stop is logged by `endMarginMoment`.
+    @discardableResult
+    func endMarginMomentVoiceIfPlaying() -> Bool {
+        guard let conductor = marginMomentConductor, conductor.isPlayingVoice else { return false }
+        let wasSounding = !conductor.isVoicePaused
+        endMarginMoment()
+        return wasSounding
+    }
+
+    /// A moment's voice is about to start (the conductor calls this before each voice): a Margin voice from the other
+    /// player stops first, then the audio session is set for speech (#1671).
+    func prepareMarginMomentVoice() throws {
+        if playingImportedCommentary != nil || playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
+        if !momentVoiceIsOpenInLog { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
+        #if os(iOS)
+        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try AVAudioSession.sharedInstance().setActive(true)
+        #endif
+    }
+
+    /// The moment's voice is over (it ended, was skipped, failed to load or was cut): log its stop once. Called from
+    /// every route that ends it, so the log shows which players overlapped (#1671).
+    func recordMarginMomentVoiceEnded() {
+        if momentVoiceIsOpenInLog { recordMarginVoiceEvent("stop", player: "moment") }
+    }
+
+    /// The log's last moment entry is a start with no stop after it.
+    private var momentVoiceIsOpenInLog: Bool {
+        let events = diagnostics["marginVoice.events"]?.components(separatedBy: " | ") ?? []
+        return events.last { $0.hasSuffix(":moment") } == "start:moment"
+    }
+
+    /// Diagnostics keep the last ten Margin voice starts and stops with the player that made them (own, shared or
+    /// moment), oldest first, so a report of two voices at once names the two players (#1671).
+    func recordMarginVoiceEvent(_ event: String, player: String) {
+        let events = (diagnostics["marginVoice.events"]?.components(separatedBy: " | ") ?? []) + ["\(event):\(player)"]
+        runtimeDiagnostics.keep("marginVoice.events", events.suffix(10).joined(separator: " | "))
+    }
+
+    /// Jumps to a Margin's place in its own session, then plays the source at the speed the listener has set. The
+    /// session comes back at the rate it last played at (a text item's 1.5×, say) while the screen shows the global
+    /// media rate, so without this the source and the Margin's voice played faster than the 1× shown (#1670).
+    func playAnchorAtShownRate(_ interjection: Interjection, engine: SessionEngine) throws -> SessionSnapshot {
+        try applyPreferredPlaybackRate(to: try engine.playInterjectionAnchor(interjection), engine: engine)
+    }
+
+    /// The speed a Margin voice plays at, next to the source's and the one shown, so Diagnostics can say whether what
+    /// was heard matched the screen (#1670). `source` is what the session asked for; `player` is read back from the
+    /// podcast player itself (n/a when the client can't tell), and `voicePlayer` from the Margin voice's own player.
+    @discardableResult
+    func recordMarginVoiceRate(_ kind: String) -> Double {
+        let voice = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+        func text(_ rate: Double?) -> String { rate.map { String(format: "%.2f", $0) } ?? "n/a" }
+        let sourcePlayer = (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.currentPlayerRate()
+        let voicePlayer = marginVoicePlayer.currentPlayer.map { Double($0.rate) }
+        diagnostics["marginVoice.rate"] = String(
+            format: "%@;voice=%.2f;source=%.2f;shown=%.2f;player=%@;voicePlayer=%@", kind, voice, snapshot.playbackRate,
+            isMediaPlaybackSnapshot ? mediaPlaybackRate : speechPlaybackRateMultiplier, text(sourcePlayer), text(voicePlayer))
+        return voice
     }
 
     nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
@@ -301,13 +375,19 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     }
 }
 
-/// "Play this moment" for your own spoken Margins, moved out of `Gate1AppModel.swift` unchanged (hot-file ratchet, #1538).
+/// "Play this moment" for your own spoken Margins, moved out of `Gate1AppModel.swift` (hot-file ratchet, #1538), now with its clock (#1577).
 extension Gate1AppModel {
-    /// Spoken podcast Margins get the full moment: lead-in, the Margin inline, then the item's other spoken
-    /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
+    /// Spoken Margins get the full moment: lead-in, the Margin inline, then the item's other spoken Margins as
+    /// playback reaches them. Written Margins keep playing from the anchor. A Margin anchored only by text position
+    /// (an article read aloud on the device, #1577) counts its lead-in in narration time; see `MarginMomentClock`.
     func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
-        guard interjection.isInlineSpokenMargin, let anchorMs = interjection.anchor.mediaTimeMs else { return }
-        let spoken = inlineSpokenMargins(itemId: interjection.itemId, store: store)
+        guard interjection.isSpokenItemMargin else { return }
+        let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
+        let spoken = spokenItemMargins(itemId: interjection.itemId, store: store)
+        let text = clock.isNarratedText ? ((try? store.loadItem(id: interjection.itemId))?.text ?? "") : ""
+        guard let anchors = MarginMomentPlanner.anchors(
+            played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
+        ) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
@@ -315,22 +395,61 @@ extension Gate1AppModel {
         startMarginMoment(
             sequence: MarginMomentSequence(
                 itemId: interjection.itemId,
-                target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
-                otherMargins: spoken.map {
-                    MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
-                }
+                target: anchors.target,
+                otherMargins: anchors.others,
+                tickAdvanceLimitMs: clock.tickAdvanceLimitMs
             ),
             voiceURLs: voiceURLs,
             title: "Your Margin",
-            isApproximate: false
+            isApproximate: false,
+            clock: clock
         )
     }
 
     /// The listener's spoken Margins on the item, from every session, in no particular order.
     func inlineSpokenMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
+        spokenItemMargins(itemId: itemId, store: store).filter(\.isInlineSpokenMargin)
+    }
+
+    /// The same, including those anchored only by a text position.
+    func spokenItemMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
         let sessions: [Session] = (try? store.loadSessions(itemId: itemId)) ?? []
         return sessions
             .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
-            .filter(\.isInlineSpokenMargin)
+            .filter(\.isSpokenItemMargin)
+    }
+
+    /// Where the source stands on the moment's own clock: its media time, or the narration time of the text
+    /// being read. The coming-up card counts down on this.
+    var marginMomentPositionMs: Int? { marginMomentPositionMs(in: snapshot) }
+
+    func marginMomentPositionMs(in current: SessionSnapshot) -> Int? {
+        guard marginMomentClock.isNarratedText else { return current.currentMediaTimeMs }
+        return current.currentTextStart.map(marginMomentClock.position(forTextOffset:))
+    }
+
+    /// The conductor's seek (to the Margin on "Play it now", or back to the start of the lead-in).
+    func seekMarginMomentSource(toPosition position: Int) {
+        if marginMomentClock.isNarratedText {
+            seekText(toCharOffset: marginMomentClock.textOffset(forPosition: position))
+        } else {
+            seekMedia(toMediaTimeMs: position)
+        }
+    }
+
+    /// Starts the moment's lead-in: the source seeks back to the lead-in's start. An article read aloud goes back
+    /// to the start of the sentence nearest thirty seconds before the Margin, so speech doesn't begin mid-sentence.
+    func startMarginMomentLeadIn(_ conductor: MarginMomentConductor, target: MarginMomentAnchor, itemId: String, resuming: Bool) {
+        let clock = marginMomentClock
+        if resuming {
+            conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
+        } else if clock.isNarratedText {
+            let text = (try? store?.loadItem(id: itemId))?.text ?? ""
+            let start = clock.leadInStartOffset(forTargetPosition: target.mediaTimeMs, in: text)
+            seekText(toCharOffset: start)
+            conductor.startListening(atMediaTimeMs: clock.position(forTextOffset: start))
+        } else {
+            conductor.start()
+        }
     }
 }

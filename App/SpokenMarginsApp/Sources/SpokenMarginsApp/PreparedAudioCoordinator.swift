@@ -163,10 +163,19 @@ actor PreparedAudioCoordinator {
         plan: [PreparedChunkPlan],
         schedulesJob: Bool = true
     ) throws -> PreparedAudioManifest {
+        try PreparedAudioEnqueue.withValidatedSource(itemId: itemId, sourceText: sourceText, repository: repository) {
+            try beginValidated(itemId: itemId, sourceText: sourceText, signature: signature, plan: plan, schedulesJob: schedulesJob)
+        }
+    }
+
+    private func beginValidated(
+        itemId: String, sourceText: String, signature: TTSRenderSignature,
+        plan: [PreparedChunkPlan], schedulesJob: Bool
+    ) throws -> PreparedAudioManifest {
         try fileManager.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         let sourceId = "source-\(itemId)"
-        if try repository.loadCanonicalSource(itemId: itemId) == nil {
+        if try repository.loadCanonicalSource(itemId: itemId)?.segments.map(\.text).joined() != sourceText {
             let locator = SourceLocator(
                 documentId: sourceId,
                 segmentId: "segment-0001",
@@ -261,16 +270,16 @@ actor PreparedAudioCoordinator {
             .appending(path: signature.digest, directoryHint: .isDirectory)
             .appending(path: "chunks", directoryHint: .isDirectory)
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let name = String(format: "%05d.wav", plan.index)
+        let articleIdentity = NarrationChunkPlanner.identity(ofArticle: sourceText)
+        // Keep the legacy directory layout; source-specific names spare files still used by another item.
+        let name = articleIdentity + "-" + String(format: "%05d.wav", plan.index)
         let destination = directory.appending(path: name)
         let temporary = directory.appending(path: ".\(name).\(UUID().uuidString).tmp")
         defer { try? fileManager.removeItem(at: temporary) }
         try fileManager.copyItem(at: audioURL, to: temporary)
         let data = try Data(contentsOf: temporary, options: [.mappedIfSafe])
-        if fileManager.fileExists(atPath: destination.path) { try fileManager.removeItem(at: destination) }
-        try fileManager.moveItem(at: temporary, to: destination)
         manifest.chunks.append(PreparedAudioChunk(
-            id: "\(manifestId)-chunk-\(plan.index)",
+            id: "\(manifestId)-\(articleIdentity)-chunk-\(plan.index)",
             index: plan.index,
             sourceRange: Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText),
             relativePath: relativePath(destination),
@@ -281,20 +290,24 @@ actor PreparedAudioCoordinator {
         ))
         manifest.chunks.sort { $0.index < $1.index }
         manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
-            job.nextChunkIndex = manifest.chunks.count
-            try repository.saveAudioPreparationJob(job)
-        }
+        _ = try saveUnlessRetired(manifest, stillCurrent: { (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) == sourceText }, commitFile: {
+            // Copy/hash outside the transaction; publish the file only while its preparation is current.
+            if self.fileManager.fileExists(atPath: destination.path) { try self.fileManager.removeItem(at: destination) }
+            try self.fileManager.moveItem(at: temporary, to: destination)
+        })
     }
 
-    func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws {
+    /// False when the manifest is gone or was retired by a re-import meanwhile (#344 audit).
+    @discardableResult
+    func complete(itemId: String, signature: TTSRenderSignature, prepared: PreparedTextAudio) throws -> Bool {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId),
+        guard try repository.loadPreparedAudioManifest(id: manifestId) != nil,
               let rawURL = prepared.media.url,
               let url = URL(string: rawURL),
-              url.isFileURL else { return }
+              url.isFileURL else { return false }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        // Loaded after the hash, which a re-import can overtake (#344 audit).
+        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return false }
         manifest.artifact = PreparedAudioArtifact(
             relativePath: relativePath(url),
             byteCount: Int64(data.count),
@@ -304,37 +317,60 @@ actor PreparedAudioCoordinator {
         manifest.state = .readyOffline
         manifest.failureCode = nil
         manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        try repository.deleteAudioPreparationJob(id: "job-\(manifestId)")
+        guard try saveUnlessRetired(manifest, stillCurrent: { Self.isMade(from: (try? PreparedAudioEnqueue.preparedText(item: $0, repository: repository)) ?? "", manifest) }) else { return false }
+        return true
+    }
+
+    /// Saves progress/completion and its job atomically with the retirement check.
+    /// File copying and hashing happen before entering this short transaction.
+    private func saveUnlessRetired(_ manifest: PreparedAudioManifest, stillCurrent: (Item) -> Bool, commitFile: (() throws -> Void)? = nil) throws -> Bool {
+        try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, item in
+            guard stillCurrent(item) else { return false }
+            try commitFile?()
+            try repository.savePreparedAudioManifest(manifest)
+            if manifest.state == .readyOffline {
+                try repository.deleteAudioPreparationJob(id: "job-\(manifest.id)")
+            } else if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifest.id }) {
+                job.nextChunkIndex = manifest.chunks.count
+                try repository.saveAudioPreparationJob(job)
+            }
+            return true
+        } ?? false
     }
 
     func stop(itemId: String, signature: TTSRenderSignature) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
-        manifest.state = .stopped
-        manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
-            job.isCancelled = true
-            try repository.saveAudioPreparationJob(job)
+        guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
+        _ = try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
+            var manifest = current
+            manifest.state = .stopped
+            manifest.updatedAt = Date()
+            try repository.savePreparedAudioManifest(manifest)
+            if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
+                job.isCancelled = true
+                try repository.saveAudioPreparationJob(job)
+            }
         }
     }
 
     func retry(itemId: String, signature: TTSRenderSignature) throws {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
-        guard manifest.state != .readyOffline else { return }
-        manifest.state = .preparing
-        manifest.failureCode = nil
-        manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        var job = (try repository.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifestId })
-            ?? AudioPreparationJob(id: "job-\(manifestId)", itemId: itemId, manifestId: manifestId, policy: .explicit)
-        job.policy = .explicit
-        job.isCancelled = false
-        job.lastFailureCode = nil
-        job.nextChunkIndex = manifest.chunks.count
-        try repository.saveAudioPreparationJob(job)
+        guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return }
+        _ = try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
+            guard current.state != .readyOffline else { return }
+            var manifest = current
+            manifest.state = .preparing
+            manifest.failureCode = nil
+            manifest.updatedAt = Date()
+            try repository.savePreparedAudioManifest(manifest)
+            var job = (try repository.loadAudioPreparationJobs()).first(where: { $0.manifestId == manifestId })
+                ?? AudioPreparationJob(id: "job-\(manifestId)", itemId: itemId, manifestId: manifestId, policy: .explicit)
+            job.policy = .explicit
+            job.isCancelled = false
+            job.lastFailureCode = nil
+            job.nextChunkIndex = manifest.chunks.count
+            try repository.saveAudioPreparationJob(job)
+        }
     }
 
     /// Applies a preparation-gate decision (#64) to the manifest as it is saved now, not to the
@@ -342,12 +378,15 @@ actor PreparedAudioCoordinator {
     /// was setting up is kept (Codex audit on bae0dc4). Returns the current manifest, nil if it's
     /// gone, and whether its state changed.
     func applyGate(_ decision: PreparationChunkDecision, manifestId: String) throws -> (manifest: PreparedAudioManifest?, changed: Bool) {
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return (nil, false) }
-        guard let state = PreparationChunkGate.manifestState(after: decision, current: manifest.state) else { return (manifest, false) }
-        manifest.state = state
-        manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        return (manifest, true)
+        guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return (nil, false) }
+        return try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
+            var manifest = current
+            guard let state = PreparationChunkGate.manifestState(after: decision, current: manifest.state) else { return (manifest, false) }
+            manifest.state = state
+            manifest.updatedAt = Date()
+            try repository.savePreparedAudioManifest(manifest)
+            return (manifest, true)
+        } ?? (nil, false)
     }
 
     /// Forgets committed chunks whose files are gone or the wrong size, so they're rendered again
@@ -356,18 +395,21 @@ actor PreparedAudioCoordinator {
     /// Only an unassembled manifest is changed; a finished one's chunks are meant to be evicted.
     /// Returns the manifest as saved now, nil if it's gone.
     func droppingMissingChunks(manifestId: String) throws -> PreparedAudioManifest? {
-        guard var manifest = try repository.loadPreparedAudioManifest(id: manifestId) else { return nil }
-        guard manifest.artifact == nil, manifest.state == .preparing || manifest.state == .pausedForThermal else { return manifest }
-        let present = manifest.chunks.filter(hasFile)
-        guard present.count < manifest.chunks.count else { return manifest }
-        manifest.chunks = present
-        manifest.updatedAt = Date()
-        try repository.savePreparedAudioManifest(manifest)
-        if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
-            job.nextChunkIndex = manifest.chunks.count
-            try repository.saveAudioPreparationJob(job)
+        guard let candidate = try repository.loadPreparedAudioManifest(id: manifestId) else { return nil }
+        return try PreparedAudioEnqueue.withCurrentManifest(candidate, repository: repository) { current, _ in
+            var manifest = current
+            guard manifest.artifact == nil, manifest.state == .preparing || manifest.state == .pausedForThermal else { return manifest }
+            let present = manifest.chunks.filter(hasFile)
+            guard present.count < manifest.chunks.count else { return manifest }
+            manifest.chunks = present
+            manifest.updatedAt = Date()
+            try repository.savePreparedAudioManifest(manifest)
+            if var job = try repository.loadAudioPreparationJobs().first(where: { $0.manifestId == manifestId }) {
+                job.nextChunkIndex = manifest.chunks.count
+                try repository.saveAudioPreparationJob(job)
+            }
+            return manifest
         }
-        return manifest
     }
 
     /// The ledger paths of a manifest's committed chunks, which its next render and its assembly

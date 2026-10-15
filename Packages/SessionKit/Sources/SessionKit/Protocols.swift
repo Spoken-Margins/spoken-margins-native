@@ -209,6 +209,9 @@ public protocol AudioPlaybackClient {
     func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest
     func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution
     func setPlaybackRate(_ rate: Double) throws
+    /// The rate the player is actually using, read back from it rather than from what was asked for (#1670); nil
+    /// when the client can't tell. A paused player reports the rate it will resume at.
+    func currentPlayerRate() -> Double?
     func setMixesWithOtherAudio(_ enabled: Bool) throws
     /// Opt-in attenuation of other apps, effective only during mixed playback.
     func setLowersBackgroundAudio(_ enabled: Bool) throws
@@ -322,6 +325,8 @@ public protocol TextAudioPreparationClient: Sendable {
 }
 
 public extension AudioPlaybackClient {
+    func currentPlayerRate() -> Double? { nil }
+
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {}
 
     func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {}
@@ -428,10 +433,13 @@ public protocol RecordingClient {
     /// Where the file being recorded will be, named the way the saved Margin names it. Nil when nothing is recording
     /// or the recorder can't say. The draft journal keeps it so a kill before Save still points at the file (#951).
     func recordingInProgressRef() -> String?
+    /// Evidence from the closed recording, retained through save retries; nil when unsupported.
+    func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity?
 }
 
 extension RecordingClient {
     public func recordingInProgressRef() -> String? { nil }
+    public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { nil }
     public func captureReading() -> RecordingCaptureReading? { nil }
     public func restartCapture() throws {
         throw SessionKitError.persistenceFailed("recording_restart_unsupported")

@@ -40,6 +40,36 @@ public enum NextChapterSummaryRule {
         return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs)
     }
 
+    /// What fills one side of the chapter row above the scrubber (#1666, which replaced #1628's hide-the-button rule).
+    public enum ChapterRowControl: Equatable, Sendable {
+        /// Skim to the next (or previous) Margin or scene.
+        case skim
+        /// The chapter row's own Next chapter button.
+        case nextChapter
+        /// A Skim control that can't be pressed now (no scene ahead, or the end of the map). It keeps its place so the
+        /// title doesn't shift when the listener crosses a chapter.
+        case skimDisabled
+        /// Nothing: the item has no Skim, so the row is the title and, if there is one, Next chapter.
+        case hidden
+    }
+
+    /// The control on the right of the chapter title. When forward Skim can be pressed it is the one forward control;
+    /// otherwise Next chapter if there is a chapter ahead; otherwise a disabled Skim so the slot never goes empty.
+    /// Only the button depends on Skim: the Lock Screen and external commands go by `isAvailable`. The Skim row can
+    /// be on screen for Skim Back alone, so forward Skim counts only when the row is shown and forward is enabled.
+    public static func forwardControl(isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool) -> ChapterRowControl {
+        if skimRowShown && canSkimForward { return .skim }
+        if isAvailable { return .nextChapter }
+        return skimRowShown ? .skimDisabled : .hidden
+    }
+
+    /// The control on the left of the chapter title: Skim back, disabled when there is nowhere to go, and absent
+    /// only for an item with no Skim at all.
+    public static func backwardControl(skimRowShown: Bool, canSkimBackward: Bool) -> ChapterRowControl {
+        guard skimRowShown else { return .hidden }
+        return canSkimBackward ? .skim : .skimDisabled
+    }
+
     /// - Parameters:
     ///   - playing: the summary bridge playing now, if any.
     ///   - hasNextChapter: whether the item has a chapter after the current one.

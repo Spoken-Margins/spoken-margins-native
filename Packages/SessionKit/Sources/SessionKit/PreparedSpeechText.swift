@@ -40,6 +40,13 @@ public final class PreparedSpeechTextCache: @unchecked Sendable {
 
     public init() {}
 
+    /// A re-import can change roles while retaining canonical text, so text equality alone is insufficient.
+    public func invalidate(itemId: String) {
+        lock.lock()
+        entries[itemId] = nil
+        lock.unlock()
+    }
+
     public func resolve(item: Item, documents: StructuredDocumentRepository?) -> PreparedSpeechText? {
         guard let text = item.text else { return nil }
         // Only a PDF can have a listenable text; everything else is its own text.

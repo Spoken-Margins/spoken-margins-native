@@ -26,5 +26,96 @@ final class MarginMomentConductorTests: XCTestCase {
         XCTAssertEqual(resumed, 1)
         XCTAssertEqual(conductor.sequence.phase, .listening)
     }
+
+    /// #1646: a skip of any length is not playback reaching the Margin just ahead.
+    func testASkipOverAMarginDoesNotPlayItEvenWhenTheSkipIsShort() throws {
+        var unavailable: [String] = []
+        let conductor = MarginMomentConductor(
+            sequence: MarginMomentSequence(
+                itemId: "article", target: MarginMomentAnchor(marginId: "ij-009", mediaTimeMs: 5_000), otherMargins: [],
+                tickAdvanceLimitMs: 6_000
+            ),
+            source: .init(pause: {}, resume: {}, seek: { _ in }),
+            voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/ij-009.m4a") }
+        )
+        conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
+        conductor.start()
+        conductor.observe(mediaTimeMs: 4_000)
+        conductor.sourceMoved()
+        conductor.observe(mediaTimeMs: 5_500)
+        XCTAssertEqual(unavailable, [], "the reading after a skip has nothing before it to cross from")
+        XCTAssertEqual(conductor.sequence.unplayed.count, 1, "the Margin still waits")
+    }
+
+    /// #1660: which landings of a Skim summary the conductor would take for playback if the app didn't call
+    /// `sourceMoved()`: any forward move up to the 4,000 ms reading limit. Those rows are the ones the app-hosted
+    /// landing test (`skimSeekOrStage`) depends on the call for; longer landings are never taken for playback.
+    /// With the call, no landing plays the Margin it passes.
+    func testASkimLandingIsReadAsPlaybackOnlyWhenItIsUnderTheReadingLimit() throws {
+        let readingMs = 100_000
+        let landings: [(aheadMs: Int, readAsPlaybackWithoutTheCall: Bool)] = [
+            (500, true), (2_000, true), (3_900, true), (4_000, true), (4_100, false), (30_000, false)
+        ]
+        for (aheadMs, readAsPlaybackWithoutTheCall) in landings {
+            for tellTheConductor in [false, true] {
+                var unavailable: [String] = []
+                let conductor = MarginMomentConductor(
+                    sequence: MarginMomentSequence(
+                        itemId: "episode", target: MarginMomentAnchor(marginId: "target", mediaTimeMs: 120_000),
+                        otherMargins: [MarginMomentAnchor(marginId: "passed", mediaTimeMs: readingMs + aheadMs / 2)]
+                    ),
+                    source: .init(pause: {}, resume: {}, seek: { _ in }),
+                    voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/passed.m4a") }
+                )
+                conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
+                conductor.start()
+                conductor.observe(mediaTimeMs: readingMs)
+                if tellTheConductor { conductor.sourceMoved() }
+                conductor.observe(mediaTimeMs: readingMs + aheadMs)
+                let expected = readAsPlaybackWithoutTheCall && !tellTheConductor ? ["passed:recording_missing"] : []
+                XCTAssertEqual(unavailable, expected,
+                               "landing \(aheadMs) ms on, \(tellTheConductor ? "with" : "without") sourceMoved()")
+            }
+        }
+    }
+
+    func testReadingStillReachesTheMarginAfterASkip() throws {
+        var unavailable: [String] = []
+        let conductor = MarginMomentConductor(
+            sequence: MarginMomentSequence(
+                itemId: "article", target: MarginMomentAnchor(marginId: "ij-009", mediaTimeMs: 5_000), otherMargins: []
+            ),
+            source: .init(pause: {}, resume: {}, seek: { _ in }),
+            voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/ij-009.m4a") }
+        )
+        conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
+        conductor.sourceMoved()
+        conductor.observe(mediaTimeMs: 3_000)
+        conductor.observe(mediaTimeMs: 4_800)
+        XCTAssertEqual(unavailable, [])
+        conductor.observe(mediaTimeMs: 5_200)
+        XCTAssertEqual(unavailable, ["ij-009:recording_missing"])
+    }
+
+    /// #1646 audit: the app reports every seek to `sourceMoved()`, including the lead-in's own, which must not wipe
+    /// the baseline: the first reading after the lead-in starts still crosses a Margin just after the start.
+    func testTheLeadInsOwnSeekDoesNotCostTheFirstReadingItsBaseline() throws {
+        var unavailable: [String] = []
+        var conductorBox: MarginMomentConductor?
+        let conductor = MarginMomentConductor(
+            sequence: MarginMomentSequence(
+                itemId: "episode", target: MarginMomentAnchor(marginId: "target", mediaTimeMs: 40_000),
+                otherMargins: [MarginMomentAnchor(marginId: "early", mediaTimeMs: 10_200)]
+            ),
+            source: .init(pause: {}, resume: {}, seek: { _ in conductorBox?.sourceMoved() }),
+            voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/voice.m4a") }
+        )
+        conductorBox = conductor
+        conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
+        XCTAssertEqual(conductor.sequence.startMediaTimeMs, 10_000)
+        conductor.start()
+        conductor.observe(mediaTimeMs: 10_450)
+        XCTAssertEqual(unavailable, ["early:recording_missing"], "10.0 s to 10.45 s crosses the Margin at 10.2 s")
+    }
 }
 #endif

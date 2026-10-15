@@ -14,6 +14,26 @@ extension Gate1AppModel {
                 nextChapterStartMs: mediaChapter?.startMs)
     }
 
+    /// Whether this item has Skim controls at all (a podcast with a ready map, or a Skim summary playing). The chapter
+    /// row draws them either side of the title and keeps both in place, dimmed when there is nowhere to go (#1666).
+    var showsSkimRow: Bool {
+        isMediaPlaybackSnapshot
+            && (snapshot.canSkimBackward || snapshot.canSkimForward || snapshot.skimBridgeState != nil)
+    }
+
+    /// What the chapter row draws right of the title: forward Skim when it can be pressed, else Next chapter, else a
+    /// dimmed Skim, so the slot is never empty. The Lock Screen and external commands go by `canJumpToNextChapter`,
+    /// and the second press of #569 still works through Skim, which ends the playing summary the same way (#1666).
+    var chapterRowForwardControl: NextChapterSummaryRule.ChapterRowControl {
+        NextChapterSummaryRule.forwardControl(
+            isAvailable: canJumpToNextChapter, skimRowShown: showsSkimRow, canSkimForward: snapshot.canSkimForward)
+    }
+
+    /// What the chapter row draws left of the title: Skim back, dimmed when there is nowhere to go.
+    var chapterRowBackwardControl: NextChapterSummaryRule.ChapterRowControl {
+        NextChapterSummaryRule.backwardControl(skimRowShown: showsSkimRow, canSkimBackward: snapshot.canSkimBackward)
+    }
+
     private var playingSummaryForNextChapter: NextChapterSummaryRule.PlayingSummary? {
         snapshot.skimBridgeState.map { .init(direction: $0.direction, landsAtMs: $0.destinationMediaTimeMs) }
     }

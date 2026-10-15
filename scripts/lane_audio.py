@@ -17,6 +17,10 @@ system-output devices are the built-in ones; when the last one is gone they go b
   that died without settling). It drops holders that are no longer booted and, with none left, puts
   each default back, but only where it is still the built-in device we pinned and the old device is
   still on the Mac. A non-wireless default someone changed by hand meanwhile is left alone.
+- A refresh never fights the Mac. If a device takes a default back and a refresh switches it away more than
+  REPIN_LIMIT times within REPIN_WINDOW seconds (AirPods that keep reclaiming the Mac, 2026-10-15: the output
+  flipped every second), pinning stands down for REPIN_YIELD seconds. Each flip also tugs the AirPods between
+  the iPhone and the Mac, which is the hijack this module exists to prevent.
 - Wired and virtual defaults (USB, HDMI, aggregate, BlackHole-style devices) are never touched.
 - Nothing changes when the lid is closed with no external display: the built-in speakers are off then
   (host_audio.py, #909), and playback would stall.
@@ -48,6 +52,10 @@ STATE_FILE = 'audio-pin.json'
 # holder this long, so another simulator's shutdown can't restore the AirPods under it.
 BOOT_GRACE = 1200.0
 LOCK_FILE = 'audio-pin.lock'
+# Refresh re-pins that undo a device reclaiming a default: after this many within the window, stop for a while.
+REPIN_LIMIT = 3
+REPIN_WINDOW = 60.0
+REPIN_YIELD = 600.0
 
 
 def _code(text):
@@ -256,8 +264,30 @@ def pin(udid, backend=None, out=sys.stderr, lid_closed=speakers_off, *, refresh=
             if refresh and udid not in state.get('holders', {}):
                 return []
             defaults = {kind: backend.default(kind) for kind in KINDS}
+            now = time.time()
+            if refresh and state.get('yield_until') and now >= state['yield_until']:
+                state.pop('yield_until')  # the stand-down is over: look at the defaults again
+                state.pop('observed', None)
             if refresh and defaults == state.get('observed'):
                 return []
+            if refresh and now < state.get('yield_until', 0):
+                state['observed'] = defaults  # standing down: the Mac's choice stands, don't look again until it moves
+                _write_state(state)
+                return []
+            if refresh:
+                recent = [t for t in state.get('repins', []) if now - t < REPIN_WINDOW]
+                if len(recent) >= REPIN_LIMIT:
+                    state['repins'] = []
+                    state['yield_until'] = now + REPIN_YIELD
+                    state['observed'] = defaults
+                    _write_state(state)
+                    print(f'[lane] audio: a device keeps taking the default audio devices back ({REPIN_LIMIT} '
+                          f'switches in {REPIN_WINDOW:.0f}s); not fighting it for {REPIN_YIELD / 60:.0f} min',
+                          file=out, flush=True)
+                    return []
+            else:
+                state.pop('repins', None)  # a fresh boot starts the count again
+                state.pop('yield_until', None)
             if lid_closed():
                 if refresh:
                     state['observed'] = defaults
@@ -283,8 +313,10 @@ def pin(udid, backend=None, out=sys.stderr, lid_closed=speakers_off, *, refresh=
                 except OSError as error:
                     print(f'[lane] audio: could not pin the {kind} device: {error}', file=out, flush=True)
             state['observed'] = defaults
+            if refresh and changed:
+                state['repins'] = recent + [now]
             if not refresh:
-                state.setdefault('holders', {})[udid] = time.time()
+                state.setdefault('holders', {})[udid] = now
             _write_state(state)
             if changed:
                 print('[lane] audio: pinned to the built-in devices while the simulator runs (' + '; '.join(changed)

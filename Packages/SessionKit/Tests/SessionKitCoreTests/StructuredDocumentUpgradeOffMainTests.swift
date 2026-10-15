@@ -79,14 +79,9 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
     func testAPDFThatCannotMoveBecomesItsOwnEditionOffMainToo() async throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
-        try fixture.store.savePreparedAudioManifest(PreparedAudioManifest(
-            id: "manifest-from-v1-text", itemId: fixture.v1.id, sourcePackageId: "source",
-            signature: TTSRenderSignature(
-                engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v",
-                synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "digest"
-            ),
-            state: .preparing, plannedChunkCount: 3
-        ))
+        var margin = try fixture.addMargin(id: "unmovable", sessionId: "session-reading", words: "Methods", editionHash: nil)
+        margin.anchor.anchorType = .media
+        try fixture.store.saveInterjection(margin)
         let before = try fixture.stored()
 
         let reimported = try await fixture.reimportOffMain()
@@ -139,6 +134,48 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         XCTAssertEqual(engine.currentItem?.text, before.item.text)
     }
 
+    @MainActor
+    func testSameTextDocumentAdoptionRetiresPreparationOnlyWhenTheHeldReaderIsPaused() async throws {
+        for playing in [false, true] {
+            let fixture = try makeFixture()
+            try fixture.addReadingSession()
+            _ = try fixture.engine.startSession(itemId: fixture.v1.id)
+            if !playing { _ = try fixture.engine.pause() }
+            try fixture.store.savePreparedAudioManifest(.init(
+                id: "old-preparation", itemId: fixture.v1.id, sourcePackageId: "source",
+                signature: .init(engine: "supertonic", modelRevision: "3", assetManifestHash: "a", voiceStyleHash: "v", synthesisParametersHash: "p", normalizationVersion: "n", chunkingVersion: "c", digest: "d"),
+                state: .preparing, plannedChunkCount: 1
+            ))
+            try fixture.store.saveAudioPreparationJob(.init(id: "old-job", itemId: fixture.v1.id, manifestId: "old-preparation", policy: .explicit))
+            let before = try fixture.stored()
+            let text = try XCTUnwrap(before.item.text)
+            var document = StructuredDocumentBuilder.build(lines: [.init(text: "Reference", role: .reference, pageIndex: 0)], engine: "pdfkit_baseline", version: 2, pageCount: 1)
+            // Preserve canonical paragraph boundaries while changing their role; the reference-line builder normalizes whitespace.
+            document.text = text
+            document.segments[0].range = .init(start: 0, length: text.count)
+            XCTAssertEqual(document.text, before.item.text)
+            let imported = try await fixture.engine.importBrowserTextInBackgroundOffMain(.init(
+                captureMode: .markdownFile, source: .init(url: try XCTUnwrap(fixture.v1.externalReference), title: "Paper"), text: document.text, contentFormat: .plainText
+            ), structuredDocument: document)
+            let after = try fixture.stored()
+            XCTAssertEqual(after.item, before.item)
+            XCTAssertEqual(after.map, before.map)
+            XCTAssertEqual(after.sessions, before.sessions)
+            XCTAssertEqual(after.margins, before.margins)
+            if playing {
+                XCTAssertNotEqual(imported.id, fixture.v1.id)
+                XCTAssertNil(after.document)
+                XCTAssertEqual(try fixture.store.loadPreparedAudioManifests(itemId: fixture.v1.id).count, 1)
+                XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().contains { $0.id == "old-job" })
+            } else {
+                XCTAssertEqual(imported.id, fixture.v1.id)
+                XCTAssertEqual(after.document, document)
+                XCTAssertTrue(try fixture.store.loadPreparedAudioManifests(itemId: fixture.v1.id).isEmpty)
+                XCTAssertTrue(try fixture.store.loadAudioPreparationJobs().isEmpty)
+            }
+        }
+    }
+
     // MARK: A Margin saved between planning and writing
 
     func testTheStoreRefusesAPlanWhenAMarginWasSavedAfterItWasMade() throws {
@@ -185,7 +222,7 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
         XCTAssertEqual(try fixture.stored(), before)
     }
 
-    func testTheStoreRefusesAPlanWhenPreparedAudioWasSavedAfterItWasMade() throws {
+    func testTheStoreRetiresPreparedAudioSavedWhileThePlanWasMade() throws {
         let fixture = try makeFixture()
         try fixture.addReadingSession()
         guard case .success(let upgrade) = try fixture.plan() else { return XCTFail("fixture should move") }
@@ -197,13 +234,10 @@ final class StructuredDocumentUpgradeOffMainTests: XCTestCase {
             ),
             state: .preparing, plannedChunkCount: 3
         ))
-        let before = try fixture.stored()
+        try fixture.store.applyStructuredDocumentUpgrade(upgrade)
+        XCTAssertEqual(try fixture.store.loadItem(id: fixture.v1.id).text, fixture.document.text)
+        XCTAssertTrue(try fixture.store.loadPreparedAudioManifests(itemId: fixture.v1.id).isEmpty)
 
-        XCTAssertThrowsError(try fixture.store.applyStructuredDocumentUpgrade(upgrade)) {
-            XCTAssertEqual($0 as? StructuredDocumentUpgradeError, .changedSincePlanned)
-        }
-
-        XCTAssertEqual(try fixture.stored(), before)
     }
 }
 

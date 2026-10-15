@@ -209,7 +209,10 @@ struct ExperienceTimelineRailScreen: View {
         var result: [TimelineRailEntry] = []
         let sourceLength = item.timelineSource.characterCount > 0 ? item.timelineSource.characterCount : item.text.count
 
-        for entry in item.timelineSource.entries {
+        // Paragraph following belongs to Now. Timeline keeps retained rich source elements
+        // alongside actual chapter/scene boundaries, rather than inventing a row for every paragraph (#1624).
+        let richSourceRoles: Set<StructuredDocument.Role> = [.caption, .table, .footnote, .reference, .figureText]
+        for entry in item.timelineSource.entries where richSourceRoles.contains(entry.role) {
             let position = Double(entry.start) / Double(max(1, item.timelineSource.characterCount)) * 100
             result.append(TimelineRailEntry(
                 id: entry.id, position: Int(position.rounded()), rank: 0, provenance: .source,
@@ -527,24 +530,38 @@ struct ExperienceTimelineRailScreen: View {
         }
     }
 
-    private var currentSourceEntryID: String? {
-        guard model.snapshot.itemId == model.selectedItem.id,
-              model.snapshot.targetType == TargetType.itemTextTTS.rawValue,
-              let offset = model.snapshot.currentTextStart else { return nil }
-        return model.selectedItem.timelineSource.entry(atCharacter: offset)?.id
-    }
-
-    private var currentEntryIDs: Set<String> {
-        let sourceID = currentSourceEntryID
-        return Set(entries.filter { entry in
+    /// Resolve against displayed rows, not every retained paragraph. The full source lookup also
+    /// prevents an earlier caption from claiming a body passage or whitespace gap after it (#1624).
+    static func selectionForPlayback(
+        entries: [TimelineRailEntry], item: ItemDetailState, snapshot: SessionSnapshot,
+        isCurrent: (TimelineRailEntry.Action) -> Bool
+    ) -> (currentIDs: Set<String>, focusID: String?) {
+        let sourceID: String?
+        if snapshot.itemId == item.id, snapshot.targetType == TargetType.itemTextTTS.rawValue,
+           let offset = snapshot.currentTextStart,
+           let source = item.timelineSource.entry(atCharacter: offset),
+           offset < source.start + source.text.count,
+           entries.contains(where: { entry in
+               guard case .sourceText = entry.action else { return false }
+               return entry.id == source.id
+           }) {
+            sourceID = source.id
+        } else {
+            sourceID = nil
+        }
+        let currentIDs = Set(entries.filter { entry in
             if case .sourceText = entry.action { return entry.id == sourceID }
             return isCurrent(entry.action)
         }.map(\.id))
+        return (currentIDs, sourceID ?? entries.first(where: { currentIDs.contains($0.id) })?.id ?? entries.first?.id)
     }
 
-    private var currentEntryID: String? {
-        currentSourceEntryID ?? entries.first(where: { isCurrent($0.action) })?.id
+    private var playbackSelection: (currentIDs: Set<String>, focusID: String?) {
+        Self.selectionForPlayback(entries: entries, item: model.selectedItem, snapshot: model.snapshot, isCurrent: isCurrent)
     }
+
+    private var currentEntryIDs: Set<String> { playbackSelection.currentIDs }
+    private var currentEntryID: String? { playbackSelection.focusID }
 
     private func focusTimeline(using proxy: ScrollViewProxy) {
         guard !responseEditorFocused else { return }

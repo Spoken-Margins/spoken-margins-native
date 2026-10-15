@@ -89,7 +89,7 @@ final class PlaybackDiagnosticFieldsTests: XCTestCase {
     /// holds only hashed tokens and state.
     func testSessionEndNamesThePathAndKeepsTheNarrationState() {
         let narration = PlaybackDiagnosticFields.narration(intent: "playing", systemVoiceActive: false, standInPassage: false)
-        for reason in [PlaybackDiagnosticFields.SessionEndReason.miniPlayerClose, .doneButton, .chapterActionSwitchItem, .startNewSession] {
+        for reason in [PlaybackDiagnosticFields.SessionEndReason.miniPlayerClose, .doneButton, .chapterActionSwitchItem, .startNewSession, .itemTrashed] {
             let fields = PlaybackDiagnosticFields.sessionEnd(reason: reason, itemToken: "aaaa", sessionToken: "bbbb", narration: narration)
             XCTAssertEqual(fields["reason"], reason.rawValue)
             XCTAssertEqual(fields["item"], "aaaa")

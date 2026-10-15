@@ -673,6 +673,81 @@ final class OfflineStorageLedgerTests: XCTestCase {
         let ledger: OfflineStorageLedger
     }
 
+    func testRemovingAnItemsPreparedAudioLeavesEverythingElse() async throws {
+        // #322: after a PDF moves to the new extraction its prepared audio no longer matches.
+        let fixture = try makeFixture(limit: 1_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let assets = [
+            OwnedOfflineAsset(id: "chunk-a", itemId: "paper", category: .preparedChunk, relativePath: "PreparedAudio/paper/0.wav", byteCount: 10, isReproducible: true),
+            OwnedOfflineAsset(id: "artifact-a", itemId: "paper", category: .preparedAudio, relativePath: "PreparedAudio/paper/all.caf", byteCount: 20, isReproducible: true),
+            OwnedOfflineAsset(id: "recording-a", itemId: "paper", category: .recording, relativePath: "Recordings/ij-001.m4a", byteCount: 5, isReproducible: false),
+            OwnedOfflineAsset(id: "chunk-b", itemId: "other", category: .preparedChunk, relativePath: "PreparedAudio/other/0.wav", byteCount: 7, isReproducible: true),
+        ]
+        for asset in assets {
+            let url = fixture.root.appending(path: asset.relativePath)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(count: Int(asset.byteCount)).write(to: url)
+            try fixture.repository.saveOwnedOfflineAsset(asset)
+        }
+
+        let removed = try await fixture.ledger.removePreparedAudio(itemId: "paper")
+
+        XCTAssertEqual(removed, 30)
+        XCTAssertEqual(Set(try fixture.repository.loadOwnedOfflineAssets().map(\.id)), ["recording-a", "chunk-b"])
+        for asset in assets {
+            let exists = FileManager.default.fileExists(atPath: fixture.root.appending(path: asset.relativePath).path)
+            XCTAssertEqual(exists, ["recording-a", "chunk-b"].contains(asset.id), asset.id)
+        }
+    }
+
+    func testRemovingAnItemsPreparedAudioKeepsAFileAnotherItemPlays() async throws {
+        // #344 audit 2: the upgraded paper's ledger row named a file another item still
+        // played, and removal deleted it without asking who used it.
+        let fixture = try makeFixture(limit: 1_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let shared = try writeAsset(fixture, relativePath: "PreparedSupertonicAudio/shared.m4a", category: .preparedAudio)
+        let own = try writeAsset(fixture, relativePath: "PreparedAudio/paper/0.wav", category: .preparedChunk)
+        let rows = try fixture.repository.loadOwnedOfflineAssets()
+        for var row in rows {
+            row.itemId = "paper"
+            try fixture.repository.saveOwnedOfflineAsset(row)
+        }
+        let article = narratedArticle(shared)
+        try fixture.repository.saveItem(article)
+        try fixture.repository.saveItem(Item(id: "paper", title: "Paper", mediaType: "pdf", text: "Upgraded text.", externalReference: nil, status: "ready"))
+
+        _ = try await fixture.ledger.removePreparedAudio(itemId: "paper")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: shared.path), "the article still plays it")
+        XCTAssertEqual(try fixture.repository.loadItem(id: "item-article"), article, "and keeps its narration")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: own.path), "the paper's own chunk goes")
+        XCTAssertEqual(try fixture.repository.loadOwnedOfflineAssets().map(\.relativePath), ["PreparedSupertonicAudio/shared.m4a"],
+                       "the kept file stays in the ledger")
+    }
+
+    func testDiscardingAStaleAssembledFileKeepsItWhenAnItemPlaysIt() async throws {
+        // #344 re-audit: narration assembled for an upgraded PDF's old text was deleted
+        // without asking whether another item plays the same file.
+        let fixture = try makeFixture(limit: 1_000)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let played = fixture.root.appending(path: "PreparedSupertonicAudio/played.m4a")
+        let stale = fixture.root.appending(path: "PreparedSupertonicAudio/stale.m4a")
+        try FileManager.default.createDirectory(at: played.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(count: 7).write(to: played)
+        try Data(count: 7).write(to: stale)
+        let article = narratedArticle(played)
+        try fixture.repository.saveItem(article)
+
+        let keptPlayed = try await fixture.ledger.discardUncommittedFile(played)
+        let removedStale = try await fixture.ledger.discardUncommittedFile(stale)
+
+        XCTAssertFalse(keptPlayed)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: played.path), "the article still plays it")
+        XCTAssertEqual(try fixture.repository.loadItem(id: "item-article"), article)
+        XCTAssertTrue(removedStale)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path), "nothing plays it")
+    }
+
     private func makeFixture(limit: Int64) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appending(path: "offline-ledger-tests-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

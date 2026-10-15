@@ -5,7 +5,7 @@ import SessionKitPersistence
 
 @MainActor
 final class PlaybackTimelineTests: XCTestCase {
-    func testOpeningAnItemLoadsAuthoredSourceRolesIntoTheTimeline() throws {
+    func testOpeningAnItemRetainsRichSourceRolesInTimelineAndNow() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -35,20 +35,111 @@ final class PlaybackTimelineTests: XCTestCase {
         model.bootstrapLibraryIfNeeded()
         model.openItem(id: "pdf")
         let entries = ExperienceTimelineRailScreen.makeEntries(from: model.selectedItem, sessionID: nil)
-        let source = entries.compactMap { entry -> TimelineSourceContent.Entry? in
-            guard case .sourceText(let source) = entry.action else { return nil }
-            XCTAssertTrue(entry.accessibilityIdentifier.hasPrefix("timeline.sourceText."))
-            return source
-        }
+        let source = model.selectedItem.timelineSource.entries
         XCTAssertEqual(source.map(\.text), ["Caption", "Cell A | Cell B", "A footnote"])
         XCTAssertEqual(source.map(\.role), [.caption, .table, .footnote])
         XCTAssertEqual(source.map(\.pageIndex), [0, 0, 1])
         XCTAssertEqual(source.first?.label, "Figure 1: authored label")
+        let richSource = entries.compactMap { entry -> TimelineSourceContent.Entry? in
+            guard case .sourceText(let source) = entry.action else { return nil }
+            return source
+        }
+        XCTAssertEqual(richSource, source, "Retained captions, tables and footnotes stay in Timeline")
+        let index = PlaybackLivePassage.SourceIndex(model.selectedItem.timelineSource)
+        let sentence = PlaybackLivePassage.Sentence(start: 0, end: 7, text: "Caption", isCurrent: true, diamonds: [])
+        XCTAssertEqual(index.fragments(for: sentence).first?.label, "Figure 1: authored label",
+                       "Now still annotates the retained source passage")
 
         model.openItem(id: "podcast")
         XCTAssertTrue(model.selectedItem.isNativeAudio)
         XCTAssertTrue(model.selectedItem.timelineSource.entries.isEmpty,
                       "An audio transcript must not become source text without time mapping")
+    }
+
+    func testTimelineKeepsOnlySupportedRichSourceElementsAlongsideNavigation() {
+        let roles = StructuredDocument.Role.allCases
+        let text = roles.map { $0.rawValue + "." }.joined(separator: "\n\n")
+        var start = 0
+        let segments = roles.enumerated().map { index, role -> StructuredDocument.Segment in
+            let length = role.rawValue.count + 1
+            defer { start += length + 2 }
+            return .init(id: "segment-\(index)", role: role, range: .init(start: start, length: length))
+        }
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 1, textSHA256: nil),
+            text: text, segments: segments, markers: [])
+        let item = ItemDetailState(id: "rich-source", title: "Document", text: text).includingTimelineSource(document)
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        let displayed = entries.compactMap { entry -> StructuredDocument.Role? in
+            guard case .sourceText(let source) = entry.action else { return nil }
+            return source.role
+        }
+        XCTAssertEqual(displayed, [.caption, .table, .footnote, .reference, .figureText],
+                       "Pictures/embeds/link payloads are not retained by this schema; metadata and headings are not scenes")
+        XCTAssertEqual(item.timelineSource.entries.map(\.role), roles, "Now and the reader still receive every retained role")
+    }
+
+    func testParagraphsDoNotInventNavigationWhenAnArticleHasNoScenes() {
+        for text in ["", "One paragraph.", "First.\n\nSecond.\n \nThird.",
+                     (0..<100).map { "Paragraph \($0)." }.joined(separator: "\n\n")] {
+            let item = ItemDetailState(id: "article", title: "Article", text: text).includingTimelineSource(nil)
+            let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+            XCTAssertTrue(item.chapters.isEmpty)
+            XCTAssertTrue(item.listeningMapScenes.isEmpty)
+            XCTAssertEqual(entries.map(\.id), ["source.beginning"], "No invented navigation for \(text.count) characters")
+        }
+    }
+
+    func testRealNavigationAppearsOnceWithoutParagraphRows() {
+        var item = ItemDetailState(id: "article", title: "Article", text: "First.\n\nSecond.")
+            .includingTimelineSource(nil)
+        item.chapters = [.init(id: "authored", title: "Opening", startChar: 0, endChar: 15, percent: 0)]
+        item.mediaChapters = [
+            .init(id: "authored", title: "Opening", startMs: 0, transcriptSegmentId: "first"),
+            .init(id: "publisher", title: "Publisher chapter", startMs: 30_000, transcriptSegmentId: "second")
+        ]
+        item.listeningMapScenes = [.init(id: "scene", title: "A real scene", startMs: 45_000, transcriptSegmentId: "third")]
+        item.mediaDurationMs = 60_000
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        XCTAssertEqual(entries.map(\.id), ["source.chapter.authored", "source.mediaChapter.publisher", "source.listeningMapScene.scene"])
+        XCTAssertEqual(entries.map(\.title), ["Opening", "Publisher chapter", "A real scene"])
+        guard case .chapter = entries[0].action, case .mediaChapter = entries[1].action,
+              case .listeningMapScene = entries[2].action else { return XCTFail("Navigation actions were lost") }
+    }
+
+    func testPlaybackFocusNeverTargetsAnOmittedParagraphOrAnEarlierCaption() throws {
+        let text = "Caption\n\nBody paragraph."
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 1, textSHA256: nil),
+            text: text, segments: [
+                .init(id: "caption", role: .caption, range: .init(start: 0, length: 7)),
+                .init(id: "body", role: .body, range: .init(start: 9, length: 15))
+            ], markers: [])
+        var item = ItemDetailState(id: "article", title: "Article", text: text).includingTimelineSource(document)
+        item.chapters = [.init(id: "scene", title: "Actual scene", startChar: 0, endChar: text.count, percent: 0)]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.status = .playing
+        let source = try XCTUnwrap(item.timelineSource.entries.first { $0.role == .caption })
+        for offset in [2, 7, 8, 10, text.count] {
+            snapshot.currentTextStart = offset
+            let selection = ExperienceTimelineRailScreen.selectionForPlayback(entries: entries, item: item, snapshot: snapshot) {
+                if case .chapter = $0 { true } else { false }
+            }
+            XCTAssertEqual(selection.focusID, offset < 7 ? source.id : "source.chapter.scene")
+            XCTAssertEqual(selection.currentIDs, offset < 7 ? [source.id, "source.chapter.scene"] : ["source.chapter.scene"])
+            XCTAssertTrue(entries.contains { $0.id == selection.focusID }, "Follow playback must scroll to a displayed row")
+        }
+        for text in ["", "Only body text."] {
+            let item = ItemDetailState(id: "article", text: text).includingTimelineSource(nil)
+            let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+            snapshot.currentTextStart = 0
+            let selection = ExperienceTimelineRailScreen.selectionForPlayback(entries: entries, item: item, snapshot: snapshot) { _ in false }
+            XCTAssertEqual(selection.focusID, "source.beginning")
+            XCTAssertTrue(selection.currentIDs.isEmpty)
+        }
     }
 
     /// #1291 APO-09: `Gate1FlowUITests` checked only that some Timeline row reads "Current chapter." after Next
@@ -144,13 +235,13 @@ final class PlaybackTimelineTests: XCTestCase {
         let relevant = entries.filter { entry in
             switch entry.action {
             case .margin, .chapter, .turn: true
-            case .sourceText(let source): source.start == 13
             default: false
             }
         }
-        XCTAssertEqual(relevant.map(\.position), [1, 1, 1, 1])
-        XCTAssertEqual(relevant.count, 4)
-        for (entry, expected) in zip(relevant, [1.1, 1.1, 1.2, 1.3]) {
+        XCTAssertEqual(relevant.map(\.position), [1, 1, 1])
+        XCTAssertEqual(relevant.count, 3)
+        XCTAssertFalse(entries.contains { if case .sourceText = $0.action { true } else { false } })
+        for (entry, expected) in zip(relevant, [1.1, 1.1, 1.2]) {
             XCTAssertEqual(try XCTUnwrap(entry.precisePosition), expected, accuracy: 1e-9,
                            "Compare source coordinates before rounding for display")
         }

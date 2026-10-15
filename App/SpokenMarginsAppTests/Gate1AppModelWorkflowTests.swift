@@ -4014,7 +4014,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     /// #1577: pin the app action to #807's single rule without playing or encoding audio.
     /// This verifies the lead-in wiring and cue; hearing the saved voice still needs the owner's phone.
-    func testPlayThisMomentUsesEightSecondListeningMomentRuleAndCountdown() throws {
+    func testPlayThisMomentUsesThirtySecondListeningMomentRuleAndCountdown() throws {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -4043,12 +4043,310 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
         let moment = try XCTUnwrap(model.marginMoment)
         let rule = ListeningMoment.rule(for: .playThisMoment)
-        XCTAssertEqual(rule.leadInMs, 8_000)
+        XCTAssertEqual(rule.leadInMs, 30_000, "the owner's call on #1577: keep thirty seconds and add the countdown")
         XCTAssertEqual(moment.startMediaTimeMs, 120_000 - rule.leadInMs)
         XCTAssertEqual(model.snapshot.currentMediaTimeMs, moment.startMediaTimeMs)
         XCTAssertEqual(model.marginMomentTitle, "Your Margin")
-        XCTAssertEqual(moment.targetCountdown(currentMediaTimeMs: model.snapshot.currentMediaTimeMs), "0:08")
+        XCTAssertEqual(moment.targetCountdown(currentMediaTimeMs: model.snapshot.currentMediaTimeMs), "0:30")
+        XCTAssertEqual(model.marginMomentClock, .media)
         XCTAssertEqual(model.screen, .playback)
+    }
+
+    /// #1670: the owner's phone, build 32: playback was set to 1× on screen, but tapping one of his Margins on a podcast
+    /// played the Margin's voice and the podcast faster. The Margin's own session came back at the rate it last played
+    /// at (here 1.5×, as from a text item), while the screen showed the global media rate. The test layer that should
+    /// have caught it is this one: the action, with the stored session rate and the shown rate disagreeing.
+    func testPlayThisMomentPlaysAtTheShownRateNotTheMarginsStoredSessionRate() throws {
+        for (shown, stored) in [(1.0, 1.5), (1.5, 1.0)] {
+            defer { UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate") }
+            let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-rate-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let databaseURL = root.appending(path: "library.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+            model.resetAndSeed()
+            defer { model.endMarginMoment(); model.pause() }
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            try store.saveItem(Item(id: "rate-source", title: "Rate source", mediaType: "podcast", text: nil,
+                externalReference: "local", status: "ready",
+                media: ItemMedia(sourceType: .nativeMediaFile, url: root.appending(path: "source.m4a").absoluteString,
+                    durationMs: 180_000, nativeMediaId: "rate-source")))
+            model.startItem(id: "rate-source")
+            var margin = shareableInterjection(itemId: "rate-source")
+            margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+            margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+                anchorBefore: "", anchorAfter: "", mediaTimeMs: 120_000)
+            margin.audioPath = root.appending(path: "margin.m4a").path
+            margin.audioStatus = "recorded"
+            try store.saveInterjection(margin)
+            // The listener's speed now, and the rate the Margin's session last played at.
+            model.setMediaPlaybackRate(shown)
+            var session = try XCTUnwrap(try store.loadSession(id: margin.sessionId))
+            session.playbackRate = stored
+            try store.saveSession(session)
+            model.refreshMarginRows()
+            let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
+
+            XCTAssertTrue(model.playMarginMoment(row))
+
+            XCTAssertEqual(model.snapshot.playbackRate, shown, "the source plays at the speed shown (stored \(stored))")
+            XCTAssertEqual(model.mediaPlaybackRate, shown)
+            XCTAssertEqual(model.diagnostics["marginVoice.rate"],
+                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f;player=n/a;voicePlayer=n/a", shown, shown, shown),
+                           "the Margin's voice reads the same rate, and Diagnostics say so")
+        }
+    }
+
+    /// #1577: the owner's phone, build 32: on an article read aloud on the device, Play this moment showed no
+    /// countdown and played only the source from the Margin's text anchor, because a Margin anchored by text position
+    /// has no media time and the moment needed one. The moment now counts narration time, so the card appears,
+    /// the source goes back to a sentence about thirty seconds before the Margin, and the countdown follows the text.
+    /// The test layer that should have caught it is this one: the action, on the item type where the Margin lives.
+    func testPlayThisMomentOnATextAnchoredMarginInAnArticleReadAloudLeadsInAndCountsDown() throws {
+        let fixture = try textAnchoredMomentFixture()
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        let moment = try XCTUnwrap(model.marginMoment, "the card shows; today's next showed none for this Margin")
+        let clock = model.marginMomentClock
+        XCTAssertEqual(clock, .liveNarration)
+        XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertEqual(moment.target.mediaTimeMs, clock.position(forTextOffset: fixture.targetChar))
+        XCTAssertEqual(moment.target.mediaTimeMs - moment.startMediaTimeMs, ListeningMoment.rule(for: .playThisMoment).leadInMs,
+                       "thirty seconds, through the one moment rule (#807)")
+
+        let leadInStart = try XCTUnwrap(model.snapshot.currentTextStart, "the source moved back for the lead-in")
+        XCTAssertEqual(leadInStart % fixture.sentenceLength, 0, "reading starts at the beginning of a sentence")
+        XCTAssertGreaterThanOrEqual(leadInStart, clock.textOffset(forPosition: moment.startMediaTimeMs))
+        XCTAssertLessThan(leadInStart, fixture.targetChar)
+        let remaining = try XCTUnwrap(moment.msUntilTarget(currentMediaTimeMs: model.marginMomentPositionMs))
+        XCTAssertTrue((25_000...30_000).contains(remaining), "about thirty seconds to go, not \(remaining) ms")
+        XCTAssertNotNil(moment.targetCountdown(currentMediaTimeMs: model.marginMomentPositionMs))
+        XCTAssertEqual(model.diagnostics["marginMoment"]?.contains("clock=narrated_text"), true)
+        XCTAssertEqual(model.screen, .playback)
+    }
+
+    /// "Play it now" on a text-anchored moment goes to the Margin's own place in the text, not to a media time.
+    func testPlayItNowOnATextAnchoredMomentReadsFromTheMarginsPlace() throws {
+        let fixture = try textAnchoredMomentFixture()
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        model.playMarginMomentNow()
+
+        XCTAssertEqual(model.snapshot.currentTextStart, fixture.targetChar)
+        // The Noop transport has no recording to open, so the voice is reported missing and the source goes on.
+        XCTAssertEqual(model.diagnostics["marginMoment.voiceUnavailable"]?.hasSuffix(":recording_missing"), true)
+    }
+
+    /// #1646: reading starts on a sentence start, so a Margin in the stretch before that start isn't part of the moment.
+    /// It used to stay in the sequence, and reading never crossed it, so the card stayed until Stop.
+    /// Sentences are 40 characters; the target is at 1600, so the 30-second rule starts at 1180 and reading starts at 1200.
+    /// The Margins sit inside the gap (1190) and well past the start (1300, 1700), not on the start itself.
+    /// (Named to run beside the other text-moment tests: under an earlier name the same steps failed on the lane,
+    /// and passed again further down the run, which points at state an earlier test leaves behind.)
+    func testPlayThisMomentOnATextAnchoredMarginLeavesOutAMarginInTheGapBeforeTheSnappedStart() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        let leadInStart = try XCTUnwrap(model.snapshot.currentTextStart)
+        XCTAssertEqual(leadInStart, 1_200, "reading starts at the first sentence start after the rule's 1180")
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar, 1_700], "the Margin at 1190 sits before where reading starts")
+    }
+
+    /// #1656: a skip from the Lock Screen, headphones, the Watch or CarPlay arrives through the compact controls, not
+    /// `skipForward()`, so the moment wasn't told about it. A sentence skip over the next Margin played it once the
+    /// next progress reading came in.
+    /// Sentences are 40 characters; reading starts at 1200 and the next Margin sits at 1300, three skips on.
+    func testPlayThisMomentOnATextAnchoredMarginSkippedFromTheLockScreenDoesNotPlayTheNextMargin() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_300])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        XCTAssertEqual(model.snapshot.currentTextStart, 1_200)
+
+        // One progress reading after each skip, as the 500 ms ticker takes them. Without `sourceMoved()` the reading
+        // after the third skip (1280 to 1320) crosses the Margin at 1300 and plays it.
+        var previous = 1_200
+        for _ in 0..<3 {
+            model.performGate2CompactCommand(.skipForward)
+            let start = try XCTUnwrap(model.snapshot.currentTextStart)
+            XCTAssertGreaterThan(start, previous, "a skip moves the reading forward")
+            previous = start
+            model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+        }
+
+        XCTAssertGreaterThan(previous, 1_300, "the skips went past the Margin")
+        let startChars = try XCTUnwrap(model.marginMoment).unplayed.map {
+            model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs)
+        }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar], "skipping over a Margin doesn't play it")
+    }
+
+    /// #1656: a chapter tapped in Timeline is a move of the source like a skip. A heading-only chapter starting at 1320
+    /// is 80 characters past 1240, under the reading limit, so without `sourceMoved()` the next reading crosses the
+    /// Margin at 1300 and plays it.
+    func testPlayThisMomentOnATextAnchoredMarginSkippedToAChapterDoesNotPlayTheNextMargin() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_300], chapterStartChars: [0, 1_320])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        model.performGate2CompactCommand(.skipForward)
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+        XCTAssertEqual(model.snapshot.currentTextStart, 1_240, "a reading just before the Margin at 1300")
+
+        model.jumpToChapter(Chapter(id: "ch-1", title: "Heading", startChar: 1_320, endChar: 3_200, percent: 41))
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+
+        XCTAssertEqual(model.snapshot.currentTextStart, 1_320, "the chapter jump moved the reading past the Margin")
+        let startChars = try XCTUnwrap(model.marginMoment).unplayed.map {
+            model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs)
+        }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar], "jumping over a Margin doesn't play it")
+    }
+
+    /// #1660: a Skim summary lands further on in the episode, and the moment must not play the Margin the landing
+    /// passed. Reading stands at 100 s, another spoken Margin sits 1 s ahead and the next scene starts 2 s on, under the
+    /// 4,000 ms reading limit, so without `sourceMoved()` in `skimSeekOrStage` the next reading crosses the Margin and plays it.
+    /// The moment's lead-in has the target at 120 s; the Margin ahead sits between the reading and the target.
+    func testPlayThisMomentOnAPodcastSkimLandingDoesNotPlayTheMarginItPasses() throws {
+        let outcome = try skimLandingOnAPodcastMoment(landingAheadMs: 2_000, otherMarginAheadMs: 1_000)
+
+        XCTAssertEqual(outcome.landedAtMs, 102_000, "the Skim landed on the next scene")
+        XCTAssertEqual(outcome.unplayedMs, [101_000, 120_000], "skimming over a Margin doesn't play it")
+        XCTAssertNil(outcome.voiceAttempt, "no voice was started for the Margin the Skim passed")
+    }
+
+    /// #1660: the neighbouring landings. Each Margin sits half way to the landing. Without `sourceMoved()` the conductor
+    /// takes the first three for playback and the last two for a seek (`testASkimLandingIsReadAsPlaybackOnlyWhenItIsUnderTheReadingLimit`
+    /// in SessionKit pins that split); with it, none of them plays a Margin.
+    func testPlayThisMomentOnAPodcastSkimLandingsOfEveryLengthDoNotPlayTheMarginsTheyPass() throws {
+        for landingAheadMs in [500, 2_000, 3_900, 4_100, 30_000] {
+            let outcome = try skimLandingOnAPodcastMoment(landingAheadMs: landingAheadMs, otherMarginAheadMs: landingAheadMs / 2)
+
+            XCTAssertEqual(outcome.landedAtMs, 100_000 + landingAheadMs, "landing \(landingAheadMs) ms on")
+            XCTAssertEqual(outcome.unplayedMs, [100_000 + landingAheadMs / 2, 120_000], "landing \(landingAheadMs) ms on")
+            XCTAssertNil(outcome.voiceAttempt, "landing \(landingAheadMs) ms on")
+        }
+    }
+
+    private struct SkimLandingOutcome {
+        let landedAtMs: Int?
+        /// Where the moment's unplayed Margins sit, in playback order.
+        let unplayedMs: [Int]
+        /// Set when the conductor tried to play a Margin's voice (the test voices don't exist, so it reports them missing).
+        let voiceAttempt: String?
+    }
+
+    /// A podcast moment on a Margin at 120 s, the source reading at 100 s and another spoken Margin `otherMarginAheadMs`
+    /// past that reading. A Skim then lands `landingAheadMs` past it: the bridge record is what the controller keeps
+    /// for a summary that is playing, and `completeSkimBridge()` runs the landing the app runs when the summary ends.
+    /// The progress ticker runs on a timer, so the test takes the readings itself, as the ticker would.
+    private func skimLandingOnAPodcastMoment(landingAheadMs: Int, otherMarginAheadMs: Int) throws -> SkimLandingOutcome {
+        let readingMs = 100_000
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-skim-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        defer { model.endMarginMoment(); model.pause() }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveItem(Item(id: "moment-source", title: "Moment source", mediaType: "podcast", text: nil,
+            externalReference: "local", status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: root.appending(path: "source.m4a").absoluteString,
+                durationMs: 180_000, nativeMediaId: "moment-source")))
+        model.startItem(id: "moment-source")
+        var margin = shareableInterjection(itemId: "moment-source")
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+            anchorBefore: "", anchorAfter: "", mediaTimeMs: 120_000)
+        margin.audioPath = root.appending(path: "margin.m4a").path
+        margin.audioStatus = "recorded"
+        try store.saveInterjection(margin)
+        var other = margin
+        other.id = "other-ahead"
+        other.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+            anchorBefore: "", anchorAfter: "", mediaTimeMs: readingMs + otherMarginAheadMs)
+        try store.saveInterjection(other)
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
+        XCTAssertTrue(model.playMarginMoment(row))
+        XCTAssertEqual(try XCTUnwrap(model.marginMoment).unplayed.count, 2, "the Margin ahead is part of the moment")
+
+        // The listener is mid-episode: one reading at 100 s gives the conductor its place.
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: readingMs))
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, readingMs)
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+
+        model.snapshot.skimBridgeState = SkimBridgeState(
+            direction: .forward, itemId: "moment-source", originMediaTimeMs: readingMs, summarySceneId: "scene-0",
+            destinationSceneId: "scene-1", destinationMediaTimeMs: readingMs + landingAheadMs,
+            summaryAssetId: "summary", wasSourcePlaying: false, status: .playing
+        )
+        model.completeSkimBridge()
+        XCTAssertNil(model.snapshot.skimBridgeState, "the summary is over")
+        let landedAtMs = model.snapshot.currentMediaTimeMs
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+
+        return SkimLandingOutcome(
+            landedAtMs: landedAtMs,
+            unplayedMs: model.marginMoment?.unplayed.map(\.mediaTimeMs) ?? [],
+            voiceAttempt: model.diagnostics["marginMoment.voiceUnavailable"]
+        )
+    }
+
+    private func textAnchoredMomentFixture(
+        otherMarginChars: [Int] = [],
+        chapterStartChars: [Int] = []
+    ) throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-text-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        let sentence = { (number: Int) in String(format: "Sentence %02d is one small thing to hear. ", number) }
+        let text = (0..<80).map(sentence).joined()
+        try store.saveItem(Item(id: "moment-article", title: "Moment article", mediaType: "text", text: text,
+            externalReference: "local", status: "ready"))
+        if !chapterStartChars.isEmpty {
+            let chapters = chapterStartChars.enumerated().map { index, start in
+                Chapter(id: "ch-\(index)", title: "Chapter \(index)", startChar: start,
+                        endChar: index + 1 < chapterStartChars.count ? chapterStartChars[index + 1] : text.count,
+                        percent: start * 100 / text.count)
+            }
+            try store.saveListeningMap(ListeningMap(id: "moment-map", itemId: "moment-article", overview: "", chapters: chapters))
+        }
+        model.startItem(id: "moment-article")
+        XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue, "read aloud on the device: no media clock")
+        let sentenceLength = sentence(0).count
+        let targetChar = sentenceLength * 40
+        var margin = shareableInterjection(itemId: "moment-article")
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        margin.anchor = Anchor(anchorType: .text, startChar: targetChar, endChar: targetChar + sentenceLength,
+            anchorBefore: "", anchorAfter: "")
+        XCTAssertNil(margin.anchor.mediaTimeMs, "a Margin made while the article was read aloud has only a text place")
+        margin.audioPath = root.appending(path: "margin.m4a").path
+        margin.audioStatus = "recorded"
+        try store.saveInterjection(margin)
+        for char in otherMarginChars {
+            var other = margin
+            other.id = "other-\(char)"
+            other.anchor = Anchor(anchorType: .text, startChar: char, endChar: char + sentenceLength, anchorBefore: "", anchorAfter: "")
+            try store.saveInterjection(other)
+        }
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
+        return (model, row, targetChar, sentenceLength)
     }
 
     func testGlobalMarginSearchStarsAndSharedRowsKeepSessionIdentity() throws {

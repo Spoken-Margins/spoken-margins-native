@@ -15,68 +15,31 @@ public struct StructuredDocumentUpgrade: Sendable {
     public var interjections: [Interjection]
     /// Sessions with their positions moved to the same place in the new text.
     public var sessions: [Session]
-    /// What the plan read. A store that applies the upgrade checks inside its transaction that none of it
-    /// changed, so a plan made off the main thread can't overwrite a Margin saved while it was running.
-    public var basis: Basis?
+    /// Preparation is disposable: the repository retires all current records at
+    /// commit, including those enqueued while this plan was being computed.
+    let baseline: StructuredDocumentUpgradeBaseline
 
-    public struct Basis: Equatable, Sendable {
-        /// The whole row, not just its text: the write replaces it, so any other field changed meanwhile would be lost.
-        var item: Item
-        var sessions: [Session]
-        var margins: [Interjection]
+    public func validateBaseline(repository: any (SessionRepository & StructuredDocumentRepository)) throws {
+        if try StructuredDocumentUpgradeBaseline.read(itemId: item.id, repository: repository) != baseline {
+            throw StructuredDocumentUpgradeError.changedSincePlanned
+        }
     }
-}
-
-public enum StructuredDocumentUpgradeError: Error, Equatable, Sendable {
-    /// The item, its sessions or its Margins changed between planning and applying.
-    case changedSincePlanned
 }
 
 /// Step 5 of C1 M3: when a PDF imported under an older extraction is imported
 /// again, move the existing item to the new extraction only if nothing of the
 /// listener's can land in the wrong place (I13 rule 1d). Otherwise it stays.
 public enum StructuredDocumentUpgrader {
+    public static func requireUnchangedSincePlanned(_ upgrade: StructuredDocumentUpgrade, repository: SessionRepository & StructuredDocumentRepository) throws {
+        try upgrade.validateBaseline(repository: repository)
+    }
     public enum StaysBecause: Error, Equatable, Sendable {
         case noText
         /// Margins imported from someone else's packet anchor into this text too.
         case importedCommentary
-        /// Prepared audio was rendered from the old text.
-        case preparedAudio
         case nonTextAnchor(marginIds: [String])
         case marginNotPlaced(marginIds: [String])
         case positionNotPlaced(sessionIds: [String])
-    }
-
-    /// Called by a store inside the transaction that applies `upgrade`.
-    public static func requireUnchangedSincePlanned(
-        _ upgrade: StructuredDocumentUpgrade,
-        repository: SessionRepository & StructuredDocumentRepository
-    ) throws {
-        guard let basis = upgrade.basis else { return }
-        guard try currentBasis(itemId: upgrade.item.id, repository: repository) == basis else {
-            throw StructuredDocumentUpgradeError.changedSincePlanned
-        }
-    }
-
-    /// The item row plus every session and Margin on it, in a fixed order; nil when something the
-    /// upgrade cannot carry (imported Margins, prepared audio, a deleted item) is now present.
-    private static func currentBasis(itemId: String, repository: SessionRepository & StructuredDocumentRepository) throws -> StructuredDocumentUpgrade.Basis? {
-        let item: Item
-        do { item = try repository.loadItem(id: itemId) }
-        catch SessionKitError.missingFixture { return nil }
-        guard item.deletedAt == nil,
-              try repository.loadImportedCommentaryLayers(itemId: itemId).isEmpty,
-              try repository.loadPreparedAudioManifests(itemId: itemId).isEmpty else { return nil }
-        let (sessions, margins) = try sessionsAndMargins(itemId: itemId, repository: repository)
-        return StructuredDocumentUpgrade.Basis(item: item, sessions: sessions, margins: margins)
-    }
-
-    private static func sessionsAndMargins(itemId: String, repository: SessionRepository & StructuredDocumentRepository) throws -> ([Session], [Interjection]) {
-        let sessions = try repository.loadSessions(itemId: itemId).sorted { $0.id < $1.id }
-        let margins = try sessions.flatMap { try repository.loadInterjections(sessionId: $0.id) }
-            .filter { $0.itemId == itemId }
-            .sorted { ($0.sessionId, $0.id) < ($1.sessionId, $1.id) }
-        return (sessions, margins)
     }
 
     public static func plan(
@@ -85,14 +48,34 @@ public enum StructuredDocumentUpgrader {
         listeningMap: ListeningMap?,
         repository: SessionRepository & StructuredDocumentRepository
     ) throws -> Result<StructuredDocumentUpgrade, StaysBecause> {
+        let baseline: StructuredDocumentUpgradeBaseline
+        if let store = repository as? any SessionRepositoryTransaction {
+            baseline = try store.withSessionTransaction {
+                try StructuredDocumentUpgradeBaseline.read(itemId: existing.id, repository: repository)
+            }
+        } else {
+            baseline = try StructuredDocumentUpgradeBaseline.read(itemId: existing.id, repository: repository)
+        }
+        guard baseline.item == existing else { throw StructuredDocumentUpgradeError.changedSincePlanned }
         guard let oldText = existing.text, !oldText.isEmpty, !document.text.isEmpty else { return .failure(.noText) }
-        if try !repository.loadImportedCommentaryLayers(itemId: existing.id).isEmpty {
+        if !baseline.commentary.isEmpty {
             return .failure(.importedCommentary)
         }
-        if try !repository.loadPreparedAudioManifests(itemId: existing.id).isEmpty {
-            return .failure(.preparedAudio)
+        let timeline = baseline.timeline?.timeline
+        let sessions = baseline.sessions.map { session in
+            // A session playing the rendered narration goes back to reading the text, at
+            // the place its media time had reached; then it moves like any other. The stored
+            // timeline describes the item's current render only: a session on an older one
+            // (#277) keeps its saved character offset (#344). So does every session once the
+            // narration is detached, since the timeline left behind can be a newer render's
+            // than the session's, and nothing records which (#344 audit 3).
+            guard PreparedNarrationFallback.canReadText(instead: session, item: existing) else { return session }
+            let timelineDescribesTarget = PreparedNarrationFallback.media(existing.media, isTarget: session.currentTargetId)
+            return PreparedNarrationFallback.liveSpeechSession(
+                from: session, item: existing, timeline: timelineDescribesTarget ? timeline : nil
+            )
         }
-        let (sessions, margins) = try sessionsAndMargins(itemId: existing.id, repository: repository)
+        let margins = baseline.margins
         let nonText = margins.filter { $0.anchor.anchorType != .text }.map(\.id)
         guard nonText.isEmpty else { return .failure(.nonTextAnchor(marginIds: nonText)) }
 
@@ -146,12 +129,45 @@ public enum StructuredDocumentUpgrader {
         }
         var item = existing
         item.text = document.text
+        // A v2 document only comes from a PDF; a link without ".pdf" may have been saved as text.
+        item.mediaType = "pdf"
         item.deletedAt = nil
+        if item.media?.sourceType == .generatedTTSPrerendered {
+            item.media = nil
+        }
         if listeningMap != nil { item.status = "ready" }
         return .success(StructuredDocumentUpgrade(
             item: item, listeningMap: listeningMap, document: document,
             interjections: movedMargins, sessions: movedSessions,
-            basis: StructuredDocumentUpgrade.Basis(item: existing, sessions: sessions, margins: margins)
+            baseline: baseline
         ))
     }
 }
+
+/// Immutable planning inputs. Searches run after the read transaction has closed;
+/// commit compares these again inside its write transaction, including new rows.
+struct StructuredDocumentUpgradeBaseline: Equatable, Sendable {
+    var item: Item
+    var document: StructuredDocument?
+    var listeningMap: ListeningMap?
+    var sessions: [Session]
+    var margins: [Interjection]
+    var timeline: SourceTranscriptTimeline?
+    var commentary: [ImportedCommentaryLayer]
+
+    static func read(itemId: String, repository: any (SessionRepository & StructuredDocumentRepository)) throws -> Self {
+        let sessions = try repository.loadSessions(itemId: itemId).sorted { $0.id < $1.id }
+        return try Self(
+            item: repository.loadItem(id: itemId),
+            document: repository.loadStructuredDocument(itemId: itemId),
+            listeningMap: repository.loadListeningMap(itemId: itemId),
+            sessions: sessions,
+            margins: sessions.flatMap { try repository.loadInterjections(sessionId: $0.id) }
+                .filter { $0.itemId == itemId }.sorted { ($0.sessionId, $0.id) < ($1.sessionId, $1.id) },
+            timeline: repository.loadTranscriptTimeline(itemId: itemId),
+            commentary: repository.loadImportedCommentaryLayers(itemId: itemId).sorted { $0.id < $1.id }
+        )
+    }
+}
+
+public enum StructuredDocumentUpgradeError: Error, Equatable, Sendable { case changedSincePlanned }

@@ -19,6 +19,16 @@ A PR is audited when all of these hold:
     list here: #402 and #439 waited on an audit this script never ran), or a
     comment on the PR or its linked issue asks for a Codex audit.
 
+A head that already has an audit is audited again only for one of these (the lane runner already
+reads the newest audit that names the head, so a second audit of the same head needs no change there):
+  * the newest audit of the head is blocking, it carries the `audit-input` marker of the title and
+    description it read (see build_comment), and the PR's title or description has changed since. Audits
+    posted before the marker existed have none and are not re-audited this way. At most
+    MAX_DESCRIPTION_REAUDITS such re-audits per head, so editing the description back and forth can't burn tokens;
+  * a comment on the PR asks for an audit and is newer than the head's newest audit;
+  * the script runs by hand with `--pr N`.
+A clean audit is never repeated because the description changed.
+
 Small PRs are batched: one Claude call per batch, one comment per PR. The comment opens
 `**Claude audit on `<sha7>`**`, the heading the lane runner counts as an audit.
 
@@ -52,6 +62,7 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -94,6 +105,7 @@ CLAUDE_BUDGET_USD = "10"  # per call; a small batch costs well under $1
 CLAUDE_TIMEOUT_S = 30 * 60
 
 MAX_FAILED_AUDITS = 2  # a head whose audit call or post failed this many times is left alone (no blind retries)
+MAX_DESCRIPTION_REAUDITS = 2  # audits of one head triggered by a changed title or description, beyond the first
 FAILURES_PATH = OPS_DIR / "codex-audit-failures.json"
 
 HEAD_FILE_CAP = 2_000_000  # bytes of one changed file copied out at the PR head
@@ -189,6 +201,9 @@ _RUNNER_WAITS_RE = re.compile(r"(?im)^not merged by the runner:.*(?:\bhas no \"?
                               r"|\binherits a blocking audit finding\b)")  # #712: an unresolved inherited finding needs one too
 # The runner's clean-audit rule (#441, lane-runner.py CLEAN_AUDIT): the verdict line opens so.
 _CLEAN_AUDIT_RE = re.compile(r"no (blocking )?findings\b", re.I)
+# What an audit read of the PR's title and description (#1643): the last line of the comment, after the footer.
+# Anchored to the end so a marker-looking string inside a finding (the model repeats PR text) is never read.
+_INPUT_MARKER_RE = re.compile(r"<!-- audit-input: sha256=([0-9a-f]{64}) -->\s*\Z")
 
 
 def first_line(body: str | None) -> str:
@@ -229,6 +244,29 @@ def audited_on(comments: list[dict], head_sha: str) -> bool:
         is_audit_comment(c) and names_sha(first_line(comment_body(c)), head_sha)
         for c in comments
     )
+
+
+def head_audit_comments(comments: list[dict], head_sha: str) -> list[dict]:
+    """The audit comments whose heading names the head, oldest first."""
+    return sorted((c for c in comments
+                   if is_audit_comment(c) and names_sha(first_line(comment_body(c)), head_sha)), key=comment_time)
+
+
+def audit_input_hash(title: str | None, body: str | None) -> str:
+    """A fingerprint of the PR's title and description, which the model reads but GitHub's events never record.
+
+    Only the first BODY_CHARS of the description count: that is all the model is shown, so an edit past it
+    would pay for an audit that reads the same input.
+    """
+    def norm(text):
+        return (text or "").replace("\r\n", "\n").strip()
+    return hashlib.sha256(json.dumps([norm(title), norm(body)[:BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def audit_input_marker(c: dict) -> str | None:
+    """The title-and-description fingerprint an audit comment carries, None for one posted before the marker."""
+    match = _INPUT_MARKER_RE.search(comment_body(c))
+    return match.group(1) if match else None
 
 
 def parse_lane_report(c: dict) -> tuple[str, str | None] | None:
@@ -367,16 +405,56 @@ def asks_for_audit(text: str) -> bool:
     return False
 
 
+def audit_requests_since(comments: list[dict], since: str) -> list[dict]:
+    """The comments newer than `since` that ask for an audit (audits and lane reports never do)."""
+    return [c for c in comments
+            if not is_audit_comment(c) and not parse_lane_report(c)
+            and comment_time(c) > since and asks_for_audit(comment_body(c))]
+
+
 def audit_requested(comments: list[dict]) -> bool:
     """A comment asks for a Codex audit, newer than the newest audit comment."""
     audits = [comment_time(c) for c in comments if is_audit_comment(c)]
-    since = max(audits) if audits else ""
-    for c in comments:
-        if is_audit_comment(c) or parse_lane_report(c):
-            continue
-        if comment_time(c) > since and asks_for_audit(comment_body(c)):
-            return True
-    return False
+    return bool(audit_requests_since(comments, max(audits) if audits else ""))
+
+
+REAUDIT_WHY = {"description": "re-audit: description changed since the blocking audit",
+               "request": "re-audit: asked for after the head's audit",
+               "forced": "re-audit: asked for with --pr"}
+
+
+def reaudit_plan(kind: str, key: str, note: str) -> tuple[dict, str]:
+    return {"kind": kind, "key": key, "note": note}, REAUDIT_WHY[kind]
+
+
+def reaudit_trigger(pr: dict, comments: list[dict], force: bool = False) -> tuple[dict | None, str]:
+    """For a head that already has an audit: (plan, reason) when it is to be audited again, else (None, why not).
+
+    The plan is {kind, key, note}. `key` is what a failed re-audit is remembered under, so a re-audit that
+    fails twice isn't retried every tick (#1456) until the description changes again.
+    """
+    head = pr["headRefOid"]
+    audits = head_audit_comments(comments, head)
+    if force:
+        return reaudit_plan("forced", head, "someone ran the audit by hand for this PR")
+    if not audits:
+        return None, "already audited on head"
+    newest = audits[-1]
+    requests = audit_requests_since(comments, comment_time(newest))
+    if requests:
+        asked = requests[-1]
+        return reaudit_plan("request", f"{head}:request-{asked.get('id') or comment_time(asked)}",
+                            "a comment asked for another audit")
+    first = comment_body(newest).lstrip().partition("\n")[2]
+    verdict = next((line.strip() for line in first.splitlines() if line.strip()), "")
+    marker = audit_input_marker(newest)
+    current = audit_input_hash(pr.get("title"), pr.get("body"))
+    if _CLEAN_AUDIT_RE.match(verdict) or marker is None or marker == current:
+        return None, "already audited on head"
+    if len(audits) - 1 >= MAX_DESCRIPTION_REAUDITS:
+        return None, "already audited on head (re-audit limit reached)"
+    return reaudit_plan("description", f"{head}:input-{current[:12]}",
+                        "the PR's title or description changed after the blocking audit read it")
 
 
 def linked_issue_numbers(pr: dict) -> list[int]:
@@ -397,32 +475,44 @@ def linked_issue_numbers(pr: dict) -> list[int]:
 
 
 def evaluate_pr(pr: dict, comments: list[dict], files: list[dict] | None,
-                issue_comments: list[dict] | None = None) -> tuple[bool, str]:
+                issue_comments: list[dict] | None = None, force: bool = False) -> tuple[bool, str]:
     """Decide whether one PR is a candidate. Returns (candidate, reason).
 
     `files` may be None when the caller hasn't fetched them yet (the earlier
     gates don't need them); the result is then (False, "need files").
     """
+    ok, why, _ = evaluate(pr, comments, files, issue_comments, force)
+    return ok, why
+
+
+def evaluate(pr: dict, comments: list[dict], files: list[dict] | None,
+             issue_comments: list[dict] | None = None, force: bool = False) -> tuple[bool, str, dict | None]:
+    """evaluate_pr, plus the re-audit plan (reaudit_trigger) when the head is audited again, else None."""
     head = pr["headRefOid"]
     if pr.get("isDraft"):
-        return False, "draft"
+        return False, "draft", None
     if pr.get("baseRefName", BASE_BRANCH) != BASE_BRANCH:
-        return False, f"base is {pr.get('baseRefName')}"
+        return False, f"base is {pr.get('baseRefName')}", None
+    plan, reason = None, ""
     if audited_on(comments, head) and not inherited.needs_reaudit(comments, head):
-        return False, "already audited on head"
+        plan, reason = reaudit_trigger(pr, comments, force)
+        if plan is None:
+            return False, reason, None
     ok, why = lane_pass_for_head(comments, head)
     if not ok:
-        return False, why
+        return False, why, None
     if files is None:
-        return False, "need files"
+        return False, "need files", None
+    if plan:  # an audited head was audited because it was risky or asked for; the trigger decides now
+        return True, reason, plan
     areas = risky_areas([f.get("filename") or f.get("path") or "" for f in files])
     if areas:
-        return True, "risky: " + ",".join(areas)
+        return True, "risky: " + ",".join(areas), None
     if runner_waits_on_audit(comments):
-        return True, "runner waits on an audit"
+        return True, "runner waits on an audit", None
     if audit_requested(comments + (issue_comments or [])):
-        return True, "audit requested"
-    return False, "not risky, no request"
+        return True, "audit requested", None
+    return False, "not risky, no request", None
 
 
 def make_batches(prs: list[tuple[int, int]]) -> list[list[int]]:
@@ -498,8 +588,13 @@ def split_sections(output: str, numbers: list[int]) -> dict[int, str]:
     return out
 
 
-def build_comment(number: int, sha: str, section: str, batch: list[int], *, reviewer: str = "Claude") -> str:
-    """Format an honestly named read-only audit; the scheduled job posts as Claude."""
+def build_comment(number: int, sha: str, section: str, batch: list[int], *, reviewer: str = "Claude",
+                  input_hash: str | None = None) -> str:
+    """Format an honestly named read-only audit; the scheduled job posts as Claude.
+
+    `input_hash` (audit_input_hash of the title and description the model read) goes in a hidden marker on the
+    last line, after the footer: the heading and the verdict line are what the runner reads (#441, #812).
+    """
     heading, footer = {
         "Codex": ("Codex audit (Astra)", FOOTER),
         "Claude": ("Claude audit", "Posted by the mechanical audit script; Claude ran read-only; "
@@ -510,6 +605,8 @@ def build_comment(number: int, sha: str, section: str, batch: list[int], *, revi
     if others:
         footer += " Batched with " + ", ".join(f"#{n}" for n in others) + "."
     lines.append(footer)
+    if input_hash:
+        lines.extend(["", f"<!-- audit-input: sha256={input_hash} -->"])
     return "\n".join(lines) + "\n"
 
 
@@ -654,8 +751,8 @@ def fetch_issue(number: int) -> dict | None:
 FAILURES: dict = {}  # PR number -> {head, fails}, loaded once per run
 
 
-def find_candidates(prs: list[dict]) -> tuple[list[dict], dict[str, int], list[tuple[int, str]]]:
-    """Returns (candidates, skip-reason counts, per-PR decisions)."""
+def find_candidates(prs: list[dict], force: bool = False) -> tuple[list[dict], dict[str, int], list[tuple[int, str]]]:
+    """Returns (candidates, skip-reason counts, per-PR decisions). `force` audits an audited head again (--pr N)."""
     cands: list[dict] = []
     skips: dict[str, int] = {}
     decisions: list[tuple[int, str]] = []
@@ -666,17 +763,17 @@ def find_candidates(prs: list[dict]) -> tuple[list[dict], dict[str, int], list[t
             comments: list[dict] = []
         else:
             comments = fetch_comments(n)
-            ok, why = evaluate_pr(pr, comments, None)
+            ok, why, plan = evaluate(pr, comments, None, force=force)
             if why == "need files":
                 files = fetch_files(n)
-                ok, why = evaluate_pr(pr, comments, files)
+                ok, why, plan = evaluate(pr, comments, files, force=force)
                 issue_comments: list[dict] = []
                 issues = linked_issue_numbers(pr)
                 if not ok and why == "not risky, no request":
                     for inum in issues:
                         issue_comments += fetch_comments(inum)
-                    ok, why = evaluate_pr(pr, comments, files, issue_comments)
-                if ok and failed_count(FAILURES, n, pr["headRefOid"]) >= MAX_FAILED_AUDITS:
+                    ok, why, plan = evaluate(pr, comments, files, issue_comments, force=force)
+                if ok and failed_count(FAILURES, n, plan["key"] if plan else pr["headRefOid"]) >= MAX_FAILED_AUDITS:
                     ok, why = False, "audit failed twice on this head"
                 if ok:
                     rep = newest_lane_report(comments)
@@ -688,11 +785,14 @@ def find_candidates(prs: list[dict]) -> tuple[list[dict], dict[str, int], list[t
                         "ready_at": rep[2] if rep else "",
                         "issues": issues,
                         "reason": why,
+                        "plan": plan,
+                        "audits": len(head_audit_comments(comments, pr["headRefOid"])),
                     })
         decisions.append((n, why))
         if not ok:
             key = {
                 "already audited on head": "audited",
+                "already audited on head (re-audit limit reached)": "audited, re-audit limit",
                 "no lane report": "no lane report",
                 "newest lane report on the head is FAIL": "lane FAIL",
                 "not risky, no request": "not risky",
@@ -722,6 +822,11 @@ def record_failure(number: int, head: str) -> None:
     failures[str(number)] = {"head": head, "fails": failed_count(failures, number, head) + 1}
     FAILURES_PATH.parent.mkdir(parents=True, exist_ok=True)
     FAILURES_PATH.write_text(json.dumps(failures))
+
+
+def failure_key(c: dict) -> str:
+    """What this candidate's failed audits are counted under: the head, plus what triggered a re-audit of it."""
+    return (c.get("plan") or {}).get("key") or c["headRefOid"]
 
 
 def clear_failure(number: int) -> None:
@@ -842,12 +947,19 @@ def incremental_diffs(worktree: Path, number: int, head: str, comments: list[dic
 
 def pr_context_block(c: dict, issue_texts: dict[int, dict[str, str]], diff_rel: str,
                      base_sha: str, merge_base: str, delta_context: str = '', inherited_context: str = '') -> str:
+    plan = c.get('plan')
     head_rel = f".sm-audit/pr-{c['number']}-head"
     parts = [
         f"## PR #{c['number']}: {c['title']}",
         f"Head commit: {c['headRefOid']} (merge base with next: {merge_base}).",
         f"Diff file: {diff_rel} ({c['lines']} changed lines, research/ left out).",
         f"Its changed files as they are at the head: {head_rel}/<path> (see {head_rel}/_AUDIT_INDEX.txt for any left out).",
+    ]
+    if plan:
+        parts.append(f"Re-audit: this head was audited before, and is audited again because {plan['note']}. The code at "
+                     "the head has not changed since the last audit. Judge the title and description as they are now, "
+                     "and say which earlier findings are cleared.")
+    parts += [
         "",
         "PR description:",
         (c.get("body") or "(none)").strip()[:BODY_CHARS],
@@ -1059,7 +1171,7 @@ def audit_batch(batch: list[dict]) -> None:
         out_file = OUTPUT_KEEP_DIR / f"{stem}.md"
         transcript = OUTPUT_KEEP_DIR / f"{stem}.jsonl"
         targets = [{'pr': c['number'], 'issues': c['issues'], 'head_sha': c['headRefOid'],
-                    'base_sha': base_sha, 'trigger': 'new head: ' + (c.get('reason') or 'eligible'),
+                    'base_sha': base_sha, 'trigger': ('' if c.get('plan') else 'new head: ') + (c.get('reason') or 'eligible'),
                     'trigger_comment': next((comment.get('html_url') or comment.get('url')
                         for comment in sorted(c.get('comments') or [], key=comment_time, reverse=True)
                         if asks_for_audit(comment_body(comment))), None),
@@ -1075,7 +1187,7 @@ def audit_batch(batch: list[dict]) -> None:
         took = int(time.time() - t0)
         if not ok:
             for c in live:
-                record_failure(c["number"], c["headRefOid"])
+                record_failure(c["number"], failure_key(c))
             log(f"batch {','.join('#' + str(c['number']) for c in live)}: claude failed after {took}s ({why}); nothing posted")
             return
         answer = out_file.read_text(encoding="utf-8", errors="replace")
@@ -1087,17 +1199,19 @@ def audit_batch(batch: list[dict]) -> None:
             target = next(t for t in targets if t['pr'] == n)
             if n not in sections:
                 target['outcome'] = {'kind': 'failed', 'reason': 'no PR section in answer'}
-                record_failure(n, head)
+                record_failure(n, failure_key(c))
                 results.append(f"#{n} no section in Claude's answer, nothing posted")
                 continue
             target['outcome'] = usage.audit_outcome(sections[n])
             fresh_comments = fetch_comments(n)
-            if audited_on(fresh_comments, head) and not inherited.needs_reaudit(fresh_comments, head):
+            if len(head_audit_comments(fresh_comments, head)) > c.get('audits', 0):  # more than when it was listed
                 target['post_missing_reason'] = 'audited by someone else meanwhile'
                 results.append(f"#{n} audited by someone else meanwhile, nothing posted")
                 continue
             body_file = tmp / f"comment-{n}.md"
-            body_file.write_text(build_comment(n, head, sections[n], live_nums), encoding="utf-8")
+            body_file.write_text(build_comment(
+                n, head, sections[n], live_nums, input_hash=audit_input_hash(c.get("title"), c.get("body"))),
+                encoding="utf-8")
             res = run(["gh", "pr", "comment", str(n), "--repo", REPO, "--body-file", str(body_file)],
                       cwd=REPO_ROOT, check=False)
             match = re.search(r'https://\S+#issuecomment-\d+', res.stdout or '')
@@ -1108,7 +1222,7 @@ def audit_batch(batch: list[dict]) -> None:
             if res.returncode == 0:
                 clear_failure(n)
             else:  # the head is still unaudited, so count it or every tick pays for the same audit again (#1456)
-                record_failure(n, head)
+                record_failure(n, failure_key(c))
             results.append(f"#{n} posted" if res.returncode == 0 else f"#{n} post failed: {res.stderr.strip()[:120]}")
         log(f"batch {','.join('#' + str(x) for x in live_nums)}: claude {took}s {why}; " + "; ".join(results))
         usage_run.checkpoint(outcome={'kind': 'audit completed', 'signature': usage.signature(answer)})
@@ -1138,7 +1252,7 @@ def describe(cands: list[dict], batches: list[list[int]]) -> tuple[str, str]:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--dry-run", action="store_true", help="print candidates and batches; no model call, no posting")
-    ap.add_argument("--pr", type=int, help="consider only this PR")
+    ap.add_argument("--pr", type=int, help="consider only this PR; audits it again if its head was already audited (#1643)")
     args = ap.parse_args(argv)
     if args.pr is not None and not args.dry_run:
         clear_failure(args.pr)  # an explicit request tries again
@@ -1163,16 +1277,16 @@ def main(argv: list[str] | None = None) -> int:
         log(f"{tag}error listing PRs: {exc}")
         return 1
     try:
-        return audit_prs(prs, args.dry_run, tag, t0)
+        return audit_prs(prs, args.dry_run, tag, t0, force=args.pr is not None)
     finally:
         rearm_pass(prs, args.dry_run)
 
 
-def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float) -> int:
+def audit_prs(prs: list[dict], dry_run: bool, tag: str, t0: float, force: bool = False) -> int:
     FAILURES.clear()
     FAILURES.update(load_failures())
     try:
-        cands, skips, decisions = find_candidates(prs)
+        cands, skips, decisions = find_candidates(prs, force=force)
     except Exception as exc:
         log(f"{tag}error listing PRs: {exc}")
         return 1

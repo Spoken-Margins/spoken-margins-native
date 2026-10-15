@@ -4,6 +4,7 @@ import SessionKit
 import SessionKitAudio
 import SessionKitPersistence
 import SessionKitSupertonic
+import UIKit
 import XCTest
 @testable import SpokenMarginsApp
 
@@ -394,6 +395,8 @@ final class SupertonicSpeechTests: XCTestCase {
         let store = try SQLiteSessionStore(path: root.appending(path: "store.sqlite").path)
         let coordinator = PreparedAudioCoordinator(repository: store, rootDirectory: root.appending(path: "PreparedAudio", directoryHint: .isDirectory))
         let text = "Prepared audio must survive stopping playback."
+        // Preparation checks the stored item's text in its transaction, so the article must exist.
+        try store.saveItem(Item(id: "item-258", title: "Article", mediaType: "article", text: text, externalReference: nil, status: "ready"))
         let plan = PreparedChunkPlan(index: 0, startOffset: 0, sourceLength: text.count, text: text)
         let signature = TTSRenderSignature(
             engine: "supertonic", modelRevision: "3", assetManifestHash: "assets", voiceStyleHash: "voice",
@@ -1887,6 +1890,188 @@ final class SupertonicSpeechTests: XCTestCase {
         try harness.play(from: pausedAt)                            // back to A
         let reported = try XCTUnwrap(harness.client.currentCharOffset())
         XCTAssertLessThan(reported, chunk[1], "the position is back in A, not C (\(reported))")
+    }
+
+    // #538: the owner's phone went silent when he left the app, because the seam between two chunks needed the
+    // app to make and start a new player, and a backgrounded app with nothing playing can be suspended right
+    // there. With the app away, the next rendered chunk is already on the player behind the playing one, so
+    // the system starts it with no app code. These tests end a chunk the way the system does: the queue moves
+    // on by itself, and the app hears afterwards. Without the queue, a new player was started for every seam.
+
+    func testWhileTheAppIsAwayTheNextChunkIsQueuedAndStartsWithoutANewPlayer() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        XCTAssertGreaterThanOrEqual(chunk.count, 4)
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued, "B is on the player behind A")
+        XCTAssertEqual(harness.itemsOnThePlayer, 2)
+        let starts = harness.playerStarts
+
+        await harness.finishPlayingChunkInTheQueue()                // A ends; the queue moves on to B by itself
+
+        let caughtUp = await harness.waitForPlayingChunk(chunk[1])
+        XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        XCTAssertEqual(harness.playerStarts, starts, "B started with no new player")
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
+    }
+
+    // The app is suspended while the queue moves on and only wakes later. Its first read of the place must not
+    // report the chunk before, which would save a position a whole chunk back.
+    func testThePlaceIsRightWhenReadAfterTheQueueMovedOnBeforeTheAppHeardOfIt() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+
+        harness.advanceTheQueueWithoutTellingTheApp()
+
+        var place = 0
+        await waitUntil { place = harness.client.currentCharOffset() ?? 0; return place >= chunk[1] }
+        XCTAssertGreaterThanOrEqual(place, chunk[1], "the place is in B, not still in A (\(place))")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+    }
+
+    // The stall monitor reads the place from another thread and may be the one to catch up with a queue that moved
+    // on. The chunk after that is still queued, from the main thread, where the app's state can be read (#538 audit).
+    func testACatchUpOffTheMainThreadStillQueuesTheChunkAfter() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+
+        harness.advanceTheQueueWithoutTellingTheApp()
+        let client = harness.client
+        DispatchQueue.global().async { _ = client.currentCharOffset() }
+
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B after the catch-up")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+    }
+
+    // The same seam with the app in front is unchanged: nothing is queued, each chunk gets its own player, and
+    // the seam is not counted as a background one.
+    func testWhileTheAppIsInFrontNothingIsQueuedAndTheSeamIsAsBefore() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { true })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(harness.client.debugQueuedChunkStart)
+        XCTAssertEqual(harness.itemsOnThePlayer, 1)
+        let before = harness.playerStarts
+
+        await harness.finishPlayingChunk()
+
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B started in a new player, as before")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertNil(harness.client.debugBackgroundSeamSummary, "a seam with the app in front isn't a background seam")
+    }
+
+    // Leaving the app while a chunk plays: the next chunk is ready already, so it goes onto the player then.
+    func testLeavingTheAppQueuesTheNextChunk() async throws {
+        let presence = AppPresence()
+        let center = NotificationCenter()
+        let harness = try SupertonicClientHarness(applicationIsActive: { presence.isActive }, notificationCenter: center)
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(harness.client.debugQueuedChunkStart, "the app is in front")
+
+        presence.isActive = false
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued, "B is queued as the app leaves")
+    }
+
+    // The chunk is still rendering when the app leaves: it is queued the moment it lands.
+    func testAChunkThatFinishesRenderingWhileTheAppIsAwayIsQueuedThen() async throws {
+        let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+        XCTAssertNil(harness.client.debugQueuedChunkStart, "B isn't rendered yet")
+
+        harness.releaseRender(2)
+
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued, "B is queued as soon as it is rendered")
+    }
+
+    // A chunk the other voice reads needs the app at its start (the chime, the notice), so it is never queued: that
+    // seam goes through the app, and the export counts it by its cause.
+    func testAStandInChunkIsNotQueuedAndItsSeamIsCountedByItsCause() async throws {
+        let harness = try SupertonicClientHarness(standInRenders: [2], applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(harness.client.debugQueuedChunkStart, "B is read by the other voice")
+        XCTAssertEqual(harness.itemsOnThePlayer, 1)
+        let before = harness.playerStarts
+
+        await harness.finishPlayingChunk()
+
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B started through the app")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "stand_in_voice 1")
+    }
+
+    // The end of A is heard while the queue has not moved on (paused at the end, or not there yet) and B is queued
+    // behind it. B is not playing, so the seam must go through the app, which still has B's audio. Treating B as
+    // playing would leave the player silent until the stall watchdog fired.
+    func testAChunkEndHeardBeforeTheQueueMovedOnIsHandledThroughTheApp() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+        let before = harness.playerStarts
+
+        await harness.finishPlayingChunk()                          // the end notification; the queue stays on A
+
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B was started through the app")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "rendered_not_queued 1")
+    }
+
+    // The listener pauses with a chunk queued: nothing is lost. Playing again carries on, and the queued chunk
+    // follows without a new player.
+    func testPausingAndResumingWithAChunkQueuedKeepsTheQueue() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+        let starts = harness.playerStarts
+
+        try harness.client.pause()
+        let pausedAt = try XCTUnwrap(harness.client.currentCharOffset())
+        try harness.play(from: pausedAt)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(harness.playerStarts, starts, "resuming used the same player")
+        XCTAssertEqual(harness.client.debugQueuedChunkStart, chunk[1], "B is still queued behind A")
+
+        await harness.finishPlayingChunkInTheQueue()
+
+        let caughtUp = await harness.waitForPlayingChunk(chunk[1])
+        XCTAssertTrue(caughtUp)
+        XCTAssertEqual(harness.playerStarts, starts)
     }
 
     func testSelectableCatalogExposesOnlyJamesLilyAndSystem() {
@@ -4436,6 +4621,16 @@ private final class SlowStandInRenderer: SupertonicRendering, @unchecked Sendabl
     }
     func discardGeneratedAudio(at url: URL) async {
         if lock.withLock({ files.contains(url) }) { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+/// Whether the app is in front, for a test to change.
+private final class AppPresence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var active = true
+    var isActive: Bool {
+        get { lock.withLock { active } }
+        set { lock.withLock { active = newValue } }
     }
 }
 

@@ -100,14 +100,66 @@ final class PreparedNarrationTextSeekTests: XCTestCase {
         XCTAssertEqual(audio.mediaTimeMs, 2_400)
     }
 
-    private func textOnlyMargin(in engine: SessionEngine, startChar: Int, mediaTimeMs: Int? = nil) throws -> Interjection {
+    /// #1577: "Play this moment" on a spoken Margin with only a text place, as the app wires it: the engine opens the
+    /// Margin's place, the moment picks its clock from what is playing, leads in thirty seconds of narration before
+    /// the Margin (here, from the start of the article), and reads the same place back from the engine.
+    func testPlayThisMomentOnATextOnlyMarginReadAloudCountsDownOnTheNarrationClock() throws {
+        let (engine, audio) = try narrationEngine(renderedSegments: 2)
+        let margin = try textOnlyMargin(in: engine, startChar: 40, audioPath: "interjections/margin.m4a")
+        XCTAssertFalse(margin.isInlineSpokenMargin, "no media time: the early return behind #1577")
+        let played = try engine.playInterjectionAnchor(margin)
+        XCTAssertEqual(played.targetType, TargetType.itemTextTTS.rawValue)
+        XCTAssertNil(played.currentMediaTimeMs, "on-device speech has no media clock")
+        XCTAssertEqual(played.currentTextStart, 40)
+
+        let clock: MarginMomentClock = played.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
+        let anchors = try XCTUnwrap(MarginMomentPlanner.anchors(
+            played: margin, among: [margin], clock: clock, targetMediaTimeMs: played.currentMediaTimeMs))
+        let sequence = MarginMomentSequence(
+            itemId: "article", target: anchors.target, otherMargins: anchors.others, tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+        XCTAssertEqual(anchors.target.mediaTimeMs, 2_857, "40 characters at 14 a second")
+        XCTAssertEqual(sequence.startMediaTimeMs, 0, "thirty seconds before 2.9 s is the start")
+
+        // The lead-in goes to the start of the article: the engine reads there, and the card counts down from it.
+        let start = MarginMomentClock.sentenceStart(atOrAfter: clock.textOffset(forPosition: sequence.startMediaTimeMs), before: 40, in: text)
+        let led = try engine.seekText(toCharOffset: start)
+        XCTAssertEqual(audio.spokenFromCharOffset, 0)
+        XCTAssertEqual(led.currentTextStart, 0)
+        let position = led.currentTextStart.map(clock.position(forTextOffset:))
+        XCTAssertEqual(sequence.targetCountdown(currentMediaTimeMs: position), "0:03")
+    }
+
+    /// The same Margin once the article is prepared: the moment counts on the narration's own media time, which the
+    /// engine found from the text place, so the Margin plays in the narration (#1537) and not in speech.
+    func testPlayThisMomentOnATextOnlyMarginOnPreparedNarrationCountsOnMediaTime() throws {
+        let (engine, audio) = try narrationEngine()
+        let margin = try textOnlyMargin(in: engine, startChar: 24, audioPath: "interjections/margin.m4a")
+        let played = try engine.playInterjectionAnchor(margin)
+        XCTAssertEqual(played.targetType, TargetType.transcriptBackedMedia.rawValue)
+
+        let clock: MarginMomentClock = played.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
+        let anchors = try XCTUnwrap(MarginMomentPlanner.anchors(
+            played: margin, among: [margin], clock: clock, targetMediaTimeMs: played.currentMediaTimeMs))
+        let sequence = MarginMomentSequence(
+            itemId: "article", target: anchors.target, otherMargins: anchors.others, tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+        XCTAssertEqual(anchors.target.mediaTimeMs, 1_500)
+        XCTAssertEqual(sequence.startMediaTimeMs, 0)
+
+        let led = try engine.seekMedia(toMediaTimeMs: sequence.startMediaTimeMs)
+        XCTAssertEqual(audio.seeks.last, 0)
+        XCTAssertEqual(sequence.targetCountdown(currentMediaTimeMs: led.currentMediaTimeMs), "0:02", "1.5 s to go, rounded up")
+    }
+
+    private func textOnlyMargin(
+        in engine: SessionEngine, startChar: Int, mediaTimeMs: Int? = nil, audioPath: String? = nil
+    ) throws -> Interjection {
         var anchor = Anchor(anchorType: .text, startChar: startChar, endChar: startChar + 4, anchorBefore: "", anchorAfter: "")
         anchor.mediaTimeMs = mediaTimeMs
         let margin = Interjection(
             id: "margin", itemId: "article", sessionId: try XCTUnwrap(engine.currentSession?.id), targetType: .item,
             targetId: "article", createdAt: Date(timeIntervalSince1970: 2), roughPercent: 50, anchor: anchor,
-            audioPath: nil, audioStatus: "none", transcriptionStatus: "complete", transcript: nil, cleanedTranscript: nil,
-            displayText: "A note", status: "active")
+            audioPath: audioPath, audioStatus: audioPath == nil ? "none" : "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "A note", status: "active")
         try XCTUnwrap(store).saveInterjection(margin)
         return margin
     }

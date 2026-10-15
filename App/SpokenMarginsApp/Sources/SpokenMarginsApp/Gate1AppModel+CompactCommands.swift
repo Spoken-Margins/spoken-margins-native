@@ -99,9 +99,28 @@ extension Gate1AppModel {
         case Gate2CompactApplicationCommand.jumpToSharedMargin:
             guard let targetID, !targetID.isEmpty else { return false }
             return jumpToImportedCommentary(interjectionID: targetID)
+        case Gate2CompactApplicationCommand.openPlayback:
+            return openPlaybackFromLiveActivity()
         default:
             reportFailure("Unsupported compact application command.")
             return false
         }
+    }
+
+    /// The Live Activity card was tapped while it showed playback. What the card shows is the app's own session, so
+    /// a session in the snapshot opens straight to its playback screen. With none, the card is stale or the snapshot
+    /// lost its session: say so instead of silently showing the Library (#1337). Both outcomes are handled, so the
+    /// URL router doesn't add "Unsupported compact control URL." over the message. The record names no item.
+    private func openPlaybackFromLiveActivity() -> Bool {
+        let screenBefore = String(describing: screen)
+        let narrationBefore = PlaybackDiagnosticFields.narrationIsPlaying(narrationDiagnostics())
+        reconcileNarrationOwnership(trigger: "live_activity_tap")
+        if hasActiveSession { openPlayback() } else { reportFailure("Nothing is playing right now.") }
+        recordDeveloperDiagnostic("liveActivity.tap", [
+            "outcome": screen == .playback && hasActiveSession ? "opened_playback" : (hasActiveSession ? "not_opened" : "no_session"),
+            "narrationClientPlaying": String(narrationBefore),
+            "screenBefore": screenBefore,
+        ])
+        return true
     }
 }

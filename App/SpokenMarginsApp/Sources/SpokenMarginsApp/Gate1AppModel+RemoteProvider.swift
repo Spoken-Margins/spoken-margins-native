@@ -128,12 +128,16 @@ extension Gate1AppModel {
         }
     }
 
-    func submitLocalSummary(itemId: String, turnId: String, contexts: [String]) {
+    func submitLocalSummary(itemId: String, turnId: String, contexts: [String], retryContext: LocalSummaryRetryContext) {
         statusMessage = "Summarizing Margins on device."
         lastError = nil
         // The session this summary belongs to: a failure that arrives after another session
         // became active settles this one's job and turn, not that session's (#1469).
         let originSessionId = snapshot.sessionId
+        guard let submissionEngine = engine else { return }
+        let origin: LocalSummaryRequestOrigin
+        do { origin = try submissionEngine.localSummaryRequestOrigin(itemId: itemId, turnId: turnId) }
+        catch { reportFailure(error, context: "Summary request is no longer pending"); return }
         Task {
             do {
                 let client = localFoundationModelClient
@@ -143,9 +147,13 @@ extension Gate1AppModel {
                 guard let response = partials.first, !response.isEmpty else {
                     throw LocalFoundationModelError.emptyResponse
                 }
+                // Settings can replace the runtime while the provider is suspended. Publish through
+                // the installed engine; only the immutable request address survives the await.
                 guard let engine else { return }
-                snapshot = try engine.aiStreamDelta(turnId: turnId, content: response)
-                snapshot = try engine.aiJobCompleted(turnId: turnId)
+                snapshot = try engine.completeLocalSummary(origin: origin, content: response)
+                diagnostics["lastSummaryMode"] = "apple_foundation_on_device"
+                // Save a late result without replacing another item's controls, status or autoplay queue.
+                guard origin.matchesPlayback(snapshot), selectedItem.id == origin.itemId else { return }
                 let completedCurrentAudio = syncPlaybackProgressBeforeGeneratedTurnDecision(engine: engine)
                 try autoPlayCompletedTurn(
                     kind: "interjection_summary",
@@ -156,6 +164,8 @@ extension Gate1AppModel {
                 diagnostics["lastSummaryMode"] = "apple_foundation_on_device"
                 refreshSelectedItem()
                 reportConfirmation("On-device summary saved and queued after the current source.")
+            } catch is LocalSummaryRequestOrigin.Discarded {
+                diagnostics["lastSummaryMode"] = "apple_foundation_discarded"
             } catch {
                 diagnostics["lastSummaryMode"] = "apple_foundation_failed"
                 diagnostics["lastLocalSummaryErrorType"] = String(reflecting: type(of: error))
@@ -164,7 +174,7 @@ extension Gate1AppModel {
                     String(describing: error),
                     userMessage: presentation.detailMessage,
                     itemId: itemId,
-                    retry: .init(key: "summary") { [weak self] in self?.summarize() },
+                    retry: .init(key: "summary") { [weak self] in self?.retryLocalSummary(retryContext) },
                     feedbackMessage: presentation.feedbackMessage,
                     settling: originSessionId.map { ProviderFailureOrigin(sessionId: $0, turnId: turnId) }
                 )

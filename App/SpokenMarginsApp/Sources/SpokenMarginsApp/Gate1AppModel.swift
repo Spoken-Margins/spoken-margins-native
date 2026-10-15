@@ -297,6 +297,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
     var marginMomentConductor: MarginMomentConductor?
+    private(set) var marginMomentClock = MarginMomentClock.media // media time, or narration time for text read aloud (#1577)
     /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
     var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
 
@@ -1093,7 +1094,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
-        if entersBackground { narrationStartupProtection.appEnteredBackground() }
+        if entersBackground { narrationStartupProtection.appEnteredBackground() }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         syncPlaybackProgressForLifecycle()
@@ -1116,7 +1117,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
-        narrationStartupProtection.appEnteredForeground()
+        narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
@@ -1284,7 +1285,7 @@ final class Gate1AppModel: ObservableObject {
             // target validation and the reversible playback transaction.
             try prepareSourceMediaPlayback(itemId: session.itemId)
             endMarginMoment()
-            snapshot = try engine.playInterjectionAnchor(interjection)
+            snapshot = try playAnchorAtShownRate(interjection, engine: engine)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             stopInterjectionAudioPlayback()
             activeItemId = session.itemId
@@ -1345,24 +1346,21 @@ final class Gate1AppModel: ObservableObject {
         voiceURLs: [String: URL],
         title: String,
         isApproximate: Bool,
-        listening: Bool = false
+        listening: Bool = false,
+        clock: MarginMomentClock = .media
     ) {
+        marginMomentClock = clock
         let conductor = MarginMomentConductor(
             sequence: sequence,
             source: .init(
                 pause: { [weak self] in self?.pause() },
                 resume: { [weak self] in self?.resumePlayback() },
-                seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
+                seek: { [weak self] in self?.seekMarginMomentSource(toPosition: $0) }
             ),
             voiceURL: leveledVoiceURL(voiceURLs, itemId: sequence.itemId, margins: [sequence.target] + sequence.unplayed)
         )
-        conductor.voiceRate = Float(Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate))
-        conductor.prepareAudioSession = {
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-        }
+        conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
+        conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
             self?.reportWarning("That Margin's recording couldn't play, so listening continues.")
@@ -1371,23 +1369,20 @@ final class Gate1AppModel: ObservableObject {
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
             self.marginMoment = conductor.sequence
             self.marginMomentVoiceIsPaused = conductor.isVoicePaused
+            if !conductor.isPlayingVoice { self.recordMarginMomentVoiceEnded() }
             // Nothing left to play inline: the card goes away and the item simply continues.
             if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty { self.endMarginMoment() }
         }
         marginMomentConductor = conductor
         marginMomentTitle = title
         marginMomentPositionIsApproximate = isApproximate
-        if listening {
-            conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
-        } else {
-            conductor.start()
-        }
+        startMarginMomentLeadIn(conductor, target: sequence.target, itemId: sequence.itemId, resuming: listening)
         diagnostics["marginMoment.chime"] = nil
         if listening {
             diagnostics["marginMoment"] = "started:listening;later=\(sequence.unplayed.count)"
             return
         }
-        diagnostics["marginMoment"] = "started:lead_in_ms=\(sequence.target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
+        diagnostics["marginMoment"] = "started:lead_in_ms=\(sequence.target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate);clock=\(clock.isNarratedText ? "narrated_text" : "media")"
     }
 
     /// "Play it now" on the coming-up cue.
@@ -1403,6 +1398,7 @@ final class Gate1AppModel: ObservableObject {
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
         giveBackUnfinishedReview()
+        recordMarginMomentVoiceEnded()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
         marginMoment = nil
@@ -1412,7 +1408,7 @@ final class Gate1AppModel: ObservableObject {
     private func observeMarginMoment(_ current: SessionSnapshot) {
         guard let conductor = marginMomentConductor else { return }
         guard current.itemId == conductor.sequence.itemId else { return endMarginMoment() }
-        conductor.observe(mediaTimeMs: current.currentMediaTimeMs)
+        conductor.observe(mediaTimeMs: marginMomentPositionMs(in: current))
     }
 
     func tryRefreshOfflineStorageUsage() {
@@ -1480,16 +1476,6 @@ final class Gate1AppModel: ObservableObject {
         return engine
     }
 
-    func finishBackgroundBrowserTextImport(_ item: Item, handoff: BrowserTextHandoff) throws -> String {
-        libraryItems = try loadLibraryRows(store: try requireStore())
-        scheduleTextAudioPrewarmIfNeeded(itemId: item.id)
-        diagnostics["lastBackgroundBrowserTextImport"] = item.id
-        if let structure = item.documentStructure {
-            recordPDFExtractionDiagnostics(structure)
-        }
-        markOnboardingSteps(onboardingSteps(for: handoff))
-        return item.id
-    }
 
     @discardableResult
     func importBrowserText(_ handoff: BrowserTextHandoff) -> Bool {
@@ -2457,7 +2443,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var shouldShowMiniPlayer: Bool {
-        hasActiveSession && !isDismissingMiniPlayer && screen != .playback && snapshot.phase != .finished && snapshot.phase != .abandoned
+        miniPlayerVisibility.visible
     }
 
     var isMediaPlaybackSnapshot: Bool {
@@ -2491,14 +2477,6 @@ final class Gate1AppModel: ObservableObject {
 
     var isSummarizingInterjections: Bool {
         latestPendingJob(kind: "interjection_summary") != nil
-    }
-
-    var canRetryLocalSummary: Bool {
-        guard !remoteProviderExperienceEnabled,
-              hasActiveSession,
-              let sessionId = snapshot.sessionId,
-              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else { return false }
-        return jobs.contains { $0.kind == "interjection_summary" && $0.status == "retryable" }
     }
 
     var summaryActionTitle: String {
@@ -2576,6 +2554,7 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
+        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
         if playingImportedCommentary != nil {
@@ -2637,9 +2616,7 @@ final class Gate1AppModel: ObservableObject {
         let normalizedPlaybackRate = command == .setPlaybackRate
             ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
-        if command == .beginInterjection || canonicalTransportCommands.contains(command) {
-            synchronizeStreamingSpeechAnchorIfNeeded()
-        }
+        synchronizeSpeechAnchorForCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }
@@ -2691,7 +2668,7 @@ final class Gate1AppModel: ObservableObject {
                 streamingSpeechQueue.relinquishToCanonicalPlayback()
             }
             reportSuccess("Compact control \(command.rawValue) \(result.delegatedToCanonicalRuntime ? "delegated" : "handled").")
-            if command == .finishInterjection, captureVerdict == .saveCutShort { reportMarginSaved(captureVerdict) }
+            if command == .finishInterjection { reportMarginSaved(captureVerdict) }
         } catch {
             if command == .finishInterjection { recordSpokenMarginSavedBeforeFailure(engine?.lastScheduledTranscriptionInterjectionId) }
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {

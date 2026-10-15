@@ -255,6 +255,37 @@ class LaneSimTests(unittest.TestCase):
         self.assertEqual([r.get('boot') for r in self.records() if 'boot' in r], [UDID])
         self.assertEqual(lane_sim.unsafe_devices(), {})
 
+    def test_a_finished_boot_marks_the_simulator_quiet_from_that_moment(self):
+        # #705: the host app stalled when launched within about 16 s of the boot finishing.
+        self.assertIsNone(lane_sim.seconds_quiet(UDID))
+        lane_sim.boot(UDID, 'test', out=self.quiet)
+        self.assertLess(lane_sim.seconds_quiet(UDID), 5)
+
+    def test_a_failed_boot_marks_nothing_quiet(self):
+        with mock.patch.dict(os.environ, {'FAKE_BOOT': 'invalid'}):
+            with self.assertRaises(lane_sim.BootError):
+                lane_sim.boot(UDID, 'test', out=self.quiet)
+        self.assertIsNone(lane_sim.seconds_quiet(UDID))
+
+    def test_quiet_markers_age_from_their_last_mark_and_old_ones_are_pruned(self):
+        lane_sim.mark_quiet(UDID)
+        marker = lane_sim.quiet_marker(UDID)
+        old = marker.parent / 'OLD-DEVICE'
+        old.touch()
+        os.utime(old, (time.time() - 3 * 24 * 3600,) * 2)
+        os.utime(marker, (time.time() - 30,) * 2)
+        self.assertAlmostEqual(lane_sim.seconds_quiet(UDID), 30, delta=2)
+        lane_sim.mark_quiet(UDID)
+        self.assertLess(lane_sim.seconds_quiet(UDID), 2)
+        self.assertEqual([path.name for path in marker.parent.iterdir()], [UDID])
+
+    def test_marking_quiet_survives_a_state_dir_that_cannot_be_written(self):
+        blocker = Path(self.env['SM_LANE_STATE_DIR']).parent / 'blocked'
+        blocker.write_text('a file where the state folder should be')
+        with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(blocker)}):
+            lane_sim.mark_quiet(UDID)  # must not raise
+            self.assertIsNone(lane_sim.seconds_quiet(UDID))
+
     def test_the_boot_pins_the_audio_first_and_each_shutdown_settles_it(self):
         events = []
         with mock.patch.object(lane_audio, 'pin', side_effect=lambda udid, **kw: events.append(('pin', udid))), \
