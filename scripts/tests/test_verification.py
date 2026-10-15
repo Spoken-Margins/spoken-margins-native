@@ -157,7 +157,12 @@ class VerificationTests(unittest.TestCase):
         self.addCleanup(state.cleanup)
         for patcher in (patch.object(verification, 'state_dir', return_value=Path(state.name)),
                         patch.dict(os.environ, {'SM_LANE_STATE_DIR': state.name}),
-                        patch.object(verification.sessionkit_pass, 'toolchain', return_value=None)):
+                        patch.object(verification.sessionkit_pass, 'toolchain', return_value=None),
+                        # #705's settle sleeps for real (up to 20 s) whenever a test runs run.xcode twice on one
+                        # device: the first call marks it quiet in this shared state folder. Tests of the settle
+                        # itself patch it again or inject sleep= (SimulatorSettleTests).
+                        patch.object(verification, 'settle_before_tests',
+                                     return_value={'seconds_quiet': None, 'waited_seconds': 0.0})):
             patcher.start()
             self.addCleanup(patcher.stop)
 
