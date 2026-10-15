@@ -120,7 +120,7 @@ extension Gate1AppModel {
     }
 
     /// Puts the source back at the listener's place when a review's own ending didn't: once Add Margin is over (saved,
-    /// cancelled or never started), and at launch when the app was ended mid-review (the saved session is wherever the
+    /// cancelled or never started, by voice or in writing after Write instead), and at launch when the app was ended mid-review (the saved session is wherever the
     /// review had got to). A position outside the stretch the review covers is left alone, because the listener got
     /// there themselves. Safe to call at any time: it does nothing unless this item owes a place.
     func restoreOwedReviewPlace(atLaunch: Bool = false) {

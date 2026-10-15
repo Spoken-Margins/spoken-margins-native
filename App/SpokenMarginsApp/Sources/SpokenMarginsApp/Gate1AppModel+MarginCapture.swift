@@ -329,6 +329,8 @@ extension Gate1AppModel {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
         beginWrittenMargin()
+        // A written Margin never records, so the save or cancel below gives a review's place back; if it didn't open, nothing will (#474).
+        if writtenMarginDraft == nil { restoreOwedReviewPlace() }
     }
 
     func saveWrittenMargin(text: String) {
@@ -340,6 +342,7 @@ extension Gate1AppModel {
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
             refreshMarginRows()
+            restoreOwedReviewPlace() // Write instead, after Add Margin during a review (#474)
             if draft.priorWasPlaying && snapshot.status == .paused {
                 reportWarning("Margin saved. Playback is paused; tap Play to continue.")
             } else {
@@ -358,6 +361,7 @@ extension Gate1AppModel {
             marginCapture.closeDraft()
             if draft.priorWasPlaying { streamingSpeechQueue.resumeAfterInterjection() }
             refreshSelectedItem()
+            restoreOwedReviewPlace()
         } catch {
             reportFailure(error, context: "Written Margin could not be cancelled")
         }

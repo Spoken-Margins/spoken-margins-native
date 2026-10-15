@@ -669,6 +669,58 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         }
     }
 
+    /// #474 audit of a1193d5: Write instead, tapped while Add Margin's microphone line is up (always on the first Add
+    /// Margin after install), drops the voice request and opens a written Margin at the friend's Margin. A written
+    /// Margin never records, so nothing gave the place back: the item carried on from the friend's Margin, and the
+    /// kept place stayed in UserDefaults to jump a later recording. The written Margin keeps its anchor at the friend's
+    /// Margin, and the place goes back when it is saved or cancelled.
+    func testWriteInsteadDuringAReviewAnchorsAtTheMarginThenPutsTheListenerBack() throws {
+        try writeInsteadDuringAReview(saving: true)
+    }
+
+    func testCancellingWriteInsteadDuringAReviewAlsoPutsTheListenerBack() throws {
+        try writeInsteadDuringAReview(saving: false)
+    }
+
+    private func writeInsteadDuringAReview(saving: Bool) throws {
+        let fixture = try SharedMarginHearingFixture(
+            itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient(),
+            microphonePermissionStatus: { .undetermined }, secondMarginAtMs: 25_000
+        )
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: 12_000))
+        model.pause()
+        let leftOffAt = try XCTUnwrap(model.snapshot.currentMediaTimeMs)
+
+        model.reviewNewMargins(itemId: "real-source", thenContinue: true)
+        try waitUntil("the first Margin's voice plays", timeout: 10) { model.marginMoment?.isPlayingMargin == true }
+
+        model.beginInterjection()
+        XCTAssertTrue(model.microphonePrimer.isShowing, "the microphone line is up, so nothing records yet")
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertNil(model.marginMoment, "the review is over")
+        XCTAssertEqual(model.reviewPlaces.owed(itemId: "real-source")?.keptForRecording, true)
+
+        model.switchPendingVoiceCaptureToWrittenMargin()
+        XCTAssertNotNil(model.writtenMarginDraft, "the written Margin opened")
+        XCTAssertLessThan(model.snapshot.currentMediaTimeMs ?? .max, 5_000, "writing at the friend's Margin, not at the listener's place")
+
+        if saving { model.saveWrittenMargin(text: "Answering in writing") } else { model.cancelWrittenMargin() }
+        XCTAssertNil(model.writtenMarginDraft)
+        try waitUntil("the listener is back where they left off", timeout: 8) {
+            (leftOffAt - 1_000...leftOffAt + 4_000).contains(model.snapshot.currentMediaTimeMs ?? 0)
+        }
+        XCTAssertNil(model.reviewPlaces.owed(itemId: "real-source"), "given back, so no longer owed")
+        if saving {
+            let saved = try XCTUnwrap(fixture.store.loadSessions(itemId: "real-source")
+                .flatMap { try fixture.store.loadInterjections(sessionId: $0.id) }.first)
+            XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 100, "anchored at the friend's Margin")
+        }
+    }
+
     /// #474 audit: the app is ended mid-review (iOS reclaims it while the phone is locked). The saved session is wherever
     /// the review had got to, and the relaunch restores that session. It must restore the listener's place instead.
     func testRelaunchingAfterAReviewWasCutOffRestoresTheListenersPlace() throws {
@@ -1253,6 +1305,7 @@ private struct SharedMarginHearingFixture {
         itemID: String,
         makeWAV: (TimeInterval) throws -> URL,
         recordingClient: RecordingClient? = nil,
+        microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
         layerIsMuted: Bool = true,
         secondMarginAtMs: Int? = nil,
         seedsItem: Bool? = nil
@@ -1265,7 +1318,10 @@ private struct SharedMarginHearingFixture {
         files = [sourceURL, voiceURL] + [secondVoiceURL].compactMap { $0 }
         let db = root.appending(path: "library.sqlite")
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: AVPlayerStreamPlaybackClient())
-        model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, databaseURLOverride: db)
+        model = Gate1AppModel(
+            audioPlaybackClient: routed, recordingClient: recordingClient,
+            microphonePermissionStatus: microphonePermissionStatus, databaseURLOverride: db
+        )
         let placeSuite = "review-places-\(UUID().uuidString)"
         reviewPlaceSuite = placeSuite
         reviewPlaceDefaults = UserDefaults(suiteName: placeSuite)!
