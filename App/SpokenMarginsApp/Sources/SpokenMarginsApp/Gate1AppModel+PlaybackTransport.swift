@@ -20,6 +20,7 @@ import PDFKit
 /// Playback transport: skips, seeks and playback rate (#1022).
 extension Gate1AppModel {
     func skipBack() {
+        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
@@ -32,6 +33,7 @@ extension Gate1AppModel {
     }
 
     func skipBackMedia() {
+        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "back", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
@@ -41,6 +43,7 @@ extension Gate1AppModel {
     }
 
     func skipForward() {
+        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         synchronizeStreamingSpeechAnchorIfNeeded()
@@ -54,6 +57,7 @@ extension Gate1AppModel {
     }
 
     func skipForwardMedia() {
+        marginMomentConductor?.sourceMoved() // a skip over a Margin doesn't play it (#1646)
         recordDeveloperDiagnostic("skip.request", ["direction": "forward", "origin": "app_ui", "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1)])
         restoreSkimOriginBeforeCanonicalTransport()
         run { engine in
@@ -110,6 +114,7 @@ extension Gate1AppModel {
 
     @discardableResult
     func seekMedia(toMediaTimeMs mediaTimeMs: Int) -> Bool {
+        marginMomentConductor?.sourceMoved()
         recordDeveloperDiagnostic("seek.media.request", ["timeMs": String(mediaTimeMs)])
         restoreSkimOriginBeforeCanonicalTransport()
         return run { engine in
@@ -157,6 +162,7 @@ extension Gate1AppModel {
 
     @discardableResult
     func seekText(toCharOffset charOffset: Int) -> Bool {
+        marginMomentConductor?.sourceMoved()
         if playingImportedCommentary != nil { stopImportedCommentaryPlayback(resumeSource: false) }
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()

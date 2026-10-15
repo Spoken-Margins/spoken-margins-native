@@ -4097,7 +4097,28 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.diagnostics["marginMoment.voiceUnavailable"]?.hasSuffix(":recording_missing"), true)
     }
 
-    private func textAnchoredMomentFixture() throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
+    /// #1646: reading starts on a sentence start, so a Margin in the stretch before that start isn't part of the moment.
+    /// It used to stay in the sequence, and reading never crossed it, so the card stayed until Stop.
+    /// Sentences are 40 characters; the target is at 1600, so the 30-second rule starts at 1180 and reading starts at 1200.
+    /// The Margins sit inside the gap (1190) and well past the start (1300, 1700), not on the start itself.
+    /// (Named to run beside the other text-moment tests: under an earlier name the same steps failed on the lane,
+    /// and passed again further down the run, which points at state an earlier test leaves behind.)
+    func testPlayThisMomentOnATextAnchoredMarginLeavesOutAMarginInTheGapBeforeTheSnappedStart() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+
+        let leadInStart = try XCTUnwrap(model.snapshot.currentTextStart)
+        XCTAssertEqual(leadInStart, 1_200, "reading starts at the first sentence start after the rule's 1180")
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar, 1_700], "the Margin at 1190 sits before where reading starts")
+    }
+
+    private func textAnchoredMomentFixture(
+        otherMarginChars: [Int] = []
+    ) throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-text-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: root) }
@@ -4121,6 +4142,12 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         margin.audioPath = root.appending(path: "margin.m4a").path
         margin.audioStatus = "recorded"
         try store.saveInterjection(margin)
+        for char in otherMarginChars {
+            var other = margin
+            other.id = "other-\(char)"
+            other.anchor = Anchor(anchorType: .text, startChar: char, endChar: char + sentenceLength, anchorBefore: "", anchorAfter: "")
+            try store.saveInterjection(other)
+        }
         model.refreshMarginRows()
         let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
         return (model, row, targetChar, sentenceLength)

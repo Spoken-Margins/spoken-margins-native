@@ -296,7 +296,7 @@ final class Gate1AppModel: ObservableObject {
     /// Whose Margin the moment is for ("Your Margin", "Cole's Margin"), and whether its position is only a guess.
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
-    private var marginMomentConductor: MarginMomentConductor?
+    private(set) var marginMomentConductor: MarginMomentConductor?
     private(set) var marginMomentClock = MarginMomentClock.media // media time, or narration time for text read aloud (#1577)
     /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
     var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
@@ -2484,14 +2484,6 @@ final class Gate1AppModel: ObservableObject {
 
     var isSummarizingInterjections: Bool {
         latestPendingJob(kind: "interjection_summary") != nil
-    }
-
-    var canRetryLocalSummary: Bool {
-        guard !remoteProviderExperienceEnabled,
-              hasActiveSession,
-              let sessionId = snapshot.sessionId,
-              let jobs = try? store?.loadAIJobs(sessionId: sessionId) else { return false }
-        return jobs.contains { $0.kind == "interjection_summary" && $0.status == "retryable" }
     }
 
     var summaryActionTitle: String {

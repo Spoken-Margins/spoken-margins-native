@@ -4,6 +4,17 @@ import SessionKit
 /// Summary, discussion and pasted response entry points. Moved out of `Gate1AppModel.swift` unchanged (#960).
 extension Gate1AppModel {
     func summarize() {
+        if !remoteProviderExperienceEnabled {
+            do {
+                if let original = try recoverableLocalSummaryRetryContext() {
+                    retryLocalSummary(original)
+                    return
+                }
+            } catch {
+                reportFailure(error, context: "Could not check the original summary", itemId: snapshot.itemId)
+                return
+            }
+        }
         let itemId = snapshot.itemId ?? ""
         withdrawRetryOffer("summary")
         if !remoteProviderExperienceEnabled {
@@ -25,7 +36,12 @@ extension Gate1AppModel {
                 snapshot = try engine.generateInterjectionSummary(scope: summaryScopeForCurrentTarget())
                 let turnId = latestPendingSummaryTurnId() ?? "turn-summary-001"
                 let contexts = localSummaryContexts(interjections: engine.lastSummaryCandidates)
-                submitLocalSummary(itemId: itemId, turnId: turnId, contexts: contexts)
+                let retryContext = LocalSummaryRetryContext(
+                    itemId: itemId, sessionId: snapshot.sessionId ?? "", turnId: turnId,
+                    scope: summaryScopeForCurrentTarget(),
+                    interjectionIds: engine.lastSummaryCandidates.map(\.id), contexts: contexts
+                )
+                submitLocalSummary(itemId: itemId, turnId: turnId, contexts: contexts, retryContext: retryContext)
                 refreshSelectedItem()
                 reportSuccess("On-device summary started.")
             }
@@ -51,6 +67,111 @@ extension Gate1AppModel {
             submitProviderJobIfNeeded(kind: "interjection_summary", itemId: itemId, turnId: turnId, messages: [summaryPrompt(interjections: engine.lastSummaryCandidates)])
             refreshSelectedItem()
             reportConfirmation(snapshot.pendingAiJobStatus == "deferred" ? "Summary queued for later." : "Summary job started.")
+        }
+    }
+
+    /// A banner may outlive navigation or edits. Retry the recorded request, never
+    /// recompute a summary from whichever target happens to be active now (#1469).
+    func retryLocalSummary(_ original: LocalSummaryRetryContext) {
+        withdrawRetryOffer("summary")
+        guard snapshot.itemId == original.itemId,
+              selectedItem.id == original.itemId,
+              snapshot.sessionId == original.sessionId,
+              summaryScopeForCurrentTarget() == original.scope else {
+            reportFailure("Return to the original item and listening target to retry this summary.", itemId: original.itemId)
+            return
+        }
+        guard localFoundationModelAvailable else {
+            reportFailure(localFoundationModelAvailabilityDescription, itemId: original.itemId)
+            return
+        }
+        guard let store, let engine else {
+            reportFailure("The original summary is unavailable. Open the item and try again.", itemId: original.itemId)
+            return
+        }
+        do {
+            let jobs = try store.loadAIJobs(sessionId: original.sessionId)
+            let turns = try store.loadTurns(sessionId: original.sessionId)
+            let interjections = try store.loadInterjections(sessionId: original.sessionId)
+            let sourceIds = Set(original.interjectionIds)
+            // SQLite orders by last update. A harmless save must not reorder a retry.
+            let byId = Dictionary(uniqueKeysWithValues: interjections.map { ($0.id, $0) })
+            let source = original.interjectionIds.compactMap { byId[$0] }.filter { $0.status == "active" }
+            guard let job = jobs.last(where: { $0.turnId == original.turnId && $0.kind == "interjection_summary" }),
+                  job.itemId == original.itemId, job.status == "retryable",
+                  let turn = turns.first(where: { $0.id == original.turnId }),
+                  turn.status == "failed" || turn.status == "failed_partial",
+                  Set(turn.sourceInterjectionIds) == sourceIds,
+                  Set(source.map(\.id)) == sourceIds,
+                  source.allSatisfy({ note in
+                      original.scope.targetType == "turn"
+                          ? note.targetType != .item && note.targetId == original.scope.turnId
+                          : note.targetType == .item && note.targetId == original.itemId
+                  }),
+                  localSummaryContexts(interjections: source) == original.contexts else {
+                reportFailure("The original summary or its Margins changed or are unavailable. Open the original item to start a new summary.", itemId: original.itemId)
+                return
+            }
+            snapshot = try engine.retryAIJob(jobId: job.id)
+            submitLocalSummary(itemId: original.itemId, turnId: original.turnId, contexts: original.contexts, retryContext: original)
+            refreshSelectedItem()
+            reportSuccess("On-device summary retry started.")
+        } catch {
+            // A store read failure is not evidence that the original notes disappeared.
+            reportFailure(error, context: "Could not recover the original summary", itemId: original.itemId)
+        }
+    }
+
+    /// The label and action use the same current-target recovery rule. An unrelated
+    /// or unrecoverable old failure must not trap every new Summarize action in Retry.
+    var canRetryLocalSummary: Bool {
+        guard !remoteProviderExperienceEnabled, hasActiveSession else { return false }
+        return (try? recoverableLocalSummaryRetryContext()) != nil
+    }
+
+    /// After relaunch only source identity is durable: use the current contents of
+    /// those original notes, not newly added notes or another target's notes.
+    private func recoverableLocalSummaryRetryContext() throws -> LocalSummaryRetryContext? {
+        guard let sessionId = snapshot.sessionId, let itemId = snapshot.itemId, let store else { return nil }
+        let jobs = try store.loadAIJobs(sessionId: sessionId).filter {
+            $0.kind == "interjection_summary" && $0.status == "retryable" && $0.itemId == itemId
+        }
+        // This property is read during ordinary playback renders. Most sessions
+        // have no failed summary, so retain the old single-job-query fast path.
+        guard !jobs.isEmpty else { return nil }
+        let turns = try store.loadTurns(sessionId: sessionId)
+        let interjections = try store.loadInterjections(sessionId: sessionId)
+        let byId = Dictionary(uniqueKeysWithValues: interjections.map { ($0.id, $0) })
+        var candidates: [LocalSummaryRetryContext] = []
+        for job in jobs {
+            guard let turn = turns.first(where: { $0.id == job.turnId }),
+                  turn.status == "failed" || turn.status == "failed_partial",
+                  !turn.sourceInterjectionIds.isEmpty else { continue }
+            let source = turn.sourceInterjectionIds.compactMap { byId[$0] }.filter { $0.status == "active" }
+            guard source.count == turn.sourceInterjectionIds.count,
+                  let first = source.first,
+                  source.allSatisfy({ $0.targetId == first.targetId && ($0.targetType == .item) == (first.targetType == .item) }),
+                  first.targetType != .item || first.targetId == itemId else { continue }
+            let scope = first.targetType == .item ? SummaryScope(targetType: "item") : SummaryScope(targetType: "turn", turnId: first.targetId)
+            guard scope == summaryScopeForCurrentTarget() else { continue }
+            candidates.append(LocalSummaryRetryContext(
+                itemId: itemId, sessionId: sessionId, turnId: turn.id, scope: scope,
+                interjectionIds: turn.sourceInterjectionIds, contexts: localSummaryContexts(interjections: source)
+            ))
+        }
+        // The generic Retry control cannot identify one of several original jobs.
+        return candidates.count == 1 ? candidates.first : nil
+    }
+
+    private func retryPendingLocalSummary() {
+        do {
+            guard let original = try recoverableLocalSummaryRetryContext() else {
+                reportFailure("The original summary is unavailable for this target. Return to its target, or use Summarize to start a new summary.", itemId: snapshot.itemId)
+                return
+            }
+            retryLocalSummary(original)
+        } catch {
+            reportFailure(error, context: "Could not recover the original summary", itemId: snapshot.itemId)
         }
     }
 
@@ -108,7 +229,7 @@ extension Gate1AppModel {
 
     func retryPendingAI() {
         guard remoteProviderExperienceEnabled else {
-            summarize()
+            retryPendingLocalSummary()
             return
         }
         guard !providerAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -151,4 +272,14 @@ extension Gate1AppModel {
             reportSuccess(autoPlay ? "Imported and playing pasted response." : "Imported pasted response.")
         }
     }
+}
+
+/// Only in-memory request identity; no database or packet changes.
+struct LocalSummaryRetryContext {
+    let itemId: String
+    let sessionId: String
+    let turnId: String
+    let scope: SummaryScope
+    let interjectionIds: [String]
+    let contexts: [String]
 }
