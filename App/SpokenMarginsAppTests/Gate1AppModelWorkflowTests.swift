@@ -4092,7 +4092,7 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
             XCTAssertEqual(model.snapshot.playbackRate, shown, "the source plays at the speed shown (stored \(stored))")
             XCTAssertEqual(model.mediaPlaybackRate, shown)
             XCTAssertEqual(model.diagnostics["marginVoice.rate"],
-                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f", shown, shown, shown),
+                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f;player=n/a;voicePlayer=n/a", shown, shown, shown),
                            "the Margin's voice reads the same rate, and Diagnostics say so")
         }
     }

@@ -209,6 +209,9 @@ public protocol AudioPlaybackClient {
     func requestMediaSeek(toMediaTimeMs mediaTimeMs: Int) throws -> MediaSeekRequest
     func mediaSeekResolution(for request: MediaSeekRequest) -> MediaSeekResolution
     func setPlaybackRate(_ rate: Double) throws
+    /// The rate the player is actually using, read back from it rather than from what was asked for (#1670); nil
+    /// when the client can't tell. A paused player reports the rate it will resume at.
+    func currentPlayerRate() -> Double?
     func setMixesWithOtherAudio(_ enabled: Bool) throws
     /// Opt-in attenuation of other apps, effective only during mixed playback.
     func setLowersBackgroundAudio(_ enabled: Bool) throws
@@ -322,6 +325,8 @@ public protocol TextAudioPreparationClient: Sendable {
 }
 
 public extension AudioPlaybackClient {
+    func currentPlayerRate() -> Double? { nil }
+
     func configureMediaContext(_ context: PlaybackMediaContext?) throws {}
 
     func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {}

@@ -46,12 +46,12 @@ extension Gate1AppModel {
         }
         stopInterjectionAudioPlayback()
         do {
-            recordMarginVoiceRate("own")
             try marginVoicePlayer.startOwn(
                 interjection,
                 url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
                 rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
             )
+            recordMarginVoiceRate("own")
             sharedMarginReturn.voiceStarted(returnToSource: returnsSource)
             reportConfirmation("Playing your Margin.")
         } catch {
@@ -133,7 +133,6 @@ extension Gate1AppModel {
         stopInterjectionAudioPlayback()
         sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
         do {
-            recordMarginVoiceRate("shared")
             try marginVoicePlayer.prepareShared(
                 prompt,
                 url: { leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs) },
@@ -147,6 +146,7 @@ extension Gate1AppModel {
             gate2CompactControls.setNowPlayingEnabled(false)
             gate2CompactControls.endLiveActivities()
             marginVoicePlayer.beginShared(installRemoteControls: !mixesWithOtherAudio)
+            recordMarginVoiceRate("shared")
         } catch {
             stopImportedCommentaryPlayback(resumeSource: false)
             reportFailure(error, context: "Shared Margin playback failed")
@@ -230,14 +230,18 @@ extension Gate1AppModel {
         try applyPreferredPlaybackRate(to: try engine.playInterjectionAnchor(interjection), engine: engine)
     }
 
-    /// The speed a Margin voice is about to play at, next to the source's and the one shown, so Diagnostics can say
-    /// whether what was heard matched the screen (#1670).
+    /// The speed a Margin voice plays at, next to the source's and the one shown, so Diagnostics can say whether what
+    /// was heard matched the screen (#1670). `source` is what the session asked for; `player` is read back from the
+    /// podcast player itself (n/a when the client can't tell), and `voicePlayer` from the Margin voice's own player.
     @discardableResult
     func recordMarginVoiceRate(_ kind: String) -> Double {
         let voice = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+        func text(_ rate: Double?) -> String { rate.map { String(format: "%.2f", $0) } ?? "n/a" }
+        let sourcePlayer = (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.currentPlayerRate()
+        let voicePlayer = marginVoicePlayer.currentPlayer.map { Double($0.rate) }
         diagnostics["marginVoice.rate"] = String(
-            format: "%@;voice=%.2f;source=%.2f;shown=%.2f", kind, voice, snapshot.playbackRate,
-            isMediaPlaybackSnapshot ? mediaPlaybackRate : speechPlaybackRateMultiplier)
+            format: "%@;voice=%.2f;source=%.2f;shown=%.2f;player=%@;voicePlayer=%@", kind, voice, snapshot.playbackRate,
+            isMediaPlaybackSnapshot ? mediaPlaybackRate : speechPlaybackRateMultiplier, text(sourcePlayer), text(voicePlayer))
         return voice
     }
 
