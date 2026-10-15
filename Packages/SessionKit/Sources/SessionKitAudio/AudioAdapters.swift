@@ -3273,6 +3273,7 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
 
 /// Used on the main thread; the audio-session observers run on the main queue.
 public final class SystemRecordingClient: RecordingClient, RecordingInterruptionReporting, @unchecked Sendable {
+    private var finalizedIntegrity: FinalizedRecordingIntegrity?
     #if canImport(AVFoundation)
     private var recorder: AVAudioRecorder?
     private var currentURL: URL?
@@ -3447,6 +3448,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func beginRecording() throws {
         #if canImport(AVFoundation)
+        finalizedIntegrity = nil
         #if os(iOS)
         let session = AVAudioSession.sharedInstance()
         let recordPermission: AVAudioSession.RecordPermission
@@ -3629,15 +3631,18 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
         #endif
     }
 
+    public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? { finalizedIntegrity }
+
     public func finishRecording(audioRef: String?) throws -> String {
         #if canImport(AVFoundation)
         guard let recorder, let currentURL else {
             if let audioRef { return audioRef }
             throw SessionKitError.invalidCommandForState("finishRecording")
         }
+        let reportedMs = max(capturedHighWaterMs, Int((recorder.currentTime * 1_000).rounded()))
         isCaptureActive = false
+        finalizedIntegrity = RecordingFileFinalizer.finish(url: currentURL, reportedMs: reportedMs) { recorder.stop() }
         recorderDelegate = nil
-        recorder.stop()
         self.recorder = nil
         self.currentURL = nil
         recordingEnded()
@@ -3655,6 +3660,7 @@ public final class SystemRecordingClient: RecordingClient, RecordingInterruption
 
     public func cancelRecording() throws {
         #if canImport(AVFoundation)
+        finalizedIntegrity = nil
         let url = currentURL
         isCaptureActive = false
         recorderDelegate = nil

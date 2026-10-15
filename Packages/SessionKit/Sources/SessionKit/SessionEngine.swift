@@ -1558,6 +1558,10 @@ public final class SessionEngine {
         recorder.captureDiagnostics().merging(marginCaptureTiming?.fields ?? [:]) { _, timing in timing }
     }
 
+    public func finalizedRecordingIntegrity() -> FinalizedRecordingIntegrity? {
+        recorder.finalizedRecordingIntegrity()
+    }
+
     @discardableResult
     public func beginWrittenInterjection(replyTo: MarginReplyLink? = nil) throws -> WrittenInterjectionCapture {
         try requireNavigationAllowed("beginWrittenInterjection")
