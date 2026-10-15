@@ -29,25 +29,7 @@ struct ExperienceMarginsScreen: View {
                         .textFieldStyle(.roundedBorder)
                         .accessibilityIdentifier("margins.search.field")
                         .padding(.bottom, 12)
-                    HStack {
-                        Picker("Scope", selection: scopeTag) {
-                            Text("All items").tag(String?.none)
-                            if !collections.isEmpty {
-                                Section("Collections") {
-                                    ForEach(collections) { collection in
-                                        Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
-                                    }
-                                }
-                            }
-                            Section("Items") {
-                                ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
-                            }
-                        }
-                        .accessibilityIdentifier("margins.scope.picker")
-                        Spacer()
-                        Text("\(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count) Margins")
-                            .font(.caption).foregroundStyle(AppColors.secondaryText)
-                    }
+                    scopeRow
                     filterBar
                         .padding(.bottom, 8)
                     if model.marginCollectionQuery.filter == .shared { sharedCollection } else { collection }
@@ -90,6 +72,58 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
+    /// The scope control and the Margins count. The control is a menu whose label is one line, cut with an ellipsis,
+    /// so a long item title can't wrap into the filters and the group heading under it (#1631). The menu's own rows
+    /// still show the full titles.
+    private var scopeRow: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Picker("Scope", selection: scopeTag) {
+                    Text("All items").tag(String?.none)
+                    if !collections.isEmpty {
+                        Section("Collections") {
+                            ForEach(collections) { collection in
+                                Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
+                            }
+                        }
+                    }
+                    Section("Items") {
+                        ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(scopeTitle)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+            }
+            .layoutPriority(1)
+            .accessibilityLabel("Scope")
+            .accessibilityValue(scopeTitle)
+            .accessibilityIdentifier("margins.scope.picker")
+            Spacer(minLength: 8)
+            Text("\(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count) Margins")
+                .font(.caption).foregroundStyle(AppColors.secondaryText)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    /// What the scope control reads: the collection, the item, or all items.
+    private var scopeTitle: String {
+        let query = model.marginCollectionQuery
+        if let scope = query.collection {
+            return collections.first { $0.id == scope.collectionID }?.name ?? "Collection"
+        }
+        if let itemID = query.itemID {
+            return model.marginScopeItems.first { $0.id == itemID }?.title ?? "Item"
+        }
+        return "All items"
+    }
+
     /// The scope picker's choice: one item, one collection (#490) or all items.
     private var scopeTag: Binding<String?> {
         Binding(
@@ -117,6 +151,7 @@ struct ExperienceMarginsScreen: View {
                         ExperienceFilterChip(isActive: model.marginCollectionQuery.filter == option) { Text(option.title) }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("margins.filter.\(option.rawValue)")
                 }
             }
         }
