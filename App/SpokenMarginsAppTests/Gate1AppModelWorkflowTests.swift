@@ -4145,8 +4145,31 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(startChars, [1_300, fixture.targetChar], "skipping over a Margin doesn't play it")
     }
 
+    /// #1656: a chapter tapped in Timeline is a move of the source like a skip. A heading-only chapter starting at 1320
+    /// is 80 characters past 1240, under the reading limit, so without `sourceMoved()` the next reading crosses the
+    /// Margin at 1300 and plays it.
+    func testPlayThisMomentOnATextAnchoredMarginSkippedToAChapterDoesNotPlayTheNextMargin() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_300], chapterStartChars: [0, 1_320])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        model.performGate2CompactCommand(.skipForward)
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+        XCTAssertEqual(model.snapshot.currentTextStart, 1_240, "a reading just before the Margin at 1300")
+
+        model.jumpToChapter(Chapter(id: "ch-1", title: "Heading", startChar: 1_320, endChar: 3_200, percent: 41))
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+
+        XCTAssertEqual(model.snapshot.currentTextStart, 1_320, "the chapter jump moved the reading past the Margin")
+        let startChars = try XCTUnwrap(model.marginMoment).unplayed.map {
+            model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs)
+        }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar], "jumping over a Margin doesn't play it")
+    }
+
     private func textAnchoredMomentFixture(
-        otherMarginChars: [Int] = []
+        otherMarginChars: [Int] = [],
+        chapterStartChars: [Int] = []
     ) throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
         let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-text-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -4159,6 +4182,14 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         let text = (0..<80).map(sentence).joined()
         try store.saveItem(Item(id: "moment-article", title: "Moment article", mediaType: "text", text: text,
             externalReference: "local", status: "ready"))
+        if !chapterStartChars.isEmpty {
+            let chapters = chapterStartChars.enumerated().map { index, start in
+                Chapter(id: "ch-\(index)", title: "Chapter \(index)", startChar: start,
+                        endChar: index + 1 < chapterStartChars.count ? chapterStartChars[index + 1] : text.count,
+                        percent: start * 100 / text.count)
+            }
+            try store.saveListeningMap(ListeningMap(id: "moment-map", itemId: "moment-article", overview: "", chapters: chapters))
+        }
         model.startItem(id: "moment-article")
         XCTAssertEqual(model.snapshot.targetType, TargetType.itemTextTTS.rawValue, "read aloud on the device: no media clock")
         let sentenceLength = sentence(0).count
