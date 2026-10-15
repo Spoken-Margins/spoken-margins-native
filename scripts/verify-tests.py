@@ -569,10 +569,36 @@ def stall_diagnosis(sample_text, state=''):
     return f'host app {"idle in its run loop" if idle else "busy or blocked on its main thread"}; {injected}'
 
 
-def stall_evidence(udid, folder, sample_seconds=3):
+# #705, read on 2026-10-15: in all 26 kept stalled result bundles whose host app was running, the session log's
+# "Launched app ... (pid = N)" was the pid the watchdog sampled, so no other launcher raced xcodebuild. In
+# pr1647-r38684087699 that launch asked for DYLD_INSERT_LIBRARIES and started 45 ms after "Launching app", yet none of
+# those libraries were loaded. Our inference: the simulator's launch of that very process lost its settings. Each
+# stall now records how far xcodebuild's session log got and whose launch it sampled.
+SESSION_STEP = re.compile(r'Installing app|Installed app|Launching app|Launched app with identifier: \S+ \(pid = (\d+)\)'
+                          r'|Transitioning from state \w+ to \w+')
+
+
+def session_progress(result_bundle):
+    """The last launch step in xcodebuild's session log for this attempt, and the pid it launched; {} without a log."""
+    try:
+        logs = list(Path(result_bundle).rglob('Session-*.log')) if result_bundle else []
+        text = max(logs, key=lambda log: log.stat().st_mtime).read_text(errors='replace') if logs else ''
+    except OSError:
+        return {}
+    steps = list(SESSION_STEP.finditer(text))
+    if not steps:
+        return {'session_last_step': None} if logs else {}
+    found = {'session_last_step': steps[-1].group(0)}
+    launched = [step.group(1) for step in steps if step.group(1)]
+    if launched:
+        found['launched_pid'] = int(launched[-1])
+    return found
+
+
+def stall_evidence(udid, folder, sample_seconds=3, result_bundle=None):
     """Best effort: which processes of this simulator are alive and what the host app is doing. Never raises."""
     folder.mkdir(parents=True, exist_ok=True)
-    found = {}
+    found = session_progress(result_bundle)
     try:
         ps = subprocess.run(['ps', '-axo', 'pid=,etime=,stat=,command='], capture_output=True, text=True, timeout=20).stdout
         mine = [line for line in ps.splitlines() if udid and udid in line]
@@ -591,8 +617,14 @@ def stall_evidence(udid, folder, sample_seconds=3):
                     text = path.read_text(errors='replace') if path.is_file() else ''
                 except OSError:
                     text = ''
-                diagnoses.append(stall_diagnosis(text, fields[2]))
+                diagnosis = stall_diagnosis(text, fields[2])
+                if 'launched_pid' in found:
+                    diagnosis += ('; xcodebuild\'s own launch' if found['launched_pid'] == int(pid)
+                                  else f'; not the pid xcodebuild launched ({found["launched_pid"]})')
+                diagnoses.append(diagnosis)
         found['diagnosis'] = '; '.join(diagnoses) if diagnoses else NO_HOST_APP
+        if found.get('session_last_step'):
+            found['diagnosis'] += f'; session log ends at "{found["session_last_step"]}"'
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         found['error'] = repr(error)
     return found
@@ -1084,7 +1116,7 @@ class Run:
 
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,
-                       'diagnose': lambda folder: stall_evidence(chosen['udid'], folder),
+                       'diagnose': lambda folder: stall_evidence(chosen['udid'], folder, result_bundle=result_bundle),
                        'reset': relaunch} if scheme == 'SpokenMarginsAppBehavior' else None
             if startup is not None:
                 self.manifest['settle_before_tests'] = settle_before_tests(chosen['udid'])
