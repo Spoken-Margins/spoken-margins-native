@@ -128,7 +128,7 @@ extension Gate1AppModel {
         }
     }
 
-    func submitLocalSummary(itemId: String, turnId: String, contexts: [String]) {
+    func submitLocalSummary(itemId: String, turnId: String, contexts: [String], retryContext: LocalSummaryRetryContext) {
         statusMessage = "Summarizing Margins on device."
         lastError = nil
         // The session this summary belongs to: a failure that arrives after another session
@@ -164,7 +164,7 @@ extension Gate1AppModel {
                     String(describing: error),
                     userMessage: presentation.detailMessage,
                     itemId: itemId,
-                    retry: .init(key: "summary") { [weak self] in self?.summarize() },
+                    retry: .init(key: "summary") { [weak self] in self?.retryLocalSummary(retryContext) },
                     feedbackMessage: presentation.feedbackMessage,
                     settling: originSessionId.map { ProviderFailureOrigin(sessionId: $0, turnId: turnId) }
                 )
