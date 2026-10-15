@@ -14,6 +14,11 @@ origin/claude/project-planning-voice-notes-neoatx if next doesn't exist yet. Mer
 research code and fixtures go under research/<id>/. Open a draft PR into next once it
 exists, and put lane requests on that PR.
 
+On the Mac, after claiming an issue or releasing its claim, you may run
+`python3 scripts/sm_project_sync.py --apply --issue <issue-number>` to update its project card.
+A cloud session can't reach the project (403), and a failed read doesn't stop implementation:
+the Mac's hourly pass repairs the card.
+
 Work milestone by milestone. For each milestone:
 1. Say in two or three sentences how you intend to reach it and what you will measure.
    For a choice the brief leaves open, or an owner decision it lists: if it's
@@ -61,6 +66,7 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 | Test next's tip | The standing Test Desk, in a loop: on each new tip, the app tests, then the screen tour and the journeys, reported on #184. On a real FAIL it reverts the culprit merge and files the re-land issue. The scheduled `SM integration run` is its understudy and runs only when the desk has posted nothing on #184 for three hours ([test-lane.md](test-lane.md), Starting the Test Desk). |
 | A live read behind every status line ("Check before you report", owner 2026-10-14) | The coordinator and any thread, in the same turn as the line: `scripts/sm_status.py` (#1597) prints one line per open PR into `next` with its head, the lane's verdict **on that head** ("none on head" when the only reports are on older commits), the audit on that head, the mergeable state, the labels that matter and the linked issue, and flags red-on-head, conflict, a T3 hold, an INCONCLUSIVE, a blocking audit and an armed PR with no `/lane T3` request. `--json` is for scripts. It only reads GitHub, so it runs from a cloud container (needs `GH_TOKEN`). Say what it showed; a thread's last report is not evidence. |
 | Find idle capacity and stuck work on every coordinator wake (owner 2026-10-14) | The coordinator, before it replies to an owner message, a Dial fire or the hourly dispatch: `python3 scripts/sm_sweep.py` (#1598) prints an action list from live GitHub reads: free Claude slots against the Dial (Codex workers counted apart), the Mac idle beside Mac-only `ready` issues, `in-progress` claims with no comment, open PR, `ws/<n>-` commit or new label in 6 hours, armed PRs red on their head, `/lane T4` requests (or the tick's `Test Desk: GO`) waiting over an hour with no Test Desk seen, and `needs-mac` PRs the finisher hasn't touched in an hour. `--apply` releases the stale claims (remove `in-progress`, add `ready`, say why; the housekeeping call of 2026-10-14) and does nothing else; every other line is the coordinator's to act on. It reads GitHub, not sessions, so confirm a Test Desk or thread is really idle before starting a second. Uses `scripts/sm_status.py` for the PR facts. |
+| Keep project 6 in sync with workflow evidence (#1621) | The Claude Mac worker's existing 10-minute tick runs `python3 scripts/sm_project_sync.py --apply` at most once an hour, whatever the Dial says, and the worker syncs its own issue's card after each claim and stop note. The cloud dispatch can't: the user project's API answers its token with 403. The pass reconciles missing issue cards as well as Status and Check health, adds no timer or worker, and writes nothing when nothing changed. Run it without `--apply` to see the proposed changes and reasons. Unknown reads are reported (exit 2) and leave those cards unchanged. |
 | Check that the scheduled tasks ran | The project's daily routine reads #337 for a missing or stalled tick. The owner starts an ops desk session only when something is wrong. |
 
 The merge-check comment keeps its old first line, **Merge check (triage desk) on `<sha7>`**. The lane runner writes it and `scripts/merge_audit.py` looks for that exact text, so don't reword it.

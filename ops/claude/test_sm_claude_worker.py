@@ -4,7 +4,9 @@ No network, no real Claude, no real gh. `claude` is a fake binary (a script in a
 worker really launches, with the prompt on stdin, and git is real: an origin repo and a clone in a temp
 folder. Only `gh` is a fake, one object holding the issues and PRs.
 """
+import contextlib
 import datetime as dt
+import io
 import json
 import os
 import stat
@@ -305,6 +307,11 @@ class TickOps(w.Ops):
                      f'- pace: Claude {usage_pct}% used, 60% of the week gone\n'
                      '- advice for dispatch: ' + ('HALT (usage breaker: Claude)' if halted else 'go'))
         self.tick = [rest(tick_line, ago(minutes=40), 337)]
+        self.boards = []
+
+    def board_sync(self, number=None, ledger=None):
+        self.boards.append(number)
+        return 'exit 0: fake'
 
     def dial_body(self): return self.dial
     def status_comments(self, now): return self.tick
@@ -369,6 +376,44 @@ class TickTests(unittest.TestCase):
                 decision, started, _ = self.tick(issues=[issue(7)], **kw)
                 self.assertEqual(started, [])
                 self.assertIn(why, decision['why'])
+
+    def test_the_board_pass_runs_hourly_whatever_the_dial_says(self):
+        # #1621: the cloud dispatch gets a 403 from the project API, so the Mac's tick keeps project 6 in line.
+        off = DIAL.replace('- [x] Paced', '- [ ] Paced').replace('- [ ] Off', '- [x] Off')
+        spawn = lambda o, slot, number, kind: 4242
+        with tempfile.TemporaryDirectory() as d:
+            ops = TickOps(d, dial=off, issues=[issue(7)])
+            self.assertIn('Dial is Off', w.tick(ops, spawn=spawn)['why'])
+            self.assertEqual(ops.boards, [None])
+            w.tick(ops, spawn=spawn)                       # the next tick inside the hour
+            self.assertEqual(ops.boards, [None])
+            with contextlib.redirect_stdout(io.StringIO()):
+                w.tick(ops, dry_run=True)                  # a dry run writes nothing, the board included
+            ops.now = lambda: NOW + dt.timedelta(hours=1)
+            w.tick(ops, spawn=spawn)
+            self.assertEqual(ops.boards, [None, None])
+            (ops.home / 'board-sync.json').write_text('not json')
+            w.tick(ops, spawn=spawn)                       # an unreadable stamp runs it rather than never
+            self.assertEqual(ops.boards, [None, None, None])
+
+    def test_board_sync_runs_the_script_and_summarises_its_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            root, sent = Path(d), []
+            def run(cmd, cwd=None, timeout=300):
+                sent.append([str(x) for x in cmd])
+                return w.Result(0, json.dumps({'changes': [{}], 'unknown': [], 'api_calls': 12, 'writes': 3,
+                                               'seconds': 4.2}))
+            ops = w.Ops(home=root / 'home', repo_root=root, run=run, echo=False)
+            self.assertIn('skipped', ops.board_sync(7))   # not on this checkout yet: nothing runs
+            self.assertEqual(sent, [])
+            (root / 'scripts').mkdir()
+            (root / 'scripts' / 'sm_project_sync.py').write_text('')
+            self.assertEqual(ops.board_sync(7), 'exit 0: 1 change(s), 0 unknown, 12 calls, 3 writes, 4.2 s')
+            self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'sm_project_sync.py'), '--apply', '--issue', '7'])
+            ops.board_sync(ledger=root / 'lane')
+            self.assertEqual(sent[-1][2:], ['--apply', '--ledger-state', str(root / 'lane')])
+            ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
+            self.assertEqual(ops.board_sync(), 'error: gone')   # never raises into a tick or a run
 
     def test_idle_when_nothing_is_eligible(self):
         decision, started, _ = self.tick(issues=[issue(7, labels=('ready',))])
@@ -601,6 +646,13 @@ class IssueRunTests(unittest.TestCase):
         self.assertEqual(self.run_issue(), 'parked')
         self.assertEqual(self.labels(), {'where:mac', 'blocked'})
         self.assertIn('two runs in a row added no commit', self.h.gh.comments(7)[-1])
+
+    def test_the_claim_and_the_stop_each_sync_the_issues_card(self):
+        self.h.plan({'files': {'one.txt': '1'}, 'handoff': 'Done: the model.'})
+        ops, seen = self.h.ops(), []
+        ops.board_sync = lambda number=None, ledger=None: seen.append((number, sorted(self.labels()))) or 'exit 0: fake'
+        self.assertEqual(w.run_issue(ops, 1, 7), 'handoff')
+        self.assertEqual(seen, [(7, ['in-progress', 'where:mac']), (7, ['ready', 'where:mac'])])
 
     def test_a_run_that_never_started_is_a_fault_not_a_run(self):
         self.h.plan({'no_json': True, 'exit': 1})

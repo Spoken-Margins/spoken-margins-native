@@ -80,4 +80,6 @@ public enum Gate2CompactApplicationCommand {
     public static let listenToSharedMargin = "listenToSharedMargin"
     public static let dismissSharedMargin = "dismissSharedMargin"
     public static let jumpToSharedMargin = "jumpToSharedMargin"
+    /// A tap on a playing Live Activity: show the playback screen of the item that is sounding (#1337).
+    public static let openPlayback = "openPlayback"
 }

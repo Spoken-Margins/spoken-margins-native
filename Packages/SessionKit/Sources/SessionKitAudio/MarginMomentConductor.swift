@@ -99,8 +99,9 @@ public final class MarginMomentConductor {
 
     /// Starts the lead-in: seeks the source to the sequence's start.
     public func start() {
-        lastObservedMs = sequence.startMediaTimeMs
         source.seek(sequence.startMediaTimeMs)
+        // After the seek: the app tells `sourceMoved()` about every seek, which would clear this baseline (#1646).
+        lastObservedMs = sequence.startMediaTimeMs
         onChange?()
     }
 
@@ -108,6 +109,12 @@ public final class MarginMomentConductor {
     public func startListening(atMediaTimeMs mediaTimeMs: Int?) {
         lastObservedMs = mediaTimeMs ?? sequence.startMediaTimeMs
         onChange?()
+    }
+
+    /// The listener skipped or sought the source themselves (#1646). The next reading is a new place, not playback
+    /// reaching it, so it crosses nothing: skipping over a Margin doesn't play it, however short the skip.
+    public func sourceMoved() {
+        lastObservedMs = nil
     }
 
     /// Call on each progress tick while the source plays.

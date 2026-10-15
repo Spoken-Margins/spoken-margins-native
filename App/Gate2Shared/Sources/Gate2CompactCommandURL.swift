@@ -35,3 +35,23 @@ public enum Gate2CompactCommandURL {
             .value
     }
 }
+
+// Where a tap on the Live Activity goes. Kept here, not with the attributes, because the share extension compiles
+// the attributes file without the command URL.
+extension Gate2LiveActivityAttributes.ContentState {
+    /// Paused and not recording, or past its stale date (the app sets one only while paused).
+    /// The card then says how to resume instead of looking like a frozen player.
+    func offersResume(isStale: Bool) -> Bool {
+        guard !isRecording, sharedMarginSenderLabel == nil else { return false }
+        return isStale || status == "paused"
+    }
+
+    /// Where a tap on the card goes. A paused card opens the app and resumes. A card that is playing opens the
+    /// playback screen of what is sounding, instead of leaving the app on whatever screen it was last on (#1337).
+    /// A recording card, or one showing a friend's Margin, just opens the app.
+    func tapURL(isStale: Bool) -> URL? {
+        if offersResume(isStale: isStale) { return Gate2CompactCommandURL.url(command: "play") }
+        guard !isRecording, sharedMarginSenderLabel == nil else { return nil }
+        return Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.openPlayback)
+    }
+}

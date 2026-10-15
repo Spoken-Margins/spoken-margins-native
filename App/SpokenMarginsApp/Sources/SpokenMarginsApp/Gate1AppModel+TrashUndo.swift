@@ -12,14 +12,16 @@ extension Gate1AppModel {
             if id == Self.guidedOnboardingItemId {
                 UserDefaults.standard.set(true, forKey: Self.guidedOnboardingTombstoneKey)
             }
-            if snapshot.itemId == id {
-                _ = try? engine?.stopPlayback()
+            if let engine, engine.currentSession?.itemId == id {
+                snapshot = try endEngineSession(engine, reason: .itemTrashed)
             }
             try store.moveItemToTrash(id: id)
             try refreshLibraryRows(store: store)
+            // An import-only item can be selected without a session. Clearing that idle selection must not
+            // discard another item's live session just because its detail page was open when Delete was tapped.
+            if snapshot.itemId == id { snapshot = SessionSnapshot() }
             if activeItemId == id {
                 activeItemId = libraryItems.first?.id ?? "item-pill"
-                snapshot = SessionSnapshot()
                 exportPreview = ""
                 selectedItem = libraryItems.first.map { (try? loadItemDetail(id: $0.id, store: store)) ?? ItemDetailState() } ?? ItemDetailState()
             }

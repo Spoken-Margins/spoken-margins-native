@@ -32,6 +32,8 @@ public struct MarginMomentSequence: Sendable, Equatable {
     /// Progress ticks arrive every 0.5 s, so even 3× playback advances well under this. A bigger forward move
     /// is a seek or skip, and skipping over a Margin shouldn't play it.
     public static let maxTickAdvanceMs = 4_000
+    /// The same limit for this moment's clock; a text clock reads in characters, so its limit differs (see `MarginMomentClock`).
+    public let tickAdvanceLimitMs: Int
 
     public enum Phase: Sendable, Equatable {
         case leadIn
@@ -54,16 +56,13 @@ public struct MarginMomentSequence: Sendable, Equatable {
         itemId: String,
         target: MarginMomentAnchor,
         otherMargins: [MarginMomentAnchor],
-        leadInMs: Int = MarginMomentSequence.defaultLeadInMs
+        leadInMs: Int = MarginMomentSequence.defaultLeadInMs,
+        tickAdvanceLimitMs: Int = MarginMomentSequence.maxTickAdvanceMs
     ) {
         self.itemId = itemId
         self.target = target
-        let start = ListeningMoment(
-            use: .playThisMoment,
-            margin: ListeningMoment.Margin(id: target.marginId, position: target.mediaTimeMs),
-            source: .media(),
-            leadInMs: leadInMs
-        ).sourceStartPosition
+        self.tickAdvanceLimitMs = tickAdvanceLimitMs
+        let start = Self.leadInStartMediaTimeMs(forTarget: target, leadInMs: leadInMs)
         startMediaTimeMs = start
         let others = otherMargins.filter { $0.marginId != target.marginId && $0.mediaTimeMs >= start }
         unplayed = Self.inPlaybackOrder([target] + others)
@@ -76,13 +75,25 @@ public struct MarginMomentSequence: Sendable, Equatable {
         itemId: String,
         resumingAtMediaTimeMs position: Int,
         playedMargin: MarginMomentAnchor,
-        otherMargins: [MarginMomentAnchor]
+        otherMargins: [MarginMomentAnchor],
+        tickAdvanceLimitMs: Int = MarginMomentSequence.maxTickAdvanceMs
     ) {
         self.itemId = itemId
+        self.tickAdvanceLimitMs = tickAdvanceLimitMs
         target = playedMargin
         startMediaTimeMs = position
         phase = .listening
         unplayed = Self.inPlaybackOrder(otherMargins.filter { $0.marginId != playedMargin.marginId && $0.mediaTimeMs > position })
+    }
+
+    /// Where the lead-in before `target` starts, by the single lead-in rule (#807).
+    public static func leadInStartMediaTimeMs(forTarget target: MarginMomentAnchor, leadInMs: Int = defaultLeadInMs) -> Int {
+        ListeningMoment(
+            use: .playThisMoment,
+            margin: ListeningMoment.Margin(id: target.marginId, position: target.mediaTimeMs),
+            source: .media(),
+            leadInMs: leadInMs
+        ).sourceStartPosition
     }
 
     private static func inPlaybackOrder(_ margins: [MarginMomentAnchor]) -> [MarginMomentAnchor] {
@@ -116,7 +127,7 @@ public struct MarginMomentSequence: Sendable, Equatable {
         guard !isPlayingMargin else { return nil }
         let crossed = unplayed.filter {
             PlaybackAnchorCrossing.isCrossed(
-                anchor: $0.mediaTimeMs, before: before, after: after, maxForwardMs: Self.maxTickAdvanceMs
+                anchor: $0.mediaTimeMs, before: before, after: after, maxForwardMs: tickAdvanceLimitMs
             )
         }
         guard let first = crossed.first else { return nil }
@@ -145,9 +156,14 @@ public struct MarginMomentSequence: Sendable, Equatable {
 }
 
 extension Interjection {
+    /// A spoken Margin on the item with a saved voice, wherever it is anchored: a media time, or only a text place
+    /// (a Margin made while an article was read aloud on the device has no media time, #1577).
+    public var isSpokenItemMargin: Bool {
+        status == "active" && captureKind != .written && targetType == .item && audioPath != nil
+    }
+
     /// A spoken Margin on the item with a media time and a saved voice, which a Margin moment plays inline.
     public var isInlineSpokenMargin: Bool {
-        guard status == "active", captureKind != .written, targetType == .item else { return false }
-        return anchor.mediaTimeMs != nil && audioPath != nil
+        isSpokenItemMargin && anchor.mediaTimeMs != nil
     }
 }

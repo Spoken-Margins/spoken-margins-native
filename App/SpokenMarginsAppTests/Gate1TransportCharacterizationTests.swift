@@ -199,6 +199,50 @@ final class Gate1TransportCharacterizationTests: XCTestCase {
         XCTAssertEqual(model.snapshot.status, .paused)
         XCTAssertNil(model.lastError)
     }
+
+    // MARK: Live Activity tap (#1337)
+
+    /// The owner tapped a playing Live Activity and stayed wherever the app was last, with no way to the player.
+    func testTappingAPlayingLiveActivityOpensPlaybackAndOtherCardsKeepTheirTaps() {
+        func card(status: String, isRecording: Bool = false, sharedFrom: String? = nil) -> Gate2LiveActivityAttributes.ContentState {
+            .init(title: "Episode", chapterTitle: "Opening", status: status, phase: "itemPlayback", progressPercent: 10,
+                  isRecording: isRecording, sharedMarginSenderLabel: sharedFrom)
+        }
+        let open = Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.openPlayback)
+        let play = Gate2CompactCommandURL.url(command: "play")
+        XCTAssertEqual(card(status: "playing").tapURL(isStale: false), open)
+        XCTAssertEqual(card(status: "paused").tapURL(isStale: false), play, "a paused card still resumes")
+        XCTAssertEqual(card(status: "playing").tapURL(isStale: true), play, "a stale card still resumes")
+        XCTAssertNil(card(status: "playing", isRecording: true).tapURL(isStale: false), "a recording card just opens the app")
+        XCTAssertNil(card(status: "playing", sharedFrom: "A friend").tapURL(isStale: false))
+    }
+
+    func testTheOpenPlaybackLinkShowsPlaybackFromAnotherScreenAndKeepsTheSession() {
+        SpokenMarginsTerms.recordAcceptance()
+        let model = makeModel()
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        let sessionId = model.snapshot.sessionId
+        XCTAssertNotNil(sessionId, "precondition: something is playing")
+        model.screen = .home
+
+        model.handleGate2CompactURL(Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.openPlayback))
+
+        XCTAssertEqual(model.screen, .playback)
+        XCTAssertEqual(model.snapshot.sessionId, sessionId)
+        XCTAssertNil(model.lastError)
+    }
+
+    func testTheOpenPlaybackLinkWithNoSessionReportsItAndNothingElse() {
+        let model = makeModel()
+        XCTAssertFalse(model.hasActiveSession)
+        let screen = model.screen
+
+        model.handleGate2CompactURL(Gate2CompactCommandURL.url(command: Gate2CompactApplicationCommand.openPlayback))
+
+        XCTAssertEqual(model.lastError, "Nothing is playing right now.", "the URL router must not overwrite it")
+        XCTAssertEqual(model.screen, screen)
+    }
 }
 
 /// Records every call that the mix transaction makes, in order, and throws on `setMixesWithOtherAudio`
