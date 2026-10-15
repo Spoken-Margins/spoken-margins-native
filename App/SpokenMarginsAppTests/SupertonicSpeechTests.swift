@@ -1614,12 +1614,17 @@ final class SupertonicSpeechTests: XCTestCase {
     /// test and every later stand-in test with their "guard never reported" messages. Cost: such a
     /// failure now names the stand-in test, not the warm-up, so the timeout note goes in the first
     /// test's log and activity list.
-    /// The wait leaves 60 s of the first test's 180 s for its own renders and waits.
-    private let iOSVoiceWarmUpWait: TimeInterval = 120
+    ///
+    /// #1688: on 2026-10-15 the cold start took 125 to 180 s in four lane runs (it had been 30 to 65 s).
+    /// The 120 s wait gave up just before the service woke, the test's own renders then timed out behind
+    /// the blocked write, and the guard fell back to Supertonic's audio ("the guard stood in" failed) on
+    /// #1684, #1685 and #1686, none of which touch the guard. The wait is now 240 s and the test gets
+    /// 330 s (the plans allow up to 360 s), which leaves 90 s for the test's own renders and waits.
+    private let iOSVoiceWarmUpWait: TimeInterval = 240
 
     private func warmUpTheIOSVoice() async throws {
         guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
-        executionTimeAllowance = 180
+        executionTimeAllowance = 330
         let root = FileManager.default.temporaryDirectory.appending(path: "warm-up-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
