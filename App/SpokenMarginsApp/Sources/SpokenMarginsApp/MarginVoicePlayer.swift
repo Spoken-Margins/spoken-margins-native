@@ -197,6 +197,15 @@ final class MarginVoicePlayer: ObservableObject {
         player.playImmediately(atRate: Float(rate))
     }
 
+    /// The system transport goes back to a shared voice that a recording was holding (#1672); `beginShared` installed it first.
+    func installSharedRemoteControls() {
+        guard sharedMargin != nil else { return }
+        remoteControls.install { [weak self] command in
+            guard let self, self.sharedMargin != nil else { return }
+            self.host?.marginVoiceRemoteCommand(command)
+        }
+    }
+
     /// Pauses or resumes the shared voice and records it: the paused flag, the health record and the phase are
     /// separate writes, and a throw while resuming leaves all of them as they were.
     func setSharedPaused(_ paused: Bool) throws {

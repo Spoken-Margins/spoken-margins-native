@@ -171,6 +171,7 @@ extension Gate1AppModel {
     }
 
     func stopImportedCommentaryPlayback(resumeSource: Bool) {
+        if marginVoiceHeldForRecording?.kind == .shared { marginVoiceHeldForRecording = nil } // nothing is held once the voice is gone (#1672)
         let shouldResume = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: resumeSource)
         stopInterjectionAudioPlayback()
         marginVoicePlayer.forgetSharedMargin()

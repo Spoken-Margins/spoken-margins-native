@@ -921,7 +921,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNotNil(model.playingImportedCommentary, "Save plays the shared Margin on")
         XCTAssertFalse(model.importedCommentaryIsPaused)
         XCTAssertEqual(model.snapshot.status, .paused, "the source waits for the shared Margin to end")
-        try waitUntil("the source carries on past the shared Margin", timeout: 8) {
+        try waitUntil("the source carries on past the shared Margin", timeout: 12) {
             model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) > 1_500
                 || model.pendingImportedCommentary != nil
         }

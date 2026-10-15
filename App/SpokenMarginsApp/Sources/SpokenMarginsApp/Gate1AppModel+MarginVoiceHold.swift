@@ -53,12 +53,24 @@ extension Gate1AppModel {
     /// One the listener had paused themselves stays paused, for Play.
     func resumeHeldMarginVoice(_ held: HeldMarginVoice?) {
         marginVoiceHeldForRecording = nil
-        guard let held, held.wasSounding else { return }
+        guard let held else { return }
+        if held.kind == .shared { setSharedVoiceTransport(heldForRecording: false) }
+        guard held.wasSounding else { return }
         switch held.kind {
         case .moment: marginMomentConductor?.setVoicePaused(false)
         case .own: setOwnMarginPaused(false)
         case .shared: setImportedCommentaryPaused(false)
         }
+    }
+
+    /// The system transport while a shared voice is held for a recording: it belongs to the recording, so a headphone
+    /// click or Lock Screen Play/Pause saves the Margin (#1030) as it did when Add a Margin stopped the voice. The
+    /// voice takes it back when it plays on. `stopInterjectionAudioPlayback` gives the same back when the voice is let go.
+    private func setSharedVoiceTransport(heldForRecording: Bool) {
+        guard !mixesWithOtherAudio else { return }
+        if heldForRecording { marginVoicePlayer.endRemoteControls() } else { marginVoicePlayer.installSharedRemoteControls() }
+        (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(heldForRecording)
+        gate2CompactControls.setNowPlayingEnabled(heldForRecording)
     }
 
     /// #866: Add Margin while a Margin plays records straight away. The voice pauses where it is (#1672) and the source
@@ -79,6 +91,7 @@ extension Gate1AppModel {
             } else {
                 marginVoiceHeldForRecording = held(.shared, paused: importedCommentaryIsPaused)
                 setImportedCommentaryPaused(true)
+                setSharedVoiceTransport(heldForRecording: true)
             }
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)

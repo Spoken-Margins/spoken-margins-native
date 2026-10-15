@@ -168,7 +168,7 @@ extension Gate1AppModel {
     @discardableResult
     func seekText(toCharOffset charOffset: Int) -> Bool {
         marginMomentConductor?.sourceMoved()
-        if playingImportedCommentary != nil, marginVoiceHeldForRecording?.kind != .shared { stopImportedCommentaryPlayback(resumeSource: false) } // Add a Margin holds the voice and moves the source under it (#1672)
+        if playingImportedCommentary != nil, heldMarginVoice?.kind != .shared { stopImportedCommentaryPlayback(resumeSource: false) } // Add a Margin holds the voice and moves the source under it (#1672)
         recordDeveloperDiagnostic("seek.text.request", ["offset": String(charOffset)])
         synchronizeStreamingSpeechAnchorIfNeeded()
         return run { engine in
