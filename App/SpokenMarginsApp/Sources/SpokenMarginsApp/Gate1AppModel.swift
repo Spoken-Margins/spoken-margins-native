@@ -1369,12 +1369,7 @@ final class Gate1AppModel: ObservableObject {
             voiceURL: leveledVoiceURL(voiceURLs, itemId: itemId, margins: [target] + otherMargins)
         )
         conductor.voiceRate = Float(Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate))
-        conductor.prepareAudioSession = {
-            #if os(iOS)
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            #endif
-        }
+        conductor.prepareAudioSession = { [weak self] in try self?.prepareMarginMomentVoice() }
         conductor.onVoiceUnavailable = { [weak self] (marginId: String, reason: String) in
             self?.diagnostics["marginMoment.voiceUnavailable"] = "\(marginId):\(reason)"
             self?.reportWarning("That Margin's recording couldn't play, so listening continues.")

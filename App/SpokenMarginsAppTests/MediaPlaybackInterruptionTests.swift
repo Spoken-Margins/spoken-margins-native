@@ -528,6 +528,57 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertNil(model.diagnostics["marginMoment.chime"], "a muted layer's Margin plays with no chime (#932)")
     }
 
+    /// #1671: the owner's phone heard two Margins at once. A moment's voice (Play this moment, Now's rows) is the
+    /// conductor's own player, apart from the one that plays a Margin from its detail, and starting through one route
+    /// never stopped the other. Starting a Margin now stops any other Margin voice first.
+    func testStartingAnOwnMarginStopsAMomentsVoiceThatIsPlaying() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.stopInterjectionAudioPlayback(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true, "precondition: the moment's voice is playing")
+
+        let own = Interjection(
+            id: "own-margin", itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),
+            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_000),
+            audioPath: fixture.record.audioPath, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
+        )
+        try fixture.store.saveInterjection(own)
+        model.toggleInterjectionAudioPlayback(own)
+
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own), "your Margin plays")
+        XCTAssertNotEqual(marginMomentVoice(model)?.isPlaying, true, "the moment's voice stopped: one voice at a time")
+        XCTAssertNil(model.marginMoment)
+        let events = try XCTUnwrap(model.diagnostics["marginVoice.events"])
+        XCTAssertTrue(events.hasSuffix("stop:moment | start:own"), "Diagnostics name both players: \(events)")
+    }
+
+    /// #1671: the same from the other side. A shared Margin heard from its card stops a moment's voice first.
+    func testListeningToASharedMarginStopsAMomentsVoiceThatIsPlaying() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.stopInterjectionAudioPlayback(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true, "precondition: the moment's voice is playing")
+
+        model.listenToImportedCommentary(layerID: fixture.layer.id, interjectionID: fixture.record.id)
+
+        XCTAssertNotNil(model.playingImportedCommentary, "the shared Margin plays from its card")
+        XCTAssertNotEqual(marginMomentVoice(model)?.isPlaying, true, "the moment's voice stopped: one voice at a time")
+        let events = try XCTUnwrap(model.diagnostics["marginVoice.events"])
+        XCTAssertTrue(events.hasSuffix("stop:moment | start:shared"), "Diagnostics name both players: \(events)")
+    }
+
     /// #1308 (ANC-08): the host test drives the real player through pause and resume closures it wrote itself. This
     /// one goes through the app's own: the episode stands still while their voice plays, then plays on by itself.
     func testTheEpisodePlaysOnAfterASharedMarginsMoment() throws {
