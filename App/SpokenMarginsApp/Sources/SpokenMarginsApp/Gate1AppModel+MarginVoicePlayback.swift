@@ -334,7 +334,9 @@ extension Gate1AppModel: MarginVoicePlayerHost {
               played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
         let spoken = inlineSpokenMargins(itemId: itemID, store: store)
         let playedIdentity = Self.marginIdentity(played)
+        // A Margin recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
         let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
+            .filter { $0.marginId == playedIdentity || abs($0.mediaTimeMs - playedMs) > 250 }
         guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken {

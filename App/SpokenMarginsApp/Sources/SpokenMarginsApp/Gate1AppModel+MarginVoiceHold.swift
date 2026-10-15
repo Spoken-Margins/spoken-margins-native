@@ -43,9 +43,10 @@ extension Gate1AppModel {
         return stillHeld ? held : nil
     }
 
-    /// A Margin is recording over a held voice. Play and Pause have nothing to act on until it is saved or cancelled.
+    /// A Margin is recording over a held voice, or waiting on the microphone to. Play and Pause have nothing to act on
+    /// until it is saved or cancelled.
     var marginVoiceIsHeldForRecording: Bool {
-        snapshot.isRecording && heldMarginVoice != nil
+        (snapshot.isRecording || isRequestingRecordingPermission) && heldMarginVoice != nil
     }
 
     /// The recording is over (saved, cancelled, or never started): the voice it held plays on from where it stopped.
@@ -64,7 +65,11 @@ extension Gate1AppModel {
     /// moves to the playing Margin's place so the new Margin is anchored there. False when that move failed: nothing
     /// records, rather than recording at the wrong place.
     func handOffPlayingMarginToRecording() -> Bool {
+        let prior = heldMarginVoice // a second tap before recording starts finds the voice already held
         marginVoiceHeldForRecording = nil
+        func held(_ kind: HeldMarginVoice.Kind, paused: Bool) -> HeldMarginVoice {
+            HeldMarginVoice(kind: kind, wasSounding: prior?.kind == kind ? prior?.wasSounding ?? !paused : !paused)
+        }
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
             handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
@@ -72,18 +77,18 @@ extension Gate1AppModel {
             if importedCommentaryPhase.isFailed {
                 stopImportedCommentaryPlayback(resumeSource: false) // nothing sounds to keep
             } else {
-                marginVoiceHeldForRecording = HeldMarginVoice(kind: .shared, wasSounding: !importedCommentaryIsPaused)
+                marginVoiceHeldForRecording = held(.shared, paused: importedCommentaryIsPaused)
                 setImportedCommentaryPaused(true)
             }
         } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             handoff = MarginCaptureHandoff(moment: conductor.sequence)
-            marginVoiceHeldForRecording = HeldMarginVoice(kind: .moment, wasSounding: !conductor.isVoicePaused)
+            marginVoiceHeldForRecording = held(.moment, paused: conductor.isVoicePaused)
             conductor.setVoicePaused(true)
         } else if let playingID = playingInterjectionAudioId {
             // Your own Margin heard from its detail: it sits where it was recorded.
             let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
             handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
-            marginVoiceHeldForRecording = HeldMarginVoice(kind: .own, wasSounding: !ownMarginVoiceIsPaused)
+            marginVoiceHeldForRecording = held(.own, paused: ownMarginVoiceIsPaused)
             setOwnMarginPaused(true)
         } else {
             return true

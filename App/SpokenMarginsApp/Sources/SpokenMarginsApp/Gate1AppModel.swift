@@ -2561,7 +2561,7 @@ final class Gate1AppModel: ObservableObject {
             default: break
             }
         }
-        if playingImportedCommentary != nil {
+        if playingImportedCommentary != nil, !(command == .beginInterjection && marginVoiceHeldForRecording != nil) {
             switch command {
             case .play: resumePlayback()
             case .pause: pause()
@@ -2678,6 +2678,7 @@ final class Gate1AppModel: ObservableObject {
             if command == .beginInterjection || command == .finishInterjection || command == .cancelInterjection {
                 streamingSpeechQueue.resumeAfterInterjection()
             }
+            if command == .beginInterjection, !snapshot.isRecording { resumeHeldMarginVoice(heldMarginVoice) } // no recording came of it (#1672)
             reportFailure(error, context: "Compact control failed")
         }
     }

@@ -192,6 +192,7 @@ extension Gate1AppModel {
             case .stale:
                 return
             case .denied:
+                resumeHeldMarginVoice(heldMarginVoice) // no recording will come of it: the Margin it paused plays on (#1672)
                 reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
             case .granted:
                 startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
@@ -328,6 +329,10 @@ extension Gate1AppModel {
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
+        if heldMarginVoice?.kind == .shared { // a card up blocks writing; the Margin is let go, as Add a Margin used to do (#1672)
+            marginVoiceHeldForRecording = nil
+            stopImportedCommentaryPlayback(resumeSource: false)
+        }
         beginWrittenMargin()
     }
 
