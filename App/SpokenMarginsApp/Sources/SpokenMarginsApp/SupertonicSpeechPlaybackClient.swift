@@ -1153,6 +1153,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            renderedDurations.removeAll()
             standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
             initialPlaybackOffset = nil
@@ -1225,6 +1226,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            renderedDurations.removeAll()
             standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
             failedRenderReasons.removeAll()
@@ -1413,6 +1415,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            renderedDurations.removeAll()
             standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
             failedRenderReasons.removeAll()
@@ -2015,6 +2018,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     generationRenderOrder.removeAll()
                 }
                 generationResults.removeAll()
+                renderedDurations.removeAll()
                 standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
                 failedRenderReasons.removeAll()
