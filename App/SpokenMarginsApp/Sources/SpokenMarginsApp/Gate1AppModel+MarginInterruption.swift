@@ -42,7 +42,11 @@ extension Gate1AppModel {
         case .none:
             return
         case .resumeSource:
-            run { engine in snapshot = try engine.resumePlayback() }
+            if let held = heldMarginVoice {
+                resumeHeldMarginVoice(held) // a Margin was recorded over this voice: it plays on, not the source (#1672)
+            } else {
+                run { engine in snapshot = try engine.resumePlayback() }
+            }
             streamingSpeechQueue.resumeAfterInterjection()
             return
         case .saveCutShort:

@@ -767,8 +767,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     }
 
     /// #866 (found on the phone): Add Margin while a shared Margin's moment plays its voice used to be refused.
-    /// It now stops the voice, records at once at the shared Margin's place (not where the source paused a tick
-    /// after it), and the source carries on after the save like after any Margin (J3).
+    /// It now records at once at the shared Margin's place (not where the source paused a tick after it). The voice
+    /// is held while it records and plays on from where it stopped after the save (#1672), and then the source
+    /// carries on like after any Margin (J3).
     func testAddMarginWhileAMarginMomentPlaysRecordsAtThatMargin() throws {
         let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient())
         defer { fixture.cleanUp() }
@@ -781,18 +782,115 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
             model.marginMoment?.isPlayingMargin == true
         }
         XCTAssertEqual(model.marginMoment?.playing?.mediaTimeMs, 1_000)
+        try waitUntil("the voice has played a little") { (self.marginMomentVoice(model)?.currentTime ?? 0) > 0.2 }
 
         model.beginInterjection()
         XCTAssertTrue(model.snapshot.isRecording, "Add Margin records straight away, with no warning")
-        XCTAssertNil(model.marginMoment, "the Margin's voice stopped")
+        XCTAssertEqual(model.marginMomentConductor?.isVoicePaused, true, "the Margin's voice is held where it is, not dropped")
+        XCTAssertNotNil(model.marginMoment?.playing)
+        let heldAt = try XCTUnwrap(marginMomentVoice(model)?.currentTime)
         XCTAssertNotEqual(model.statusMessage, "Skip or finish the Margin that's playing before recording a new one.")
 
         model.finishInterjection()
         let saved = try XCTUnwrap(fixture.store.loadSessions(itemId: "real-source")
             .flatMap { try fixture.store.loadInterjections(sessionId: $0.id) }.first)
         XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 20, "anchored at the playing Margin")
-        try waitUntil("the source carries on") { model.snapshot.status == .playing }
-        XCTAssertNil(model.marginMoment, "the old voice doesn't come back")
+        XCTAssertEqual(model.marginMomentConductor?.isVoicePaused, false, "Save plays the Margin on")
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(marginMomentVoice(model)?.currentTime), heldAt, "from where it stopped, not from the start")
+        XCTAssertEqual(model.snapshot.status, .paused, "the source waits for the Margin to end")
+        try waitUntil("the Margin ends and the source carries on", timeout: 10) { model.snapshot.status == .playing }
+        XCTAssertNil(model.marginMoment, "the Margin that played on is over")
+    }
+
+    /// #1672 (found on the phone): cancelling the Margin recorded over a Margin plays the first one on too.
+    func testCancellingAMarginRecordedOverAMarginMomentPlaysThatMarginOn() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.pause() }
+        try waitUntil("playback reaches the shared Margin and its voice plays", timeout: 10) {
+            model.marginMoment?.isPlayingMargin == true
+        }
+
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertEqual(model.marginMomentConductor?.isVoicePaused, true)
+        model.cancelInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.marginMomentConductor?.isVoicePaused, false, "Cancel plays the Margin on")
+        XCTAssertEqual(model.snapshot.status, .paused, "the source waits for the Margin to end")
+        try waitUntil("the Margin ends and the source carries on", timeout: 10) { model.snapshot.status == .playing }
+    }
+
+    /// #1672 (found on the phone): pausing during a Margin's moment from the Lock Screen or headphones (the compact
+    /// transport) paused the Margin's voice no more than it resumed the source behind it: Play sent the listener back
+    /// to the item over the Margin. Play and Pause act on the voice, in place.
+    func testCompactPauseAndPlayDuringAMarginMomentActOnThatMargin() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+        model.playSharedMarginMoment(row)
+        defer { model.endMarginMoment(); model.stopInterjectionAudioPlayback(); model.pause() }
+        model.playMarginMomentNow()
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true, "precondition: the Margin's voice is playing")
+        XCTAssertEqual(model.snapshot.status, .paused, "precondition: the source waits behind it")
+
+        model.dispatchGate2CompactCommand(.togglePlayPause, origin: "now_playing")
+        XCTAssertEqual(model.marginMomentConductor?.isVoicePaused, true, "Pause holds the Margin")
+        XCTAssertEqual(model.snapshot.status, .paused)
+
+        model.dispatchGate2CompactCommand(.togglePlayPause, origin: "now_playing")
+        XCTAssertEqual(model.marginMomentConductor?.isVoicePaused, false, "Play carries the Margin on")
+        XCTAssertEqual(marginMomentVoice(model)?.isPlaying, true)
+        XCTAssertEqual(model.snapshot.status, .paused, "Play did not start the source over the Margin")
+    }
+
+    /// #1672 (found on the phone): your own Margin, played from its detail, paused sent the listener back to the item:
+    /// the player had no pause, so Play resumed the source over the voice. Pause holds the voice and Play plays it on.
+    func testPausingYourOwnMarginHoldsItAndPlayCarriesItOnNotTheSource() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.stopInterjectionAudioPlayback(); model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        let own = try fixture.addOwnMargin(sessionID: try XCTUnwrap(model.snapshot.sessionId))
+        model.toggleInterjectionAudioPlayback(own)
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own))
+        XCTAssertEqual(model.snapshot.status, .paused, "hearing a Margin from its detail pauses the source")
+        XCTAssertTrue(model.activePlaybackIsPlaying, "the transport shows the Margin playing")
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
+        try waitUntil("the voice has played a little") { player.currentTime().seconds > 0.2 }
+
+        model.playPause()
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own), "pausing is not stopping")
+        XCTAssertTrue(model.ownMarginVoiceIsPaused)
+        XCTAssertEqual(player.rate, 0)
+        XCTAssertFalse(model.activePlaybackIsPlaying)
+        XCTAssertEqual(model.snapshot.status, .paused)
+        let heldAt = player.currentTime().seconds
+
+        model.playPause()
+        XCTAssertFalse(model.ownMarginVoiceIsPaused, "Play carries the Margin on")
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own))
+        XCTAssertEqual(model.snapshot.status, .paused, "Play did not start the source over the Margin")
+        XCTAssertGreaterThanOrEqual(player.currentTime().seconds, heldAt, "from where it stopped")
+
+        model.dispatchGate2CompactCommand(.pause, origin: "now_playing")
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "the Lock Screen Pause holds it too")
+        model.dispatchGate2CompactCommand(.play, origin: "now_playing")
+        XCTAssertFalse(model.ownMarginVoiceIsPaused)
+        XCTAssertEqual(model.snapshot.status, .paused)
+
+        try waitUntil("the Margin ends and the source carries on", timeout: 10) { model.snapshot.status == .playing }
+        XCTAssertFalse(model.isPlayingInterjectionAudio(own))
     }
 
     /// #866: the same from the Lock Screen / Live Activity Add Margin, while a shared Margin opened from the list plays
@@ -811,7 +909,8 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
 
         model.dispatchGate2CompactCommand(.beginInterjection, origin: "live_activity")
         XCTAssertTrue(model.snapshot.isRecording, "the compact Add Margin records too")
-        XCTAssertNil(model.playingImportedCommentary, "the shared Margin stopped")
+        XCTAssertNotNil(model.playingImportedCommentary, "the shared Margin is held while it records (#1672)")
+        XCTAssertTrue(model.importedCommentaryIsPaused)
         XCTAssertEqual(model.diagnostics["marginCaptureHandoff"], "seekMedia(ms: 1000)")
 
         model.dispatchGate2CompactCommand(.finishInterjection, origin: "live_activity")
@@ -819,12 +918,15 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let saved = try XCTUnwrap(fixture.store.loadSessions(itemId: "real-source")
             .flatMap { try fixture.store.loadInterjections(sessionId: $0.id) }.first)
         XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 20, "anchored at the shared Margin")
+        XCTAssertNotNil(model.playingImportedCommentary, "Save plays the shared Margin on")
+        XCTAssertFalse(model.importedCommentaryIsPaused)
+        XCTAssertEqual(model.snapshot.status, .paused, "the source waits for the shared Margin to end")
         try waitUntil("the source carries on past the shared Margin", timeout: 8) {
             model.snapshot.status == .playing && (model.snapshot.currentMediaTimeMs ?? 0) > 1_500
                 || model.pendingImportedCommentary != nil
         }
         XCTAssertNil(model.pendingImportedCommentary, "the rejoin doesn't offer the shared Margin just answered")
-        XCTAssertNil(model.playingImportedCommentary, "the shared Margin doesn't resume over the source")
+        XCTAssertNil(model.playingImportedCommentary, "the shared Margin is over once the source carries on")
         XCTAssertEqual(model.snapshot.status, .playing)
     }
 
@@ -838,27 +940,30 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         defer { model.pause() }
         try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
         model.seekMedia(toMediaTimeMs: 5_000)
-        let own = Interjection(
-            id: "own-margin", itemId: "real-source", sessionId: try XCTUnwrap(model.snapshot.sessionId),
-            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
-            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_000),
-            audioPath: fixture.record.audioPath, audioStatus: "recorded", transcriptionStatus: "complete",
-            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
-        )
-        try fixture.store.saveInterjection(own)
+        let own = try fixture.addOwnMargin(sessionID: try XCTUnwrap(model.snapshot.sessionId))
         model.toggleInterjectionAudioPlayback(own)
         XCTAssertTrue(model.isPlayingInterjectionAudio(own))
         XCTAssertEqual(model.snapshot.status, .paused, "hearing a Margin from its detail pauses the source")
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
+        try waitUntil("the voice has played a little") { player.currentTime().seconds > 0.2 }
 
         model.beginInterjection()
         XCTAssertTrue(model.snapshot.isRecording, "Add Margin records straight away")
-        XCTAssertFalse(model.isPlayingInterjectionAudio(own), "your Margin's voice stopped")
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own), "your Margin is held while the new one records (#1672)")
+        XCTAssertTrue(model.ownMarginVoiceIsPaused)
         XCTAssertEqual(model.diagnostics["marginCaptureHandoff"], "seekMedia(ms: 1000)")
+        let heldAt = player.currentTime().seconds
 
         model.finishInterjection()
         let saved = try XCTUnwrap(fixture.store.loadSessions(itemId: "real-source")
             .flatMap { try fixture.store.loadInterjections(sessionId: $0.id) }.first { $0.id != own.id })
         XCTAssertEqual(try XCTUnwrap(saved.anchor.mediaTimeMs), 1_000, accuracy: 20, "anchored at the Margin that played, not at 5 s")
+        XCTAssertTrue(model.isPlayingInterjectionAudio(own), "Save plays your Margin on")
+        XCTAssertFalse(model.ownMarginVoiceIsPaused)
+        XCTAssertGreaterThanOrEqual(player.currentTime().seconds, heldAt, "from where it stopped, not from the start")
+        XCTAssertEqual(model.snapshot.status, .paused, "the source waits for your Margin to end")
+        try waitUntil("your Margin ends and the source carries on", timeout: 10) { model.snapshot.status == .playing }
+        XCTAssertFalse(model.isPlayingInterjectionAudio(own))
     }
 
     // MARK: Leveled Margins (#467)
@@ -994,6 +1099,19 @@ private struct SharedMarginHearingFixture {
         _ = try store.importCommentaryLayer(layer, interjections: [record])
         model.selectedItem.importedCommentaryLayers = [layer]
         model.selectedItem.importedCommentaryInterjections = [layer.id: [record]]
+    }
+
+    /// One of your own spoken Margins on the item, at 1 s, with the shared Margin's two-second voice.
+    func addOwnMargin(sessionID: String) throws -> Interjection {
+        let own = Interjection(
+            id: "own-margin", itemId: "real-source", sessionId: sessionID,
+            targetType: .item, targetId: "real-source", createdAt: Date(), roughPercent: 3,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_000),
+            audioPath: record.audioPath, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: "My Margin", status: "active"
+        )
+        try store.saveInterjection(own)
+        return own
     }
 
     func storedRecord() throws -> ImportedCommentaryInterjection? {

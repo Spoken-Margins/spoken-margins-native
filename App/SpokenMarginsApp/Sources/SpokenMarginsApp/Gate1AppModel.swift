@@ -297,6 +297,8 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
     private(set) var marginMomentConductor: MarginMomentConductor?
+    /// The Margin voice Add a Margin paused and kept (`Gate1AppModel+MarginVoiceHold.swift`, #1672).
+    var marginVoiceHeldForRecording: HeldMarginVoice?
     private(set) var marginMomentClock = MarginMomentClock.media // media time, or narration time for text read aloud (#1577)
     /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
     var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
@@ -304,6 +306,7 @@ final class Gate1AppModel: ObservableObject {
     var activePlaybackIsPlaying: Bool {
         if playingImportedCommentary != nil { return importedCommentaryPhase.showsPause }
         if marginMomentConductor?.isPlayingVoice == true { return !marginMomentVoiceIsPaused }
+        if ownMarginVoiceHasTransport { return !ownMarginVoiceIsPaused }
         return snapshot.skimBridgeState?.status == .playing || snapshot.status.isPlaybackActive
     }
 
@@ -1573,6 +1576,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func playPause() {
+        if marginVoiceIsHeldForRecording { return } // a Margin is recording over the voice; nothing plays until it ends
         if playingImportedCommentary != nil {
             // Pause while it sounds or loads; Play (resume, or Retry after a failure) otherwise (#941).
             setImportedCommentaryPaused(importedCommentaryPhase.showsPause)
@@ -1580,6 +1584,10 @@ final class Gate1AppModel: ObservableObject {
         }
         if let conductor = marginMomentConductor, conductor.isPlayingVoice {
             conductor.setVoicePaused(!conductor.isVoicePaused)
+            return
+        }
+        if ownMarginVoiceHasTransport {
+            setOwnMarginPaused(!ownMarginVoiceIsPaused)
             return
         }
         if snapshot.phase == .finished, let itemID = snapshot.itemId {
@@ -1600,12 +1608,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func pause() {
+        if marginVoiceIsHeldForRecording { return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(true)
             return
         }
         if let conductor = marginMomentConductor, conductor.isPlayingVoice, !conductor.isVoicePaused {
             conductor.setVoicePaused(true)
+            return
+        }
+        if ownMarginVoiceHasTransport, !ownMarginVoiceIsPaused {
+            setOwnMarginPaused(true)
             return
         }
         if snapshot.skimBridgeState != nil {
@@ -1722,12 +1735,17 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func resumePlayback() {
+        if marginVoiceIsHeldForRecording { return }
         if playingImportedCommentary != nil {
             setImportedCommentaryPaused(false)
             return
         }
         if let conductor = marginMomentConductor, conductor.isVoicePaused {
             conductor.setVoicePaused(false)
+            return
+        }
+        if ownMarginVoiceHasTransport, ownMarginVoiceIsPaused {
+            setOwnMarginPaused(false)
             return
         }
         if snapshot.skimBridgeState != nil {
@@ -2156,38 +2174,6 @@ final class Gate1AppModel: ObservableObject {
         }
     }
 
-    /// #866: Add Margin while a Margin plays records straight away. The voice stops without resuming the source,
-    /// and the source moves to the playing Margin's place so the new Margin is anchored there. False when that move
-    /// failed: nothing records, rather than recording at the wrong place.
-    func handOffPlayingMarginToRecording() -> Bool {
-        let handoff: MarginCaptureHandoff
-        if let prompt = playingImportedCommentary {
-            handoff = MarginCaptureHandoff(sharedMargin: prompt.interjection, itemId: prompt.layer.itemId)
-            sharedMarginOffers.markAnnounced(prompt.id) // the rejoin mustn't offer it again
-            stopImportedCommentaryPlayback(resumeSource: false)
-        } else if let conductor = marginMomentConductor, conductor.isPlayingVoice {
-            handoff = MarginCaptureHandoff(moment: conductor.sequence)
-            endMarginMoment()
-        } else if let playingID = playingInterjectionAudioId {
-            // Your own Margin heard from its detail: it sits where it was recorded.
-            let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
-            handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
-            stopInterjectionAudioPlayback()
-        } else {
-            return true
-        }
-        let move = handoff.sourceMove(from: snapshot)
-        diagnostics["marginCaptureHandoff"] = String(describing: move)
-        let moved: Bool
-        switch move {
-        case .stay: return true
-        case .seekMedia(let ms): moved = seekMedia(toMediaTimeMs: ms)
-        case .seekText(let charOffset): moved = seekText(toCharOffset: charOffset)
-        }
-        if !moved { reportFailure("Couldn't go back to that Margin's place, so no Margin was started. Tap Add Margin again to record where the source is.") }
-        return moved
-    }
-
     func playTurn(_ turn: ConversationTurn, fromTimeline: Bool = false) {
         stopSpeechPreviews()
         run { engine in
@@ -2561,6 +2547,20 @@ final class Gate1AppModel: ObservableObject {
         if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
+        // A Margin recording over a held voice is saved or cancelled through the model, which plays the voice on (#1672).
+        if snapshot.isRecording, heldMarginVoice != nil, command == .finishInterjection || command == .cancelInterjection {
+            if command == .finishInterjection { finishInterjection() } else { cancelInterjection() }
+            return
+        }
+        // Play and Pause reach the Margin's voice while one has the floor, not the source paused behind it (#1672).
+        if !snapshot.isRecording, marginMomentConductor?.isPlayingVoice == true || ownMarginVoiceHasTransport {
+            switch command {
+            case .play: resumePlayback(); return
+            case .pause: pause(); return
+            case .togglePlayPause: playPause(); return
+            default: break
+            }
+        }
         if playingImportedCommentary != nil {
             switch command {
             case .play: resumePlayback()
