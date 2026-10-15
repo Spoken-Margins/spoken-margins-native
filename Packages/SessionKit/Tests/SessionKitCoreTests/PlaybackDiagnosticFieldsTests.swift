@@ -84,4 +84,31 @@ final class PlaybackDiagnosticFieldsTests: XCTestCase {
         ).keys).union(PlaybackDiagnosticFields.narration(intent: "stopped", systemVoiceActive: false, standInPassage: false).keys)
         XCTAssertEqual(keys, ["code", "reason", "policyBlock", "conditions", "offset", "clientIntent", "clientVoice", "clientStandIn"])
     }
+
+    /// #1337: the export showed `item=none` while narration kept reading. The record names the path and
+    /// holds only hashed tokens and state.
+    func testSessionEndNamesThePathAndKeepsTheNarrationState() {
+        let narration = PlaybackDiagnosticFields.narration(intent: "playing", systemVoiceActive: false, standInPassage: false)
+        for reason in [PlaybackDiagnosticFields.SessionEndReason.miniPlayerClose, .doneButton, .chapterActionSwitchItem, .startNewSession] {
+            let fields = PlaybackDiagnosticFields.sessionEnd(reason: reason, itemToken: "aaaa", sessionToken: "bbbb", narration: narration)
+            XCTAssertEqual(fields["reason"], reason.rawValue)
+            XCTAssertEqual(fields["item"], "aaaa")
+            XCTAssertEqual(fields["session"], "bbbb")
+            XCTAssertEqual(fields["clientIntent"], "playing", "the state before the close stays in the record")
+        }
+    }
+
+    func testClearedSessionFlagsNarrationThatOutlivesIt() {
+        for (intent, outlives) in [("playing", true), ("paused", false), ("stopped", false), ("", false)] {
+            let narration = PlaybackDiagnosticFields.narration(intent: intent, systemVoiceActive: true, standInPassage: false)
+            let fields = PlaybackDiagnosticFields.sessionCleared(
+                previousItemToken: "aaaa", previousSessionToken: "bbbb", previousStatus: "playing", narration: narration
+            )
+            XCTAssertEqual(fields["narrationOutlivesSession"], String(outlives), "intent \(intent)")
+            XCTAssertEqual(fields["previousItem"], "aaaa")
+            XCTAssertEqual(fields["previousSession"], "bbbb")
+            XCTAssertEqual(fields["previousStatus"], "playing")
+        }
+        XCTAssertFalse(PlaybackDiagnosticFields.narrationIsPlaying([:]), "a client that reports nothing is not playing")
+    }
 }

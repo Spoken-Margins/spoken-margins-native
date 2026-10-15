@@ -23,15 +23,27 @@ public enum PublisherNarrationEvidence {
     /// Reads `window._preloads` on a Substack post page: the post's own completed voiceover, or nil for a
     /// podcast post, a post without a voiceover, one still processing, or a page that isn't a post.
     /// Substack's automatic narration (`audio_items` of type `tts`, the "Listen" button on a post whose
-    /// author recorded nothing) is not a voiceover: `has_voiceover` stays false for it.
+    /// author recorded nothing) is not a voiceover: `has_voiceover` stays false for it. See `generatedVoice`.
     public static func voiceover(inPostPage html: String) -> PostVoiceover? {
+        completedRecording(inPostPage: html, type: "voiceover", requiresVoiceoverFlag: true)
+    }
+
+    /// The post's completed automatic narration, which Substack makes for a post whose author recorded nothing
+    /// (owner's call, 2026-10-14: a shared post plays it, after the author's voiceover if there is one). Nil for
+    /// a paywalled one (status `paywalled`, no audio address), one still processing, or a page that isn't a post.
+    public static func generatedVoice(inPostPage html: String) -> PostVoiceover? {
+        completedRecording(inPostPage: html, type: "tts", requiresVoiceoverFlag: false)
+    }
+
+    private static func completedRecording(inPostPage html: String, type: String, requiresVoiceoverFlag: Bool) -> PostVoiceover? {
         guard let post = post(inPostPage: html),
-              post["type"] as? String == "newsletter", post["has_voiceover"] as? Bool == true,
+              post["type"] as? String == "newsletter",
+              !requiresVoiceoverFlag || post["has_voiceover"] as? Bool == true,
               let canonicalURL = post["canonical_url"] as? String,
               let postID = post["id"] as? Int,
               let recordings = post["audio_items"] as? [[String: Any]],
               let recording = recordings.first(where: {
-                  $0["type"] as? String == "voiceover" && $0["status"] as? String == "completed"
+                  $0["type"] as? String == type && $0["status"] as? String == "completed"
                       && $0["post_id"] as? Int == postID
               }),
               let audio = recording["audio_url"] as? String,
@@ -43,8 +55,7 @@ public enum PublisherNarrationEvidence {
     }
 
     /// Why a post page gives no voiceover, as a short token for diagnostics (#810), so "the post had none"
-    /// can be told from "the page wasn't read". The owner's post (2026-10-05) offered only Substack's own
-    /// automatic narration, `generated_voice_only`, which the Substack app also shows as listenable.
+    /// can be told from "the page wasn't read".
     /// Meant for a page `voiceover(inPostPage:)` gave nothing for; for a page that does give one it returns
     /// `voiceover_unreadable`.
     public static func absence(inPostPage html: String) -> String {
@@ -66,7 +77,7 @@ public enum PublisherNarrationEvidence {
         }
         if let unfinished = voiceovers.first { return "voiceover_\(status(unfinished))" }
         if let generated = recordings.first(where: { $0["type"] as? String == "tts" }) {
-            return status(generated) == "completed" ? "generated_voice_only" : "generated_voice_\(status(generated))"
+            return status(generated) == "completed" ? "generated_voice_unreadable" : "generated_voice_\(status(generated))"
         }
         return post["has_voiceover"] as? Bool == true ? "no_recording_listed" : "no_recording"
     }
@@ -85,32 +96,49 @@ public enum PublisherNarrationEvidence {
         preloads(in: html)?["post"] as? [String: Any]
     }
 
+    /// A followed post (#1616): `entry` with the page's completed voiceover of that same post, else its completed
+    /// automatic narration (marked as generated). Nil when the page gives neither, or is another post's.
     public static func confirmedEntry(_ entry: FeedEntry, html: String) -> FeedEntry? {
-        guard let voiceover = voiceover(inPostPage: html), voiceover.canonicalURL == entry.canonicalURL else { return nil }
+        let recording: PostVoiceover, generated: Bool
+        if let voiceover = voiceover(inPostPage: html) {
+            (recording, generated) = (voiceover, false)
+        } else if let voice = generatedVoice(inPostPage: html) {
+            (recording, generated) = (voice, true)
+        } else {
+            return nil
+        }
+        guard recording.canonicalURL == entry.canonicalURL else { return nil }
         var confirmed = entry
         confirmed.publisherNarrationConfirmed = true
-        confirmed.audioURL = voiceover.audioURL
-        if let durationMs = voiceover.durationMs { confirmed.audioDurationMs = durationMs }
+        confirmed.publisherNarrationGenerated = generated ? true : nil
+        confirmed.audioURL = recording.audioURL
+        if let durationMs = recording.durationMs { confirmed.audioDurationMs = durationMs }
         return confirmed
     }
 
     /// A post shared as a link (#810): the record to keep beside the article imported from it, when the page
-    /// has a completed voiceover of that same post. `finalURL` is where the page ended up after redirects,
-    /// since a shared `open.substack.com/pub/<name>/p/<slug>` link redirects to the post's canonical address.
+    /// has a completed voiceover of that same post, else its completed automatic narration. `finalURL` is where
+    /// the page ended up after redirects, since a shared `open.substack.com/pub/<name>/p/<slug>` link redirects
+    /// to the post's canonical address.
     public static func publisherAudio(postPage html: String, finalURL: URL, itemId: String) -> PublisherAudio? {
-        guard let voiceover = voiceover(inPostPage: html),
-              let canonical = URL(string: voiceover.canonicalURL),
-              samePage(canonical, finalURL) else { return nil }
+        let recording: (PostVoiceover, String)
+        if let voiceover = voiceover(inPostPage: html) {
+            recording = (voiceover, PublisherAudioDetector.detectedFromPublisherNarration)
+        } else if let generated = generatedVoice(inPostPage: html) {
+            recording = (generated, PublisherAudioDetector.detectedFromGeneratedNarration)
+        } else {
+            return nil
+        }
+        guard let canonical = URL(string: recording.0.canonicalURL), samePage(canonical, finalURL) else { return nil }
         return PublisherAudio(
-            itemId: itemId, audioURL: voiceover.audioURL, durationMs: voiceover.durationMs,
-            detectedFrom: PublisherAudioDetector.detectedFromPublisherNarration
+            itemId: itemId, audioURL: recording.0.audioURL, durationMs: recording.0.durationMs, detectedFrom: recording.1
         )
     }
 
     /// `absence(inPostPage:)`, plus `other_post` for a page whose voiceover belongs to a different address
     /// than the one it ended at.
     public static func absence(postPage html: String, finalURL: URL) -> String {
-        if let voiceover = voiceover(inPostPage: html), let canonical = URL(string: voiceover.canonicalURL),
+        if let found = voiceover(inPostPage: html) ?? generatedVoice(inPostPage: html), let canonical = URL(string: found.canonicalURL),
            !samePage(canonical, finalURL) { return "other_post" }
         return absence(inPostPage: html)
     }

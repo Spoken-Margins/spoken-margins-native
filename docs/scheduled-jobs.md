@@ -143,6 +143,8 @@ Whether GitHub's free hosted runners for public repos include enough macOS capac
 | T4 and T5 journeys (computer use), the phone build, the owner's phone check, signing, TestFlight upload | Not replaceable. They need the owner's Mac, his login keychain and his phone. |
 | The usage breaker, the Dial, the Mac tick, disk relief, keep-awake | Not Actions jobs at all. Unaffected. |
 
-### The question
+### The owner's answer (2026-10-14)
 
-Which do you want if you go ahead: a new public repo made from a cleaned snapshot of `next` (no history and no issues, and every hash here stays valid), with this repo kept private as the working one, or flipping this repo after rewriting its history (every hash changes and the issue and comment history goes public)?
+Not now. The repo stays private until Solid Ground ships and the owner gives an explicit go. Licence questions have to be settled first (the missing `LICENSE`, Supertonic's OpenRAIL-M terms, third-party fixture content). Nothing on this page is a decision to go public.
+
+Still open for when he gives the go: whether the public copy is a new repo from a cleaned snapshot of `next` (no history, no issues, every hash here stays valid, this repo stays the private working one) or this repo flipped after its history is rewritten (every hash changes and the issue and comment history goes public).

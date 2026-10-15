@@ -19,6 +19,30 @@ final class PlaybackStartWatchTests: XCTestCase {
         XCTAssertEqual(watch.observe(itemId: "article", status: .playing, at: tap + 20), [], "only the first audio counts")
     }
 
+    func testASeekThatBecomesSilentHasItsOwnWaitingCueClock() {
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: "article", status: .playing, requestedAt: tap, at: tap + 1)
+        _ = watch.observe(itemId: "article", status: .starting, requestedAt: tap, at: tap + 60)
+
+        XCTAssertEqual(watch.waitingItemId, "article")
+        XCTAssertEqual(watch.cueWait(at: tap + 60) ?? -1, 0.8, accuracy: 0.001,
+                       "the old playback request is not the beginning of this seek's wait")
+        XCTAssertFalse(watch.takeCue(at: tap + 60.5))
+        XCTAssertTrue(watch.takeCue(at: tap + 60.81))
+        XCTAssertEqual(watch.observe(itemId: "article", status: .playing, requestedAt: tap, at: tap + 62),
+                       [.firstAudio(itemId: "article", milliseconds: 2_000)])
+    }
+
+    func testAnInstantOrQuickSeekDoesNotProduceAWaitingCue() {
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: "article", status: .playing, requestedAt: tap, at: tap)
+        _ = watch.observe(itemId: "article", status: .playing, requestedAt: tap, at: tap + 60)
+        XCTAssertNil(watch.waitingItemId, "cached audio can keep playing without a silent start")
+        _ = watch.observe(itemId: "article", status: .starting, requestedAt: tap, at: tap + 70)
+        _ = watch.observe(itemId: "article", status: .playing, requestedAt: tap, at: tap + 70.2)
+        XCTAssertFalse(watch.takeCue(at: tap + 71), "a quick pending seek resolves before its cue")
+    }
+
     func testAStartThatEndsWithoutAudioIsNotCountedAsFirstAudio() {
         var watch = PlaybackStartWatch()
         _ = watch.observe(itemId: "article", status: .starting, at: tap)
@@ -33,17 +57,18 @@ final class PlaybackStartWatchTests: XCTestCase {
                        [.firstAudio(itemId: "podcast", milliseconds: 1_250)])
     }
 
-    /// Review of #580: skips, seeks and rate changes send a playing item back through "starting".
-    func testASkipWhilePlayingIsNotANewStart() {
+    /// #1101: skips and seeks may need fresh audio. Their wait is timed from the silent transition.
+    func testAPendingSkipWhilePlayingGetsACueWithoutReusingItsOriginalStartTime() {
         var watch = PlaybackStartWatch()
         _ = watch.observe(itemId: "podcast", status: .starting, at: tap)
         XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 2),
                        [.firstAudio(itemId: "podcast", milliseconds: 2_000)])
 
         XCTAssertEqual(watch.observe(itemId: "podcast", status: .starting, at: tap + 60), [])
-        XCTAssertNil(watch.waitingItemId)
-        XCTAssertFalse(watch.takeCue(at: tap + 65))
-        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 66), [])
+        XCTAssertEqual(watch.waitingItemId, "podcast")
+        XCTAssertTrue(watch.takeCue(at: tap + 65))
+        XCTAssertEqual(watch.observe(itemId: "podcast", status: .playing, at: tap + 66),
+                       [.firstAudio(itemId: "podcast", milliseconds: 6_000)])
 
         _ = watch.observe(itemId: "podcast", status: .paused, at: tap + 70)
         _ = watch.observe(itemId: "podcast", status: .starting, at: tap + 80)
@@ -52,7 +77,7 @@ final class PlaybackStartWatchTests: XCTestCase {
                        [.ended(itemId: "podcast", milliseconds: 1_000, status: .playing),
                         .firstAudio(itemId: "article", milliseconds: 0)])
         _ = watch.observe(itemId: "article", status: .starting, at: tap + 90)
-        XCTAssertNil(watch.waitingItemId, "a skip within the next item is not a start")
+        XCTAssertEqual(watch.waitingItemId, "article", "a pending skip within the next item can be silent too")
     }
 
     /// Audit of #580: a buffered resume can go straight from paused to playing, and still counts as a start.
@@ -95,13 +120,12 @@ final class PlaybackStartWatchTests: XCTestCase {
         XCTAssertEqual(watch.cueWait(at: tap + 10) ?? -1, 0.8, accuracy: 0.001, "no request stamp: the full delay")
     }
 
-    /// Audit of #580: another target on the same item (a Margin's answer) is a new start; a seek on the same
-    /// target is not.
+    /// Another target on the same item (a Margin's answer) is a new start; a pending seek also opens a wait.
     func testAnotherTargetOnTheSameItemIsANewStart() {
         var watch = PlaybackStartWatch()
         _ = watch.observe(itemId: "article", targetId: "article", status: .playing, at: tap)
         XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .starting, at: tap + 5), [])
-        XCTAssertNil(watch.waitingItemId, "a seek on the same target")
+        XCTAssertEqual(watch.waitingItemId, "article", "a silent seek on the same target")
         _ = watch.observe(itemId: "article", targetId: "article", status: .playing, at: tap + 6)
 
         XCTAssertEqual(watch.observe(itemId: "article", targetId: "answer", status: .starting, at: tap + 10), [])
@@ -111,14 +135,13 @@ final class PlaybackStartWatchTests: XCTestCase {
                        [.firstAudio(itemId: "article", milliseconds: 2_000)])
     }
 
-    /// Audit of #580: a new request on the same item and target (another saved session of the article) is a new
-    /// start; a seek under the same request is not.
+    /// A new request on the same item and target uses its request time; a pending seek uses its transition time.
     func testANewRequestOnTheSameTargetIsANewStart() {
         var watch = PlaybackStartWatch()
         let first = tap, second = tap + 20
         _ = watch.observe(itemId: "article", targetId: "article", status: .playing, requestedAt: first, at: tap + 1)
         XCTAssertEqual(watch.observe(itemId: "article", targetId: "article", status: .starting, requestedAt: first, at: tap + 10), [])
-        XCTAssertNil(watch.waitingItemId, "a seek keeps its request")
+        XCTAssertEqual(watch.waitingItemId, "article", "a seek keeps its request but still needs a waiting cue")
         _ = watch.observe(itemId: "article", targetId: "article", status: .playing, requestedAt: first, at: tap + 11)
         let opened = watch.startCount
 

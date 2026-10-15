@@ -123,13 +123,13 @@ final class Gate1AppModel: ObservableObject {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/latest.json"))
 
-    private let playbackEventRecording = DeveloperDiagnosticRecording(
+    let playbackEventRecording = DeveloperDiagnosticRecording(
         limit: 300,
         fileURL: Gate1AppModel.isRunningUnitTests ? nil : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
             .appendingPathComponent("DeveloperDiagnostics/playback-events.json"),
         automatic: true
     )
-    private var lastPlaybackEventCheckpoint: TimeInterval = 0
+    var lastPlaybackEventCheckpoint: TimeInterval = 0
     var speechInterruptionResumeWatch = SpeechInterruptionResumeWatch()
 
     func recordDeveloperDiagnostic(_ kind: String, _ fields: [String: String] = [:]) {
@@ -139,15 +139,6 @@ final class Gate1AppModel: ObservableObject {
            !kind.hasPrefix("scrub."), kind != "main.delayed" {
             playbackEventRecording.record(kind, fields)
         }
-    }
-
-    private func recordPlaybackEventState(previous: SessionSnapshot) {
-        let now = ProcessInfo.processInfo.systemUptime
-        let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId
-            || previous.lastFailure != snapshot.lastFailure
-        guard changed || (snapshot.status.isPlaybackActive && now - lastPlaybackEventCheckpoint >= 30) else { return }
-        lastPlaybackEventCheckpoint = now
-        playbackEventRecording.record("playback.state", playbackStateRecordFields())
     }
 
     private func configureDeveloperDiagnosticRecording() {
@@ -2020,7 +2011,7 @@ final class Gate1AppModel: ObservableObject {
         stopSpeechPreviews()
         streamingSpeechQueue.stopAndClear()
         if hasActiveSession, let engine {
-            _ = try? endEngineSession(engine)
+            _ = try? endEngineSession(engine, reason: .startNewSession)
             snapshot = engine.snapshot
         }
         activeItemId = id
@@ -4479,7 +4470,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { feedSubscriptions = storedFeedSubscriptions(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
     }
 
     func requireLocalSourceImporter() throws -> LocalSourceImporter {
