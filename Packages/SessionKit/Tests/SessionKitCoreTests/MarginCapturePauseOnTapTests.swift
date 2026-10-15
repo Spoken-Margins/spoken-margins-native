@@ -52,8 +52,14 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         var begins = 0
         var cancels = 0
         var failsToStart = false
+        /// A slow microphone start (the Bluetooth switch), and what the source was doing while it ran.
+        var startDelay: TimeInterval = 0
+        var sourcePlaying: (() -> Bool)?
+        var sourceWasPlayingDuringStart: Bool?
         func beginRecording() throws {
             if failsToStart { throw SessionKitError.invalidCommandForState("microphone") }
+            sourceWasPlayingDuringStart = sourcePlaying?()
+            if startDelay > 0 { Thread.sleep(forTimeInterval: startDelay) }
             begins += 1
         }
         func cancelRecording() throws { cancels += 1 }
@@ -130,12 +136,44 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
 
         _ = try rig.engine.cancelInterjection()
 
-        XCTAssertTrue(rig.audio.playing, "the snapshot said paused when the Margin began, but the podcast was playing before the tap")
+        XCTAssertTrue(rig.audio.playing, "the podcast was playing before the tap, so Cancel plays it on")
         XCTAssertEqual(rig.audio.events, ["play@3969000"])
         XCTAssertEqual(try rig.journal.load().drafts.count, 0)
     }
 
     // MARK: Done when 3: Cancel while the start is slow
+
+    func testASlowMicrophoneStartNeverRunsOverAPlayingPodcast() throws {
+        let rig = try rig(item: episode)
+        rig.recorder.startDelay = 0.3
+        rig.recorder.sourcePlaying = { rig.audio.playing }
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+
+        _ = try rig.engine.beginInterjection(request: MarginCaptureRequest())
+
+        XCTAssertEqual(rig.recorder.sourceWasPlayingDuringStart, false, "the listener never talks over the podcast")
+        XCTAssertEqual(rig.recorder.begins, 1)
+    }
+
+    func testAPlayFromTheLockScreenWhileWaitingIsNotSoughtAgainByCancel() throws {
+        let rig = try rig(item: episode)
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+        _ = try rig.engine.resumePlayback() // the listener pressed Play on the Lock Screen
+        rig.audio.events.removeAll()
+
+        _ = try rig.engine.abandonPendingInterjection()
+
+        XCTAssertEqual(rig.audio.events, [], "it already plays; Cancel doesn't restart it")
+        XCTAssertFalse(rig.engine.hasPendingInterjectionPause)
+    }
+
+    func testACancelThatFindsThePauseStillPendingClearsIt() throws {
+        let rig = try rig(item: episode)
+        rig.engine.pauseSourceForInterjection(request: MarginCaptureRequest())
+        _ = try rig.engine.cancelInterjection()
+        XCTAssertFalse(rig.engine.hasPendingInterjectionPause, "a stale pause would be taken for the next Margin's")
+        XCTAssertTrue(rig.audio.playing)
+    }
 
     func testCancelBeforeTheSlowStartRunsStopsItAndResumesThePodcastWithNoDraft() throws {
         let rig = try rig(item: episode)
@@ -210,7 +248,7 @@ final class MarginCapturePauseOnTapTests: XCTestCase {
         let fields = rig.engine.recordingCaptureDiagnostics()
         func ms(_ key: String) throws -> Int { try XCTUnwrap(Int(try XCTUnwrap(fields[key]))) }
 
-        XCTAssertLessThan(try ms("tapToSourcePausedMs"), 150, "the pause came with the tap")
+        XCTAssertLessThan(try ms("tapToSourcePausedMs"), try ms("tapToEngineEnteredMs"), "the pause came with the tap, before the wait")
         XCTAssertGreaterThanOrEqual(try ms("tapToEngineEnteredMs"), 250, "the wait before the engine call shows as its own step")
         XCTAssertGreaterThanOrEqual(try ms("tapToAnchorReadyMs"), try ms("tapToEngineEnteredMs"))
         XCTAssertGreaterThanOrEqual(try ms("tapToRecorderRequestedMs"), try ms("tapToAnchorReadyMs"))

@@ -340,6 +340,7 @@ extension Gate1AppModel {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
         beginWrittenMargin()
+        if writtenMarginDraft == nil { resumeSourcePausedOnTap() } // the pencil refused: nothing else will put the source back
     }
 
     func saveWrittenMargin(text: String) {

@@ -1434,8 +1434,9 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("beginInterjection")
         }
         guard var session = currentSession else { throw SessionKitError.invalidCommandForState("beginInterjection") }
+        // Left in place until the steps that can throw have passed, so a failure here still leaves the app
+        // something to put back (`hasPendingInterjectionPause`).
         let pendingPause = pendingInterjectionPause
-        pendingInterjectionPause = nil
         marginCaptureTiming = pendingPause?.timing ?? MarginCaptureTiming(request: request)
         marginCaptureTiming?.engineEntered(at: ProcessInfo.processInfo.systemUptime)
         // The tap already paused it (#1696), so the snapshot no longer says it was playing.
@@ -1473,6 +1474,7 @@ public final class SessionEngine {
         closedRecordingRef = nil
         storedMarginFinish = nil
         marginCaptureTiming?.anchorReady(at: ProcessInfo.processInfo.systemUptime)
+        pendingInterjectionPause = nil // from here a failure puts the source back itself, below
         do {
             marginCaptureTiming?.recorderRequested(at: ProcessInfo.processInfo.systemUptime)
             try recorder.beginRecording()
@@ -1554,6 +1556,8 @@ public final class SessionEngine {
         guard pendingInterjectionPause != nil else { return snapshot }
         pendingInterjectionPause = nil
         marginCaptureTiming = nil
+        // Play from the Lock Screen or Now Playing in the meantime already did the job; don't seek it again.
+        guard !snapshot.status.isPlaybackActive else { return snapshot }
         guard var session = currentSession else { return snapshot }
         // The pause froze the clock, so this reads where the listener stopped. A failure here still resumes.
         if let synced = try? syncCurrentPositionFromAudio(session) { session = synced }
@@ -2093,6 +2097,7 @@ public final class SessionEngine {
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
+        pendingInterjectionPause = nil // a Cancel that finds the tap's pause still pending resumes below like any other
         removeRecordingDraft() // first: a kill between the two leaves a file nobody recovers, so a Cancel stays cancelled
         try recorder.cancelRecording()
         let returnsToFinished = returnsToFinishedSource(targetType: recordingTargetType ?? .item)
@@ -2843,6 +2848,7 @@ public final class SessionEngine {
         try persistSession(session)
         currentSession = nil
         publisherPlayback.removeAll()
+        transcriptTimelineCache = nil
         currentItem = nil
         currentMap = nil
         recordingAnchor = nil

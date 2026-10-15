@@ -745,13 +745,13 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     private static let newestTranscriptTimelineRecord =
         "FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;"
 
-    /// The id, save time and length of the newest timeline record, read without decoding it (#1696). The engine keeps
+    /// The id, save time and byte length of the newest timeline record, read without decoding it (#1696). The engine keeps
     /// the decoded timeline of the item it plays for as long as this doesn't change. A save changes `updated_at`
     /// (and the id when the timeline is replaced), so a stale copy can't outlive the save that replaced it.
     public func transcriptTimelineStamp(itemId: String) throws -> String? {
         var stamp: String?
         try readTexts(
-            "SELECT id || '|' || updated_at || '|' || length(payload) \(Self.newestTranscriptTimelineRecord)", [itemId], name: "transcript_timeline_stamp"
+            "SELECT id || '|' || updated_at || '|' || length(CAST(payload AS BLOB)) \(Self.newestTranscriptTimelineRecord)", [itemId], name: "transcript_timeline_stamp"
         ) { stamp = $0 }
         return stamp
     }
