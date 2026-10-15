@@ -57,7 +57,7 @@ VALUES = '''fieldValues(first:100) { pageInfo { hasNextPage } nodes {
   ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
   ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name } } }
 } }'''
-ITEM = '''id content { __typename ... on Issue { id number repository { nameWithOwner } } }
+ITEM = '''id content { __typename ... on Issue { id number state repository { nameWithOwner } } }
 ''' + VALUES
 
 
@@ -101,7 +101,7 @@ def project(api, owner, number):
             n = content['number']
             if n in items:
                 raise sm_status.GitHubError(f'duplicate project item for #{n}')
-            items[n] = {'id': item['id'], 'values': fields(item)}
+            items[n] = {'id': item['id'], 'values': fields(item), 'state': content.get('state')}
         if not connection['pageInfo']['hasNextPage']:
             break
         next_cursor = connection['pageInfo']['endCursor']
@@ -181,6 +181,17 @@ def claim_activity(api, issue, now):
         raise sm_status.GitHubError(f'#{n}: no claim event or implementer evidence')
     fresh = any(now - sm_status.parse_time(at) < STALE for at in seen)
     return fresh, 'recent claim/implementer activity' if fresh else 'claim quiet for at least six hours'
+
+
+def closed_card(item, n, only):
+    """A closed issue whose card already shows Done with no Check health: nothing would be written, so the project
+    read is enough (reading the ~90 closed cards one by one was most of a full run's calls). Any card that would be
+    written is read from the issue itself first, so an issue reopened during the run is never set Done, which the
+    board's Auto-close workflow would turn into closing it again. An --issue run always reads the issue."""
+    values = (item or {}).get('values') or {}
+    if only or not item or item.get('state') != 'CLOSED' or values.get('Status') != 'Done' or values.get(HEALTH):
+        return None
+    return {'number': n, 'state': 'closed', 'labels': []}
 
 
 def derive(api, issue, pulls, now, cache):
@@ -315,7 +326,7 @@ def reconcile(api, owner='uncomposed', number=6, apply=False, only=None, now=Non
         cache = {}
         for n in sorted(targets):
             try:
-                issue = issues.get(n) or api.get(f'issues/{n}')
+                issue = issues.get(n) or closed_card(board['items'].get(n), n, only) or api.get(f'issues/{n}')
                 if 'pull_request' in issue:
                     if only:
                         raise sm_status.GitHubError(f'#{n} is a pull request, not an issue')
