@@ -36,20 +36,32 @@ public enum SavedVoiceRunRule {
         return savedRun.reduce(0, +) / max(0.25, playbackRate) >= minimumListening
     }
 
-    /// Whether the chunk starting at `start` is a paragraph seam: the first chunk boundary after a paragraph break,
-    /// that is, a line break lies between the previous chunk's start (`previousStart`) and this chunk's first word.
-    /// The planner's chunks run across paragraph breaks, so a boundary rarely sits exactly on one; this one is the
-    /// nearest after it. With no previous chunk (the start of the text), it is a seam. `text` and the offsets are the
-    /// source text's: the spoken text has its line breaks turned into spaces.
+    /// Whether chunk `index` of a plan starts at a paragraph seam: the first sentence boundary after a paragraph
+    /// break. The planner's chunks run across paragraph breaks and may end at a comma, so the voice changes only where
+    /// the previous chunk ends a sentence, and only when a line break lies between the end of the sentence before and
+    /// this chunk's first word. Chunk 0 is a seam. `sourceStart` gives a chunk's start in `text`, the source text (the
+    /// spoken text has its line breaks turned into spaces); `endsSentence` whether a chunk ends a sentence.
+    public static func isParagraphSeam(
+        in text: String, at index: Int, sourceStart: (Int) -> Int, endsSentence: (Int) -> Bool
+    ) -> Bool {
+        guard index > 0 else { return true }
+        guard endsSentence(index - 1) else { return false }
+        var first = index - 1
+        while first > 0, !endsSentence(first - 1) { first -= 1 }
+        return isParagraphSeam(in: text, previousStart: sourceStart(first), start: sourceStart(index))
+    }
+
+    /// Whether a line break lies between `previousStart` and the first word at or after `start`, in `text`. With no
+    /// previous start (the start of the text), it does.
     public static func isParagraphSeam(in text: String, previousStart: Int?, start: Int) -> Bool {
         guard let previousStart else { return true }
-        let characters = Array(text)
-        guard previousStart >= 0, previousStart < start, start <= characters.count else { return false }
-        if characters[previousStart..<start].contains(where: \.isNewline) { return true }
-        var index = start
-        while index < characters.count, characters[index].isWhitespace {
-            if characters[index].isNewline { return true }
-            index += 1
+        guard previousStart >= 0, previousStart < start,
+              let from = text.index(text.startIndex, offsetBy: previousStart, limitedBy: text.endIndex),
+              let to = text.index(from, offsetBy: start - previousStart, limitedBy: text.endIndex) else { return false }
+        if text[from..<to].contains(where: \.isNewline) { return true }
+        for character in text[to...] {
+            guard character.isWhitespace else { return false }
+            if character.isNewline { return true }
         }
         return false
     }

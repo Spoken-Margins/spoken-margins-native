@@ -2484,6 +2484,15 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(run.texts.allSatisfy(outcome.bundledTexts.contains), "the bundled voice renders the short run: \(outcome.bundledTexts)")
     }
 
+    /// #1680 audit: a hot start splits the first chunk for a quick start. A fully prepared article still plays saved
+    /// Supertonic from there to the end, the whole first chunk included, as it did before (#849 audit).
+    func testAPreparedArticlePlaysSavedSupertonicFromASplitStartOnAHotPhone() async throws {
+        let text = Self.pressureArticle(paragraphs: 4)
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(0..<200), declaredSeconds: 20)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertEqual(outcome.bundledTexts, [], "saved Supertonic plays throughout")
+    }
+
     /// An article of paragraphs for the pressure tests: the planner runs chunks across the breaks.
     private static func pressureArticle(paragraphs: Int) -> String {
         (1...paragraphs).map {
@@ -2500,9 +2509,9 @@ final class SupertonicSpeechTests: XCTestCase {
         let plan = NarrationChunkPlanner.spokenPlan(spokenText: projection.text, articleText: nil, articleSpokenStart: 0).chunks
         let seam = try XCTUnwrap(plan.indices.first { index in
             index >= start && index + count < plan.count - 1 && SavedVoiceRunRule.isParagraphSeam(
-                in: text,
-                previousStart: projection.sourceOffset(atSpokenCharacterOffset: plan[index - 1].startOffset),
-                start: projection.sourceOffset(atSpokenCharacterOffset: plan[index].startOffset))
+                in: text, at: index,
+                sourceStart: { projection.sourceOffset(atSpokenCharacterOffset: plan[$0].startOffset) },
+                endsSentence: { plan[$0].boundary == .sentence || plan[$0].boundary == .hard })
         }, "no seam with room for the run in \(plan.count) chunks")
         let indices = seam...(seam + count - 1)
         return (indices, indices.map { plan[$0].text }, plan)

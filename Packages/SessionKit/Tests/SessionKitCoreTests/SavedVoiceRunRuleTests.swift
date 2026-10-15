@@ -62,17 +62,21 @@ final class SavedVoiceRunRuleTests: XCTestCase {
 
     /// The player plans chunks on the spoken text, which has its line breaks turned into spaces, so seams are read in
     /// the source text at the chunks' source offsets: each paragraph after the first gives exactly one seam, at the
-    /// first chunk boundary after its break.
-    func testPlannedChunksGiveOneSeamPerParagraph() {
-        func seams(_ article: String) -> [Int] {
+    /// first sentence boundary after its break, never mid-sentence.
+    func testPlannedChunksGiveOneSeamPerParagraphAtASentenceEnd() {
+        func seams(_ article: String, budget: Int = RenderedSpeechChunker.spokenCostBudget) -> [Int] {
             let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(article)
-            let chunks = NarrationChunkPlanner.spokenPlan(spokenText: projection.text, articleText: nil, articleSpokenStart: 0).chunks
+            let chunks = NarrationChunkPlanner.spokenPlan(
+                spokenText: projection.text, articleText: nil, articleSpokenStart: 0, budget: budget).chunks
             XCTAssertGreaterThan(chunks.count, 3)
-            return chunks.indices.filter {
+            return chunks.indices.filter { index in
                 SavedVoiceRunRule.isParagraphSeam(
-                    in: article,
-                    previousStart: $0 == 0 ? nil : projection.sourceOffset(atSpokenCharacterOffset: chunks[$0 - 1].startOffset),
-                    start: projection.sourceOffset(atSpokenCharacterOffset: chunks[$0].startOffset))
+                    in: article, at: index,
+                    sourceStart: { projection.sourceOffset(atSpokenCharacterOffset: chunks[$0].startOffset) },
+                    endsSentence: { chunks[$0].boundary == .sentence || chunks[$0].boundary == .hard })
+            }.map { index in
+                if index > 0 { XCTAssertEqual(chunks[index - 1].boundary, .sentence, "chunk \(index) starts mid-sentence") }
+                return index
             }
         }
         let paragraph = "The committee met on Tuesday to discuss the proposal, which had been circulating for weeks. Most of the objections concerned cost."
@@ -80,5 +84,22 @@ final class SavedVoiceRunRuleTests: XCTestCase {
         XCTAssertEqual(seams(article).count, 4)
         XCTAssertEqual(seams(article).first, 0)
         XCTAssertEqual(seams(article.replacingOccurrences(of: "\n\n", with: " ")), [0], "no line breaks, no seams after the start")
+        // Long sentences split at commas: a seam still waits for a sentence end.
+        let long = "One clause runs on, and another follows it, and a third comes after that, and it keeps going a while longer."
+        let commas = (1...4).map { _ in long }.joined(separator: "\n\n")
+        XCTAssertEqual(seams(commas, budget: 60).count, 4)
+    }
+
+    func testASeamWaitsForTheSentenceToEnd() {
+        let text = "Ends here.\n\nNew paragraph, with a comma, and more. Next sentence."
+        let starts = [0, text.distance(from: text.startIndex, to: text.range(of: "with")!.lowerBound),
+                      text.distance(from: text.startIndex, to: text.range(of: "Next")!.lowerBound)]
+        let sentence = [false, true, true]
+        func seam(_ index: Int) -> Bool {
+            SavedVoiceRunRule.isParagraphSeam(in: text, at: index, sourceStart: { starts[$0] }, endsSentence: { sentence[$0] })
+        }
+        XCTAssertTrue(seam(0))
+        XCTAssertFalse(seam(1), "the chunk before ends at a comma")
+        XCTAssertTrue(seam(2), "the first sentence end after the break")
     }
 }
