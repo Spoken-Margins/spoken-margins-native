@@ -47,6 +47,38 @@ final class MarginMomentConductorTests: XCTestCase {
         XCTAssertEqual(conductor.sequence.unplayed.count, 1, "the Margin still waits")
     }
 
+    /// #1660: which landings of a Skim summary the conductor would take for playback if the app didn't call
+    /// `sourceMoved()`: any forward move up to the 4,000 ms reading limit. Those rows are the ones the app-hosted
+    /// landing test (`skimSeekOrStage`) depends on the call for; longer landings are never taken for playback.
+    /// With the call, no landing plays the Margin it passes.
+    func testASkimLandingIsReadAsPlaybackOnlyWhenItIsUnderTheReadingLimit() throws {
+        let readingMs = 100_000
+        let landings: [(aheadMs: Int, readAsPlaybackWithoutTheCall: Bool)] = [
+            (500, true), (2_000, true), (3_900, true), (4_000, true), (4_100, false), (30_000, false)
+        ]
+        for (aheadMs, readAsPlaybackWithoutTheCall) in landings {
+            for tellTheConductor in [false, true] {
+                var unavailable: [String] = []
+                let conductor = MarginMomentConductor(
+                    sequence: MarginMomentSequence(
+                        itemId: "episode", target: MarginMomentAnchor(marginId: "target", mediaTimeMs: 120_000),
+                        otherMargins: [MarginMomentAnchor(marginId: "passed", mediaTimeMs: readingMs + aheadMs / 2)]
+                    ),
+                    source: .init(pause: {}, resume: {}, seek: { _ in }),
+                    voiceURL: { _ in URL(fileURLWithPath: "/nonexistent/passed.m4a") }
+                )
+                conductor.onVoiceUnavailable = { id, reason in unavailable.append("\(id):\(reason)") }
+                conductor.start()
+                conductor.observe(mediaTimeMs: readingMs)
+                if tellTheConductor { conductor.sourceMoved() }
+                conductor.observe(mediaTimeMs: readingMs + aheadMs)
+                let expected = readAsPlaybackWithoutTheCall && !tellTheConductor ? ["passed:recording_missing"] : []
+                XCTAssertEqual(unavailable, expected,
+                               "landing \(aheadMs) ms on, \(tellTheConductor ? "with" : "without") sourceMoved()")
+            }
+        }
+    }
+
     func testReadingStillReachesTheMarginAfterASkip() throws {
         var unavailable: [String] = []
         let conductor = MarginMomentConductor(
