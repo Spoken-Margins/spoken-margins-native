@@ -296,6 +296,10 @@ public class InMemorySessionRepository: SessionRepository, @unchecked Sendable {
         transcriptTimelines[id]
     }
 
+    /// No stamp: tests change `transcriptTimelines` in place, so every read here is a fresh one (#1696).
+    /// A test of the engine's timeline cache overrides this.
+    public func transcriptTimelineStamp(itemId: String) throws -> String? { nil }
+
     public func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline? {
         transcriptTimelines.values
             .filter { $0.itemId == itemId }
