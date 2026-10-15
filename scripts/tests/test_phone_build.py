@@ -76,6 +76,62 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
         self.assertFalse(any('uninstall' in call for call in calls))
 
+    def other_build(self, name, sha, built_at):
+        folder = self.phone / name
+        (folder / 'SpokenMarginsApp.app').mkdir(parents=True)
+        (folder / 'build.json').write_text(json.dumps({'sha': sha, 'built_at': built_at}))
+        (folder / 'test-plan.md').write_text(f'# plan {sha[:7]}\n')
+        return folder
+
+    def point_latest_at(self, folder):
+        (self.phone / 'latest').unlink()
+        (self.phone / 'latest').symlink_to(folder.name)
+
+    def pin_daily_at(self, folder, when):
+        (self.phone / 'daily-ready').symlink_to(folder.name)
+        stamp = datetime.datetime.fromisoformat(when).timestamp()
+        os.utime(self.phone / 'daily-ready', (stamp, stamp), follow_symlinks=False)
+
+    def test_daily_pin_never_goes_over_a_newer_build_on_the_phone(self):
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-09-30T13:00:00')
+        newer = self.other_build('20260930-150000-ccccccc', 'c' * 40, '2026-09-30T15:00:00')
+        self.point_latest_at(newer)
+        (self.phone / 'installed.txt').write_text('c' * 40 + ' 2026-09-30T15:10:00 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertFalse(any('install app' in call for call in calls), calls)
+        self.assertIn('newer build than this morning', done.stdout)
+        self.assertIn('already has this build: commit ccccccc', done.stdout)
+        self.assertNotIn(f'open {pin.resolve()}/test-plan.md', calls)
+
+    def test_pruned_newer_build_on_the_phone_gets_latest_not_the_pin(self):
+        # Seen 2026-10-15 (#1691): the phone's 10:47 build was pruned; the pin was the 05:16 build.
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-09-30T13:00:00')
+        latest = self.other_build('20260930-170000-ddddddd', 'd' * 40, '2026-09-30T17:00:00')
+        self.point_latest_at(latest)
+        (self.phone / 'installed.txt').write_text('c' * 40 + ' 2026-09-30T15:10:00 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {latest.resolve()}/SpokenMarginsApp.app'])
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], 'd' * 40)
+        self.assertIn(f'open {latest.resolve()}/test-plan.md', calls)
+
+    def test_daily_pin_still_goes_over_an_older_build_on_the_phone(self):
+        pin = self.make_build()
+        self.pin_daily_at(pin, '2026-09-30T13:00:00')
+        self.other_build('20260929-090000-eeeeeee', 'e' * 40, '2026-09-29T09:00:00')
+        latest = self.other_build('20260930-170000-ddddddd', 'd' * 40, '2026-09-30T17:00:00')
+        self.point_latest_at(latest)
+        (self.phone / 'installed.txt').write_text('e' * 40 + ' 2026-09-30T14:00:00 Cole iPhone\n')
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {pin.resolve()}/SpokenMarginsApp.app'])
+        self.assertIn('install the daily phone pass', done.stdout)
+
     def test_already_installed_daily_binary_opens_plan_without_reinstall(self):
         folder = self.make_build()
         (self.phone / 'daily-ready').symlink_to(folder.name)
