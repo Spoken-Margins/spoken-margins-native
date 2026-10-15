@@ -1104,7 +1104,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let renderControl = activeRenderControl
             activeRenderControl = nil
             player?.pause()
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             fallbackIsActive = false
             let urls = Set(
@@ -1181,7 +1181,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             activeRenderControl = nil
             generationDisabledReasons[targetId] = stopReason
             player?.pause()
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             let urls = Set(
                 renderedCache.values.map(\.url)
@@ -1267,7 +1267,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             currentChunkLength = 0
             let cached = cachedOrSavedChunk(containing: nextOffset)
             let finishedURL = activeAudioURL
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             activeItem = nil
             activeAudioURL = nil
@@ -1361,7 +1361,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let renderControl = activeRenderControl
             activeRenderControl = nil
             player?.pause()
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             fallbackIsActive = false
             let urls = Set(
@@ -1958,7 +1958,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     player?.pause()
                 } else {
                     player?.pause()
-                    player?.replaceCurrentItem(with: nil)
+                    Self.empty(player)
                     player = nil
                 }
                 var urls = Set(
@@ -2057,7 +2057,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func finishSystemFallback(targetId: String, sourceOffset: Int, reason: String, stopReason: String, kept: URL?) {
         if reason == Self.stalledPlayerReason {
             lock.withLock {
-                player?.replaceCurrentItem(with: nil)
+                Self.empty(player)
                 player = nil
                 activeAudioURL = nil
                 activeAudioDuration = 0
@@ -2289,6 +2289,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         systemVoiceIsArmed = false
                     }
                     let armed = systemVoiceIsArmed
+                    // A queue that moved on by itself has a new chunk's time against the old chunk's start (#538).
+                    self.applyQueuedAdvance(finished: nil)
                     let sample = self.lock.withLock { () -> (active: Bool, intends: Bool, clock: Int?, watched: WatchedPlayback) in
                         if self.fallbackIsActive {
                             let voice = WatchedPlayback(systemVoicePlayback: self.systemVoicePlayback)
@@ -2477,11 +2479,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Re-activates the session and plays the same chunk from the same point in a new player.
     private func reseatStalledPlayer() {
+        applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock { () -> (URL, TimeInterval, RenderRequest, TimeInterval)? in
             guard transportIntent == .playing, let request = activeRequest, let url = activeAudioURL else { return nil }
             let time = playerTime(player)
             player?.pause()
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             let fraction = activeAudioDuration > 0 ? time / activeAudioDuration : 0
             // A player that stalls before its initial seek lands still reads zero: keep the place
@@ -2913,7 +2916,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             if wasPlaying, let player {
                 // Moving to another chunk: stop the live one first so two never play at once.
                 player.pause()
-                player.replaceCurrentItem(with: nil)
+                Self.empty(player)
                 self.player = nil
             }
             if let cached = cachedOrSavedChunk(containing: spokenOffset) {
@@ -3108,13 +3111,22 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Takes the queued chunk's observers off and forgets it. Its player is being discarded, or its end is handled.
     private func dropQueuedChunk() {
-        if let queuedEndObserver {
-            NotificationCenter.default.removeObserver(queuedEndObserver)
-            self.queuedEndObserver = nil
+        let dropped = lock.withLock { () -> (NSObjectProtocol?, NSKeyValueObservation?) in
+            let observers = (queuedEndObserver, queuedStatusObservation)
+            queuedEndObserver = nil
+            queuedStatusObservation = nil
+            queuedChunk = nil
+            return observers
         }
-        queuedStatusObservation?.invalidate()
-        queuedStatusObservation = nil
-        lock.withLock { queuedChunk = nil }
+        if let endObserver = dropped.0 { NotificationCenter.default.removeObserver(endObserver) }
+        dropped.1?.invalidate()
+    }
+
+    /// Takes everything off a player that is being let go. A queue player also drops the chunks queued behind its
+    /// current one, so none of them can start playing after the player is dropped (#538).
+    private static func empty(_ player: AVPlayer?) {
+        (player as? AVQueuePlayer)?.removeAllItems()
+        player?.replaceCurrentItem(with: nil)
     }
 
     /// Leaving the app is when a queued chunk matters: the chunk behind the playing one may already be rendered.
@@ -3138,16 +3150,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard !appIsActive, let queue = player as? AVQueuePlayer, let playing = activeItem,
                   queue.currentItem === playing else { return }
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
-            let cached = renderedCache[nextOffset]
+            let nextCached = renderedCache[nextOffset]
             let facts = BackgroundChunkSeam.Facts(
                 appIsActive: appIsActive,
                 intendsToPlay: transportIntent == .playing && !fallbackIsActive && handOverAwaitingStart == nil,
                 nextChunkExists: nextOffset < preparedSpeechProjection.text.count,
-                nextChunkIsRendered: cached != nil,
+                nextChunkIsRendered: nextCached != nil,
                 nextChunkIsStandIn: standInOffsets.contains(nextOffset),
                 alreadyQueued: queuedChunk != nil
             )
-            guard BackgroundChunkSeam.shouldQueueAhead(facts), let cached,
+            guard BackgroundChunkSeam.shouldQueueAhead(facts), let cached = nextCached,
                   cached.request.generation == generation,
                   cached.request.targetId == currentTargetId else { return }
             let item = AVPlayerItem(url: cached.url)
@@ -3180,11 +3192,21 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func applyQueuedAdvance(finished: AVPlayerItem?) -> Bool {
         guard applicationIsActive != nil else { return false }
         var finishedURL: URL?
+        var replacedObservers: (NSObjectProtocol?, NSKeyValueObservation?)?
         let applied = lock.withLock { () -> Bool in
-            guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item,
-                  (finished != nil && (finished === activeItem || finished === queued.item))
-                      || queued.player.currentItem === queued.item
-            else { return false }
+            guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item else { return false }
+            let current = queued.player.currentItem
+            if finished != nil, finished === activeItem, current === activeItem {
+                // The end of the playing chunk was heard but the queue has not moved on (it is paused at the end,
+                // or has not got to the next item yet): the queued chunk is not playing. Take it off and let the
+                // seam go through the app, which still has its audio in the cache.
+                queued.player.remove(queued.item)
+                queued.player.actionAtItemEnd = .pause
+                queuedChunk = nil
+                return false
+            }
+            let endHeard = finished != nil && (finished === activeItem || finished === queued.item)
+            guard endHeard || current === queued.item else { return false }
             let request = queued.cached.request
             finishedURL = activeAudioURL
             queuedChunk = nil
@@ -3210,18 +3232,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             _ = voiceChangeCueDecider.leadIn(forStandIn: false)
             // Back to a player that stays on its item at the end, until another chunk is queued behind this one.
             queued.player.actionAtItemEnd = .pause
+            // The queued chunk's end observer and failure watch take over from the finished chunk's.
+            replacedObservers = (playbackEndObserver, playerItemStatusObservation)
+            playbackEndObserver = queuedEndObserver
+            queuedEndObserver = nil
+            playerItemStatusObservation = queuedStatusObservation
+            queuedStatusObservation = nil
             return true
         }
         guard applied else { return false }
-        // The queued chunk's end observer and failure watch take over from the finished chunk's.
-        if let finishedChunkObserver = playbackEndObserver {
+        if let finishedChunkObserver = replacedObservers?.0 {
             NotificationCenter.default.removeObserver(finishedChunkObserver)
         }
-        playbackEndObserver = queuedEndObserver
-        queuedEndObserver = nil
-        playerItemStatusObservation?.invalidate()
-        playerItemStatusObservation = queuedStatusObservation
-        queuedStatusObservation = nil
+        replacedObservers?.1?.invalidate()
         if let finishedURL,
            !lock.withLock({ generationResults.values.contains(where: { $0.audioURL == finishedURL }) }) {
             discardAudio(finishedURL)
@@ -3276,7 +3299,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard generation == request.generation,
                   player?.currentItem === item || (player != nil && activeItem === item) else { return nil }
             player?.pause()
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             activeItem = nil
             let url = activeAudioURL
@@ -3501,7 +3524,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 )
             }
             player?.pause()
-            player?.replaceCurrentItem(with: nil)
+            Self.empty(player)
             player = nil
             transportIntent = .paused
             // The listener's pause or play, and a system interruption that already asked to resume, keep their say.

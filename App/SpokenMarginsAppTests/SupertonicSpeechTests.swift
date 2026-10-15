@@ -2010,6 +2010,26 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "stand_in_voice 1")
     }
 
+    // The end of A is heard while the queue has not moved on (paused at the end, or not there yet) and B is queued
+    // behind it. B is not playing, so the seam must go through the app, which still has B's audio. Treating B as
+    // playing would leave the player silent until the stall watchdog fired.
+    func testAChunkEndHeardBeforeTheQueueMovedOnIsHandledThroughTheApp() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+        let before = harness.playerStarts
+
+        await harness.finishPlayingChunk()                          // the end notification; the queue stays on A
+
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B was started through the app")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "rendered_not_queued 1")
+    }
+
     // The listener pauses with a chunk queued: nothing is lost. Playing again carries on, and the queued chunk
     // follows without a new player.
     func testPausingAndResumingWithAChunkQueuedKeepsTheQueue() async throws {
