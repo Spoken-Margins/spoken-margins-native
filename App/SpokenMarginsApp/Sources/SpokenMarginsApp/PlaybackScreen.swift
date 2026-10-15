@@ -199,10 +199,12 @@ struct PlaybackScreen: View {
                                 isNativeAudio: model.selectedItem.isNativeAudio
                             )
                             onDeviceSpeechGenerationControl
-                            Button("Write a Margin", systemImage: "square.and.pencil") {
-                                closeOptions(to: .write)
+                            if !dockOffersMarginRow {
+                                Button("Write a Margin", systemImage: "square.and.pencil") {
+                                    closeOptions(to: .write)
+                                }
+                                .accessibilityIdentifier("playback.writeMargin.button")
                             }
-                            .accessibilityIdentifier("playback.writeMargin.button")
                             reflectionOptions
                             conversation
                             sessionActionDock
@@ -292,6 +294,12 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
+    }
+
+    /// The dock carries the Add a Margin row and its pencil in every state but these two, where it shows Return to
+    /// Source instead. More offers Write a Margin only then, so the two never sit side by side (#430).
+    private var dockOffersMarginRow: Bool {
+        model.playingImportedCommentary == nil && model.snapshot.skimBridgeState == nil
     }
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
