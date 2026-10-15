@@ -229,11 +229,17 @@ struct PlaybackScreen: View {
             PlaybackChapterRowView(
                 title: model.playbackChapterHeaderTitle,
                 sourceTitle: model.playbackItemHeaderTitle,
-                showsNextChapterButton: model.showsNextChapterButton,
+                backward: model.chapterRowBackwardControl,
+                forward: model.chapterRowForwardControl,
+                skimBackwardTitle: model.skimBackwardTitle,
+                skimForwardTitle: model.skimForwardTitle,
+                skimLocked: model.snapshot.isRecording,
                 waitingText: model.snapshot.status == .starting
                     ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
                 showItem: model.openCurrentPlaybackItem,
-                nextChapter: model.jumpToNextChapter
+                nextChapter: model.jumpToNextChapter,
+                skimBackward: model.skimBackward,
+                skimForward: model.skimForward
             )
             playbackPosition
             playbackTransport
@@ -257,12 +263,16 @@ struct PlaybackScreen: View {
             .foregroundStyle(.white)
             .buttonStyle(.plain)
             if model.playingImportedCommentary != nil {
-                Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
-                    .buttonStyle(InterjectButtonStyle())
-                    .accessibilityIdentifier("importedCommentary.returnToSource")
+                Button(action: model.returnToSourceFromImportedCommentary) {
+                    Text("Return to Source").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(InterjectButtonStyle())
+                .accessibilityIdentifier("importedCommentary.returnToSource")
             } else if model.snapshot.skimBridgeState != nil {
-                Button("Return to Source") {
+                Button {
                     model.returnFromSkim()
+                } label: {
+                    Text("Return to Source").frame(maxWidth: .infinity)
                 }
                 .buttonStyle(InterjectButtonStyle())
                 .accessibilityIdentifier("playback.skim.return.button")
@@ -875,28 +885,6 @@ struct PlaybackScreen: View {
                 .disabled(!model.hasActiveSession)
                 .accessibilityLabel(model.isMediaPlaybackSnapshot ? "Forward \(model.mediaSkipForwardSeconds) seconds" : "Next \(model.skipUnit)")
                 .accessibilityIdentifier("playback.forward.button")
-            }
-
-            if model.showsSkimRow {
-                HStack(spacing: 14) {
-                    Button(action: model.skimBackward) {
-                        Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
-                            .frame(minWidth: 44, minHeight: 44)
-                    }
-                    .disabled(!model.snapshot.canSkimBackward)
-                    .accessibilityLabel(model.skimBackwardTitle + " by scene summary")
-                    .accessibilityIdentifier("playback.skim.backward.button")
-
-                    Button(action: model.skimForward) {
-                        Label(model.skimForwardTitle, systemImage: "forward.end.alt.fill")
-                            .frame(minWidth: 44, minHeight: 44)
-                    }
-                    .disabled(!model.snapshot.canSkimForward)
-                    .accessibilityLabel(model.skimForwardTitle + " by scene summary")
-                    .accessibilityIdentifier("playback.skim.forward.button")
-                }
-                .buttonStyle(.bordered)
-                .font(.caption.weight(.semibold))
             }
         }
         .disabled(model.snapshot.isRecording)

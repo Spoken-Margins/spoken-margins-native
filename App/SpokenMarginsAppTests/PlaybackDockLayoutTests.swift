@@ -66,7 +66,7 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
     }
 
-    // MARK: - Next chapter next to Skim (#1628)
+    // MARK: - Skim in the chapter row (#1666, replacing #1628)
 
     /// The owner saw a Next chapter button above the scrubber and a forward Skim control below the transport on the
     /// same screen. The model decides which of them the dock draws; these pin that decision for each state the issue
@@ -86,7 +86,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertTrue(model.snapshot.canSkimForward, "precondition: forward Skim is offered")
         XCTAssertTrue(model.showsSkimRow)
         XCTAssertTrue(model.canJumpToNextChapter, "the Lock Screen and external commands keep Next chapter (#569)")
-        XCTAssertFalse(model.showsNextChapterButton, "the chapter row must not draw a second forward control")
+        XCTAssertEqual(model.chapterRowForwardControl, .skim, "the chapter row must draw one forward control")
+        XCTAssertEqual(model.chapterRowBackwardControl, .skim)
     }
 
     // The end-of-map state (Skim row up for Skim Back, forward off, a feed chapter still ahead) is pinned by the
@@ -98,37 +99,48 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")
         XCTAssertFalse(model.showsSkimRow)
         XCTAssertTrue(model.canJumpToNextChapter)
-        XCTAssertTrue(model.showsNextChapterButton)
+        XCTAssertEqual(model.chapterRowForwardControl, .nextChapter)
+        XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
     }
 
     func testNextChapterStaysInAnArticleWithChapters() {
         let model = makeArticleModel(withChapters: true)
         XCTAssertTrue(model.canJumpToNextChapter, "precondition: the article has a chapter after this one")
         XCTAssertFalse(model.showsSkimRow, "an article has no Skim row")
-        XCTAssertTrue(model.showsNextChapterButton)
+        XCTAssertEqual(model.chapterRowForwardControl, .nextChapter)
+        XCTAssertEqual(model.chapterRowBackwardControl, .hidden)
     }
 
     func testNoNextChapterButtonAtTheLastChapter() {
         let model = makePodcastModel(withChapters: true)
         model.snapshot.currentMediaTimeMs = 2_000_000
         XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
-        XCTAssertFalse(model.showsNextChapterButton)
+        XCTAssertEqual(model.chapterRowForwardControl, .hidden)
     }
 
-    /// The real chapter row, laid out: with the button asked for the row is a button wider (44-point minimum) than
-    /// without it, so what the model decides is what the dock draws.
-    func testChapterRowDrawsTheButtonOnlyWhenAsked() {
-        func idealWidth(showsNextChapterButton: Bool) -> CGFloat {
+    /// The real chapter row, laid out: each control asked for makes the row a button (44-point minimum) wider, and a
+    /// dimmed Skim takes the same room as a live one, so the title doesn't shift when the listener crosses a chapter.
+    func testChapterRowDrawsEachControlOnlyWhenAsked() {
+        func idealWidth(
+            backward: NextChapterSummaryRule.ChapterRowControl, forward: NextChapterSummaryRule.ChapterRowControl
+        ) -> CGFloat {
             let row = PlaybackChapterRowView(
-                title: "Chapter 2", sourceTitle: "An episode", showsNextChapterButton: showsNextChapterButton,
+                title: "Chapter 2", sourceTitle: "An episode", backward: backward, forward: forward,
+                skimBackwardTitle: "Back to 12:05", skimForwardTitle: "Skim to 36:11",
                 showItem: {}, nextChapter: {}
             )
             return UIHostingController(rootView: row.fixedSize(horizontal: true, vertical: false))
                 .sizeThatFits(in: CGSize(width: 2_000, height: 200)).width
         }
-        let with = idealWidth(showsNextChapterButton: true)
-        let without = idealWidth(showsNextChapterButton: false)
-        XCTAssertGreaterThanOrEqual(with - without, 44, "the Next chapter button added \(with - without) points to the row")
+        let bare = idealWidth(backward: .hidden, forward: .hidden)
+        let next = idealWidth(backward: .hidden, forward: .nextChapter)
+        XCTAssertGreaterThanOrEqual(next - bare, 44, "the Next chapter button added \(next - bare) points to the row")
+        let skim = idealWidth(backward: .skim, forward: .skim)
+        let dimmed = idealWidth(backward: .skimDisabled, forward: .skimDisabled)
+        XCTAssertGreaterThanOrEqual(skim - bare, 88, "the two Skim arrows added \(skim - bare) points to the row")
+        XCTAssertEqual(dimmed, skim, accuracy: 0.5, "a dimmed Skim must keep its place")
+        XCTAssertEqual(idealWidth(backward: .skim, forward: .nextChapter), skim, accuracy: 0.5,
+                       "Next chapter takes Skim forward's slot, no wider")
     }
 
     // MARK: - Assertions
