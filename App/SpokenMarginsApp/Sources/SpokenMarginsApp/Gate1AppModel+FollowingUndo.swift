@@ -29,6 +29,34 @@ extension Gate1AppModel {
         }
     }
 
+    /// "Clear" on the New list (#1589): dismisses every followed entry listed, with one Undo. It
+    /// records no listening signal: clearing a pile is not a verdict on each entry.
+    func clearFollowedSourceEntries(ids: [String]) {
+        guard let coordinator = followedSourceCoordinator, !ids.isEmpty else { return }
+        Task { [weak self] in
+            guard let previous = try? await coordinator.dismissEntries(ids: ids), !previous.isEmpty else { return }
+            let count = previous.count
+            let action = UserFeedbackEvent.Action(
+                title: FollowingDismissMessages.undoTitle,
+                accessibilityLabel: FollowingDismissMessages.clearUndoAccessibilityLabel(count: count),
+                identifier: "following.undo.button",
+                perform: { [weak self] in self?.undoClearedFollowedSourceEntries(previous) }
+            )
+            self?.presentFeedback(UserFeedbackEvent(kind: .success, message: FollowingDismissMessages.cleared(count: count), action: action))
+            await self?.reloadFollowedSourceEntries()
+            await self?.performFollowedSourceRefresh(force: false)
+        }
+    }
+
+    func undoClearedFollowedSourceEntries(_ previous: [String: FeedEntryState]) {
+        guard let coordinator = followedSourceCoordinator else { return }
+        Task { [weak self] in
+            try? await coordinator.undoDismissEntries(restoring: previous)
+            await self?.reloadFollowedSourceEntries()
+            await self?.performFollowedSourceRefresh(force: false)
+        }
+    }
+
     /// A Quick Folder file's dismissal lives in `UserDefaults`; Undo removes it from there.
     func dismissQuickAccessFileWithUndo(_ file: QuickAccessFile) {
         dismissQuickAccessFile(file)

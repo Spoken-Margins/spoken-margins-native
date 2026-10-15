@@ -261,7 +261,8 @@ final class QuickAccessFolderStateTests: XCTestCase {
         let entry = FeedEntry(id: "episode", subscriptionId: "show", canonicalURL: "https://example.com/e/1", title: "Episode", publishedAt: Date(timeIntervalSince1970: 50))
         let subscription = FeedSubscription(
             id: "show",
-            source: SourceIdentity(id: "source-show", kind: .podcastFeed, canonicalURL: "https://example.com/feed.xml", host: "example.com", title: "The Show")
+            source: SourceIdentity(id: "source-show", kind: .podcastFeed, canonicalURL: "https://example.com/feed.xml", host: "example.com", title: "The Show"),
+            createdAt: Date(timeIntervalSince1970: 0)
         )
         let sameURL = LibraryItemRow(id: "imported", title: "Unrelated", status: "Ready", canDelete: true, mediaType: "text", sourceReference: "https://Example.com/e/1/#top")
         let sameShowAndTitle = LibraryItemRow(id: "heard", title: "Episode", status: "Ready", canDelete: true, mediaType: "text", sourceTitle: "The Show")
