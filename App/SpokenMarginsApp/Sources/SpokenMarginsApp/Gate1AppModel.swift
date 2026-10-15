@@ -1098,7 +1098,7 @@ final class Gate1AppModel: ObservableObject {
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
         if entersBackground { narrationStartupProtection.appEnteredBackground() }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
-        supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
+        OnDeviceVoiceGovernor.app.setAppBackgrounded(true) // every on-device voice is paced while away (#1679)
         syncPlaybackProgressForLifecycle()
         refreshLockScreenSurfacesForLifecycle()
         scheduleAutomaticAudioPreparationIfNeeded()
@@ -1123,7 +1123,7 @@ final class Gate1AppModel: ObservableObject {
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
-        supertonicRenderer?.setBackgroundInferencePacingEnabled(false)
+        OnDeviceVoiceGovernor.app.setAppBackgrounded(false)
         let refreshedAvailability = localFoundationModelClient.availability()
         if refreshedAvailability != localFoundationModelAvailability {
             localFoundationModelAvailability = refreshedAvailability

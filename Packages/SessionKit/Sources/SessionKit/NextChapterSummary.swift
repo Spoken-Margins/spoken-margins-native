@@ -40,13 +40,34 @@ public enum NextChapterSummaryRule {
         return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs)
     }
 
-    /// Whether the chapter row above the scrubber draws its Next chapter button (#1628). A forward Skim control
-    /// the listener can press already offers forward navigation, so the second button is hidden; with no forward
-    /// Skim target (no ready map, a map that has ended, an article) Next chapter stays. This is only about the
-    /// button: the Lock Screen and external commands go by `isAvailable`. The Skim row can be on screen for Skim
-    /// Back alone, so forward Skim counts only when the row is shown and its forward control is enabled.
-    public static func showsChapterRowButton(isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool) -> Bool {
-        isAvailable && !(skimRowShown && canSkimForward)
+    /// What fills one side of the chapter row above the scrubber (#1666, which replaced #1628's hide-the-button rule).
+    public enum ChapterRowControl: Equatable, Sendable {
+        /// Skim to the next (or previous) Margin or scene.
+        case skim
+        /// The chapter row's own Next chapter button.
+        case nextChapter
+        /// A Skim control that can't be pressed now (no scene ahead, or the end of the map). It keeps its place so the
+        /// title doesn't shift when the listener crosses a chapter.
+        case skimDisabled
+        /// Nothing: the item has no Skim, so the row is the title and, if there is one, Next chapter.
+        case hidden
+    }
+
+    /// The control on the right of the chapter title. When forward Skim can be pressed it is the one forward control;
+    /// otherwise Next chapter if there is a chapter ahead; otherwise a disabled Skim so the slot never goes empty.
+    /// Only the button depends on Skim: the Lock Screen and external commands go by `isAvailable`. The Skim row can
+    /// be on screen for Skim Back alone, so forward Skim counts only when the row is shown and forward is enabled.
+    public static func forwardControl(isAvailable: Bool, skimRowShown: Bool, canSkimForward: Bool) -> ChapterRowControl {
+        if skimRowShown && canSkimForward { return .skim }
+        if isAvailable { return .nextChapter }
+        return skimRowShown ? .skimDisabled : .hidden
+    }
+
+    /// The control on the left of the chapter title: Skim back, disabled when there is nowhere to go, and absent
+    /// only for an item with no Skim at all.
+    public static func backwardControl(skimRowShown: Bool, canSkimBackward: Bool) -> ChapterRowControl {
+        guard skimRowShown else { return .hidden }
+        return canSkimBackward ? .skim : .skimDisabled
     }
 
     /// - Parameters:

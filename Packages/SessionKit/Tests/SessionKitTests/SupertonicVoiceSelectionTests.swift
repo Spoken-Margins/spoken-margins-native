@@ -3,6 +3,7 @@ import AVFoundation
 import Foundation
 import XCTest
 @testable import SessionKitSupertonic
+import SessionKit
 
 /// APA-15 (#1042): the only real-render test checked each voice against itself (a sample rate, a length,
 /// a peak above 0.000001), so a renderer that always loaded James's style, or wrote near-silence, passed.
@@ -19,7 +20,7 @@ final class SupertonicVoiceSelectionTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-voices-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root)
+        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         let sentence = "Both voices read this same sentence aloud, one after the other."
         func render(_ voice: SupertonicVoiceID) async throws -> (samples: [Float], sampleRate: Double) {
             let result = try await renderer.render(text: sentence, voice: voice, speed: 1, synthesisSteps: 5)

@@ -18,8 +18,55 @@ set -u
 
 phone_dir="${SM_PHONE_DIR:-$HOME/SpokenMargins-phone}"
 latest="$phone_dir/latest"
+pinned=""
 if [[ -L "$phone_dir/daily-ready" && -f "$phone_dir/daily-ready/build.json" ]]; then
-  latest="$phone_dir/daily-ready"  # the daily walkthrough and binary must agree (#1600)
+  # The daily walkthrough and binary must agree (#1600), but the pin never goes over a newer build
+  # already on the phone (#1691). "newer" when the installed build was built after the pinned one,
+  # or, once its folder is pruned, when a different build was installed after the pin was set:
+  # the installer only installs the pin or latest, and latest is never older than the pin.
+  phone_is_newer=$(/usr/bin/python3 - "$phone_dir" <<'PY'
+import datetime, json, os, sys
+from pathlib import Path
+
+phone = Path(sys.argv[1])
+
+def build(folder):
+    try:
+        info = json.loads((folder / 'build.json').read_text())
+    except (OSError, ValueError):
+        return None, None
+    try:
+        return info.get('sha'), datetime.datetime.fromisoformat(info.get('built_at'))
+    except (TypeError, ValueError):
+        return info.get('sha'), None
+
+try:
+    words = (phone / 'installed.txt').read_text().split()
+except OSError:
+    words = []
+pin_sha, pin_built = build(phone / 'daily-ready')
+installed = words[0] if words else ''
+newer = False
+if installed and pin_sha and installed != pin_sha:
+    found = [built for sha, built in map(build, phone.glob(f'*-{installed[:7]}')) if sha == installed]
+    if found:
+        newer = bool(found[0] and pin_built and found[0] > pin_built)
+    else:
+        try:
+            at = datetime.datetime.fromisoformat(words[1])
+            pinned_at = datetime.datetime.fromtimestamp(os.lstat(phone / 'daily-ready').st_mtime)
+            newer = at > pinned_at
+        except (IndexError, OSError, ValueError):
+            newer = False
+print('yes' if newer else 'no')
+PY
+)
+  if [[ "$phone_is_newer" == yes ]]; then
+    pinned=passed
+  else
+    latest="$phone_dir/daily-ready"
+    pinned=yes
+  fi
 fi
 app="$latest/SpokenMarginsApp.app"
 work=$(mktemp -d "${TMPDIR:-/tmp}/sm-install.XXXXXX")
@@ -33,12 +80,16 @@ stop() {
   exit 1
 }
 
-if [[ -L "$phone_dir/daily-ready" ]]; then
+if [[ "$pinned" == yes ]]; then
   print -r -- "Spoken Margins: install the daily phone pass"
 else
   print -r -- "Spoken Margins: install the newest phone build"
 fi
 print -r -- ""
+if [[ "$pinned" == passed ]]; then
+  print -r -- "Your phone already has a newer build than this morning's daily pass, so this uses the newest build instead."
+  print -r -- ""
+fi
 
 [[ -d "$app" && -f "$latest/build.json" ]] || stop "There is no phone build yet in $phone_dir. Ask for one: scripts/phone-build makes it."
 latest="${latest:A}"
@@ -117,7 +168,7 @@ if [[ "${build_status%%$'\n'*}" == same ]]; then
   print -r -- "${build_status#*$'\n'}"
   print -r -- ""
   print -r -- "Nothing on the phone was changed."
-  if [[ -L "$phone_dir/daily-ready" && -f "$latest/test-plan.md" ]]; then
+  if [[ "$pinned" == yes && -f "$latest/test-plan.md" ]]; then
     # A daily pass can add checks without changing the already-installed binary.
     daily_icloud="${SM_PHONE_ICLOUD:-$HOME/Library/Mobile Documents/com~apple~CloudDocs/Spoken Margins test plans}"
     if [[ -d "$daily_icloud" ]] || mkdir "$daily_icloud" 2>/dev/null; then

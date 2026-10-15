@@ -93,12 +93,12 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // Next chapter reads the summary of the chapter being left, then lands at the next chapter;
         // a second press skips the summary instead of queueing another (#569).
         XCTAssertEqual(model.nextPlaybackMediaChapter?.startMs, 5_000)
-        // The state the owner saw on the phone (#1628): a ready map and a next chapter, with no summary playing.
-        // Forward Skim is the one forward control on the dock; Next chapter stays for the Lock Screen.
+        // The state the owner saw on the phone (#1628, #1666): a ready map and a next chapter, with no summary playing.
+        // Forward Skim is the one forward control in the chapter row; Next chapter stays for the Lock Screen.
         XCTAssertNil(model.snapshot.skimBridgeState, "precondition: no summary is playing")
         XCTAssertTrue(model.showsSkimRow, "the Skim row is on the dock")
         XCTAssertTrue(model.canJumpToNextChapter, "the Lock Screen and external commands keep Next chapter")
-        XCTAssertFalse(model.showsNextChapterButton, "the chapter row must not draw a second forward button beside Skim")
+        XCTAssertEqual(model.chapterRowForwardControl, .skim, "the chapter row must draw one forward control")
         model.jumpToNextChapter()
         XCTAssertEqual(model.snapshot.skimBridgeState?.direction, .forward)
         XCTAssertEqual(model.snapshot.skimBridgeState?.summarySceneId, "scene-0", "the summary is of the chapter being left")
@@ -129,9 +129,11 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // While paused, a map change can move where Skim Back lands without flipping availability.
         // The Lock Screen must show the new time, not the one from before the change (#115).
         XCTAssertTrue(model.snapshot.canSkimBackward)
-        // At the last chapter the Skim row stays for Skim Back, and there is no Next chapter to show (#1628).
+        // At the last chapter Skim Back stays, and the forward slot keeps its place as a dimmed Skim (#1666).
         XCTAssertTrue(model.showsSkimRow)
-        XCTAssertFalse(model.showsNextChapterButton)
+        XCTAssertEqual(model.chapterRowBackwardControl, .skim)
+        XCTAssertEqual(model.chapterRowForwardControl, model.snapshot.canSkimForward ? .skim : .skimDisabled,
+                       "no chapter ahead: the slot is forward Skim, dimmed when it can't be pressed, never empty")
         XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 5_000, "precondition: the Lock Screen shows Skim Back's destination")
         func movedMap(sceneOneStartMs: Int) -> PortableListeningMapProposalArtifact {
             let bounds = [0, sceneOneStartMs, 10_000]

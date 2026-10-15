@@ -75,6 +75,7 @@ let package = Package(
         .target(
             name: "SessionKitPocket",
             dependencies: [
+                "SessionKit",
                 .product(
                     name: "onnxruntime",
                     package: "onnxruntime-swift-package-manager"

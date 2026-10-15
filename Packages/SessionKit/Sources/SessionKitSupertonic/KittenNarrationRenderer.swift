@@ -43,6 +43,7 @@ public enum KittenNarrationError: Error, LocalizedError, Equatable {
 /// text through `KittenFrontEnd`. It stands in for Supertonic when `SupertonicResourcePolicy` refuses
 /// to render (heat, memory pressure), at about 6x real time on the owner's iPhone 17 Pro in Low Power
 /// Mode (C2 M2, #192). One serial queue, one ONNX session, loaded on first use and kept until `unload()`.
+/// Its inference is paced by the shared `OnDeviceVoiceGovernor`, as Supertonic's is (#1679).
 public final class KittenNarrationRenderer: @unchecked Sendable {
     public static let engine = "kitten"
     public static let sampleRate = 24_000
@@ -52,6 +53,13 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
     static let speed: Float = 0.8
     static let styleRowCount = 400
     static let styleWidth = 256
+
+    private final class CancellationFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        var isCancelled: Bool { lock.withLock { cancelled } }
+        func cancel() { lock.withLock { cancelled = true } }
+    }
 
     private final class Runtime {
         let environment: ORTEnv
@@ -81,19 +89,28 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
     private let outputDirectory: URL
     private let fileManager: FileManager
     private let threads: Int32
+    /// Paces inference in the background, for every on-device voice alike (#1679).
+    public let governor: OnDeviceVoiceGovernor
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.kitten.render", qos: .userInitiated)
     private var runtime: Runtime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
+    /// When the next inference may start, from the last one's cost (#1679). Read and written on `renderQueue` only.
+    private var nextInferenceNotBefore: TimeInterval?
 
     /// Two threads measured 6.7x against 5.8x on one (C2 M2), and leave the rest of the CPU to playback.
-    public init(assets: KittenAssetLocation, outputDirectory: URL, threads: Int = 2, fileManager: FileManager = .default) throws {
+    /// `governor` paces inference in the background; the app passes its one shared governor.
+    public init(
+        assets: KittenAssetLocation, outputDirectory: URL, threads: Int = 2,
+        governor: OnDeviceVoiceGovernor, fileManager: FileManager = .default
+    ) throws {
         try assets.validate(fileManager: fileManager)
         try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         self.assets = assets
         self.outputDirectory = outputDirectory
         self.fileManager = fileManager
         self.threads = Int32(max(1, threads))
+        self.governor = governor
     }
 
     /// Kitten's input ids and the style row Kitten's own wrapper picks: the row at the text's length in
@@ -102,37 +119,60 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
         min(text.unicodeScalars.count, styleRowCount - 1)
     }
 
+    /// Live narration: paced only while the app is in the background.
     public func render(text: String) async throws -> SupertonicNarrationResult {
+        try await render(text: text, pacing: .whenAppBackgrounded)
+    }
+
+    public func render(text: String, pacing: OnDeviceRenderPacing) async throws -> SupertonicNarrationResult {
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { throw KittenNarrationError.emptyText }
         try Task.checkCancellation()
-        return try await withCheckedThrowingContinuation { continuation in
-            renderQueue.async { [self] in
-                autoreleasepool {
-                    do {
-                        let startedAt = Date()
-                        let runtime = try loadRuntimeIfNeeded()
-                        let samples = try synthesize(spoken, with: runtime)
-                        let rate = Self.sampleRate
-                        let kept = SpeechSilenceTrim.speechRange(in: samples, sampleRate: rate).map { Array(samples[$0]) } ?? samples
-                        let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
-                        let audioURL = outputDirectory.appending(path: "kitten-\(UUID().uuidString).wav")
-                        try writeWavFile(audioURL.path, kept, rate)
-                        generatedAudioURLs.insert(audioURL)
-                        continuation.resume(returning: SupertonicNarrationResult(
-                            audioURL: audioURL,
-                            duration: TimeInterval(kept.count) / TimeInterval(rate),
-                            sampleRate: rate,
-                            renderDuration: Date().timeIntervalSince(startedAt),
-                            sessionLoadCount: sessionLoadCount,
-                            engine: Self.engine,
-                            trimmedSilence: trimmedSilence
-                        ))
-                    } catch {
-                        continuation.resume(throwing: error)
+        let cancellation = CancellationFlag()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                renderQueue.async { [self] in
+                    autoreleasepool {
+                        do {
+                            // The rest the last inference earned, waited out here under this render's own pacing and
+                            // cancellation: in the background Kitten stays under iOS's CPU limit, which it ran
+                            // straight past before (#1679), and a chunk is never held back once it is made.
+                            if let notBefore = nextInferenceNotBefore {
+                                try governor.waitForNextInference(notBefore: notBefore, pacing: pacing) {
+                                    guard !cancellation.isCancelled else { throw CancellationError() }
+                                    return true
+                                }
+                                nextInferenceNotBefore = nil
+                            }
+                            guard !cancellation.isCancelled else { throw CancellationError() }
+                            let startedAt = Date()
+                            // Loading the session is paid once and isn't counted as inference.
+                            let runtime = try loadRuntimeIfNeeded()
+                            let (samples, cost) = try governor.measureInference { try synthesize(spoken, with: runtime) }
+                            nextInferenceNotBefore = governor.nextInference(after: cost, pacing: pacing)
+                            let rate = Self.sampleRate
+                            let kept = SpeechSilenceTrim.speechRange(in: samples, sampleRate: rate).map { Array(samples[$0]) } ?? samples
+                            let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
+                            let audioURL = outputDirectory.appending(path: "kitten-\(UUID().uuidString).wav")
+                            try writeWavFile(audioURL.path, kept, rate)
+                            generatedAudioURLs.insert(audioURL)
+                            continuation.resume(returning: SupertonicNarrationResult(
+                                audioURL: audioURL,
+                                duration: TimeInterval(kept.count) / TimeInterval(rate),
+                                sampleRate: rate,
+                                renderDuration: Date().timeIntervalSince(startedAt),
+                                sessionLoadCount: sessionLoadCount,
+                                engine: Self.engine,
+                                trimmedSilence: trimmedSilence
+                            ))
+                        } catch {
+                            continuation.resume(throwing: error)
+                        }
                     }
                 }
             }
+        } onCancel: {
+            cancellation.cancel()
         }
     }
 

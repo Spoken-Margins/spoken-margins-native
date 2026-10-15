@@ -10,6 +10,12 @@ import SessionKitAudio
 /// still playing. Each test makes that state directly, the state the owner's export showed, and checks the repair.
 @MainActor
 final class NarrationOwnershipRepairTests: XCTestCase {
+    /// One test sends the app to the background; the voice governor is shared by the test process (#1679).
+    override func tearDown() {
+        OnDeviceVoiceGovernor.app.setAppBackgrounded(false)
+        super.tearDown()
+    }
+
     func testForegroundShowsTheMiniPlayerAgainForASessionThatIsStillPlaying() throws {
         try withLibrary { model, audio in
             let playingItem = try startArticle(model)
