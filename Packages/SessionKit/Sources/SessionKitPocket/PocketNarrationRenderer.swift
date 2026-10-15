@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 
 public struct PocketNarrationResult: Equatable, Sendable {
     public let audioURL: URL
@@ -43,10 +44,14 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
     private let threads: Int
     private let fileManager: FileManager
     private let noiseSeed: UInt64?
+    /// Paces inference in the background, for every on-device voice alike (#1679).
+    public let governor: OnDeviceVoiceGovernor
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.pocket.render", qos: .userInitiated)
     private var runtime: PocketRuntime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
+    /// When the next inference may start, from the last one's cost (#1679). Read and written on `renderQueue` only.
+    private var nextInferenceNotBefore: TimeInterval?
 
     /// `threads` is onnxruntime's thread count inside one network call. One keeps the phone cool;
     /// the model's own reference uses up to four. `noiseSeed` makes a render repeat exactly.
@@ -56,6 +61,7 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
         voice: PocketVoiceID = .alba,
         threads: Int = 1,
         noiseSeed: UInt64? = nil,
+        governor: OnDeviceVoiceGovernor,
         fileManager: FileManager = .default
     ) throws {
         try assets.validate(voice: voice, fileManager: fileManager)
@@ -65,6 +71,7 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
         self.outputDirectory = outputDirectory
         self.threads = threads
         self.noiseSeed = noiseSeed
+        self.governor = governor
         self.fileManager = fileManager
     }
 
@@ -80,12 +87,23 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
                 renderQueue.async { [self] in
                     autoreleasepool {
                         do {
+                            // The rest the last inference earned, as for Kitten (#1679).
+                            if let notBefore = nextInferenceNotBefore {
+                                try governor.waitForNextInference(notBefore: notBefore, pacing: .whenAppBackgrounded) {
+                                    guard !cancellation.isCancelled else { throw CancellationError() }
+                                    return true
+                                }
+                                nextInferenceNotBefore = nil
+                            }
                             guard !cancellation.isCancelled else { throw CancellationError() }
                             let runtime = try loadRuntimeIfNeeded()
                             // Load time is paid once and reported apart from the render.
                             let startedAt = Date()
                             var noise = PocketNoise(seed: noiseSeed)
-                            let samples = try runtime.render(text: text, noise: &noise) { cancellation.isCancelled }
+                            let (samples, inferenceCost) = try governor.measureInference {
+                                try runtime.render(text: text, noise: &noise) { cancellation.isCancelled }
+                            }
+                            nextInferenceNotBefore = governor.nextInference(after: inferenceCost, pacing: .whenAppBackgrounded)
                             let renderDuration = Date().timeIntervalSince(startedAt)
                             guard !cancellation.isCancelled else { throw CancellationError() }
 

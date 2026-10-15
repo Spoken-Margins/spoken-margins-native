@@ -230,6 +230,12 @@ final class SupertonicMemoryBackoff: @unchecked Sendable {
     }
 }
 
+extension OnDeviceVoiceGovernor {
+    /// The app's one governor: every on-device voice's renderer paces through it, and the app's lifecycle tells it
+    /// when the app is in the background, so a voice that takes over there is paced from its first render (#1679).
+    static let app = OnDeviceVoiceGovernor(conditions: { SupertonicResourcePolicy.currentConditions() })
+}
+
 /// Applies I14 (`SpeechEnginePolicy`) to the device: heat and memory pressure stop new
 /// Supertonic inference; Low Power Mode and charging alone don't (#183).
 enum SupertonicResourcePolicy {
@@ -598,7 +604,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         audioPlayerStarter: (@Sendable (AVPlayer, Float) -> Void)? = nil,
         observesPlayerLifecycle: Bool = true,
         voiceChangeCue: (@Sendable () -> Void)? = nil,
-        onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { SupertonicResourcePolicy.allowsRendering() },
+        onDeviceRenderingAllowed: @escaping @Sendable () -> Bool = { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
         pressureRenderer: (any BundledVoiceRendering)? = nil,
         fallbackClient: AudioPlaybackClient? = nil,
         interruptionHandler: InterruptionHandler? = nil,
@@ -850,7 +856,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Kitten renders the rest of `generation` from here on, until a play releases it (#849 audit).
     private func holdBundledVoice(for generation: UUID) {
-        let block = SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+        let block = OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         lock.withLock {
             guard self.generation == generation else { return }
             if bundledVoiceGeneration != generation { bundledVoiceBlock = block }
@@ -1937,7 +1943,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // The stop names why the iOS voice took over, so the player's line needs nothing else (#314).
         let stopReason = SpeechFallbackReason(
             supertonicCode: reason,
-            resourceBlock: SpeechEnginePolicy.onDeviceRenderingBlock(SupertonicResourcePolicy.currentConditions())
+            resourceBlock: OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         ).rawValue
         var cancelledRenderQueue = false
         do {

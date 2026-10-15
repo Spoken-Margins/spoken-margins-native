@@ -70,7 +70,8 @@ print("chunks: \(chunks.count) of \(all.count) distinct, \(chunks.map(\.count).r
 var reports: [EngineReport] = []
 do {
     let kitten = try KittenNarrationRenderer(
-        assets: KittenAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Kitten")), outputDirectory: output, threads: threads)
+        assets: KittenAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Kitten")), outputDirectory: output, threads: threads,
+        governor: OnDeviceVoiceGovernor())
     reports.append(try await measure(engine: "kitten", chunks: chunks) { try await kitten.render(text: $0) })
     // The fast-start head the player plays first after a fallback (a warm session).
     let head = NarrationChunkPlanner.splittingFirstChunk(
@@ -86,7 +87,8 @@ do {
 }
 do {
     let supertonic = try SupertonicNarrationRenderer(
-        assets: SupertonicAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Supertonic")), outputDirectory: output)
+        assets: SupertonicAssetLocation(rootURL: root.appending(path: "App/SpokenMarginsApp/Resources/Supertonic")), outputDirectory: output,
+        governor: OnDeviceVoiceGovernor())
     reports.append(try await measure(engine: "supertonic", chunks: chunks) { try await supertonic.render(text: $0) })
     await supertonic.unload()
 } catch {
