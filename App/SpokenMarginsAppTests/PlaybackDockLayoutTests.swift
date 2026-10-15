@@ -46,7 +46,8 @@ final class PlaybackDockLayoutTests: XCTestCase {
     /// Starting playback is a status the dock must show without changing its height, so the bar stays where it was.
     func testStartingPlaybackDoesNotMoveTheDock() async throws {
         for phone in Self.phones {
-            for build in [self.makeArticleModel, self.makePodcastModel] {
+            let builds: [() -> Gate1AppModel] = [{ self.makeArticleModel() }, { self.makePodcastModel() }]
+            for build in builds {
                 let model = build()
                 let mounted = try mount(model, size: phone.size)
                 defer { mounted.close() }
@@ -113,6 +114,25 @@ final class PlaybackDockLayoutTests: XCTestCase {
         XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
         let shown = try await shownForwardControls(model, size: Self.phones[0].size)
         XCTAssertFalse(shown.contains("playback.nextChapter.button"), "saw \(shown)")
+    }
+
+    /// The same decision without mounting, so it holds even where the accessibility tree can't be read: the model
+    /// says whether the chapter row offers Next chapter, and the Skim row it draws is the one that decides it.
+    func testChapterRowButtonFollowsForwardSkim() {
+        let model = makePodcastModel(withChapters: true)
+        XCTAssertTrue(model.canJumpToNextChapter)
+        XCTAssertFalse(model.showsSkimRow)
+        XCTAssertTrue(model.showsNextChapterButton, "no Skim: Next chapter stays")
+
+        model.snapshot.skimBridgeState = SkimBridgeState(
+            direction: .forward, itemId: model.selectedItem.id, originMediaTimeMs: 1_200_000, summarySceneId: "chapter-0",
+            destinationSceneId: "chapter-1", destinationMediaTimeMs: 1_800_000, summaryAssetId: "summary",
+            wasSourcePlaying: false, status: .playing
+        )
+        XCTAssertTrue(model.showsSkimRow)
+        XCTAssertTrue(model.snapshot.canSkimForward)
+        XCTAssertTrue(model.canJumpToNextChapter, "external and Lock Screen commands keep Next chapter (#569)")
+        XCTAssertFalse(model.showsNextChapterButton, "forward Skim is offered: the second button goes")
     }
 
     /// Which of the two forward controls the mounted screen draws, by accessibility identifier.
