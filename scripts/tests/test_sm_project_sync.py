@@ -83,6 +83,7 @@ class API:
                 'nodes': fields, 'pageInfo': {'hasNextPage': False}}}}}
         if 'items(first:' in query:
             nodes = [{'id': f'item{n}', 'content': {'__typename': 'Issue', 'id': f'I{n}', 'number': n,
+                                                 'state': (self.routes.get(f'issues/{n}') or {}).get('state', 'open').upper(),
                                                  'repository': {'nameWithOwner': self.repo}},
                       'fieldValues': self.field_values(values)} for n, values in self.items.items()]
             # Unrelated content deliberately has no usable issue fields.
@@ -189,6 +190,38 @@ class Reconciliation(unittest.TestCase):
         for labels, wanted in (([], 'Done'), (['found-on-phone', 'priority'], 'Done')):
             api = API([issue(labels=labels, state='closed')], {7: {'Status': 'Checking'}})
             self.assertEqual(self.run_sync(api)['changes'][0]['status'], wanted)
+
+    def test_closed_card_is_done_from_the_project_read_alone(self):
+        # A full run used to GET every closed card's issue one by one: 90 of a live run's 162 calls (2026-10-15).
+        api = API([issue(labels=['found-on-phone'], state='closed'), issue(8)],
+                  {7: {'Status': 'Checking', sync.HEALTH: 'Waiting on checks/review'}, 8: {'Status': 'Todo'}})
+        result = self.run_sync(api, True)
+        self.assertEqual([(c['issue'], c['status']) for c in result['changes']], [(7, 'Done')])
+        self.assertTrue(result['changes'][0]['verified'])
+        self.assertIn('issues/7', api.reads)          # a card about to be written is read from the issue first
+        self.assertEqual(api.items[7], {'Status': 'Done'})
+        api.reads.clear()
+        again = self.run_sync(api, True)
+        self.assertEqual((again['changes'], again['unchanged']), ([], 2))
+        self.assertNotIn('issues/7', api.reads)       # already Done: the project read alone settles it
+        targeted = self.run_sync(api, only=[7])       # a hook for one issue still reads it
+        self.assertIn('issues/7', api.reads)
+        self.assertEqual(targeted['changes'], [])
+
+    def test_an_issue_reopened_during_the_run_is_never_set_done(self):
+        # The project read says CLOSED and the open list was read before the reopen; Done would make the board's
+        # Auto-close workflow close the owner's reopened issue again.
+        api = API([issue(state='closed')], {7: {'Status': 'Needs your check'}})
+        graphql = api.graphql
+        def reopened_after_the_board_read(query, **v):
+            data = graphql(query, **v)
+            if 'items(first:' in query:
+                api.routes['issues/7'] = issue(labels=['status: needs-human-validation'])
+            return data
+        api.graphql = reopened_after_the_board_read
+        result = self.run_sync(api, True)
+        self.assertNotIn('Done', [c['status'] for c in result['changes']])
+        self.assertEqual(api.items[7]['Status'], 'Needs your check')
 
     def test_stale_claim_routine_comments_do_not_count_as_implementer(self):
         api = API([issue(labels=['in-progress'])])
