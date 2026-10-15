@@ -16,7 +16,45 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         try await qualifyLateSuccess(bHasSummary: false)
     }
 
-    private func qualifyLateSuccess(bHasSummary: Bool) async throws {
+    func testLateASuccessDoesNotQueueIntoANewSessionOfTheSameItem() async throws {
+        try await qualifyLateSuccess(bHasSummary: false, sameItemNewSession: true)
+    }
+
+    func testActiveSummarySuccessStillPlaysOrQueuesItsOriginalTurn() async throws {
+        let preferences = VoicePreferencesSnapshot.capture()
+        let database = FileManager.default.temporaryDirectory.appending(path: "active-summary-\(UUID().uuidString).sqlite")
+        let provider = HeldSummarySuccessProvider()
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(),
+            featureFlags: SpokenMarginsFeatureFlags(remoteProviderExperienceEnabled: false),
+            localFoundationModelClient: provider, databaseURLOverride: database)
+        addTeardownBlock { @MainActor in
+            await provider.cancelAll()
+            model.pause()
+            preferences.restore()
+        }
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        model.beginWrittenMargin()
+        model.saveWrittenMargin(text: "Remember this original argument.")
+        let session = try XCTUnwrap(model.snapshot.sessionId)
+        model.summarize()
+        try await waitForRequests(1, provider: provider)
+        let requests = await provider.requests
+        let request = try XCTUnwrap(requests.first)
+        let turn = try XCTUnwrap(model.store?.loadTurns(sessionId: session).last)
+        try await provider.succeed(request.id, text: "The original argument remains worth remembering.")
+        for _ in 0..<500 {
+            if model.snapshot.targetId == turn.id || model.diagnostics["pendingAutoPlayTurnId"] == turn.id { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let reopened = try SQLiteSessionStore(path: database.path)
+        XCTAssertEqual(try reopened.loadTurns(sessionId: session).first { $0.id == turn.id }?.status, "complete")
+        XCTAssertTrue(model.snapshot.targetId == turn.id || model.diagnostics["pendingAutoPlayTurnId"] == turn.id,
+                      "Normal active success must retain the existing play-or-queue behavior")
+    }
+
+    private func qualifyLateSuccess(bHasSummary: Bool, sameItemNewSession: Bool = false) async throws {
         let preferences = VoicePreferencesSnapshot.capture()
         let directory = FileManager.default.temporaryDirectory.appending(path: "summary-success-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -53,7 +91,9 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let requestA = try XCTUnwrap(initialRequests.first)
         XCTAssertEqual(try noteIDs(requestA.context), [noteA])
 
-        model.startItem(id: "success-b")
+        let destinationItemId = sameItemNewSession ? "item-pill" : "success-b"
+        if sameItemNewSession { model.startNewSession(id: destinationItemId) }
+        else { model.startItem(id: destinationItemId) }
         let b = try XCTUnwrap(model.snapshot.sessionId)
         XCTAssertNotEqual(a, b)
         if bHasSummary {
@@ -68,6 +108,8 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         let jobsB = try store.loadAIJobs(sessionId: b)
         let turnsB = try store.loadTurns(sessionId: b)
         let targetB = model.snapshot.targetId
+        let statusB = model.statusMessage
+        let queueB = model.diagnostics["pendingAutoPlayTurnId"]
         if bHasSummary {
             XCTAssertEqual(jobsB.last?.status, "pending")
             XCTAssertEqual(turnsB.last?.status, "pending")
@@ -93,8 +135,10 @@ final class SummarySuccessOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(try reopened.loadAIJobs(sessionId: b), jobsB, "A's success must not settle B's pending job")
         XCTAssertEqual(try reopened.loadTurns(sessionId: b), turnsB, "A's content must not be written into B")
         XCTAssertEqual(model.snapshot.sessionId, b)
-        XCTAssertEqual(model.snapshot.itemId, "success-b")
+        XCTAssertEqual(model.snapshot.itemId, destinationItemId)
         XCTAssertEqual(model.snapshot.targetId, targetB)
+        XCTAssertEqual(model.statusMessage, statusB, "A's completion must not replace B's status")
+        XCTAssertEqual(model.diagnostics["pendingAutoPlayTurnId"], queueB, "A's completion must not queue playback in B")
         let pendingCount = await provider.pendingCount
         XCTAssertEqual(pendingCount, bHasSummary ? 1 : 0, "B's real provider request stays held")
     }
