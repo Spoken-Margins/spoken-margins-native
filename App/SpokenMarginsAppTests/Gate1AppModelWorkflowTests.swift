@@ -4101,16 +4101,20 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
     /// It used to stay in the sequence, and reading never crossed it, so the card stayed until Stop.
     func testAMarginBetweenTheLeadInAndItsSnappedSentenceStartIsLeftOutOfTheMoment() throws {
         // Sentences are 40 characters; the target is at 1600, so the 30-second rule starts at 1180 and reading starts at 1200.
-        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_200, 1_700])
+        // The Margins sit well inside the gap (1190) and well past the start (1300, 1700), not on the start itself,
+        // which plays as soon as reading begins.
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
 
         XCTAssertTrue(model.playMarginMoment(fixture.row))
 
-        XCTAssertEqual(model.snapshot.currentTextStart, 1_200)
+        let leadInStart = try XCTUnwrap(model.snapshot.currentTextStart)
+        XCTAssertEqual(leadInStart % fixture.sentenceLength, 0, "reading starts at the beginning of a sentence")
+        XCTAssertGreaterThanOrEqual(leadInStart, 1_200, "not in the gap before the first sentence start")
         let moment = try XCTUnwrap(model.marginMoment)
-        let startChars = Set(moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) })
-        XCTAssertEqual(startChars, [1_200, fixture.targetChar, 1_700], "the Margin at 1190 sits before where reading starts")
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar, 1_700], "the Margin at 1190 sits before where reading starts")
     }
 
     private func textAnchoredMomentFixture(
