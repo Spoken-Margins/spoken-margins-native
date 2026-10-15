@@ -4,59 +4,7 @@ import XCTest
 @testable import SessionKitSupertonic
 
 final class SupertonicNarrationTests: XCTestCase {
-    func testBackgroundInferencePacingLeavesSafetyMarginBelowIOSCPUQuota() {
-        XCTAssertEqual(
-            SupertonicInferencePacingPolicy.delay(afterInferenceDuration: 10, backgrounded: false),
-            0
-        )
-        let delay = SupertonicInferencePacingPolicy.delay(
-            afterInferenceDuration: 10,
-            backgrounded: true
-        )
-        XCTAssertEqual(delay, 5.384615, accuracy: 0.000_001)
-        XCTAssertEqual(10 / (10 + delay), 0.65, accuracy: 0.000_001)
-    }
-
-    // #1101: a background wake can arrive later than requested. That elapsed time has already
-    // paced inference; repeatedly subtracting only 100 ms charges the same scheduler delay again.
-    func testBackgroundPacingCountsActualElapsedTimeWhenSleepOvershoots() {
-        let delay = SupertonicInferencePacingPolicy.delay(afterInferenceDuration: 10, backgrounded: true)
-        var elapsed: TimeInterval = 0
-        var sleeps = 0
-        SupertonicInferencePacingPolicy.wait(for: delay, now: { elapsed }, sleep: { requested in
-            sleeps += 1
-            elapsed += requested + 2 // a delayed background wake, without a real wall-clock sleep
-        }, shouldContinue: { true })
-        XCTAssertEqual(sleeps, 3, "once the budget has elapsed, no more sleeps may be requested")
-        XCTAssertLessThan(elapsed, delay + 2.1)
-    }
-
-    func testCancelledBackgroundPacingReleasesTheObsoleteRenderOnTheNextWake() {
-        var elapsed: TimeInterval = 0
-        var cancelled = false
-        var sleeps = 0
-        XCTAssertThrowsError(try SupertonicInferencePacingPolicy.wait(for: 5, now: { elapsed }, sleep: { requested in
-            sleeps += 1
-            elapsed += requested
-            cancelled = true
-        }, shouldContinue: {
-            if cancelled { throw CancellationError() }
-            return true
-        })) { XCTAssertTrue($0 is CancellationError) }
-        XCTAssertEqual(sleeps, 1)
-    }
-
-    func testForegroundingStopsBackgroundPacingOnTheNextWake() {
-        var elapsed: TimeInterval = 0
-        var backgrounded = true
-        var sleeps = 0
-        SupertonicInferencePacingPolicy.wait(for: 5, now: { elapsed }, sleep: { requested in
-            sleeps += 1
-            elapsed += requested
-            backgrounded = false
-        }, shouldContinue: { backgrounded })
-        XCTAssertEqual(sleeps, 1)
-    }
+    // The pacing policy's own tests are in SessionKitCoreTests/OnDeviceVoiceGovernorTests (#1679).
 
     // #377: live narration and background preparation share one renderer. Preparation used to
     // set the shared pacing flag for its render and clear it after, so a live chunk rendered in

@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 
 public struct PocketNarrationResult: Equatable, Sendable {
     public let audioURL: URL
@@ -43,6 +44,8 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
     private let threads: Int
     private let fileManager: FileManager
     private let noiseSeed: UInt64?
+    /// Paces inference in the background, for every on-device voice alike (#1679).
+    public let governor: OnDeviceVoiceGovernor
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.pocket.render", qos: .userInitiated)
     private var runtime: PocketRuntime?
     private var sessionLoadCount = 0
@@ -56,6 +59,7 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
         voice: PocketVoiceID = .alba,
         threads: Int = 1,
         noiseSeed: UInt64? = nil,
+        governor: OnDeviceVoiceGovernor = OnDeviceVoiceGovernor(),
         fileManager: FileManager = .default
     ) throws {
         try assets.validate(voice: voice, fileManager: fileManager)
@@ -65,6 +69,7 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
         self.outputDirectory = outputDirectory
         self.threads = threads
         self.noiseSeed = noiseSeed
+        self.governor = governor
         self.fileManager = fileManager
     }
 
@@ -78,6 +83,7 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 renderQueue.async { [self] in
+                    var cost: OnDeviceVoiceGovernor.InferenceCost?
                     autoreleasepool {
                         do {
                             guard !cancellation.isCancelled else { throw CancellationError() }
@@ -85,7 +91,10 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
                             // Load time is paid once and reported apart from the render.
                             let startedAt = Date()
                             var noise = PocketNoise(seed: noiseSeed)
-                            let samples = try runtime.render(text: text, noise: &noise) { cancellation.isCancelled }
+                            let (samples, inferenceCost) = try governor.measureInference {
+                                try runtime.render(text: text, noise: &noise) { cancellation.isCancelled }
+                            }
+                            cost = inferenceCost
                             let renderDuration = Date().timeIntervalSince(startedAt)
                             guard !cancellation.isCancelled else { throw CancellationError() }
 
@@ -110,6 +119,8 @@ public final class PocketNarrationRenderer: @unchecked Sendable {
                             continuation.resume(throwing: error)
                         }
                     }
+                    // Live narration's rest before the next render, as for Kitten (#1679).
+                    if let cost { governor.rest(after: cost, pacing: .whenAppBackgrounded) }
                 }
             }
         } onCancel: {

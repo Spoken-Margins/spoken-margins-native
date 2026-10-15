@@ -150,15 +150,12 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     private let outputDirectory: URL
     private let fileManager: FileManager
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.supertonic.render", qos: .userInitiated)
-    private let inferencePacingLock = NSLock()
-    private var backgroundInferencePacingEnabled = false
+    /// Paces inference in the background, for every on-device voice alike (#1679).
+    public let governor: OnDeviceVoiceGovernor
     #if DEBUG
-    private var pacingRecords: [(pacing: SupertonicRenderPacing, delay: TimeInterval)] = []
     /// Each inference step's pacing: who asked for the render and how long it was held back.
     var debugPacingRecords: [(pacing: SupertonicRenderPacing, delay: TimeInterval)] {
-        inferencePacingLock.lock()
-        defer { inferencePacingLock.unlock() }
-        return pacingRecords
+        governor.debugPacingRecords.map { ($0.pacing, $0.delay) }
     }
     #endif
     private var runtime: Runtime?
@@ -168,25 +165,23 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     public init(
         assets: SupertonicAssetLocation,
         outputDirectory: URL,
+        governor: OnDeviceVoiceGovernor = OnDeviceVoiceGovernor(),
         fileManager: FileManager = .default
     ) throws {
         try assets.validate(fileManager: fileManager)
         try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         self.assets = assets
         self.outputDirectory = outputDirectory
+        self.governor = governor
         self.fileManager = fileManager
     }
 
-    /// Whether the app is in the background: set from the app's lifecycle only. Keeps
-    /// generation running there without exceeding iOS's sustained CPU budget for background
-    /// audio processes. Foreground live synthesis stays unthrottled so the first chunks start
-    /// quickly. Background preparation asks for pacing per render instead (#377): it used to
-    /// set and clear this shared flag, which paced live narration while a Library chunk
-    /// rendered and switched pacing off in the background when a pass ended.
+    /// Whether the app is in the background, on this renderer's governor (the app sets it on the shared governor).
+    /// Background preparation asks for pacing per render instead (#377): it used to set and clear this shared flag,
+    /// which paced live narration while a Library chunk rendered and switched pacing off in the background when a
+    /// pass ended.
     public func setBackgroundInferencePacingEnabled(_ enabled: Bool) {
-        inferencePacingLock.lock()
-        backgroundInferencePacingEnabled = enabled
-        inferencePacingLock.unlock()
+        governor.setAppBackgrounded(enabled)
     }
 
     public func render(
@@ -328,68 +323,17 @@ public final class SupertonicNarrationRenderer: @unchecked Sendable {
     private func paceBackgroundInference(
         after inferenceDuration: TimeInterval, pacing: SupertonicRenderPacing, cancellation: RenderCancellationToken
     ) throws {
-        let delay = pacingDelay(afterInferenceDuration: inferenceDuration, for: pacing)
-        #if DEBUG
-        inferencePacingLock.lock()
-        pacingRecords.append((pacing, delay))
-        inferencePacingLock.unlock()
-        #endif
-        try SupertonicInferencePacingPolicy.wait(for: delay) {
+        try governor.rest(afterInference: inferenceDuration, pacing: pacing) {
             guard !cancellation.isCancelled else { throw CancellationError() }
-            return isPaced(pacing)
+            return true
         }
     }
 
     /// How long a render with `pacing` sleeps after `inferenceDuration` of inference, now.
     func pacingDelay(afterInferenceDuration inferenceDuration: TimeInterval, for pacing: SupertonicRenderPacing) -> TimeInterval {
-        SupertonicInferencePacingPolicy.delay(afterInferenceDuration: inferenceDuration, backgrounded: isPaced(pacing))
-    }
-
-    private func isPaced(_ pacing: SupertonicRenderPacing) -> Bool {
-        pacing == .always || isBackgroundInferencePacingEnabled
-    }
-
-    private var isBackgroundInferencePacingEnabled: Bool {
-        inferencePacingLock.lock()
-        defer { inferencePacingLock.unlock() }
-        return backgroundInferencePacingEnabled
+        governor.pacingDelay(afterInference: inferenceDuration, for: pacing)
     }
 }
 
-/// Who a render is for, which decides whether its inference is paced (#377).
-public enum SupertonicRenderPacing: Equatable, Sendable {
-    /// The listener's live narration: paced only while the app is in the background.
-    case whenAppBackgrounded
-    /// Background preparation: always paced, so it never competes with live narration for CPU.
-    case always
-}
-
-enum SupertonicInferencePacingPolicy {
-    /// ONNX occupied roughly 85% of one CPU in the device termination traces.
-    /// Holding inference work to 65% of wall time leaves margin below iOS's 80%
-    /// sustained-background limit for playback and application bookkeeping.
-    static let backgroundWorkDutyCycle = 0.65
-
-    static func delay(afterInferenceDuration duration: TimeInterval, backgrounded: Bool) -> TimeInterval {
-        guard backgrounded, duration > 0 else { return 0 }
-        return duration * ((1 / backgroundWorkDutyCycle) - 1)
-    }
-
-    /// Scheduler delay already rests inference. In the background a 100 ms sleep may wake much
-    /// later; subtracting only the requested 100 ms would repeatedly add that delay (#1101).
-    /// Clock and sleep are injected for host tests; production uses the monotonic system clock.
-    static func wait(
-        for duration: TimeInterval,
-        now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
-        shouldContinue: () throws -> Bool
-    ) rethrows {
-        let deadline = now() + duration
-        while true {
-            guard try shouldContinue() else { return }
-            let remaining = deadline - now()
-            guard remaining > 0 else { return }
-            sleep(min(0.1, remaining))
-        }
-    }
-}
+/// Who a render is for, which decides whether its inference is paced (#377). Shared by every on-device voice (#1679).
+public typealias SupertonicRenderPacing = OnDeviceRenderPacing

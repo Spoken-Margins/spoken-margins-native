@@ -89,6 +89,37 @@ final class KittenRendererTests: XCTestCase {
         }
     }
 
+    // #1679: heat hands narration to Kitten, and Kitten used to render flat out in the background, so iOS stopped the
+    // app for its CPU use about a minute after the phone was locked. A backgrounded Kitten render now rests before the
+    // next one by the shared governor's rule; a render with the app in front does not.
+    func testABackgroundedRenderRestsBeforeTheNextAndAForegroundOneDoesNot() async throws {
+        final class Slept: @unchecked Sendable {
+            private let lock = NSLock()
+            private var total: TimeInterval = 0
+            var seconds: TimeInterval { lock.withLock { total } }
+            func add(_ seconds: TimeInterval) { lock.withLock { total += seconds } }
+        }
+        // Real time for the inference; a rest moves the clock on without sleeping.
+        let slept = Slept()
+        let governor = OnDeviceVoiceGovernor(now: { ProcessInfo.processInfo.systemUptime + slept.seconds }, sleep: { slept.add($0) })
+        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: governor)
+
+        _ = try await renderer.render(text: Self.prose[0])
+        _ = await renderer.diagnostics() // queued behind any rest
+        XCTAssertEqual(slept.seconds, 0, "a render with the app in front is not slowed down")
+
+        governor.setAppBackgrounded(true)
+        let background = try await renderer.render(text: Self.prose[1])
+        _ = await renderer.diagnostics()
+        let paced = try XCTUnwrap(governor.debugPacingRecords.last)
+        XCTAssertGreaterThan(paced.delay, 0, "\(governor.debugPacingRecords)")
+        XCTAssertGreaterThanOrEqual(paced.delay, paced.inference * (1 / OnDeviceInferencePacingPolicy.backgroundWorkDutyCycle - 1) - 0.000_1,
+                                    "at least the wall-time rest Supertonic gets")
+        XCTAssertEqual(slept.seconds, paced.delay, accuracy: 0.05, "the next render waited out the rest")
+        XCTAssertLessThan(paced.inference + paced.delay, background.duration,
+                          "paced, Kitten still renders faster than the chunk plays (#1673)")
+    }
+
     /// A long article through the fallback voice, read as the player plans it (a short first chunk, then the
     /// article's own chunks), with each next chunk starting the moment the one before it ends or, when it
     /// isn't ready, when it is. No pause between chunks may pass 1 s. `SPEECH_SOAK_MINUTES` sets the length

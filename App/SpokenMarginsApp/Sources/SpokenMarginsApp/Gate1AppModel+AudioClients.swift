@@ -204,7 +204,8 @@ extension Gate1AppModel {
         )
         let renderer = try SupertonicNarrationRenderer(
             assets: SupertonicAssetLocation(rootURL: resourceRoot),
-            outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory)
+            outputDirectory: cachesDirectory.appending(path: "SupertonicPlayback", directoryHint: .isDirectory),
+            governor: .app
         )
         supertonicRenderer = renderer
         return renderer
@@ -248,7 +249,8 @@ extension Gate1AppModel {
                   for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true),
               let renderer = try? KittenNarrationRenderer(
                   assets: KittenAssetLocation(rootURL: resourceRoot),
-                  outputDirectory: cachesDirectory.appending(path: "KittenPlayback", directoryHint: .isDirectory))
+                  outputDirectory: cachesDirectory.appending(path: "KittenPlayback", directoryHint: .isDirectory),
+                  governor: .app)
         else {
             diagnostics["kittenFallbackVoice"] = "unavailable"
             return nil

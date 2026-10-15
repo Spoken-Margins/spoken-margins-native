@@ -43,6 +43,7 @@ public enum KittenNarrationError: Error, LocalizedError, Equatable {
 /// text through `KittenFrontEnd`. It stands in for Supertonic when `SupertonicResourcePolicy` refuses
 /// to render (heat, memory pressure), at about 6x real time on the owner's iPhone 17 Pro in Low Power
 /// Mode (C2 M2, #192). One serial queue, one ONNX session, loaded on first use and kept until `unload()`.
+/// Its inference is paced by the shared `OnDeviceVoiceGovernor`, as Supertonic's is (#1679).
 public final class KittenNarrationRenderer: @unchecked Sendable {
     public static let engine = "kitten"
     public static let sampleRate = 24_000
@@ -81,19 +82,25 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
     private let outputDirectory: URL
     private let fileManager: FileManager
     private let threads: Int32
+    /// Paces inference in the background, for every on-device voice alike (#1679).
+    public let governor: OnDeviceVoiceGovernor
     private let renderQueue = DispatchQueue(label: "com.spokenmargins.kitten.render", qos: .userInitiated)
     private var runtime: Runtime?
     private var sessionLoadCount = 0
     private var generatedAudioURLs: Set<URL> = []
 
     /// Two threads measured 6.7x against 5.8x on one (C2 M2), and leave the rest of the CPU to playback.
-    public init(assets: KittenAssetLocation, outputDirectory: URL, threads: Int = 2, fileManager: FileManager = .default) throws {
+    public init(
+        assets: KittenAssetLocation, outputDirectory: URL, threads: Int = 2,
+        governor: OnDeviceVoiceGovernor = OnDeviceVoiceGovernor(), fileManager: FileManager = .default
+    ) throws {
         try assets.validate(fileManager: fileManager)
         try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
         self.assets = assets
         self.outputDirectory = outputDirectory
         self.fileManager = fileManager
         self.threads = Int32(max(1, threads))
+        self.governor = governor
     }
 
     /// Kitten's input ids and the style row Kitten's own wrapper picks: the row at the text's length in
@@ -102,17 +109,25 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
         min(text.unicodeScalars.count, styleRowCount - 1)
     }
 
+    /// Live narration: paced only while the app is in the background.
     public func render(text: String) async throws -> SupertonicNarrationResult {
+        try await render(text: text, pacing: .whenAppBackgrounded)
+    }
+
+    public func render(text: String, pacing: OnDeviceRenderPacing) async throws -> SupertonicNarrationResult {
         let spoken = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !spoken.isEmpty else { throw KittenNarrationError.emptyText }
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { continuation in
             renderQueue.async { [self] in
+                var cost: OnDeviceVoiceGovernor.InferenceCost?
                 autoreleasepool {
                     do {
                         let startedAt = Date()
-                        let runtime = try loadRuntimeIfNeeded()
-                        let samples = try synthesize(spoken, with: runtime)
+                        let (samples, inferenceCost) = try governor.measureInference {
+                            try synthesize(spoken, with: loadRuntimeIfNeeded())
+                        }
+                        cost = inferenceCost
                         let rate = Self.sampleRate
                         let kept = SpeechSilenceTrim.speechRange(in: samples, sampleRate: rate).map { Array(samples[$0]) } ?? samples
                         let trimmedSilence = TimeInterval(samples.count - kept.count) / TimeInterval(rate)
@@ -132,6 +147,9 @@ public final class KittenNarrationRenderer: @unchecked Sendable {
                         continuation.resume(throwing: error)
                     }
                 }
+                // The chunk is already handed back; the rest holds the queue, so the next render waits. In the
+                // background this keeps Kitten under iOS's CPU limit, which it ran straight past before (#1679).
+                if let cost { governor.rest(after: cost, pacing: pacing) }
             }
         }
     }
