@@ -96,12 +96,23 @@ public enum PublisherNarrationEvidence {
         preloads(in: html)?["post"] as? [String: Any]
     }
 
+    /// A followed post (#1616): `entry` with the page's completed voiceover of that same post, else its completed
+    /// automatic narration (marked as generated). Nil when the page gives neither, or is another post's.
     public static func confirmedEntry(_ entry: FeedEntry, html: String) -> FeedEntry? {
-        guard let voiceover = voiceover(inPostPage: html), voiceover.canonicalURL == entry.canonicalURL else { return nil }
+        let recording: PostVoiceover, generated: Bool
+        if let voiceover = voiceover(inPostPage: html) {
+            (recording, generated) = (voiceover, false)
+        } else if let voice = generatedVoice(inPostPage: html) {
+            (recording, generated) = (voice, true)
+        } else {
+            return nil
+        }
+        guard recording.canonicalURL == entry.canonicalURL else { return nil }
         var confirmed = entry
         confirmed.publisherNarrationConfirmed = true
-        confirmed.audioURL = voiceover.audioURL
-        if let durationMs = voiceover.durationMs { confirmed.audioDurationMs = durationMs }
+        confirmed.publisherNarrationGenerated = generated ? true : nil
+        confirmed.audioURL = recording.audioURL
+        if let durationMs = recording.durationMs { confirmed.audioDurationMs = durationMs }
         return confirmed
     }
 
