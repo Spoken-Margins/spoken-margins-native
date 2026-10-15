@@ -117,6 +117,51 @@ class LaneAudioTests(unittest.TestCase):
         # These AirPods arrived during the run; restoring them would select a device the run never began on.
         self.assertEqual(self.mac.defaults, {'input': 99, 'output': 92, 'system': 92})
 
+    def refresh_after_airpods_reclaim(self, clock):
+        self.mac.defaults = {'input': 112, 'output': 106, 'system': 106}  # the AirPods take the Mac back
+        with mock.patch('time.time', return_value=clock):
+            return lane_audio.pin('SIM-A', backend=self.mac, out=self.out, lid_closed=lambda: False, refresh=True)
+
+    def test_a_device_that_keeps_reclaiming_the_defaults_is_not_fought_every_second(self):
+        # 2026-10-15: pinning undid every reclaim on each 1 s tick, so the output flipped AirPods <-> speakers
+        # all through a run and kept tugging the AirPods between the iPhone and the Mac.
+        with mock.patch('time.time', return_value=1000.0):
+            self.pin()
+        switched = [len(self.refresh_after_airpods_reclaim(1001.0 + tick)) for tick in range(lane_audio.REPIN_LIMIT)]
+        self.assertEqual(switched, [3] * lane_audio.REPIN_LIMIT)
+        stood_down = self.refresh_after_airpods_reclaim(1010.0)
+        self.assertEqual(stood_down, [])
+        self.assertEqual(self.mac.defaults, {'input': 112, 'output': 106, 'system': 106})  # the Mac's choice stands
+        self.assertIn('not fighting it', self.out.getvalue())
+        sets = len(self.mac.sets)
+        self.assertEqual(self.refresh_after_airpods_reclaim(1100.0), [])  # still standing down
+        self.assertEqual(len(self.mac.sets), sets)
+        after = 1010.0 + lane_audio.REPIN_YIELD + 1
+        self.assertEqual(len(self.refresh_after_airpods_reclaim(after)), 3)  # the yield is over: pinned again
+        # The AirPods were never pinned away from at boot, so settle must not resurrect them as a restore target.
+        self.booted.clear()
+        self.settle()
+
+    def test_reclaims_spread_over_time_are_still_pinned(self):
+        with mock.patch('time.time', return_value=1000.0):
+            self.pin()
+        gap = lane_audio.REPIN_WINDOW / lane_audio.REPIN_LIMIT + 1
+        for tick in range(lane_audio.REPIN_LIMIT * 3):
+            self.assertEqual(len(self.refresh_after_airpods_reclaim(1001.0 + tick * gap)), 3)
+        self.assertNotIn('not fighting it', self.out.getvalue())
+
+    def test_a_fresh_boot_starts_the_count_again(self):
+        with mock.patch('time.time', return_value=1000.0):
+            self.pin()
+        for tick in range(lane_audio.REPIN_LIMIT + 1):
+            self.refresh_after_airpods_reclaim(1001.0 + tick)
+        self.assertGreater(lane_audio._read_state().get('yield_until', 0), 0)
+        self.mac.defaults = {'input': 112, 'output': 106, 'system': 106}
+        with mock.patch('time.time', return_value=1020.0):
+            self.pin('SIM-B')
+        self.assertEqual(self.mac.defaults, {'input': 99, 'output': 92, 'system': 92})
+        self.assertNotIn('yield_until', lane_audio._read_state())
+
     def test_refresh_preserves_original_defaults_and_manual_wired_choices(self):
         self.pin()
         self.mac.defaults.update(input=IPHONE_MIC['id'], output=USB_OUT['id'], system=AIRPODS_OUT['id'])
