@@ -4,6 +4,7 @@
 import AVFoundation
 import Foundation
 import OnnxRuntimeBindings
+import SessionKit
 import SessionKitSupertonic
 
 struct VoiceBenchPassageResult: Encodable, Sendable {
@@ -219,7 +220,7 @@ enum SupertonicBench {
             throw SupertonicNarrationError.missingAsset("Supertonic")
         }
         let out = URL.cachesDirectory.appending(path: "VoiceBench/Supertonic", directoryHint: .isDirectory)
-        let renderer = try SupertonicNarrationRenderer(assets: SupertonicAssetLocation(rootURL: root), outputDirectory: out)
+        let renderer = try SupertonicNarrationRenderer(assets: SupertonicAssetLocation(rootURL: root), outputDirectory: out, governor: OnDeviceVoiceGovernor())
         let loadStart = Date()
         let warm = try await renderer.render(text: "Warm up.", voice: .m2, speed: 1.0, synthesisSteps: 8)
         await renderer.discardGeneratedAudio(at: warm.audioURL)

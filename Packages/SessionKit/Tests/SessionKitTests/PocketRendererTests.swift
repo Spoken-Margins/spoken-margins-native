@@ -3,6 +3,7 @@ import Foundation
 import OnnxRuntimeBindings
 import XCTest
 @testable import SessionKitPocket
+import SessionKit
 
 /// Tests of the Pocket TTS renderer (#459). The first group needs no downloads. The rest read the
 /// weights `research/C2/pocket/fetch_weights.sh` fetches (or the folder in `POCKET_TTS_MODEL_DIR`)
@@ -123,7 +124,7 @@ final class PocketRendererTests: XCTestCase {
         let assets = try fetchedWeights()
         let output = FileManager.default.temporaryDirectory.appending(path: "pocket-small-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: output) }
-        let renderer = try PocketNarrationRenderer(assets: assets, outputDirectory: output, noiseSeed: 1)
+        let renderer = try PocketNarrationRenderer(assets: assets, outputDirectory: output, noiseSeed: 1, governor: OnDeviceVoiceGovernor())
 
         do {
             _ = try await renderer.render(text: "  \n ")
@@ -162,7 +163,7 @@ final class PocketRendererTests: XCTestCase {
         func get(assets: PocketAssetLocation) async throws -> (load: Double, renders: [PassageRender]) {
             if let cached { return cached }
             let directory = PocketRendererTests.repoRoot.appending(path: "artifacts/pocket", directoryHint: .isDirectory)
-            let renderer = try PocketNarrationRenderer(assets: assets, outputDirectory: directory, threads: 1, noiseSeed: 20_261_014)
+            let renderer = try PocketNarrationRenderer(assets: assets, outputDirectory: directory, threads: 1, noiseSeed: 20_261_014, governor: OnDeviceVoiceGovernor())
             let load = try await renderer.preload()
             struct File: Decodable { struct Passage: Decodable { var id: String; var text: String }; var passages: [Passage] }
             let passages = try JSONDecoder().decode(File.self, from: Data(contentsOf: PocketRendererTests.repoRoot.appending(path: "research/C2/passages.json"))).passages
