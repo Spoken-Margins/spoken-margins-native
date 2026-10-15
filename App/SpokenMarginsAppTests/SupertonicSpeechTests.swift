@@ -1617,8 +1617,21 @@ final class SupertonicSpeechTests: XCTestCase {
     /// The wait leaves 60 s of the first test's 180 s for its own renders and waits.
     private let iOSVoiceWarmUpWait: TimeInterval = 120
 
+    /// #1688: with no voice named, iOS writes with its default en-US voice, the Siri voice (nora)
+    /// from Apple's asset catalog. The 10-11 template holds nora "neural"; the catalog now offers
+    /// nora "natural" (268 MB), and a fresh clone drops the first and downloads the second at boot.
+    /// Since 10-14 a first write has waited 125 to 391 s on the lane while that runs. The stand-in
+    /// tests check the guard's files, not which voice reads, so they name a voice that ships inside
+    /// the simulator runtime and needs no download.
+    private static let builtInIOSVoice = "com.apple.voice.super-compact.en-US.Samantha"
+
     private func warmUpTheIOSVoice() async throws {
         guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
+        // Without it the renderer quietly uses the default voice, and the download wait comes back.
+        guard AVSpeechSynthesisVoice(identifier: Self.builtInIOSVoice) != nil else {
+            XCTFail("#1688 the simulator runtime has no \(Self.builtInIOSVoice); pick another built-in voice")
+            return
+        }
         executionTimeAllowance = 180
         let root = FileManager.default.temporaryDirectory.appending(path: "warm-up-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -1626,7 +1639,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let started = Date()
         do {
             _ = try await SystemVoiceChunkRenderer().render(
-                text: "The iOS voice is ready.", voiceIdentifier: nil,
+                text: "The iOS voice is ready.", voiceIdentifier: Self.builtInIOSVoice,
                 matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: iOSVoiceWarmUpWait
             )
             print("#1230 iOS voice warm-up took \(Date().timeIntervalSince(started)) s")
@@ -1651,7 +1664,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: Self.builtInIOSVoice)
         let result = try await guardRenderer.render(
             text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
             voice: .m2, language: "en", speed: 1, synthesisSteps: 8
@@ -1672,7 +1685,7 @@ final class SupertonicSpeechTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let reports = StallEventLog()
         let guardRenderer = SupertonicOutputGuard(
-            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil,
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: Self.builtInIOSVoice,
             onReplacement: { reports.stall($0, [:]) }
         )
         let render = Task {
@@ -1703,7 +1716,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let reports = GuardReports()
         let client = SupertonicSpeechPlaybackClient(
             renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20),
-                                            systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
+                                            systemVoiceIdentifier: Self.builtInIOSVoice, onReplacement: { reports.add($0) }),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             diskCache: cache, audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
@@ -1726,7 +1739,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: Self.builtInIOSVoice)
         let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
         var standIn: URL?
         let kept = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered in
@@ -1782,7 +1795,7 @@ final class SupertonicSpeechTests: XCTestCase {
             let reports = GuardReports()
             let client = SupertonicSpeechPlaybackClient(
                 renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
-                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
+                                                systemVoiceIdentifier: Self.builtInIOSVoice, onReplacement: { reports.add($0) }),
                 voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
