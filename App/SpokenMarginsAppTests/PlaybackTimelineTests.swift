@@ -107,6 +107,41 @@ final class PlaybackTimelineTests: XCTestCase {
               case .listeningMapScene = entries[2].action else { return XCTFail("Navigation actions were lost") }
     }
 
+    func testPlaybackFocusNeverTargetsAnOmittedParagraphOrAnEarlierCaption() throws {
+        let text = "Caption\n\nBody paragraph."
+        let document = StructuredDocument(
+            extraction: .init(engine: "test", version: 1, sourceSHA256: nil, pageCount: 1, textSHA256: nil),
+            text: text, segments: [
+                .init(id: "caption", role: .caption, range: .init(start: 0, length: 7)),
+                .init(id: "body", role: .body, range: .init(start: 9, length: 15))
+            ], markers: [])
+        var item = ItemDetailState(id: "article", title: "Article", text: text).includingTimelineSource(document)
+        item.chapters = [.init(id: "scene", title: "Actual scene", startChar: 0, endChar: text.count, percent: 0)]
+        let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+        var snapshot = SessionSnapshot()
+        snapshot.itemId = item.id
+        snapshot.targetType = TargetType.itemTextTTS.rawValue
+        snapshot.status = .playing
+        let source = try XCTUnwrap(item.timelineSource.entries.first { $0.role == .caption })
+        for offset in [2, 7, 8, 10, text.count] {
+            snapshot.currentTextStart = offset
+            let selection = ExperienceTimelineRailScreen.selectionForPlayback(entries: entries, item: item, snapshot: snapshot) {
+                if case .chapter = $0 { true } else { false }
+            }
+            XCTAssertEqual(selection.focusID, offset < 7 ? source.id : "source.chapter.scene")
+            XCTAssertEqual(selection.currentIDs, offset < 7 ? [source.id, "source.chapter.scene"] : ["source.chapter.scene"])
+            XCTAssertTrue(entries.contains { $0.id == selection.focusID }, "Follow playback must scroll to a displayed row")
+        }
+        for text in ["", "Only body text."] {
+            let item = ItemDetailState(id: "article", text: text).includingTimelineSource(nil)
+            let entries = ExperienceTimelineRailScreen.makeEntries(from: item, sessionID: nil)
+            snapshot.currentTextStart = 0
+            let selection = ExperienceTimelineRailScreen.selectionForPlayback(entries: entries, item: item, snapshot: snapshot) { _ in false }
+            XCTAssertEqual(selection.focusID, "source.beginning")
+            XCTAssertTrue(selection.currentIDs.isEmpty)
+        }
+    }
+
     /// #1291 APO-09: `Gate1FlowUITests` checked only that some Timeline row reads "Current chapter." after Next
     /// chapter, which is true before the jump too, and that class runs nowhere. Here the model's real Next chapter
     /// press must move the Timeline's current chapter from the one playing to the next one, and only that one.
