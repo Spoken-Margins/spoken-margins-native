@@ -134,9 +134,9 @@ extension Gate1AppModel {
         // The session this summary belongs to: a failure that arrives after another session
         // became active settles this one's job and turn, not that session's (#1469).
         let originSessionId = snapshot.sessionId
-        guard let engine else { return }
+        guard let submissionEngine = engine else { return }
         let origin: LocalSummaryRequestOrigin
-        do { origin = try engine.localSummaryRequestOrigin(itemId: itemId, turnId: turnId) }
+        do { origin = try submissionEngine.localSummaryRequestOrigin(itemId: itemId, turnId: turnId) }
         catch { reportFailure(error, context: "Summary request is no longer pending"); return }
         Task {
             do {
@@ -147,6 +147,9 @@ extension Gate1AppModel {
                 guard let response = partials.first, !response.isEmpty else {
                     throw LocalFoundationModelError.emptyResponse
                 }
+                // Settings can replace the runtime while the provider is suspended. Publish through
+                // the installed engine; only the immutable request address survives the await.
+                guard let engine else { return }
                 snapshot = try engine.completeLocalSummary(origin: origin, content: response)
                 diagnostics["lastSummaryMode"] = "apple_foundation_on_device"
                 // Save a late result without replacing another item's controls, status or autoplay queue.
