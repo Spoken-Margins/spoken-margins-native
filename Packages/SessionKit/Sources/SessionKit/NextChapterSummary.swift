@@ -40,6 +40,14 @@ public enum NextChapterSummaryRule {
         return isHeadingForNextChapter(playing, nextChapterStartMs: nextChapterStartMs)
     }
 
+    /// Whether the chapter row above the scrubber draws its Next chapter button (#1628). A forward Skim control
+    /// the listener can press already offers forward navigation, so the second button is hidden; with no forward
+    /// Skim target (no ready map, a map that has ended, an article) Next chapter stays. This is only about the
+    /// button: the Lock Screen and external commands go by `isAvailable`.
+    public static func showsChapterRowButton(isAvailable: Bool, forwardSkimOffered: Bool) -> Bool {
+        isAvailable && !forwardSkimOffered
+    }
+
     /// - Parameters:
     ///   - playing: the summary bridge playing now, if any.
     ///   - hasNextChapter: whether the item has a chapter after the current one.

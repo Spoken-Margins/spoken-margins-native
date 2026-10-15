@@ -81,4 +81,16 @@ final class NextChapterSummaryTests: XCTestCase {
         XCTAssertFalse(Rule.isAvailable(playing: nil, hasNextChapter: false, nextChapterStartMs: nil))
         XCTAssertTrue(Rule.isAvailable(playing: nil, hasNextChapter: true, nextChapterStartMs: nil))
     }
+
+    // MARK: the chapter row's button next to Skim (#1628)
+
+    func testChapterRowButtonIsHiddenOnlyWhenForwardSkimIsOffered() {
+        // chapters + a forward Skim target: Skim is the one forward control
+        XCTAssertFalse(Rule.showsChapterRowButton(isAvailable: true, forwardSkimOffered: true))
+        // chapters only, a missing or unready map, no forward target (including the end of the map)
+        XCTAssertTrue(Rule.showsChapterRowButton(isAvailable: true, forwardSkimOffered: false))
+        // no next chapter: nothing to show whether or not Skim is offered
+        XCTAssertFalse(Rule.showsChapterRowButton(isAvailable: false, forwardSkimOffered: false))
+        XCTAssertFalse(Rule.showsChapterRowButton(isAvailable: false, forwardSkimOffered: true))
+    }
 }

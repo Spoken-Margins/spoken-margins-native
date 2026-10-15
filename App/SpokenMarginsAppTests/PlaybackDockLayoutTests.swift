@@ -1,4 +1,4 @@
-import SessionKit
+@testable import SessionKit
 import SwiftUI
 import UIKit
 import XCTest
@@ -65,6 +65,86 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
     }
 
+    // MARK: - Next chapter next to Skim (#1628)
+
+    /// The owner saw a Next chapter button above the scrubber and a forward Skim control below the transport on the same
+    /// screen. This mounts the real playback screen and reads which of the two it draws. The bridge is the one real state
+    /// where the model's own availability pass reports forward Skim without a stored map.
+    func testForwardSkimIsTheOnlyForwardControlWhenItIsOffered() async throws {
+        for phone in Self.phones {
+            let model = makePodcastModel(withChapters: true)
+            model.snapshot.skimBridgeState = SkimBridgeState(
+                direction: .forward, itemId: model.selectedItem.id, originMediaTimeMs: 1_200_000, summarySceneId: "chapter-0",
+                destinationSceneId: "chapter-1", destinationMediaTimeMs: 1_800_000, summaryAssetId: "summary",
+                wasSourcePlaying: false, status: .playing
+            )
+            XCTAssertTrue(model.canJumpToNextChapter, "precondition: a second Next chapter press can skip the summary (#569)")
+            XCTAssertTrue(model.snapshot.canSkimForward, "precondition: forward Skim is offered")
+            let shown = try await shownForwardControls(model, size: phone.size)
+            XCTAssertTrue(shown.contains("playback.skim.forward.button"), "\(phone.name): forward Skim is missing; saw \(shown)")
+            XCTAssertFalse(shown.contains("playback.nextChapter.button"),
+                           "\(phone.name): Next chapter is drawn beside forward Skim; saw \(shown)")
+        }
+    }
+
+    func testNextChapterStaysWhenThereIsNoForwardSkim() async throws {
+        for phone in Self.phones {
+            let model = makePodcastModel(withChapters: true)
+            XCTAssertTrue(model.canJumpToNextChapter, "precondition: the podcast has a chapter after this one")
+            XCTAssertFalse(model.snapshot.canSkimForward, "precondition: no map, so no forward Skim")
+            let shown = try await shownForwardControls(model, size: phone.size)
+            XCTAssertTrue(shown.contains("playback.nextChapter.button"), "\(phone.name): Next chapter is missing; saw \(shown)")
+            XCTAssertFalse(shown.contains("playback.skim.forward.button"), "\(phone.name): Skim shows without a map; saw \(shown)")
+        }
+    }
+
+    func testNextChapterStaysInAnArticleWithChapters() async throws {
+        for phone in Self.phones {
+            let model = makeArticleModel(withChapters: true)
+            XCTAssertTrue(model.canJumpToNextChapter, "precondition: the article has a chapter after this one")
+            let shown = try await shownForwardControls(model, size: phone.size)
+            XCTAssertTrue(shown.contains("playback.nextChapter.button"), "\(phone.name): Next chapter is missing; saw \(shown)")
+        }
+    }
+
+    func testNoNextChapterButtonAtTheLastChapter() async throws {
+        let model = makePodcastModel(withChapters: true)
+        model.snapshot.currentMediaTimeMs = 2_000_000
+        XCTAssertFalse(model.canJumpToNextChapter, "precondition: nothing after the last chapter")
+        let shown = try await shownForwardControls(model, size: Self.phones[0].size)
+        XCTAssertFalse(shown.contains("playback.nextChapter.button"), "saw \(shown)")
+    }
+
+    /// Which of the two forward controls the mounted screen draws, by accessibility identifier.
+    private func shownForwardControls(_ model: Gate1AppModel, size: CGSize) async throws -> Set<String> {
+        let mounted = try mount(model, size: size)
+        defer { mounted.close() }
+        _ = try await waitForBar(in: mounted)
+        var found: [String] = []
+        var visited = Set<ObjectIdentifier>()
+        Self.collectIdentifiers(from: mounted.window, into: &found, visited: &visited)
+        XCTAssertTrue(found.contains("playback.dock.chapter.button"),
+                      "precondition: the mounted screen's accessibility tree is readable; saw \(found)")
+        return Set(found.filter { $0 == "playback.nextChapter.button" || $0 == "playback.skim.forward.button" })
+    }
+
+    /// Walks views and the accessibility elements SwiftUI vends, which are not always views.
+    private static func collectIdentifiers(from node: NSObject, into found: inout [String], visited: inout Set<ObjectIdentifier>) {
+        guard visited.insert(ObjectIdentifier(node)).inserted else { return }
+        if node.responds(to: Selector(("accessibilityIdentifier"))),
+           let identifier = node.value(forKey: "accessibilityIdentifier") as? String, !identifier.isEmpty {
+            found.append(identifier)
+        }
+        var children: [NSObject] = []
+        if let view = node as? UIView { children += view.subviews }
+        children += (node.accessibilityElements ?? []).compactMap { $0 as? NSObject }
+        let count = node.accessibilityElementCount()
+        if count != NSNotFound, count > 0 {
+            children += (0..<count).compactMap { node.accessibilityElement(at: $0) as? NSObject }
+        }
+        for child in children { collectIdentifiers(from: child, into: &found, visited: &visited) }
+    }
+
     // MARK: - Assertions
 
     private func assertCompactDock(_ mounted: Mounted, phone: String, size: CGSize) async throws {
@@ -93,25 +173,38 @@ final class PlaybackDockLayoutTests: XCTestCase {
         return Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
     }
 
-    private func makeArticleModel() -> Gate1AppModel {
+    private func makeArticleModel(withChapters: Bool = false) -> Gate1AppModel {
         let model = makeModel()
         let text = (1...60).map { "Sentence number \($0) of a long article that keeps going." }.joined(separator: " ")
-        model.selectedItem = ItemDetailState(id: "dock-article", title: "A long article", text: text)
-            .includingTimelineSource(nil)
+        var article = ItemDetailState(id: "dock-article", title: "A long article", text: text)
+        if withChapters {
+            article.chapters = [
+                Chapter(id: "a", title: "Opening", startChar: 0, endChar: text.count / 2, percent: 0),
+                Chapter(id: "b", title: "Ending", startChar: text.count / 2, endChar: text.count, percent: 50),
+            ]
+        }
+        model.selectedItem = article.includingTimelineSource(nil)
         var snapshot = SessionSnapshot()
         snapshot.itemId = model.selectedItem.id
         snapshot.targetType = TargetType.itemTextTTS.rawValue
         snapshot.status = .paused
         snapshot.currentTextStart = text.count / 2
+        if withChapters { snapshot.chapterTitle = "Opening" }
         model.snapshot = snapshot
         return model
     }
 
-    private func makePodcastModel() -> Gate1AppModel {
+    private func makePodcastModel(withChapters: Bool = false) -> Gate1AppModel {
         let model = makeModel()
         var item = ItemDetailState(id: "dock-podcast", title: "An episode", text: "")
         item.isNativeAudio = true
         item.mediaDurationMs = 3_600_000
+        if withChapters {
+            // The snapshot sits at 1,200,000 ms, so the next chapter starts at 1,800,000 ms.
+            item.mediaChapters = [("chapter-0", 0), ("chapter-1", 1_800_000)].map {
+                MediaTimelineChapter(id: $0.0, title: "Chapter \($0.0)", startMs: $0.1, transcriptSegmentId: "segment-\($0.0)")
+            }
+        }
         model.selectedItem = item.includingTimelineSource(nil)
         var snapshot = SessionSnapshot()
         snapshot.itemId = model.selectedItem.id

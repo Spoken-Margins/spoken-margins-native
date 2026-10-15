@@ -233,7 +233,7 @@ struct PlaybackScreen: View {
             PlaybackChapterRowView(
                 title: model.playbackChapterHeaderTitle,
                 sourceTitle: model.playbackItemHeaderTitle,
-                canJumpToNextChapter: model.canJumpToNextChapter,
+                showsNextChapterButton: model.showsNextChapterButton,
                 waitingText: model.snapshot.status == .starting
                     ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
                 showItem: model.openCurrentPlaybackItem,
@@ -882,8 +882,7 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.forward.button")
             }
 
-            if model.isMediaPlaybackSnapshot,
-               model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
+            if model.showsSkimRow {
                 HStack(spacing: 14) {
                     Button(action: model.skimBackward) {
                         Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
