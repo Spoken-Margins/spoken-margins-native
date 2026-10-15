@@ -125,6 +125,42 @@ final class MarginMomentClockTests: XCTestCase {
             from: clock.position(forTextOffset: 2_000), to: clock.position(forTextOffset: 4_000)))
     }
 
+    /// #1656: neighbouring jump sizes, with a Margin in the jumped-over text. Up to the limit (84 characters, six
+    /// seconds of narration) a reading is playback and reaches the Margin; anything longer, and any backward move, is not.
+    func testJumpSizesOnTheNarrationClockSeparateReadingFromSkipping() {
+        let rows: [(size: Int, plays: Bool)] = [
+            (7, true), (30, true), (60, true), (84, true), // word-sized and a late tick, up to the limit
+            (85, false), (100, false), (200, false), (350, false), (3_000, false) // a skip, a scrub, a chapter jump
+        ]
+        let from = 1_120
+        for row in rows {
+            let target = MarginMomentAnchor(
+                marginId: "s::ij-1", mediaTimeMs: clock.position(forTextOffset: from + row.size / 2))
+            var sequence = MarginMomentSequence(
+                itemId: "article", target: target, otherMargins: [], tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+            let played = sequence.progressed(
+                from: clock.position(forTextOffset: from), to: clock.position(forTextOffset: from + row.size))
+            XCTAssertEqual(played != nil, row.plays, "forward by \(row.size) characters over a Margin")
+            var backward = MarginMomentSequence(
+                itemId: "article", target: target, otherMargins: [], tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+            XCTAssertNil(
+                backward.progressed(
+                    from: clock.position(forTextOffset: from + row.size), to: clock.position(forTextOffset: from)),
+                "back by \(row.size) characters over a Margin")
+        }
+    }
+
+    /// #1656: a command from the Lock Screen, headphones, the Watch or CarPlay that moves the source is one the Margin
+    /// moment is told about, so it can't count as reading either.
+    func testEveryCompactCommandThatMovesTheSourceIsNamed() {
+        let moving: Set<CompactControlCommand> = [
+            .skipBack, .skipForward, .skimBackward, .skimForward, .seekToMediaTime, .jumpToChapter
+        ]
+        for command in CompactControlCommand.allCases {
+            XCTAssertEqual(command.movesPlaybackPosition, moving.contains(command), command.rawValue)
+        }
+    }
+
     // MARK: Which Margins play
 
     private func margin(
@@ -317,6 +353,26 @@ final class MarginMomentClockTests: XCTestCase {
             ("Heading\r\n\r\nBody here. More.", "Body", "a heading before Windows line breaks"),
             ("Hello.\nWorld here. End.", "World", "a single line break after a full stop"),
             ("First line\n  \nSecond block. End.", "Second", "a blank line with spaces in it"),
+            // #1656: initials, initialisms, abbreviations and brands that end a sentence or don't.
+            ("Take Vitamin A. Then rest. Done.", "Then", "a single capital closing a sentence, before an opener"),
+            ("Take Vitamin A. Rest well. Done.", "Done", "known limit: a word that could be a surname after a single capital reads as a name, so the lead-in starts a sentence later, never mid-sentence"),
+            ("George R. R. Martin wrote it. Then more.", "Then", "two initials in a name"),
+            ("Franklin D. Roosevelt spoke. Then more.", "Then", "a middle initial after a capitalised name"),
+            ("Turn left on Main St. Then stop. Done.", "Then", "St. closing a sentence, before an opener"),
+            ("He went to St. Louis today. Then more.", "Then", "St. in a place name"),
+            ("It was Martin Luther King Jr. Then more.", "Then", "Jr. closing a sentence"),
+            ("Ask Acme Inc. Then wait. Done.", "Then", "Inc. closing a sentence"),
+            ("Ask Acme Inc. Smith will help. Done.", "Done", "Inc. before a name"),
+            ("She said no. 5 people came anyway. Done.", "5 people", "the word no, not No."),
+            ("It was No. 5 on the list. Then more.", "Then", "No. before a number"),
+            ("It was NO. 5 on the list. Then more.", "Then", "NO. before a number"),
+            ("Read vol. 3 first. Then more.", "Then", "vol. before a number in lower case"),
+            ("He ordered the U.S. Army to stand down. Then more.", "Then", "an initialism before a name"),
+            ("He lived in the U.S. Then he left. Done.", "Then", "an initialism closing a sentence"),
+            ("It is in Washington, D.C. Then more.", "Then", "D.C. closing a sentence"),
+            ("We tried it. iPhone sales rose. Done.", "iPhone", "a brand with a lower-case first letter"),
+            ("We tried it. eBay sales rose. Done.", "eBay", "another such brand"),
+            ("We tried it. then it broke. Done.", "Done", "an ordinary lower-case word carries the sentence on"),
         ]
         for row in rows {
             let expected = try XCTUnwrap(row.text.range(of: row.starts)).lowerBound

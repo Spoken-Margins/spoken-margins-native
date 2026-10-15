@@ -66,6 +66,14 @@ extension Gate1AppModel {
         }
     }
 
+    /// What every compact control (Lock Screen, headphones, Watch, CarPlay) does before it runs: the streaming speech
+    /// anchor catches up, and a Margin moment is told when the command moves the source (#1656), as `skipBack()` and
+    /// the other in-app transport methods do for themselves.
+    func noteCompactCommand(_ command: CompactControlCommand, canonicalTransport: Bool) {
+        if command == .beginInterjection || canonicalTransport { synchronizeStreamingSpeechAnchorIfNeeded() }
+        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() }
+    }
+
     func mediaSkipSettingsChanged() {
         mediaSkipBackSeconds = MediaSkipRule.validated(mediaSkipBackSeconds)
         mediaSkipForwardSeconds = MediaSkipRule.validated(mediaSkipForwardSeconds)

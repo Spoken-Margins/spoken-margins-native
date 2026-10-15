@@ -2630,9 +2630,7 @@ final class Gate1AppModel: ObservableObject {
         let normalizedPlaybackRate = command == .setPlaybackRate
             ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
-        if command == .beginInterjection || canonicalTransportCommands.contains(command) {
-            synchronizeStreamingSpeechAnchorIfNeeded()
-        }
+        noteCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }

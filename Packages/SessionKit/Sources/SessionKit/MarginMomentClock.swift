@@ -66,7 +66,8 @@ public enum MarginMomentClock: Sendable, Equatable {
     ///
     /// A sentence ends at `.`, `!`, `?` or `…` (with any closing quote or bracket after it) followed by white space,
     /// except after an abbreviation (`Mr.`, `e.g.`, an initial) or before a lower-case word (`Wait... then`). A blank
-    /// line ends one too, which is how a heading with no punctuation of its own ends.
+    /// line ends one too, which is how a heading with no punctuation of its own ends. Initialisms (`U.S. Army`) and
+    /// names with initials don't end one, unless a word that opens sentences follows (`Vitamin A. Then`).
     public static func sentenceStart(atOrAfter offset: Int, before limit: Int, in text: String) -> Int {
         guard offset > 0 else { return 0 }
         let characters = Array(text)
@@ -117,26 +118,56 @@ public enum MarginMomentClock: Sendable, Equatable {
         let run = characters[here..<end]
         // A lower-case word after a full stop, an ellipsis or a closing quote carries the sentence on:
         // `Wait... then`, `"Why?" he asked`.
-        if run.contains(where: { $0 == "." || $0 == "\u{2026}" || closers.contains($0) }), characters[start].isLowercase {
+        // (A brand written like `iPhone` or `eBay` starts a sentence of its own.)
+        if run.contains(where: { $0 == "." || $0 == "\u{2026}" || closers.contains($0) }), characters[start].isLowercase,
+           !isCamelCaseWord(at: start, in: characters) {
             return nil
         }
         if characters[here] == ".", end == here + 1,
-           isAbbreviation(before: here, in: characters, nextIsNumber: characters[start].isNumber) { return nil }
+           isAbbreviation(before: here, in: characters, nextWordAt: start) { return nil }
         return start
     }
 
-    /// The word ending just before the full stop at `index`: a title, `e.g.`, `Fig.` before a number, or a single
-    /// initial (`J. K. Rowling`).
-    private static func isAbbreviation(before index: Int, in characters: [Character], nextIsNumber: Bool) -> Bool {
+    /// Words that start a sentence far more often than they follow an initial or an abbreviation as a name does.
+    /// "Vitamin A. Then" and "Main St. Then" end a sentence; "J. K. Rowling" and "St. Louis" don't.
+    private static let sentenceOpeners: Set<String> = [
+        "then", "the", "it", "he", "she", "they", "we", "you", "this", "that", "these", "those", "and", "but", "so",
+        "there", "however", "now", "in", "on", "at", "as", "if", "when", "after", "before", "his", "her", "their",
+        "our", "what", "who", "one", "some", "also", "next", "later"
+    ]
+    /// Abbreviations that are also common at the end of a sentence, so a sentence opener after them is a new sentence.
+    private static let sometimesSentenceFinal: Set<String> = ["st", "mt", "sr", "jr", "inc", "ltd"]
+
+    private static func word(at index: Int, in characters: [Character]) -> String {
+        var end = index
+        while end < characters.count, characters[end].isLetter || characters[end] == "'" || characters[end] == "\u{2019}" { end += 1 }
+        return String(characters[index..<end])
+    }
+
+    private static func isCamelCaseWord(at index: Int, in characters: [Character]) -> Bool {
+        let text = word(at: index, in: characters)
+        return text.count > 1 && text.dropFirst().contains(where: \.isUppercase)
+    }
+
+    /// The word ending just before the full stop at `index`: a title, `e.g.`, `Fig.` before a number, an initialism
+    /// such as `U.S.` or a single initial (`J. K. Rowling`). `nextWordAt` is where the next sentence would start.
+    private static func isAbbreviation(before index: Int, in characters: [Character], nextWordAt start: Int) -> Bool {
         var begin = index
         while begin > 0, characters[begin - 1].isLetter || characters[begin - 1] == "." { begin -= 1 }
         let word = String(characters[begin..<index])
         let lowered = word.lowercased()
-        if abbreviations.contains(lowered) { return true }
-        if nextIsNumber, numbered.contains(lowered) { return true }
+        let opensASentence = sentenceOpeners.contains(Self.word(at: start, in: characters).lowercased())
+        if abbreviations.contains(lowered) { return !(sometimesSentenceFinal.contains(lowered) && opensASentence) }
+        // `No. 5` and `Fig. 3`, but not "She said no. 5 people came": the word `no` must be written like an abbreviation.
+        if characters[start].isNumber, numbered.contains(lowered) {
+            return lowered != "no" || word.first?.isUppercase == true
+        }
+        // `U.S.`, `D.C.`: capitals separated by stops. "Lived in the U.S. Then" ends the sentence.
+        let pieces = word.split(separator: ".", omittingEmptySubsequences: false)
+        if pieces.count > 1, pieces.allSatisfy({ $0.count == 1 && $0.first?.isUppercase == true }) { return !opensASentence }
         // An initial follows a capitalised name or another initial, or starts the text. After a lower-case word a
-        // single capital is a word ending the sentence ("so did I.").
-        guard word.count == 1, let only = word.first, only.isUppercase, only != "I" else { return false }
+        // single capital is a word ending the sentence ("so did I."), and "Vitamin A. Then" ends one too.
+        guard word.count == 1, let only = word.first, only.isUppercase, only != "I", !opensASentence else { return false }
         var before = begin
         while before > 0, characters[before - 1] == " " { before -= 1 }
         guard before > 0, characters[before - 1].isLetter else { return true }

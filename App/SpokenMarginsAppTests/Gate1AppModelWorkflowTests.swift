@@ -4116,6 +4116,25 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(startChars, [1_300, fixture.targetChar, 1_700], "the Margin at 1190 sits before where reading starts")
     }
 
+    /// #1656: a skip from the Lock Screen, headphones, the Watch or CarPlay arrives through the compact controls, not
+    /// `skipForward()`, so the moment wasn't told about it. A sentence skip over the next Margin played it.
+    /// Sentences are 40 characters; reading starts at 1200 and the next Margin sits at 1300, three skips on.
+    func testPlayThisMomentOnATextAnchoredMarginSkippedFromTheLockScreenDoesNotPlayTheNextMargin() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_300])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        XCTAssertEqual(model.snapshot.currentTextStart, 1_200)
+
+        for _ in 0..<3 { model.performGate2CompactCommand(.skipForward) }
+
+        XCTAssertGreaterThan(try XCTUnwrap(model.snapshot.currentTextStart), 1_300, "the skips went past the Margin")
+        let startChars = try XCTUnwrap(model.marginMoment).unplayed.map {
+            model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs)
+        }
+        XCTAssertEqual(startChars, [1_300, fixture.targetChar], "skipping over a Margin doesn't play it")
+    }
+
     private func textAnchoredMomentFixture(
         otherMarginChars: [Int] = []
     ) throws -> (model: Gate1AppModel, row: MarginRow, targetChar: Int, sentenceLength: Int) {
