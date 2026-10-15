@@ -888,6 +888,12 @@ class ReauditAfterDescriptionFix(unittest.TestCase):
         same = pr(body="Closes #705.\r\n\r\n")
         self.assertEqual(A.evaluate_pr(same, [self.LANE, self.blocked()], self.FILES), (False, "already audited on head"))
 
+    def test_an_edit_past_what_the_model_reads_is_not_a_description_change(self):
+        long_read = pr(body="Closes #705. " + "x" * A.BODY_CHARS)
+        past = pr(body=long_read["body"] + " edited past the cap")
+        self.assertEqual(A.evaluate_pr(past, [self.LANE, self.audit(self.BLOCKING, "2026-10-15T02:44:00Z", read=long_read)],
+                                       self.FILES), (False, "already audited on head"))
+
     # (c)
     def test_a_clean_audit_is_not_repeated_for_a_description_edit(self):
         clean = self.audit(self.CLEAN, "2026-10-15T02:44:00Z")

@@ -253,10 +253,14 @@ def head_audit_comments(comments: list[dict], head_sha: str) -> list[dict]:
 
 
 def audit_input_hash(title: str | None, body: str | None) -> str:
-    """A fingerprint of the PR's title and description, which the model reads but GitHub's events never record."""
+    """A fingerprint of the PR's title and description, which the model reads but GitHub's events never record.
+
+    Only the first BODY_CHARS of the description count: that is all the model is shown, so an edit past it
+    would pay for an audit that reads the same input.
+    """
     def norm(text):
         return (text or "").replace("\r\n", "\n").strip()
-    return hashlib.sha256(json.dumps([norm(title), norm(body)], ensure_ascii=False).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps([norm(title), norm(body)[:BODY_CHARS]], ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def audit_input_marker(c: dict) -> str | None:
