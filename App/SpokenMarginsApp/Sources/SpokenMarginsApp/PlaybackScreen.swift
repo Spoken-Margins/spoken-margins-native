@@ -55,7 +55,7 @@ struct PlaybackScreen: View {
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write, paste, sourceText }
+    private enum OptionsDestination { case item, timeline, export, margins, paste, sourceText }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -199,10 +199,6 @@ struct PlaybackScreen: View {
                                 isNativeAudio: model.selectedItem.isNativeAudio
                             )
                             onDeviceSpeechGenerationControl
-                            Button("Write a Margin", systemImage: "square.and.pencil") {
-                                closeOptions(to: .write)
-                            }
-                            .accessibilityIdentifier("playback.writeMargin.button")
                             reflectionOptions
                             conversation
                             sessionActionDock
@@ -455,7 +451,6 @@ struct PlaybackScreen: View {
         case .timeline: openTimeline()
         case .export: model.openExport()
         case .margins: model.openMargins()
-        case .write: model.beginWrittenMargin()
         case .paste: isPastingAssistantResponse = true
         case .sourceText: openSourceText()
         }
