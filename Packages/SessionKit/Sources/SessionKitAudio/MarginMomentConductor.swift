@@ -110,6 +110,12 @@ public final class MarginMomentConductor {
         onChange?()
     }
 
+    /// The listener skipped or sought the source themselves (#1646). The next reading is a new place, not playback
+    /// reaching it, so it crosses nothing: skipping over a Margin doesn't play it, however short the skip.
+    public func sourceMoved() {
+        lastObservedMs = nil
+    }
+
     /// Call on each progress tick while the source plays.
     public func observe(mediaTimeMs: Int?) {
         defer { if let mediaTimeMs { lastObservedMs = mediaTimeMs } }

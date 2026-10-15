@@ -26,7 +26,8 @@ public enum MarginMomentClock: Sendable, Equatable {
     /// The largest forward move between two progress readings that still counts as playback. On-device speech
     /// reports where it is a word at a time, so a text reading moves a few characters a tick: half a second at 3× is
     /// about 30 characters, 2 s of narration. 6 s (about 84 characters) covers a late tick and stays under a
-    /// sentence skip, which must not play the Margin it jumps over (#1646).
+    /// sentence skip, which must not play the Margin it jumps over (#1646). The app also tells the conductor about every
+    /// skip and seek (`MarginMomentConductor.sourceMoved`), so a short skip is never taken for playback either.
     public var tickAdvanceLimitMs: Int {
         isNarratedText ? 6_000 : MarginMomentSequence.maxTickAdvanceMs
     }
@@ -83,6 +84,8 @@ public enum MarginMomentClock: Sendable, Equatable {
     private static let abbreviations: Set<String> = [
         "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "mt", "vs", "cf", "e.g", "i.e", "inc", "ltd"
     ]
+    /// Abbreviations that are only abbreviations before a number (`Fig. 3`, `No. 5`; but "I said no. Then...").
+    private static let numbered: Set<String> = ["fig", "no", "vol", "pp", "p", "ch", "sec", "art", "eq"]
 
     /// If a sentence break sits at `index`, the index where the next sentence starts. Moves `index` past what it
     /// looked at, so a run such as `?!` or `..."` is read once.
@@ -111,20 +114,35 @@ public enum MarginMomentClock: Sendable, Equatable {
         var start = end
         while start < characters.count, characters[start].isWhitespace { start += 1 }
         guard start < characters.count else { return nil }
-        if characters[here...(end - 1)].contains(where: { $0 == "." || $0 == "\u{2026}" }) {
-            if characters[start].isLowercase { return nil }
-            if characters[here] == ".", end == here + 1, isAbbreviation(before: here, in: characters) { return nil }
+        let run = characters[here..<end]
+        // A lower-case word after a full stop, an ellipsis or a closing quote carries the sentence on:
+        // `Wait... then`, `"Why?" he asked`.
+        if run.contains(where: { $0 == "." || $0 == "\u{2026}" || closers.contains($0) }), characters[start].isLowercase {
+            return nil
         }
+        if characters[here] == ".", end == here + 1,
+           isAbbreviation(before: here, in: characters, nextIsNumber: characters[start].isNumber) { return nil }
         return start
     }
 
-    /// The word ending just before the full stop at `index`: a title, `e.g.`, or a single initial (`J. K.`).
-    private static func isAbbreviation(before index: Int, in characters: [Character]) -> Bool {
+    /// The word ending just before the full stop at `index`: a title, `e.g.`, `Fig.` before a number, or a single
+    /// initial (`J. K. Rowling`).
+    private static func isAbbreviation(before index: Int, in characters: [Character], nextIsNumber: Bool) -> Bool {
         var begin = index
         while begin > 0, characters[begin - 1].isLetter || characters[begin - 1] == "." { begin -= 1 }
         let word = String(characters[begin..<index])
-        if word.count == 1, let only = word.first, only.isUppercase { return true }
-        return abbreviations.contains(word.lowercased())
+        let lowered = word.lowercased()
+        if abbreviations.contains(lowered) { return true }
+        if nextIsNumber, numbered.contains(lowered) { return true }
+        // An initial follows a capitalised name or another initial, or starts the text. After a lower-case word a
+        // single capital is a word ending the sentence ("so did I.").
+        guard word.count == 1, let only = word.first, only.isUppercase, only != "I" else { return false }
+        var before = begin
+        while before > 0, characters[before - 1] == " " { before -= 1 }
+        guard before > 0, characters[before - 1].isLetter else { return true }
+        var wordStart = before
+        while wordStart > 0, characters[wordStart - 1].isLetter { wordStart -= 1 }
+        return !characters[wordStart].isLowercase
     }
 }
 
