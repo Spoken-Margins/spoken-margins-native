@@ -3250,7 +3250,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             discardAudio(finishedURL)
         }
         recordBackgroundSeam(.queuedAhead)
-        queueNextChunkIfWanted()
+        // The app's state can only be read on the main thread (the stall monitor calls from another one, where it
+        // would always answer "in front" and queue nothing), so the next chunk is queued from there (#538 audit).
+        if Thread.isMainThread {
+            queueNextChunkIfWanted()
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.queueNextChunkIfWanted() }
+        }
         return true
     }
 
@@ -3496,6 +3502,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// `announcesPause` is false when the caller is the listener's own pause or play, which the app already knows.
     private func markMediaServicesReset(announcesPause: Bool = true) {
+        // Bring the place and the kept chunk up to a queue that has already moved on, before the queued chunk is
+        // forgotten below (#538 audit).
+        applyQueuedAdvance(finished: nil)
         removePlaybackEndObserver()
         var endedWaitingHandOver = false
         let reset = lock.withLock { () -> (

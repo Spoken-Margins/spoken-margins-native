@@ -1937,6 +1937,25 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
     }
 
+    // The stall monitor reads the place from another thread and may be the one to catch up with a queue that moved
+    // on. The chunk after that is still queued, from the main thread, where the app's state can be read (#538 audit).
+    func testACatchUpOffTheMainThreadStillQueuesTheChunkAfter() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+
+        harness.advanceTheQueueWithoutTellingTheApp()
+        let client = harness.client
+        DispatchQueue.global().async { _ = client.currentCharOffset() }
+
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B after the catch-up")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+    }
+
     // The same seam with the app in front is unchanged: nothing is queued, each chunk gets its own player, and
     // the seam is not counted as a background one.
     func testWhileTheAppIsInFrontNothingIsQueuedAndTheSeamIsAsBefore() async throws {
