@@ -65,6 +65,7 @@ extension Gate1AppModel {
     ) {
         guard !requireTermsDecisionBeforePlayback(action) else { return }
         stopSpeechPreviews()
+        marginMomentConductor?.sourceMoved() // a chapter jump over a Margin doesn't play it (#1656)
         clearPendingAutoPlayTurns()
         run { engine in
             try move(engine)

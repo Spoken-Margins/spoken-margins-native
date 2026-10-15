@@ -2569,6 +2569,7 @@ final class Gate1AppModel: ObservableObject {
             "mediaTimeMs": String(snapshot.currentMediaTimeMs ?? -1),
             "requestedMediaTimeMs": String(mediaTimeMs ?? -1)
         ])
+        if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
         if playingImportedCommentary != nil {
@@ -2630,7 +2631,7 @@ final class Gate1AppModel: ObservableObject {
         let normalizedPlaybackRate = command == .setPlaybackRate
             ? playbackRate.map { SpeechRateRule.quarterStepMultiplier($0) }
             : playbackRate
-        noteCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
+        synchronizeSpeechAnchorForCompactCommand(command, canonicalTransport: canonicalTransportCommands.contains(command))
         if command == .beginInterjection {
             streamingSpeechQueue.pauseForInterjection()
         }

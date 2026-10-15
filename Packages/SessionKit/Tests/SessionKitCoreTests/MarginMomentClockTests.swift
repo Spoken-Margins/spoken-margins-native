@@ -372,6 +372,8 @@ final class MarginMomentClockTests: XCTestCase {
             ("It is in Washington, D.C. Then more.", "Then", "D.C. closing a sentence"),
             ("We tried it. iPhone sales rose. Done.", "iPhone", "a brand with a lower-case first letter"),
             ("We tried it. eBay sales rose. Done.", "eBay", "another such brand"),
+            ("Levels fell... mRNA counts rose. Done.", "Done", "a brand after an ellipsis: only a pause"),
+            ("Levels fell... pH rose. Done.", "Done", "another such word after an ellipsis"),
             ("We tried it. then it broke. Done.", "Done", "an ordinary lower-case word carries the sentence on"),
         ]
         for row in rows {

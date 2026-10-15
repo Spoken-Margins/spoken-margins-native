@@ -108,6 +108,7 @@ extension Gate1AppModel: SkimBridgeHost {
 
     func skimSeekOrStage(toMediaTimeMs mediaTimeMs: Int) throws {
         guard let engine else { return }
+        marginMomentConductor?.sourceMoved() // the skim lands somewhere new; Margins it passed don't play (#1656)
         snapshot = try seekOrStageMedia(engine, toMediaTimeMs: mediaTimeMs)
     }
 

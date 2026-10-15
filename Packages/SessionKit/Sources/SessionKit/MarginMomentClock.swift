@@ -118,9 +118,11 @@ public enum MarginMomentClock: Sendable, Equatable {
         let run = characters[here..<end]
         // A lower-case word after a full stop, an ellipsis or a closing quote carries the sentence on:
         // `Wait... then`, `"Why?" he asked`.
-        // (A brand written like `iPhone` or `eBay` starts a sentence of its own.)
+        // (A brand written like `iPhone` or `eBay` starts a sentence of its own after a full stop, but after an
+        // ellipsis, which may be only a pause, it carries on: `Levels fell... mRNA counts rose`.)
+        let pause = run.contains("\u{2026}") || run.filter { $0 == "." }.count > 1
         if run.contains(where: { $0 == "." || $0 == "\u{2026}" || closers.contains($0) }), characters[start].isLowercase,
-           !isCamelCaseWord(at: start, in: characters) {
+           pause || !isCamelCaseWord(at: start, in: characters) {
             return nil
         }
         if characters[here] == ".", end == here + 1,
