@@ -10,6 +10,8 @@ struct PlaybackChapterRowView: View {
     var forward: NextChapterSummaryRule.ChapterRowControl = .hidden
     var skimBackwardTitle = ""
     var skimForwardTitle = ""
+    /// A recording locks Skim, as it did when the arrows sat in the transport.
+    var skimLocked = false
     /// What the silence is while playback starts. It takes the title's place in this fixed-height row, so the
     /// dock never changes height while the listener scrubs or starts a source (#357, #430).
     var waitingText: String?
@@ -63,7 +65,7 @@ struct PlaybackChapterRowView: View {
             Image(systemName: isBackward ? "backward.end.alt.fill" : "forward.end.alt.fill")
                 .frame(minWidth: 44, minHeight: 44)
         }
-        .disabled(!enabled)
+        .disabled(!enabled || skimLocked)
         .opacity(enabled ? 1 : 0.35)
         .accessibilityLabel((isBackward ? skimBackwardTitle : skimForwardTitle) + " by scene summary")
         .accessibilityIdentifier(isBackward ? "playback.skim.backward.button" : "playback.skim.forward.button")

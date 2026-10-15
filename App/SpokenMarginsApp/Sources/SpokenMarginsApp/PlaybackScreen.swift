@@ -233,6 +233,7 @@ struct PlaybackScreen: View {
                 forward: model.chapterRowForwardControl,
                 skimBackwardTitle: model.skimBackwardTitle,
                 skimForwardTitle: model.skimForwardTitle,
+                skimLocked: model.snapshot.isRecording,
                 waitingText: model.snapshot.status == .starting
                     ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
                 showItem: model.openCurrentPlaybackItem,
