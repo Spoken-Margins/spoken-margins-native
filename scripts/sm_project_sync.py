@@ -25,6 +25,7 @@ HEALTH = 'Check health'
 STATUSES = {'Todo', 'In Progress', 'Checking', 'Needs your check', 'Done'}
 VALIDATION = {'needs-human-validation', 'status: needs-human-validation'}
 HOLD = {'deferred', 'blocked', 'needs-owner'}
+NOT_OWNER = {'agent-verify', 'validate-by-use'}  # merged fixes the owner doesn't check by hand (owner, 2026-10-15)
 CLAIM = re.compile(r'[*_\s]*Claimed by project thread "([^"]+)"')
 STOP = re.compile(r'[*_\s]*Thread "([^"]+)" stopping:')
 ROUTINE = re.compile(r'(?:<!--|\*{0,2}(?:Owner phone check|Claude audit|Codex audit|Merge check|'
@@ -236,6 +237,8 @@ def derive(api, issue, pulls, now, cache):
             if not paths:
                 return decision(reason='unknown: merged PR file list empty')
             # Existing phone workflow distinguishes pure moves/tests/tooling from listener changes.
+            if labels & NOT_OWNER:
+                return decision('Checking', f'merged PR #{latest["number"]}; ' + ', '.join(sorted(labels & NOT_OWNER)) + ', not an owner check')
             if listener_facing(latest, issue, paths) or 'found-on-phone' in labels:
                 return decision('Needs your check', f'merged implementation PR #{latest["number"]}; phone acceptance not recorded')
             return decision('Checking', f'merged internal PR #{latest["number"]}; issue not yet closed',
