@@ -4,59 +4,7 @@ import XCTest
 @testable import SessionKitSupertonic
 
 final class SupertonicNarrationTests: XCTestCase {
-    func testBackgroundInferencePacingLeavesSafetyMarginBelowIOSCPUQuota() {
-        XCTAssertEqual(
-            SupertonicInferencePacingPolicy.delay(afterInferenceDuration: 10, backgrounded: false),
-            0
-        )
-        let delay = SupertonicInferencePacingPolicy.delay(
-            afterInferenceDuration: 10,
-            backgrounded: true
-        )
-        XCTAssertEqual(delay, 5.384615, accuracy: 0.000_001)
-        XCTAssertEqual(10 / (10 + delay), 0.65, accuracy: 0.000_001)
-    }
-
-    // #1101: a background wake can arrive later than requested. That elapsed time has already
-    // paced inference; repeatedly subtracting only 100 ms charges the same scheduler delay again.
-    func testBackgroundPacingCountsActualElapsedTimeWhenSleepOvershoots() {
-        let delay = SupertonicInferencePacingPolicy.delay(afterInferenceDuration: 10, backgrounded: true)
-        var elapsed: TimeInterval = 0
-        var sleeps = 0
-        SupertonicInferencePacingPolicy.wait(for: delay, now: { elapsed }, sleep: { requested in
-            sleeps += 1
-            elapsed += requested + 2 // a delayed background wake, without a real wall-clock sleep
-        }, shouldContinue: { true })
-        XCTAssertEqual(sleeps, 3, "once the budget has elapsed, no more sleeps may be requested")
-        XCTAssertLessThan(elapsed, delay + 2.1)
-    }
-
-    func testCancelledBackgroundPacingReleasesTheObsoleteRenderOnTheNextWake() {
-        var elapsed: TimeInterval = 0
-        var cancelled = false
-        var sleeps = 0
-        XCTAssertThrowsError(try SupertonicInferencePacingPolicy.wait(for: 5, now: { elapsed }, sleep: { requested in
-            sleeps += 1
-            elapsed += requested
-            cancelled = true
-        }, shouldContinue: {
-            if cancelled { throw CancellationError() }
-            return true
-        })) { XCTAssertTrue($0 is CancellationError) }
-        XCTAssertEqual(sleeps, 1)
-    }
-
-    func testForegroundingStopsBackgroundPacingOnTheNextWake() {
-        var elapsed: TimeInterval = 0
-        var backgrounded = true
-        var sleeps = 0
-        SupertonicInferencePacingPolicy.wait(for: 5, now: { elapsed }, sleep: { requested in
-            sleeps += 1
-            elapsed += requested
-            backgrounded = false
-        }, shouldContinue: { backgrounded })
-        XCTAssertEqual(sleeps, 1)
-    }
+    // The pacing policy's own tests are in SessionKitCoreTests/OnDeviceVoiceGovernorTests (#1679).
 
     // #377: live narration and background preparation share one renderer. Preparation used to
     // set the shared pacing flag for its render and clear it after, so a live chunk rendered in
@@ -78,7 +26,7 @@ final class SupertonicNarrationTests: XCTestCase {
         for voice in SupertonicVoiceID.allCases {
             _ = FileManager.default.createFile(atPath: assets.voiceStyleURL(for: voice).path, contents: Data())
         }
-        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root.appending(path: "output"))
+        let renderer = try SupertonicNarrationRenderer(assets: assets, outputDirectory: root.appending(path: "output"), governor: OnDeviceVoiceGovernor())
 
         renderer.setBackgroundInferencePacingEnabled(false)
         XCTAssertGreaterThan(renderer.pacingDelay(afterInferenceDuration: 10, for: .always), 0,
@@ -104,7 +52,7 @@ final class SupertonicNarrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-real-pacing-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root)
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         func render(_ text: String, _ pacing: SupertonicRenderPacing) async throws {
             let result = try await renderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 5, pacing: pacing)
             await renderer.discardGeneratedAudio(at: result.audioURL)
@@ -142,7 +90,7 @@ final class SupertonicNarrationTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-real-trim-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: root) }
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root)
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root, governor: OnDeviceVoiceGovernor())
         let result = try await renderer.render(
             text: "The listener hears this sentence now.", voice: .m2, language: "en", speed: 1,
             synthesisSteps: 5, pacing: .whenAppBackgrounded
@@ -225,7 +173,8 @@ final class SupertonicNarrationTests: XCTestCase {
         }
         let renderer = try SupertonicNarrationRenderer(
             assets: assets,
-            outputDirectory: root.appending(path: "output", directoryHint: .isDirectory)
+            outputDirectory: root.appending(path: "output", directoryHint: .isDirectory),
+            governor: OnDeviceVoiceGovernor()
         )
 
         do {
@@ -256,7 +205,7 @@ final class SupertonicNarrationTests: XCTestCase {
         let durable = root.appending(path: "PreparedAudio/item/chunk-0001.wav")
         try FileManager.default.createDirectory(at: durable.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("durable prepared chunk".utf8).write(to: durable)
-        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root.appending(path: "Playback"))
+        let renderer = try SupertonicNarrationRenderer(assets: repoAssets, outputDirectory: root.appending(path: "Playback"), governor: OnDeviceVoiceGovernor())
 
         await renderer.discardGeneratedAudio(at: durable)
         XCTAssertTrue(FileManager.default.fileExists(atPath: durable.path), "a prepared chunk the renderer didn't make survives")

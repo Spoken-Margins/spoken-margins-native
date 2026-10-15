@@ -411,7 +411,8 @@ final class SupertonicSpeechTests: XCTestCase {
 
         let renderer = try SupertonicNarrationRenderer(
             assets: SupertonicAssetLocation(rootURL: resources),
-            outputDirectory: root.appending(path: "Playback", directoryHint: .isDirectory)
+            outputDirectory: root.appending(path: "Playback", directoryHint: .isDirectory),
+            governor: OnDeviceVoiceGovernor()
         )
         let started = expectation(description: "prepared chunk started")
         let client = SupertonicSpeechPlaybackClient(
@@ -2235,7 +2236,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
         let output = FileManager.default.temporaryDirectory.appending(path: "kitten-client-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: output) }
-        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output)
+        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output, governor: OnDeviceVoiceGovernor())
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
@@ -2292,7 +2293,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
         let output = FileManager.default.temporaryDirectory.appending(path: "kitten-hold-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: output) }
-        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output)
+        let kitten = try KittenNarrationRenderer(assets: KittenAssetLocation(rootURL: root), outputDirectory: output, governor: OnDeviceVoiceGovernor())
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
@@ -4097,7 +4098,8 @@ final class SupertonicSpeechTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: output) }
         let renderer = try SupertonicNarrationRenderer(
             assets: SupertonicAssetLocation(rootURL: root),
-            outputDirectory: output
+            outputDirectory: output,
+            governor: OnDeviceVoiceGovernor()
         )
 
         let james = try await renderer.render(text: "James reads this short test.", voice: .m2)
