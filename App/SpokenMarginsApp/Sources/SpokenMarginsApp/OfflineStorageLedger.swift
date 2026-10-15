@@ -166,6 +166,81 @@ actor OfflineStorageLedger {
         return removed
     }
 
+    /// A render can finish after an extraction upgrade. Save its ledger row only with a live manifest.
+    @discardableResult
+    func commitPrepared(reservationId: String, asset: OwnedOfflineAsset, manifest: PreparedAudioManifest) throws -> Bool {
+        let saved = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, _ in
+            try commit(reservationId: reservationId, asset: asset)
+            return true
+        } ?? false
+        if !saved {
+            try release(reservationId: reservationId)
+            _ = try discardUncommittedFile(rootDirectory.appending(path: asset.relativePath))
+        }
+        return saved
+    }
+
+    /// Deletes one item's prepared audio (assembled narration and chunks) and their ledger
+    /// rows, and nothing else: no recordings, Margins or other items' files. Used after the
+    /// item moved to a new PDF extraction, so its audio no longer matches its text (#322).
+    ///
+    /// A file any item still plays stays, with its row (#344). Unlike eviction, nothing is
+    /// detached: another item's narration still matches its own text.
+    func removePreparedAudio(itemId: String) throws -> Int64 {
+        var removed: Int64 = 0
+        let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
+        for asset in try repository.loadOwnedOfflineAssets()
+        where asset.itemId == itemId && (asset.category == .preparedAudio || asset.category == .preparedChunk) {
+            guard try removeFileNoItemPlays(rootDirectory.appending(path: asset.relativePath), references: references) else { continue }
+            try repository.deleteOwnedOfflineAsset(id: asset.id)
+            removed += asset.byteCount
+        }
+        return removed
+    }
+
+    /// After an item moved to a new PDF extraction (#322): once its manifests are retired, its
+    /// prepared files and rows go. An item that still has a manifest, or never had audio, keeps all.
+    @discardableResult
+    func removeRetiredPreparedAudio(itemId: String) async -> Int64 {
+        guard let store = repository as? any SessionRepositoryTransaction else { return 0 }
+        return (try? store.withSessionTransaction {
+            guard try repository.loadPreparedAudioManifests(itemId: itemId).isEmpty else { return Int64(0) }
+            return try removePreparedAudio(itemId: itemId)
+        }) ?? 0
+    }
+
+    /// Narration assembled for text its item no longer has (#344): the file goes unless an item
+    /// plays it, and its reservation is released.
+    func discardStaleAssembly(_ url: URL?, reservationId: String) async {
+        if let url, url.isFileURL { _ = try? discardUncommittedFile(url) }
+        try? release(reservationId: reservationId)
+    }
+
+    /// Deletes a prepared file nothing was committed for, such as narration assembled
+    /// for text its item no longer has, unless an item plays it (#344).
+    @discardableResult
+    func discardUncommittedFile(_ url: URL) throws -> Bool {
+        try removeFileNoItemPlays(url, references: PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true)))
+    }
+
+    private func removeFileNoItemPlays(_ url: URL, references: PreparedNarrationFallback.FileReferences) throws -> Bool {
+        guard references.release(url) == .unreferenced else { return false }
+        // Another preparation can refer to a chunk or an artifact even before its item plays it.
+        for asset in try repository.loadOwnedOfflineAssets() where !asset.isReproducible {
+            if rootDirectory.appending(path: asset.relativePath).standardizedFileURL == url.standardizedFileURL { return false }
+        }
+        for item in try repository.listItems(includeDeleted: true) {
+            for manifest in try repository.loadPreparedAudioManifests(itemId: item.id) {
+                let paths = manifest.chunks.map { "PreparedAudio/\($0.relativePath)" }
+                    + [manifest.artifact?.relativePath, manifest.artifact.map { "PreparedAudio/\($0.relativePath)" },
+                       manifest.artifact.map { "PreparedSupertonicAudio/\($0.relativePath)" }].compactMap { $0 }
+                if paths.contains(where: { rootDirectory.appending(path: $0).standardizedFileURL == url.standardizedFileURL }) { return false }
+            }
+        }
+        if fileManager.fileExists(atPath: url.path) { try fileManager.removeItem(at: url) }
+        return true
+    }
+
     /// Settings > Storage > Clear Audio. The rendered speech cache is outside the ledger (#313), so it's
     /// cleared through the app's cache, under its lock, or by directory when this launch hasn't opened it.
     func clearReproducibleAudio(renderedSpeechCache: RenderedSpeechDiskCache?) throws -> Int64 {
