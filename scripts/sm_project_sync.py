@@ -204,20 +204,19 @@ def derive(api, issue, pulls, now, cache):
         rows = [cache[p['number']]['row'] for p in pulls if p['state'] == 'open']
         if rows:
             return checking(rows, labels)
+    merged = [p for p in pulls if p.get('merged_at')]
+    latest = max(merged, key=lambda p: p['merged_at']) if merged else None
     if labels & VALIDATION:
+        # Claimed again after the merge (a failed check sent it back): the new work shows, until its claim goes quiet.
+        if latest and 'in-progress' in labels and resumed_after(api, issue, latest) and claim_activity(api, issue, now)[0]:
+            return decision('In Progress', 'reclaimed after the merge; implementation active again')
         return decision('Needs your check', 'protected physical-device validation is pending')
     if labels & HOLD or (issue.get('milestone') or {}).get('title') in {'Later', 'Co-op Experience'}:
         health = ('Needs attention: ' + ', '.join(sorted(labels & {'blocked', 'needs-owner'}))) if labels & {'blocked', 'needs-owner'} else ''
         return decision('Todo', 'issue explicitly held/deferred; a stale claim or old merge does not override it', health)
-    merged = [p for p in pulls if p.get('merged_at')]
-    if merged:
-        latest = max(merged, key=lambda p: p['merged_at'])
-        # An old partial fix must not hide a new claim/reopened issue. Compare label/reopen events with the merge.
-        events = api.pages(f'issues/{issue["number"]}/events')
-        resumed = any(e.get('event') == 'reopened' and e['created_at'] > latest['merged_at'] for e in events)
-        claim_since = sm_status.label_since(events, 'in-progress')
-        resumed = resumed or bool(claim_since and claim_since > latest['merged_at'])
-        if not resumed:
+    if latest:
+        # An old partial fix must not hide a new claim/reopened issue.
+        if not resumed_after(api, issue, latest):
             file_cache = cache.setdefault('merged_files', {})
             pr = latest['number']
             if pr not in file_cache:
@@ -236,12 +235,20 @@ def derive(api, issue, pulls, now, cache):
     return decision('Todo', 'open backlog/released claim; no stronger implementation or validation evidence')
 
 
+def resumed_after(api, issue, merged_pull):
+    """The issue was reopened, or claimed again, after that PR merged (compares label and reopen events with it)."""
+    events = api.pages(f'issues/{issue["number"]}/events')
+    claim_since = sm_status.label_since(events, 'in-progress')
+    return bool(claim_since and claim_since > merged_pull['merged_at']) or any(
+        e.get('event') == 'reopened' and e['created_at'] > merged_pull['merged_at'] for e in events)
+
+
 def checking(rows, labels):
     attention = [f'PR #{r["number"]}: {f["code"]}' for r in rows for f in r['flags']
                  if f['severity'] == sm_status.RED or f['code'] in {
                      'held-by-runner', 'inconclusive-on-head', 't3-unqueued', 'armed-no-lane-request', 'owner-tap'}]
-    attention += [f'PR #{r["number"]}: merge {r["mergeable"]}' for r in rows
-                  if r['mergeable'] in {'blocked', 'unstable', 'unknown'}]
+    # Not GitHub's mergeable_state: "blocked", "unstable" and "has_hooks" are normal while reviews or checks are
+    # pending and flip between runs. A real conflict or red check is already a flag above.
     if labels & HOLD:
         attention.append('issue: ' + ', '.join(sorted(labels & HOLD)))
     health = ('Needs attention: ' + '; '.join(attention)) if attention else 'Waiting on checks/review'
@@ -310,6 +317,8 @@ def reconcile(api, owner='uncomposed', number=6, apply=False, only=None, now=Non
             try:
                 issue = issues.get(n) or api.get(f'issues/{n}')
                 if 'pull_request' in issue:
+                    if only:
+                        raise sm_status.GitHubError(f'#{n} is a pull request, not an issue')
                     continue
                 if issue.get('number') != n or issue.get('state') not in {'open', 'closed'} or 'labels' not in issue:
                     raise sm_status.GitHubError(f'#{n}: issue response missing state/labels/identity')

@@ -290,6 +290,34 @@ class Reconciliation(unittest.TestCase):
         self.assertEqual(self.run_sync(api)['changes'][0]['status'], 'In Progress')
 
 
+class ReviewFixes(unittest.TestCase):
+    def test_reclaimed_after_merge_shows_active_work_even_with_the_validation_label(self):
+        labels = ['in-progress', 'status: needs-human-validation']
+        api = API([issue(labels=labels)], bundles=[merged()])
+        api.routes['issues/7/events'] = [event(at='2026-10-14T19:55:00Z')]
+        self.assertEqual(sync.reconcile(api, now=NOW)['changes'][0]['status'], 'In Progress')
+        # a claim older than the merge, or a quiet claim, leaves it waiting for the owner
+        api.routes['issues/7/events'] = [event(at='2026-10-14T10:00:00Z')]
+        self.assertEqual(sync.reconcile(api, now=NOW)['changes'][0]['status'], 'Needs your check')
+        api.routes['issues/7/events'] = [event(at='2026-10-14T19:55:00Z')]
+        api.routes['issues/7/comments'] = [comment('Thread "A" stopping: handed back', at='2026-10-14T19:57:00Z')]
+        self.assertEqual(sync.reconcile(api, now=NOW)['changes'][0]['status'], 'Needs your check')
+
+    def test_normal_merge_states_are_not_attention(self):
+        for state in ('blocked', 'unstable', 'has_hooks'):
+            with self.subTest(state=state):
+                b = bundle()
+                b['pull']['mergeable_state'] = state
+                change = sync.reconcile(API([issue()], bundles=[b]), now=NOW)['changes'][0]
+                self.assertEqual(change['health'], 'Waiting on checks/review')
+
+    def test_issue_argument_that_is_a_pull_request_is_reported(self):
+        api = API([issue()])
+        api.routes['issues/9'] = {'number': 9, 'pull_request': {}}
+        result = sync.reconcile(api, only=[9], now=NOW)
+        self.assertEqual(result['unknown'], [{'issue': 9, 'reason': '#9 is a pull request, not an issue'}])
+
+
 class SafetyEdges(unittest.TestCase):
     def test_pr_merged_during_live_read_uses_fresh_state(self):
         b = merged()
