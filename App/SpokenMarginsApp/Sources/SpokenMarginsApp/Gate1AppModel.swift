@@ -297,6 +297,7 @@ final class Gate1AppModel: ObservableObject {
     @Published private(set) var marginMomentTitle = "Your Margin"
     @Published private(set) var marginMomentPositionIsApproximate = false
     private var marginMomentConductor: MarginMomentConductor?
+    private(set) var marginMomentClock = MarginMomentClock.media // media time, or narration time for text read aloud (#1577)
     /// Heard audio around streamed Margins, in temporary files only while a Margin can use it (#156, #652). Keyed by margin identity.
     var heardSourceWindows = HeardSourceWindowFiles(rootDirectory: HeardSourceWindowFiles.defaultRootDirectory)
 
@@ -1348,20 +1349,22 @@ final class Gate1AppModel: ObservableObject {
         voiceURLs: [String: URL],
         title: String,
         isApproximate: Bool,
-        resumingAtMediaTimeMs: Int? = nil
+        resumingAtMediaTimeMs: Int? = nil,
+        clock: MarginMomentClock = .media
     ) {
         let sequence: MarginMomentSequence
         if let position = resumingAtMediaTimeMs {
-            sequence = MarginMomentSequence(itemId: itemId, resumingAtMediaTimeMs: position, playedMargin: target, otherMargins: otherMargins)
+            sequence = MarginMomentSequence(itemId: itemId, resumingAtMediaTimeMs: position, playedMargin: target, otherMargins: otherMargins, tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
         } else {
-            sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins)
+            sequence = MarginMomentSequence(itemId: itemId, target: target, otherMargins: otherMargins, tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
         }
+        marginMomentClock = clock
         let conductor = MarginMomentConductor(
             sequence: sequence,
             source: .init(
                 pause: { [weak self] in self?.pause() },
                 resume: { [weak self] in self?.resumePlayback() },
-                seek: { [weak self] in _ = self?.seekMedia(toMediaTimeMs: $0) }
+                seek: { [weak self] in self?.seekMarginMomentSource(toPosition: $0) }
             ),
             voiceURL: leveledVoiceURL(voiceURLs, itemId: itemId, margins: [target] + otherMargins)
         )
@@ -1386,17 +1389,13 @@ final class Gate1AppModel: ObservableObject {
         marginMomentConductor = conductor
         marginMomentTitle = title
         marginMomentPositionIsApproximate = isApproximate
-        if resumingAtMediaTimeMs != nil {
-            conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
-        } else {
-            conductor.start()
-        }
+        startMarginMomentLeadIn(conductor, target: target, itemId: itemId, resuming: resumingAtMediaTimeMs != nil)
         diagnostics["marginMoment.chime"] = nil
         if resumingAtMediaTimeMs != nil {
             diagnostics["marginMoment"] = "started:listening;later=\(sequence.unplayed.count)"
             return
         }
-        diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate)"
+        diagnostics["marginMoment"] = "started:lead_in_ms=\(target.mediaTimeMs - sequence.startMediaTimeMs);others=\(sequence.unplayed.count - 1);approximate=\(isApproximate);clock=\(clock.isNarratedText ? "narrated_text" : "media")"
     }
 
     /// "Play it now" on the coming-up cue.
@@ -1420,7 +1419,7 @@ final class Gate1AppModel: ObservableObject {
     private func observeMarginMoment(_ current: SessionSnapshot) {
         guard let conductor = marginMomentConductor else { return }
         guard current.itemId == conductor.sequence.itemId else { return endMarginMoment() }
-        conductor.observe(mediaTimeMs: current.currentMediaTimeMs)
+        conductor.observe(mediaTimeMs: marginMomentPositionMs(in: current))
     }
 
     func tryRefreshOfflineStorageUsage() {

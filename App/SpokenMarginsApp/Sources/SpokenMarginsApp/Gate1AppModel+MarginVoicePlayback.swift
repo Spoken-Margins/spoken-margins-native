@@ -296,34 +296,79 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     }
 }
 
-/// "Play this moment" for your own spoken Margins, moved out of `Gate1AppModel.swift` unchanged (hot-file ratchet, #1538).
+/// "Play this moment" for your own spoken Margins, moved out of `Gate1AppModel.swift` (hot-file ratchet, #1538), now with its clock (#1577).
 extension Gate1AppModel {
-    /// Spoken podcast Margins get the full moment: lead-in, the Margin inline, then the item's other spoken
-    /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
+    /// Spoken Margins get the full moment: lead-in, the Margin inline, then the item's other spoken Margins as
+    /// playback reaches them. Written Margins keep playing from the anchor. A Margin anchored only by text position
+    /// (an article read aloud on the device, #1577) counts its lead-in in narration time; see `MarginMomentClock`.
     func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
-        guard interjection.isInlineSpokenMargin, let anchorMs = interjection.anchor.mediaTimeMs else { return }
-        let spoken = inlineSpokenMargins(itemId: interjection.itemId, store: store)
+        guard interjection.isSpokenItemMargin else { return }
+        let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
+        let spoken = spokenItemMargins(itemId: interjection.itemId, store: store)
+        guard let anchors = MarginMomentPlanner.anchors(
+            played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs
+        ) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
             if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
         }
         startMarginMoment(
             itemId: interjection.itemId,
-            target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
-            otherMargins: spoken.map {
-                MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
-            },
+            target: anchors.target,
+            otherMargins: anchors.others,
             voiceURLs: voiceURLs,
             title: "Your Margin",
-            isApproximate: false
+            isApproximate: false,
+            clock: clock
         )
     }
 
     /// The listener's spoken Margins on the item, from every session, in no particular order.
     func inlineSpokenMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
+        spokenItemMargins(itemId: itemId, store: store).filter(\.isInlineSpokenMargin)
+    }
+
+    /// The same, including those anchored only by a text position.
+    func spokenItemMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
         let sessions: [Session] = (try? store.loadSessions(itemId: itemId)) ?? []
         return sessions
             .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
-            .filter(\.isInlineSpokenMargin)
+            .filter(\.isSpokenItemMargin)
+    }
+
+    /// Where the source stands on the moment's own clock: its media time, or the narration time of the text
+    /// being read. The coming-up card counts down on this.
+    var marginMomentPositionMs: Int? { marginMomentPositionMs(in: snapshot) }
+
+    func marginMomentPositionMs(in current: SessionSnapshot) -> Int? {
+        guard marginMomentClock.isNarratedText else { return current.currentMediaTimeMs }
+        return current.currentTextStart.map(marginMomentClock.position(forTextOffset:))
+    }
+
+    /// The conductor's seek (to the Margin on "Play it now", or back to the start of the lead-in).
+    func seekMarginMomentSource(toPosition position: Int) {
+        if marginMomentClock.isNarratedText {
+            seekText(toCharOffset: marginMomentClock.textOffset(forPosition: position))
+        } else {
+            seekMedia(toMediaTimeMs: position)
+        }
+    }
+
+    /// Starts the moment's lead-in: the source seeks back to the lead-in's start. An article read aloud goes back
+    /// to the start of the sentence nearest thirty seconds before the Margin, so speech doesn't begin mid-sentence.
+    func startMarginMomentLeadIn(_ conductor: MarginMomentConductor, target: MarginMomentAnchor, itemId: String, resuming: Bool) {
+        let clock = marginMomentClock
+        if resuming {
+            conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
+        } else if clock.isNarratedText {
+            let text = (try? store?.loadItem(id: itemId))?.text ?? ""
+            let start = MarginMomentClock.sentenceStart(
+                atOrAfter: clock.textOffset(forPosition: conductor.sequence.startMediaTimeMs),
+                before: clock.textOffset(forPosition: target.mediaTimeMs), in: text)
+            seekText(toCharOffset: start)
+            conductor.startListening(atMediaTimeMs: clock.position(forTextOffset: start))
+        } else {
+            conductor.start()
+        }
     }
 }
