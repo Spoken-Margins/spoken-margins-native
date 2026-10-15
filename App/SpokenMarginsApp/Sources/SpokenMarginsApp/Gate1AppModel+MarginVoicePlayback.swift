@@ -48,12 +48,12 @@ extension Gate1AppModel {
         }
         stopInterjectionAudioPlayback()
         do {
-            recordMarginVoiceEvent("start", player: "own")
             try marginVoicePlayer.startOwn(
                 interjection,
                 url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
                 rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
             )
+            recordMarginVoiceEvent("start", player: "own") // after the start call, so a start that throws logs no start
             sharedMarginReturn.voiceStarted(returnToSource: returnsSource)
             reportConfirmation("Playing your Margin.")
         } catch {
@@ -138,7 +138,6 @@ extension Gate1AppModel {
         stopInterjectionAudioPlayback()
         sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
         do {
-            recordMarginVoiceEvent("start", player: "shared")
             try marginVoicePlayer.prepareShared(
                 prompt,
                 url: { leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs) },
@@ -147,6 +146,7 @@ extension Gate1AppModel {
                 lowersBackgroundAudio: lowersBackgroundAudio,
                 mixedPlaybackVolume: mixedPlaybackVolume
             )
+            recordMarginVoiceEvent("start", player: "shared") // after the start call, so a start that throws logs no start
             pendingImportedCommentary = nil
             (sessionAudioPlaybackClient ?? audioPlaybackClientOverride)?.setRemoteCommandHandlingEnabled(false)
             gate2CompactControls.setNowPlayingEnabled(false)
@@ -230,24 +230,38 @@ extension Gate1AppModel {
     }
 
     /// Only one Margin voice sounds at a time (#1671). A moment's voice is the conductor's own player, apart from
-    /// `marginVoicePlayer`, so starting a Margin through the other route has to stop it. True when it did.
+    /// `marginVoicePlayer`, so starting a Margin through the other route has to stop it. True when the voice was
+    /// sounding, so the source it held paused is the Margin's to bring back; a voice the listener had paused leaves
+    /// everything paused, as before (#1538). The stop is logged by `endMarginMoment`.
     @discardableResult
     func endMarginMomentVoiceIfPlaying() -> Bool {
-        guard marginMomentConductor?.isPlayingVoice == true else { return false }
-        recordMarginVoiceEvent("stop", player: "moment")
+        guard let conductor = marginMomentConductor, conductor.isPlayingVoice else { return false }
+        let wasSounding = !conductor.isVoicePaused
         endMarginMoment()
-        return true
+        return wasSounding
     }
 
     /// A moment's voice is about to start (the conductor calls this before each voice): a Margin voice from the other
     /// player stops first, then the audio session is set for speech (#1671).
     func prepareMarginMomentVoice() throws {
         if playingImportedCommentary != nil || playingInterjectionAudioId != nil { stopInterjectionAudioPlayback() }
-        if marginMomentConductor?.isPlayingVoice != true { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
+        if !momentVoiceIsOpenInLog { recordMarginVoiceEvent("start", player: "moment") } // not on a resume
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
         #endif
+    }
+
+    /// The moment's voice is over (it ended, was skipped, failed to load or was cut): log its stop once. Called from
+    /// every route that ends it, so the log shows which players overlapped (#1671).
+    func recordMarginMomentVoiceEnded() {
+        if momentVoiceIsOpenInLog { recordMarginVoiceEvent("stop", player: "moment") }
+    }
+
+    /// The log's last moment entry is a start with no stop after it.
+    private var momentVoiceIsOpenInLog: Bool {
+        let events = diagnostics["marginVoice.events"]?.components(separatedBy: " | ") ?? []
+        return events.last { $0.hasSuffix(":moment") } == "start:moment"
     }
 
     /// Diagnostics keep the last ten Margin voice starts and stops with the player that made them (own, shared or

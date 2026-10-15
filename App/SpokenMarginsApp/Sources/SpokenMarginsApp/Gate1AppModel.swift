@@ -1378,6 +1378,7 @@ final class Gate1AppModel: ObservableObject {
             guard let self, let conductor, self.marginMomentConductor === conductor else { return }
             self.marginMoment = conductor.sequence
             self.marginMomentVoiceIsPaused = conductor.isVoicePaused
+            if !conductor.isPlayingVoice { self.recordMarginMomentVoiceEnded() }
             // Nothing left to play inline: the card goes away and the item simply continues.
             if conductor.sequence.phase == .listening, conductor.sequence.unplayed.isEmpty { self.endMarginMoment() }
         }
@@ -1405,6 +1406,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Stops playing Margins inline. The item keeps its current play state.
     func endMarginMoment() {
+        recordMarginMomentVoiceEnded()
         marginMomentConductor?.cancel()
         marginMomentConductor = nil
         marginMoment = nil
