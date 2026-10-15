@@ -4195,8 +4195,14 @@ public final class SessionEngine {
                         } catch StructuredDocumentUpgradeError.changedSincePlanned {}
                     }
                 }
-                let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-                itemId += "-edition-\(digest)"
+                // Unchanged text has nothing to move: unless the open reader is playing or holds
+                // prerendered narration, the one row takes the new document below, which also
+                // brings a deleted paper back and keeps imported Margins on a single item.
+                let heldReader = currentSession?.itemId == existing.id || currentItem?.id == existing.id
+                if existing.text != text || heldReader {
+                    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+                    itemId += "-edition-\(digest)"
+                }
             }
             if var existing = try existingItem(id: itemId) {
                 // Repair an old automatic title on re-import, retaining the item and its anchors.

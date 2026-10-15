@@ -229,4 +229,65 @@ final class PDFReimportAuditTests: XCTestCase {
         XCTAssertNotEqual(PreparedSpeechText(item: imported, document: document)?.text, old.text)
     }
 
+    // Same canonical text, a new document, and an upgrade that does not apply: nothing needs to
+    // move, so the one Library row takes the document, as before #322 (audit on 3f321a9, finding 1).
+
+    func testSameTextReimportOfADeletedPaperRestoresItInsteadOfAddingAnEdition() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "audit-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let store = try SQLiteSessionStore(path: path.path)
+        let engine = engine(store)
+        let old = try engine.importBrowserTextInBackground(handoff(document.text))
+        try store.moveItemToTrash(id: old.id, at: Date(timeIntervalSince1970: 100))
+
+        let again = try engine.importBrowserTextInBackground(handoff(document.text), structuredDocument: document)
+
+        XCTAssertEqual(again.id, old.id, "no -edition- item for unchanged text")
+        XCTAssertEqual(try store.listItems().map(\.id), [old.id])
+        XCTAssertNil(try store.loadItem(id: old.id).deletedAt, "the paper is back, with whatever it held")
+        XCTAssertTrue(try store.listDeletedItems().isEmpty)
+        XCTAssertEqual(try store.loadStructuredDocument(itemId: old.id), document)
+    }
+
+    @MainActor
+    func testSameTextReimportOfADeletedPaperOffMainRestoresIt() async throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "audit-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let store = try SQLiteSessionStore(path: path.path)
+        let engine = engine(store)
+        let old = try engine.importBrowserTextInBackground(handoff(document.text))
+        try store.moveItemToTrash(id: old.id, at: Date(timeIntervalSince1970: 100))
+
+        let again = try await engine.importBrowserTextInBackgroundOffMain(handoff(document.text), structuredDocument: document)
+
+        XCTAssertEqual(again.id, old.id)
+        XCTAssertEqual(try store.listItems().map(\.id), [old.id])
+        XCTAssertNil(try store.loadItem(id: old.id).deletedAt)
+    }
+
+    func testSameTextReimportOfAPaperWithImportedMarginsKeepsOneItem() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "audit-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: path) }
+        let store = try SQLiteSessionStore(path: path.path)
+        let engine = engine(store)
+        let old = try engine.importBrowserTextInBackground(handoff(document.text))
+        let layer = ImportedCommentaryLayer(
+            id: "layer-from-a-friend", itemId: old.id, packageDigest: "digest-1", packageId: "package-1",
+            itemIdentity: SharedItemIdentity(itemType: .pdf, title: "Paper", durationMs: nil),
+            importedAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let theirs = ImportedCommentaryInterjection(
+            id: "their-margin", layerId: layer.id, packageScopedId: "m1", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            anchorEvidence: PortableAnchorEvidence(anchorType: .text), approvedTranscript: "Look at the methods."
+        )
+        _ = try store.importCommentaryLayer(layer, interjections: [theirs])
+
+        let again = try engine.importBrowserTextInBackground(handoff(document.text), structuredDocument: document)
+
+        XCTAssertEqual(again.id, old.id, "the duplicate #322 removes must not come back for unchanged text")
+        XCTAssertEqual(try store.listItems().map(\.id), [old.id])
+        XCTAssertEqual(try store.loadStructuredDocument(itemId: old.id), document)
+        XCTAssertEqual(try store.loadImportedCommentaryInterjections(layerId: layer.id).map(\.id), ["their-margin"])
+    }
+
 }
