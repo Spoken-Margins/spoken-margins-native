@@ -540,6 +540,37 @@ def stop(udid: str, reason: str) -> None:
     mark_unsafe(udid, reason)
 
 
+def quiet_marker(udid: str) -> Path:
+    return state_dir() / 'simulator-quiet' / udid
+
+
+def mark_quiet(udid: str) -> None:
+    """Record that this simulator was busy until now: its boot just finished, or an app-hosted test run just ended.
+
+    The host app stalled at startup when launched within about 16 s of either (#705); verify-tests.py waits for
+    seconds_quiet() to reach its settle time. Best effort, never raises.
+    """
+    try:
+        marker = quiet_marker(udid)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+        os.utime(marker)
+        cutoff = time.time() - 24 * 3600
+        for old in marker.parent.iterdir():  # devices are deleted after each run; their markers need not stay
+            if old.stat().st_mtime < cutoff:
+                old.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def seconds_quiet(udid: str) -> float | None:
+    """Seconds since mark_quiet for this simulator, or None when it was never marked or the marker can't be read."""
+    try:
+        return time.time() - quiet_marker(udid).stat().st_mtime
+    except OSError:
+        return None
+
+
 def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lock_wait: float | None = None,
          info: dict | None = None, first_boot: bool = False) -> float:
     """Boot one simulator under the lane's rules and wait until it is ready. Returns seconds taken.
@@ -603,6 +634,7 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
                 info.update(boot_window=(wall_start, time.time()), tolerated=tolerated)
                 record_event(udid, f'ready after {seconds:.0f}s' + (f', one change tolerated: {tolerated}' if tolerated
                                                                     else ', no SpringBoard change'))
+                mark_quiet(udid)
                 return seconds
     except TimeoutError as error:
         raise BootError(f'the lane stayed busy: {error}') from None
