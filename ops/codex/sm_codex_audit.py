@@ -78,6 +78,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 from lane_dedupe import GitHubApi, automerge_holds_a_slot
+from lane_audit_policy import PERSISTENCE_PATTERNS, NEVER_RISKY_RE
 import lane_inherited_holds as inherited
 
 # ---------------------------------------------------------------------------
@@ -148,15 +149,7 @@ RISKY_PATTERNS = {
         r"packet",
         r"^Contracts/fixtures/(sharing|interjection-packages)/",
     ],
-    "persistence": [
-        r"(^|/)SessionKitPersistence/",
-        r"sqlite",
-        r"migration",
-        r"persist",
-        r"ledger",
-        r"(^|/)SessionEngine[^/]*\.swift$",
-        r"^Contracts/fixtures/(persistence|prepared-audio)/",
-    ],
+    "persistence": PERSISTENCE_PATTERNS,
     "audio": [
         r"(^|/)SessionKitAudio/",
         r"audio ?session",
@@ -177,9 +170,7 @@ RISKY_PATTERNS = {
     ],
 }
 _RISKY_RE = {k: [re.compile(p, re.I) for p in v] for k, v in RISKY_PATTERNS.items()}
-_NEVER_RISKY_RE = re.compile(
-    r"(^|/)(docs|research|Design)/|(^|/)[^/]*Tests/|\.md$", re.I
-)
+_NEVER_RISKY_RE = NEVER_RISKY_RE
 _UNCOUNTED_RE = re.compile(r"(^|/)research/|(^|/)fixtures/", re.I)
 
 # ---------------------------------------------------------------------------
