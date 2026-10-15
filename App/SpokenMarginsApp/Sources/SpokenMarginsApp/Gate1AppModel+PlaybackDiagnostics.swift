@@ -26,6 +26,12 @@ extension Gate1AppModel {
                 previousStatus: previous.status.rawValue,
                 narration: narrationDiagnostics()
             ))
+            // A snapshot that loses its session while the client still reads is repaired now, not at the next
+            // foreground. After the assignment finishes, so the repair doesn't assign inside the observer; a path
+            // that ended the session also stopped the client, so it finds nothing to do.
+            if PlaybackDiagnosticFields.narrationIsPlaying(narrationDiagnostics()) {
+                Task { @MainActor [weak self] in self?.reconcileNarrationOwnership(trigger: "session_cleared") }
+            }
         }
         let now = ProcessInfo.processInfo.systemUptime
         let changed = previous.status != snapshot.status || previous.targetId != snapshot.targetId

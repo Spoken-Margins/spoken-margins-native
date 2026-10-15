@@ -1093,7 +1093,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameInactiveOrBackground(entersBackground: Bool = false) {
-        if entersBackground { narrationStartupProtection.appEnteredBackground() }
+        if entersBackground { narrationStartupProtection.appEnteredBackground() }; reconcileNarrationOwnership(trigger: entersBackground ? "background" : "inactive")
         marginOutput.finishBeforeBackground(); readwiseHighlightSync.stop()
         supertonicRenderer?.setBackgroundInferencePacingEnabled(true)
         syncPlaybackProgressForLifecycle()
@@ -1116,7 +1116,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     func handleAppBecameActive() {
-        narrationStartupProtection.appEnteredForeground()
+        narrationStartupProtection.appEnteredForeground(); reconcileNarrationOwnership(trigger: "foreground")
         openReadyListeningEdition()
         marginOutput.start(); readwiseHighlightSync.start { [weak self] in self?.store }
         if let store { CommunityMapUploadService.shared.retryFailed(store: store, localAudio: { [weak self] in self?.importedPodcastRecipientLocalURLs[$0] ?? self?.podcastDownloadCoordinator?.validatedLocalURL(for: $0) }) { [weak self] in self?.diagnostics["communityMapUpload"] = $0 } }
@@ -2450,7 +2450,7 @@ final class Gate1AppModel: ObservableObject {
     }
 
     var shouldShowMiniPlayer: Bool {
-        hasActiveSession && !isDismissingMiniPlayer && screen != .playback && snapshot.phase != .finished && snapshot.phase != .abandoned
+        miniPlayerVisibility.visible
     }
 
     var isMediaPlaybackSnapshot: Bool {
