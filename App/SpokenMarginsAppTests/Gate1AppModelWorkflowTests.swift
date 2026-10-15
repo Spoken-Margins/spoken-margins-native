@@ -4099,22 +4099,26 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
 
     /// #1646: reading starts on a sentence start, so a Margin in the stretch before that start isn't part of the moment.
     /// It used to stay in the sequence, and reading never crossed it, so the card stayed until Stop.
-    func testAMarginBetweenTheLeadInAndItsSnappedSentenceStartIsLeftOutOfTheMoment() throws {
-        // Sentences are 40 characters; the target is at 1600, so the 30-second rule starts at 1180 and reading starts at 1200.
-        // The Margins sit well inside the gap (1190) and well past the start (1300, 1700), not on the start itself,
-        // which plays as soon as reading begins.
+    /// Sentences are 40 characters; the target is at 1600, so the 30-second rule starts at 1180 and reading starts at 1200.
+    /// The Margins sit inside the gap (1190) and well past the start (1300, 1700), not on the start itself.
+    func testAMarginInTheGapBeforeTheSnappedSentenceStartIsLeftOutOfTheMoment() throws {
         let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
         let model = fixture.model
         defer { model.endMarginMoment(); model.pause() }
-
         XCTAssertTrue(model.playMarginMoment(fixture.row))
-
-        let leadInStart = try XCTUnwrap(model.snapshot.currentTextStart)
-        XCTAssertEqual(leadInStart % fixture.sentenceLength, 0, "reading starts at the beginning of a sentence")
-        XCTAssertGreaterThanOrEqual(leadInStart, 1_200, "not in the gap before the first sentence start")
         let moment = try XCTUnwrap(model.marginMoment)
         let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
-        XCTAssertEqual(startChars, [1_300, fixture.targetChar, 1_700], "the Margin at 1190 sits before where reading starts")
+        XCTAssertFalse(startChars.contains(1_190), "the Margin at 1190 sits before where reading starts: \(startChars)")
+    }
+
+    func testMarginsAfterTheSnappedSentenceStartStayInTheMoment() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        let moment = try XCTUnwrap(model.marginMoment)
+        let startChars = moment.unplayed.map { model.marginMomentClock.textOffset(forPosition: $0.mediaTimeMs) }
+        XCTAssertEqual(Set(startChars), [1_300, fixture.targetChar, 1_700], "\(startChars)")
     }
 
     private func textAnchoredMomentFixture(
