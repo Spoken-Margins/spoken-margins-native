@@ -4111,6 +4111,24 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertFalse(startChars.contains(1_190), "the Margin at 1190 sits before where reading starts: \(startChars)")
     }
 
+    func testZGapFixtureStartsAMomentWithTheTargetInIt() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row), "the moment starts")
+        let moment = try XCTUnwrap(model.marginMoment, "the card shows")
+        XCTAssertTrue(moment.unplayed.contains { $0.marginId.hasSuffix(fixture.row.interjection.id) }, "the target waits in it")
+    }
+
+    func testZGapMarginIsNotInTheMomentSecondCopy() throws {
+        let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
+        let model = fixture.model
+        defer { model.endMarginMoment(); model.pause() }
+        XCTAssertTrue(model.playMarginMoment(fixture.row))
+        let moment = try XCTUnwrap(model.marginMoment)
+        XCTAssertFalse(moment.unplayed.contains { $0.marginId.hasSuffix("other-1190") }, "by id")
+    }
+
     func testMarginsAfterTheSnappedSentenceStartStayInTheMoment() throws {
         let fixture = try textAnchoredMomentFixture(otherMarginChars: [1_190, 1_300, 1_700])
         let model = fixture.model
