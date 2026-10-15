@@ -55,7 +55,7 @@ struct PlaybackScreen: View {
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write, paste, sourceText }
+    private enum OptionsDestination { case item, timeline, export, margins, paste, sourceText }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -199,12 +199,6 @@ struct PlaybackScreen: View {
                                 isNativeAudio: model.selectedItem.isNativeAudio
                             )
                             onDeviceSpeechGenerationControl
-                            if !dockOffersMarginRow {
-                                Button("Write a Margin", systemImage: "square.and.pencil") {
-                                    closeOptions(to: .write)
-                                }
-                                .accessibilityIdentifier("playback.writeMargin.button")
-                            }
                             reflectionOptions
                             conversation
                             sessionActionDock
@@ -294,12 +288,6 @@ struct PlaybackScreen: View {
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.18)).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("playback.controls")
-    }
-
-    /// The dock carries the Add a Margin row and its pencil in every state but these two, where it shows Return to
-    /// Source instead. More offers Write a Margin only then, so the two never sit side by side (#430).
-    private var dockOffersMarginRow: Bool {
-        model.playingImportedCommentary == nil && model.snapshot.skimBridgeState == nil
     }
 
     /// Add a Margin (spoken) with the pencil (written) beside it.
@@ -463,7 +451,6 @@ struct PlaybackScreen: View {
         case .timeline: openTimeline()
         case .export: model.openExport()
         case .margins: model.openMargins()
-        case .write: model.beginWrittenMargin()
         case .paste: isPastingAssistantResponse = true
         case .sourceText: openSourceText()
         }
