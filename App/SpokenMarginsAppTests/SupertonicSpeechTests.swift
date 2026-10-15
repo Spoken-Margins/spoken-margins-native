@@ -2866,6 +2866,72 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTFail("\(message): engine stayed \(try engine.syncPlaybackProgress().status)", file: file, line: line)
     }
 
+    // #1101: a seek into the still-rendering next chunk detaches the real current player. Its old
+    // start must not confirm the seek, release startup protection or suppress the waiting cue.
+    func testAnUnrenderedSeekInTheBackgroundStaysProtectedAndCuedUntilItsPlayerStarts() async throws {
+        let template = try makeTestWAV(duration: 3)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let secondRender = AsyncStream<Void>.makeStream()
+        defer { secondRender.continuation.finish() }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template, renderGates: [2: secondRender.stream])
+        let decisions = ResumeDecisionCapture()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            }, observesPlayerLifecycle: true,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onResumeDecision: { decisions.append($0) }
+        )
+        let text = String(repeating: "This article has enough ordinary words to put its next passage in another chunk. ", count: 12)
+        let item = Item(id: "seek-1101", title: "Seek", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let engine = SessionEngine(
+            profile: RuntimeCapabilityProfile(id: "phone", displayName: "Phone", capabilities: [
+                "sync": ["canonical_persistence"], "playback": ["realtime_tts"]
+            ]),
+            repository: InMemorySessionRepository(items: [item.id: item]), audio: client
+        )
+        _ = try engine.startSession(itemId: item.id)
+        try await waitForEngine(engine, status: .playing, "the original player is playing")
+        for _ in 0..<100 where await renderer.renderCount < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        let renderCount = await renderer.renderCount
+        XCTAssertEqual(renderCount, 2)
+
+        var starts = 0, releases = 0
+        let protection = NarrationStartupProtection(begin: { _, _ in
+            starts += 1
+            return { releases += 1 }
+        }, record: { _, _ in })
+        protection.statusChanged(to: .playing, itemId: item.id, eligible: { true })
+        let requestedAt = Date(timeIntervalSince1970: 1_101)
+        var watch = PlaybackStartWatch()
+        _ = watch.observe(itemId: item.id, status: .playing, requestedAt: requestedAt, at: requestedAt)
+        let plan = NarrationChunkPlanner.articlePlan(text)
+        let offset = plan.chunks[1].startOffset + 5
+        let seeking = try engine.seekText(toCharOffset: offset)
+        XCTAssertEqual(decisions.values.last?["path"], "await_render")
+        XCTAssertEqual(seeking.status, .starting)
+        protection.statusChanged(to: seeking.status, itemId: item.id, eligible: { true })
+        protection.appEnteredBackground()
+        _ = watch.observe(itemId: item.id, status: seeking.status, requestedAt: requestedAt, at: requestedAt + 10)
+        XCTAssertEqual(try engine.syncPlaybackProgress().status, .starting, "the old player cannot confirm the new place")
+        XCTAssertEqual(starts, 1)
+        XCTAssertEqual(releases, 0)
+        XCTAssertTrue(watch.takeCue(at: requestedAt + 11), "the silent seek gets a waiting cue")
+
+        secondRender.continuation.finish()
+        try await waitForEngine(engine, status: .playing, "the requested passage plays")
+        protection.statusChanged(to: engine.snapshot.status, itemId: item.id, eligible: { true })
+        _ = watch.observe(itemId: item.id, status: .playing, requestedAt: requestedAt, at: requestedAt + 12)
+        XCTAssertFalse(protection.isProtecting)
+        XCTAssertEqual(releases, 1)
+        XCTAssertNil(watch.waitingItemId)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(client.currentCharOffset()), offset)
+        try client.stop()
+    }
+
     // #235 backstop: if the chunk never renders, the client's own render deadline ends the wait in
     // the iOS voice, so relaxing the engine's watchdog can't leave a start pending for ever.
     func testResumeWaitingOnARenderThatNeverFinishesEndsInTheIOSVoice() async throws {
