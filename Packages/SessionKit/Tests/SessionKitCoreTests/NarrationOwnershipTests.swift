@@ -3,25 +3,34 @@ import XCTest
 
 /// #1337: sound with no mini player. The decision a returning listener's app makes, and the reasons it records.
 final class NarrationOwnershipTests: XCTestCase {
-    /// Every combination of the three facts, so a new case can't slip into the wrong row.
+    /// Every combination of the facts, so a new case can't slip into the wrong row. A playing engine session
+    /// always has a session, so the rows with `engineHas == false` and `enginePlaying == true` don't exist.
     func testRepairTable() {
-        let rows: [(app: Bool, engine: Bool, narration: Bool, expected: NarrationOwnership.Repair)] = [
-            (true, true, true, .none),
-            (true, true, false, .none),
-            (true, false, true, .none),
-            (true, false, false, .none),
+        let rows: [(app: Bool, engineHas: Bool, enginePlaying: Bool, narration: Bool, expected: NarrationOwnership.Repair)] = [
+            (true, true, true, true, .none),
+            (true, true, false, true, .none),
+            (true, false, false, true, .none),
+            (true, false, false, false, .none),
             // The app lost the session; the engine still plays it: show it again where it is.
-            (false, true, true, .adoptEngineSession),
-            (false, true, false, .adoptEngineSession),
+            (false, true, true, true, .adoptEngineSession),
+            (false, true, true, false, .adoptEngineSession),
+            // The engine holds a session that isn't playing (paused, or a sync that failed): its sound is not ours to stop.
+            (false, true, false, true, .none),
+            (false, true, false, false, .none),
             // Nothing owns the sound: stop it rather than leave it uncontrollable.
-            (false, false, true, .stopNarration),
-            (false, false, false, .none),
+            (false, false, false, true, .stopNarration),
+            (false, false, false, false, .none),
         ]
         for row in rows {
             XCTAssertEqual(
-                NarrationOwnership.repair(appHasSession: row.app, engineSessionIsPlaying: row.engine, narrationIsPlaying: row.narration),
+                NarrationOwnership.repair(
+                    appHasSession: row.app,
+                    engineHasSession: row.engineHas,
+                    engineSessionIsPlaying: row.enginePlaying,
+                    narrationIsPlaying: row.narration
+                ),
                 row.expected,
-                "app=\(row.app) engine=\(row.engine) narration=\(row.narration)"
+                "app=\(row.app) engineHas=\(row.engineHas) enginePlaying=\(row.enginePlaying) narration=\(row.narration)"
             )
         }
     }
@@ -29,7 +38,7 @@ final class NarrationOwnershipTests: XCTestCase {
     /// A paused or idle listener with no session is the normal Library state: no repair, no event noise.
     func testAnIdleAppWithQuietNarrationNeedsNoRepair() {
         XCTAssertEqual(
-            NarrationOwnership.repair(appHasSession: false, engineSessionIsPlaying: false, narrationIsPlaying: false),
+            NarrationOwnership.repair(appHasSession: false, engineHasSession: false, engineSessionIsPlaying: false, narrationIsPlaying: false),
             .none
         )
     }
@@ -41,6 +50,7 @@ final class NarrationOwnershipTests: XCTestCase {
         XCTAssertEqual(
             NarrationOwnership.repair(
                 appHasSession: false,
+                engineHasSession: false,
                 engineSessionIsPlaying: false,
                 narrationIsPlaying: PlaybackDiagnosticFields.narrationIsPlaying(narration)
             ),

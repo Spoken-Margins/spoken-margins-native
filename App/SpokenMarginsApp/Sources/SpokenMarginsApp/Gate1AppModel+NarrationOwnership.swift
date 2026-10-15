@@ -22,12 +22,17 @@ extension Gate1AppModel {
     @discardableResult
     func reconcileNarrationOwnership(trigger: String) -> NarrationOwnership.Repair {
         let narration = narrationDiagnostics()
+        let engineHasSession = engine?.currentSession != nil
         var live: SessionSnapshot?
-        if !hasActiveSession, let engine, engine.currentSession != nil {
-            live = try? engine.syncPlaybackProgress()
+        // Only a session the engine says is playing is synced: the sync persists, and a paused or finished one
+        // (the guided-onboarding reset leaves one) must not be rewritten on every foreground. A failed sync falls
+        // back to the engine's own snapshot rather than reading as "nothing playing".
+        if !hasActiveSession, let engine, engineHasSession, engine.snapshot.status.isPlaybackActive {
+            live = (try? engine.syncPlaybackProgress()) ?? engine.snapshot
         }
         let repair = NarrationOwnership.repair(
             appHasSession: hasActiveSession,
+            engineHasSession: engineHasSession,
             engineSessionIsPlaying: live?.status.isPlaybackActive == true,
             narrationIsPlaying: PlaybackDiagnosticFields.narrationIsPlaying(narration)
         )

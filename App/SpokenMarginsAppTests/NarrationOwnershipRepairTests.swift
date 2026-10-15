@@ -20,7 +20,6 @@ final class NarrationOwnershipRepairTests: XCTestCase {
             XCTAssertTrue(audio.isPlaying)
             let playCount = audio.playCount
 
-            model.handleAppBecameInactiveOrBackground(entersBackground: true)
             model.handleAppBecameActive()
 
             XCTAssertTrue(model.hasActiveSession)
@@ -35,6 +34,21 @@ final class NarrationOwnershipRepairTests: XCTestCase {
             XCTAssertEqual(model.screen, .playback)
             model.pause()
             XCTAssertFalse(audio.isPlaying, "The repaired controls must control the sound that was playing")
+        }
+    }
+
+    func testEnteringTheBackgroundShowsTheMiniPlayerAgainForASessionThatIsStillPlaying() throws {
+        try withLibrary { model, audio in
+            _ = try startArticle(model)
+            let session = try XCTUnwrap(model.snapshot.sessionId)
+            model.screen = .home
+            loseTheSnapshot(model)
+
+            model.handleAppBecameInactiveOrBackground(entersBackground: true)
+
+            XCTAssertEqual(model.snapshot.sessionId, session)
+            XCTAssertTrue(model.shouldShowMiniPlayer)
+            XCTAssertTrue(audio.isPlaying)
         }
     }
 

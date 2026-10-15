@@ -12,15 +12,21 @@ public enum NarrationOwnership {
         /// current place, rather than reconstructing one.
         case adoptEngineSession = "adopt_engine_session"
         /// Neither the snapshot nor the engine has a session, yet the client still reads: stop it. Sound with no
-        /// session and no controls is the worst case, and there is nothing to attach a mini player to.
+        /// session and no controls is the worst case, and there is nothing to attach a mini player to. An engine
+        /// that still holds a session owns its sound, whatever state it is in, so that is never stopped here.
         case stopNarration = "stop_narration"
     }
 
     /// `engineSessionIsPlaying` is the engine's own live status (after a progress sync), not the app's copy.
-    public static func repair(appHasSession: Bool, engineSessionIsPlaying: Bool, narrationIsPlaying: Bool) -> Repair {
+    public static func repair(
+        appHasSession: Bool,
+        engineHasSession: Bool,
+        engineSessionIsPlaying: Bool,
+        narrationIsPlaying: Bool
+    ) -> Repair {
         guard !appHasSession else { return .none }
         if engineSessionIsPlaying { return .adoptEngineSession }
-        return narrationIsPlaying ? .stopNarration : .none
+        return narrationIsPlaying && !engineHasSession ? .stopNarration : .none
     }
 
     /// A `playback.ownershipRepair` record. Hashed tokens and state only: no titles, text or URLs.
