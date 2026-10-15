@@ -46,6 +46,7 @@ extension Gate1AppModel {
         }
         stopInterjectionAudioPlayback()
         do {
+            recordMarginVoiceRate("own")
             try marginVoicePlayer.startOwn(
                 interjection,
                 url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
@@ -132,6 +133,7 @@ extension Gate1AppModel {
         stopInterjectionAudioPlayback()
         sharedMarginReturn.voiceStarted(returnToSource: shouldResumeSource)
         do {
+            recordMarginVoiceRate("shared")
             try marginVoicePlayer.prepareShared(
                 prompt,
                 url: { leveledMarginURL(audioURL, itemId: prompt.layer.itemId, anchorMediaTimeMs: prompt.interjection.resolution.localMediaTimeMs) },
@@ -219,6 +221,24 @@ extension Gate1AppModel {
         screen = .playback
         diagnostics["lastSharedMarginNavigation"] = "opened:\(interjectionID)"
         return true
+    }
+
+    /// Jumps to a Margin's place in its own session, then plays the source at the speed the listener has set. The
+    /// session comes back at the rate it last played at (a text item's 1.5×, say) while the screen shows the global
+    /// media rate, so without this the source and the Margin's voice played faster than the 1× shown (#1670).
+    func playAnchorAtShownRate(_ interjection: Interjection, engine: SessionEngine) throws -> SessionSnapshot {
+        try applyPreferredPlaybackRate(to: try engine.playInterjectionAnchor(interjection), engine: engine)
+    }
+
+    /// The speed a Margin voice is about to play at, next to the source's and the one shown, so Diagnostics can say
+    /// whether what was heard matched the screen (#1670).
+    @discardableResult
+    func recordMarginVoiceRate(_ kind: String) -> Double {
+        let voice = Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
+        diagnostics["marginVoice.rate"] = String(
+            format: "%@;voice=%.2f;source=%.2f;shown=%.2f", kind, voice, snapshot.playbackRate,
+            isMediaPlaybackSnapshot ? mediaPlaybackRate : speechPlaybackRateMultiplier)
+        return voice
     }
 
     nonisolated static func marginPlaybackRate(itemPlaybackRate: Double) -> Double {
