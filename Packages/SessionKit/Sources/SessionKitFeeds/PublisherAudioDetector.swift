@@ -52,7 +52,8 @@ public enum PublisherAudioDetector {
     /// an article with publisher audio.
     public static func publisherAudio(for entry: FeedEntry, itemId: String) -> PublisherAudio? {
         guard kind(of: entry) == .articleWithPublisherAudio, let audioURL = httpsURL(entry.audioURL) else { return nil }
-        return PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: entry.audioDurationMs, detectedFrom: detectedFromPublisherNarration)
+        return PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: entry.audioDurationMs,
+                              detectedFrom: entry.publisherNarrationGenerated == true ? detectedFromGeneratedNarration : detectedFromPublisherNarration)
     }
 
     /// An authenticated feed already supplied this text. Do not replace it with a public teaser.

@@ -42,6 +42,29 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
     }
 
+    /// The owner scrubbed and a "loading" line appeared under Play/Pause, which pushed the whole dock up (#430).
+    /// Starting playback is a status the dock must show without changing its height, so the bar stays where it was.
+    func testStartingPlaybackDoesNotMoveTheDock() async throws {
+        for phone in Self.phones {
+            for build in [self.makeArticleModel, self.makePodcastModel] {
+                let model = build()
+                let mounted = try mount(model, size: phone.size)
+                defer { mounted.close() }
+                let restingBar = try await waitForBar(in: mounted)
+                let restingTop = restingBar.convert(restingBar.bounds, to: mounted.window).minY
+                var starting = model.snapshot
+                starting.status = .starting
+                model.snapshot = starting
+                try await Task.sleep(for: .milliseconds(300))
+                mounted.window.layoutIfNeeded()
+                let startingBar = try await waitForBar(in: mounted)
+                let startingTop = startingBar.convert(startingBar.bounds, to: mounted.window).minY
+                XCTAssertEqual(startingTop, restingTop, accuracy: 0.5,
+                               "\(phone.name): the bar moved from \(restingTop) to \(startingTop) while playback was starting")
+            }
+        }
+    }
+
     // MARK: - Assertions
 
     private func assertCompactDock(_ mounted: Mounted, phone: String, size: CGSize) async throws {

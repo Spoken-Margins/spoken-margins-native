@@ -868,12 +868,12 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserText(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> SessionSnapshot {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
-        try saveItem(item)
-        if let deterministicMap {
-            try repository.saveListeningMap(deterministicMap)
-        }
-        try saveStructuredDocument(document, itemId: item.id)
+        let (item, deterministicMap, document, persisted) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
+        if !persisted {
+            try saveItem(item)
+            if let deterministicMap { try repository.saveListeningMap(deterministicMap) }
+            try saveStructuredDocument(document, itemId: item.id)
+        } else { forgetDocumentCaches(itemId: item.id) }
         forgetFailure(unlessItemIs: item.id)
         currentItem = item
         currentMap = deterministicMap
@@ -897,12 +897,12 @@ public final class SessionEngine {
     @discardableResult
     public func importBrowserTextInBackground(_ handoff: BrowserTextHandoff, structuredDocument: StructuredDocument? = nil) throws -> Item {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
-        let (item, deterministicMap, document) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
-        try saveItem(item)
-        if let deterministicMap {
-            try repository.saveListeningMap(deterministicMap)
-        }
-        try saveStructuredDocument(document, itemId: item.id)
+        let (item, deterministicMap, document, persisted) = try browserTextImportRecords(handoff, structuredDocument: structuredDocument)
+        if !persisted {
+            try saveItem(item)
+            if let deterministicMap { try repository.saveListeningMap(deterministicMap) }
+            try saveStructuredDocument(document, itemId: item.id)
+        } else { forgetDocumentCaches(itemId: item.id) }
         return item
     }
 
@@ -921,20 +921,18 @@ public final class SessionEngine {
         try require("importBrowserText", category: "sync", capabilities: ["browser_session_handoff", "canonical_persistence"])
         var outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .deferred)
         if case .upgradeCandidate(let job) = outcome {
-            let planned = try await Task.detached(priority: .userInitiated) { try job.plan() }.value
+            let planned = await Task.detached(priority: .userInitiated) { try? job.plan() }.value
             try afterStructuredUpgradePlannedForTesting?()
-            if case .success(let upgrade) = planned, currentSession?.itemId != job.existing.id {
+            if case .success(let upgrade)? = planned, currentSession?.itemId != job.existing.id, currentItem?.id != job.existing.id {
                 do {
                     try job.apply(upgrade)
-                    // The transaction wrote it; the engine re-saves the row in the form it keeps it in.
-                    try saveItem(upgrade.item)
                     forgetDocumentCaches(itemId: upgrade.item.id)
                     return upgrade.item
                 } catch StructuredDocumentUpgradeError.changedSincePlanned {}
             }
             outcome = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .skip)
         }
-        guard case .records(let item, let deterministicMap, let document) = outcome else {
+        guard case .records(let item, let deterministicMap, let document, _) = outcome else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
         try saveItem(item)
@@ -947,7 +945,9 @@ public final class SessionEngine {
 
     private func saveStructuredDocument(_ document: StructuredDocument?, itemId: String) throws {
         guard let document, let store = repository as? StructuredDocumentRepository else { return }
-        try store.saveStructuredDocument(document, itemId: itemId)
+        if let store = store as? any (SessionRepository & StructuredDocumentRepository) {
+            try PreparedAudioEnqueue.saveStructuredDocument(document, itemId: itemId, repository: store)
+        } else { try store.saveStructuredDocument(document, itemId: itemId) }
         forgetDocumentCaches(itemId: itemId)
     }
 
@@ -3196,7 +3196,10 @@ public final class SessionEngine {
         guard let prepared = try textAudio.prepareTextAudio(itemId: item.id, title: item.title, text: sourceText) else {
             return item
         }
-        return try applyPreparedTextAudio(prepared, to: item)
+        do { return try applyPreparedTextAudio(prepared, to: item) }
+        catch SessionKitError.invalidCommandForState("applyPreparedTextAudio:source_text_changed") {
+            return try repository.loadItem(id: item.id)
+        }
     }
 
     /// Prepared narration is cache-backed. If iOS purges that cache, the text item
@@ -3206,14 +3209,41 @@ public final class SessionEngine {
         guard PreparedNarrationFallback.isMissing(item.media) else {
             return item
         }
-        var repaired = item
-        repaired.media = nil
-        try saveItem(repaired)
-        try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: item.id, repository: repository)
-        return repaired
+        let repair = { () throws -> Item in
+            var current = try self.repository.loadItem(id: item.id)
+            if PreparedNarrationFallback.isMissing(current.media) {
+                current.media = nil
+                try self.saveItem(current)
+                try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: item.id, repository: self.repository)
+            }
+            return current
+        }
+        if let store = repository as? any SessionRepositoryTransaction { return try store.withSessionTransaction(repair) }
+        return try repair()
     }
 
     private func applyPreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
+        let write = { () throws -> Item in
+            let stored = try self.repository.loadItem(id: item.id)
+            guard stored.deletedAt == nil, stored.text == item.text,
+                  Self.preparedAudioMatches(prepared, item: stored) else {
+                throw SessionKitError.invalidCommandForState("applyPreparedTextAudio:source_text_changed")
+            }
+            return try self.writePreparedTextAudio(prepared, to: stored)
+        }
+        if let store = repository as? any SessionRepositoryTransaction { return try store.withSessionTransaction(write) }
+        return try write()
+    }
+
+    private static func preparedAudioMatches(_ prepared: PreparedTextAudio, item: Item) -> Bool {
+        let text = item.text ?? ""
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let projected = SpeechTextNormalizer.projectForSystemSpeech(trimmed).text
+        return prepared.normalizedText == text || prepared.normalizedText == trimmed
+            || SpeechTextNormalizer.projectForSystemSpeech(prepared.normalizedText).text == projected
+    }
+
+    private func writePreparedTextAudio(_ prepared: PreparedTextAudio, to item: Item) throws -> Item {
         let transcriptId = item.transcriptId ?? "generated-transcript-\(item.id)"
         let map = currentMap?.itemId == item.id ? currentMap : (try? repository.loadListeningMap(itemId: item.id))
         let timeline = generatedTextTimeline(prepared.timeline, using: map)
@@ -3728,7 +3758,7 @@ public final class SessionEngine {
             try PreparedNarrationFallback.markPreparedAudioForRepreparation(itemId: detached.id, repository: repository)
         }
         currentItem = detached
-        let timelineDescribesTarget = targetIsCurrentRender || detached.media == nil
+        let timelineDescribesTarget = targetIsCurrentRender
         var reading = PreparedNarrationFallback.liveSpeechSession(
             from: session, item: detached,
             timeline: publisherTimeline ?? (timelineDescribesTarget ? sourceTranscriptTimeline(for: session) : nil)
@@ -4059,11 +4089,11 @@ public final class SessionEngine {
     private func browserTextImportRecords(
         _ handoff: BrowserTextHandoff,
         structuredDocument: StructuredDocument? = nil
-    ) throws -> (Item, ListeningMap?, StructuredDocument?) {
-        guard case .records(let item, let map, let document) = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
+    ) throws -> (Item, ListeningMap?, StructuredDocument?, Bool) {
+        guard case .records(let item, let map, let document, let persisted) = try browserTextImportOutcome(handoff, structuredDocument: structuredDocument, upgrade: .inline) else {
             throw SessionKitError.invalidCommandForState("importBrowserText")
         }
-        return (item, map, document)
+        return (item, map, document, persisted)
     }
 
     /// Where a re-imported PDF's move to the new extraction (C1 M3 step 5) is planned and written.
@@ -4077,7 +4107,7 @@ public final class SessionEngine {
     }
 
     private enum BrowserTextImportOutcome {
-        case records(Item, ListeningMap?, StructuredDocument?)
+        case records(Item, ListeningMap?, StructuredDocument?, persisted: Bool = false)
         case upgradeCandidate(StructuredUpgradeJob)
     }
 
@@ -4146,22 +4176,33 @@ public final class SessionEngine {
             // A corrected extraction (or a new PDF extractor) must not move existing
             // Margin anchors. Retain the original edition and give changed text its
             // own identity.
-            if let existing = try existingItem(id: itemId), existing.text != text {
+            if let existing = try existingItem(id: itemId), existing.text != text ||
+                (document.map({ (try? (repository as? any StructuredDocumentRepository)?.loadStructuredDocument(itemId: itemId)) != $0 }) == true
+                 && !(existing.text == text && (currentSession?.itemId == existing.id || currentItem?.id == existing.id)
+                      && !snapshot.status.isPlaybackActive && existing.media?.sourceType != .generatedTTSPrerendered)) {
                 // C1 M3 step 5: a PDF re-imported with a newer extraction moves the
                 // existing item to it when every Margin and position lands on the same
                 // words (I13 rule 1d). Otherwise it stays, and the new text becomes
                 // its own edition as before.
-                if mode != .skip, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id,
+                if mode != .skip, let document, existing.deletedAt == nil, currentSession?.itemId != existing.id, currentItem?.id != existing.id,
                    let store = repository as? any (SessionRepository & StructuredDocumentRepository) {
                     let job = StructuredUpgradeJob(repository: store, existing: existing, document: document)
                     if mode == .deferred { return .upgradeCandidate(job) }
-                    if case .success(let upgrade) = try job.plan() {
-                        try job.apply(upgrade)
-                        return .records(upgrade.item, upgrade.listeningMap, document)
+                    if case .success(let upgrade)? = try? job.plan() {
+                        do {
+                            try job.apply(upgrade)
+                            return .records(upgrade.item, upgrade.listeningMap, document, persisted: true)
+                        } catch StructuredDocumentUpgradeError.changedSincePlanned {}
                     }
                 }
-                let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
-                itemId += "-edition-\(digest)"
+                // Unchanged text has nothing to move: unless the open reader is playing or holds
+                // prerendered narration, the one row takes the new document below, which also
+                // brings a deleted paper back and keeps imported Margins on a single item.
+                let heldReader = currentSession?.itemId == existing.id || currentItem?.id == existing.id
+                if existing.text != text || heldReader {
+                    let digest = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+                    itemId += "-edition-\(digest)"
+                }
             }
             if var existing = try existingItem(id: itemId) {
                 // Repair an old automatic title on re-import, retaining the item and its anchors.

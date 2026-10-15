@@ -1221,13 +1221,17 @@ class VerificationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'adapters')
             calls, startup = self.watch()
+            startup['diagnose'] = lambda folder: {'diagnosis': verification.NO_HOST_APP}
             script = 'import time; print("Writing result bundle at path:", flush=True); time.sleep(60)'
-            with self.assertRaisesRegex(RuntimeError, r'printed no test output in 2 launch\(es\) of 1s'):
+            # #1161: the step's error names what the host app was doing, not only that no test output came.
+            with self.assertRaisesRegex(RuntimeError, r'printed no test output in 2 launch\(es\) of 1s.*'
+                                                      r'no host app process: the launch into the simulator'):
                 run.command('xcode-tests', [sys.executable, '-c', script], timeout=60, tests=True, startup=startup)
             step = run.manifest['steps'][-1]
             self.assertEqual(step['exit_code'], 124)
             self.assertFalse(step['interrupted'])  # the lane's report says "ran out of budget" for interrupted steps
             self.assertEqual([s['attempt'] for s in step['startup_stalls']], [1, 2])
+            self.assertEqual([s['diagnosis'] for s in step['startup_stalls']], [verification.NO_HOST_APP] * 2)
             self.assertEqual(calls['reset'], [1])  # no third launch
             self.assertLess(step['seconds'], 30)
 
@@ -1289,11 +1293,82 @@ class VerificationTests(unittest.TestCase):
 
             with patch.object(verification.subprocess, 'run', side_effect=run_):
                 found = verification.stall_evidence(device, folder)
-            self.assertEqual(found, {'processes': 1, 'samples': [{'pid': 101, 'exit': 0}]})
+            # sample wrote no file here, so the stall says so rather than guessing.
+            self.assertEqual(found, {'processes': 1, 'samples': [{'pid': 101, 'exit': 0}],
+                                     'diagnosis': 'host app sample unreadable (no main thread in its call graph)'})
             self.assertEqual(sampled, [['sample', '101']])
             self.assertIn(device, (folder / 'processes.txt').read_text())
             with patch.object(verification.subprocess, 'run', side_effect=OSError('no ps')):
                 self.assertIn('error', verification.stall_evidence(device, folder))
+
+    # Shaped like the `sample` output in the #1161 stall folders: the main thread first, other threads after it.
+    def stall_sample(self, main_frames, images, stray=''):
+        frames = ''.join(f'    + {" " * i}2499 {frame}  (in X) + 4  [0x1]\n' for i, frame in enumerate(main_frames))
+        frames += f'    + 1 {stray}  (in X) + 4  [0x1]\n' if stray else ''
+        return ('Analysis of sampling SpokenMarginsApp (pid 101) every 1 millisecond\n----\n\nCall graph:\n'
+                f'    2500 Thread_1   DispatchQueue_1: com.apple.main-thread  (serial)\n{frames}'
+                '    2500 Thread_2: com.apple.AXSpeech\n    + 2500 semaphore_wait_trap  (in libsystem_kernel.dylib)\n'
+                '\nTotal number in stack (recursive counted multiple times):\n'
+                f'\nBinary Images:\n{images}')
+
+    RUN_LOOP = ['start', 'UIApplicationMain', 'GSEventRunModal', '__CFRunLoopRun', '__CFRunLoopServiceMachPort',
+                'mach_msg2_trap']
+    APP_IMAGES = '       0x102ea8000 -        0x102eabfff +SpokenMarginsApp (0.1 - 32) <A> /x/SpokenMarginsApp\n'
+    INJECT = ('       0x10f000000 -        0x10f00ffff +libXCTestBundleInject.dylib (0) <B> '
+              '/x/SpokenMarginsApp.app/Frameworks/libXCTestBundleInject.dylib\n')
+
+    def test_stall_diagnosis_names_each_shape_seen_in_the_1161_samples(self):
+        sample = self.stall_sample
+        cases = [
+            # 19 of 32: started, idle, and xcodebuild's DYLD_INSERT_LIBRARIES never took effect.
+            (sample(self.RUN_LOOP, self.APP_IMAGES), 'S', 'host app idle in its run loop; XCTest never injected'),
+            # Another thread waiting on a semaphore is normal; only the main thread decides "idle".
+            (sample(self.RUN_LOOP, self.APP_IMAGES + self.INJECT), 'Ss', 'host app idle in its run loop; XCTest loaded'),
+            # A wait seen in 1 of 2500 main-thread samples is a one-off branch, not a blocked app.
+            (sample(self.RUN_LOOP, self.APP_IMAGES, stray='__ulock_wait'), 'S',
+             'host app idle in its run loop; XCTest never injected'),
+            (sample(['start', 'Gate1AppModel.init', 'dispatch_sync', '_dispatch_sync_f_slow', '__ulock_wait'],
+                    self.APP_IMAGES + self.INJECT), 'S', 'host app busy or blocked on its main thread; XCTest loaded'),
+            # 1 of 32: launched about 70 s late, so the sample caught it in dyld, stopped for the debugger (Ts).
+            (sample(['_dyld_start'], ''), 'Ts', 'host app launched late and still starting in dyld'),
+            (sample(self.RUN_LOOP, self.APP_IMAGES), 'T', 'host app launched late and still starting in dyld'),
+            # A later one had already resumed when sampled: running, but most samples still in dyld's set-up.
+            (sample(['start', 'dyld4::prepareSim', 'dyld4::APIs::runAllInitializersForMain'], ''), 'S',
+             'host app launched late and still starting in dyld'),
+            (sample(self.RUN_LOOP, ''), 'S', 'host app idle in its run loop; XCTest load unknown'),
+            ('', 'S', 'host app sample unreadable'),
+            ('sample: process 101 does not exist\n', '', 'host app sample unreadable'),
+        ]
+        for text, state, expected in cases:
+            with self.subTest(expected=expected, state=state):
+                self.assertTrue(verification.stall_diagnosis(text, state).startswith(expected),
+                                verification.stall_diagnosis(text, state))
+
+    def test_stall_evidence_with_no_host_app_says_the_launch_never_completed(self):
+        # 12 of 32 #1161 stalls: the session log ends at "Launching app" and no app process exists.
+        with tempfile.TemporaryDirectory() as temporary:
+            device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+            listing = f'  90 05:10 S /x/Devices/{device}/data/usr/libexec/launchd_sim\n'
+            with patch.object(verification.subprocess, 'run',
+                              return_value=subprocess.CompletedProcess([], 0, stdout=listing)):
+                found = verification.stall_evidence(device, Path(temporary) / 'stall')
+            self.assertEqual(found, {'processes': 1, 'diagnosis': verification.NO_HOST_APP})
+
+    def test_stall_evidence_diagnoses_the_sample_it_took(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary) / 'stall'
+            device = 'A1B2C3D4-0000-0000-0000-SYNTHETIC00'
+            listing = f'  101 01:30 Ss /x/Devices/{device}/data/Y/SpokenMarginsApp.app/SpokenMarginsApp\n'
+            text = self.stall_sample(self.RUN_LOOP, self.APP_IMAGES)
+
+            def run_(args, **kwargs):
+                if args[0] == 'sample':
+                    Path(args[args.index('-file') + 1]).write_text(text)
+                return subprocess.CompletedProcess(args, 0, stdout=listing)
+
+            with patch.object(verification.subprocess, 'run', side_effect=run_):
+                found = verification.stall_evidence(device, folder)
+            self.assertEqual(found['diagnosis'], 'host app idle in its run loop; XCTest never injected')
 
     def simulator_listings(self, *runners):
         """simctl listings, one per call: an iOS 26 iPhone template plus the Test Runner named in each."""
