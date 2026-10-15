@@ -222,14 +222,32 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         let store = try XCTUnwrap(f.model.store)
         let originalJob = try XCTUnwrap(store.loadAIJobs(sessionId: f.a).last)
         f.model.startItem(id: "item-pill")
+        let beforeNotes = try store.loadInterjections(sessionId: f.a)
+        let beforeIDs = Set(beforeNotes.map(\.id))
+        let newText = "NEW_NOTE: do not silently add this to an old Retry."
         f.model.beginWrittenMargin()
-        f.model.saveWrittenMargin(text: "NEW_NOTE: do not silently add this to an old Retry.")
-        let newNote = try XCTUnwrap(store.loadInterjections(sessionId: f.a).last?.id)
-        XCTAssertNotEqual(newNote, f.noteA)
+        f.model.saveWrittenMargin(text: newText)
+        let afterNotes = try store.loadInterjections(sessionId: f.a)
+        // SQLite orders by second-resolution updated_at, then ID. A tied timestamp
+        // can put the original UUID last; enumeration order is not creation order.
+        XCTAssertEqual(afterNotes.count, beforeNotes.count + 1, "Saving must actually add a new Margin")
+        XCTAssertEqual(Set(afterNotes.map(\.id)).count, afterNotes.count)
+        let addedNotes = afterNotes.filter { !beforeIDs.contains($0.id) }
+        XCTAssertEqual(addedNotes.count, 1, "Identify the new saved record, never the last enumerated row")
+        let newNote = try XCTUnwrap(addedNotes.first)
+        XCTAssertEqual(newNote.transcript, newText)
+        XCTAssertEqual(newNote.sessionId, f.a)
+        XCTAssertEqual(newNote.itemId, "item-pill")
+        XCTAssertEqual(newNote.targetType, .item)
+        XCTAssertEqual(newNote.targetId, "item-pill")
+        XCTAssertEqual(newNote.status, "active")
+        XCTAssertNotEqual(newNote.id, f.noteA)
         f.model.retryPendingAI() // Playback's explicit Retry Summary button.
         try await waitForRequests(2, f.provider)
         let requests = await f.provider.requests
-        XCTAssertEqual(try summaryNoteIDs(in: XCTUnwrap(requests.last).context), [f.noteA])
+        let retriedIDs = try summaryNoteIDs(in: XCTUnwrap(requests.last).context)
+        XCTAssertEqual(retriedIDs, [f.noteA])
+        XCTAssertFalse(retriedIDs.contains(newNote.id), "Retry must exclude the newly saved Margin")
         let jobs = try store.loadAIJobs(sessionId: f.a)
         XCTAssertEqual(jobs.count, 1)
         XCTAssertEqual(jobs.last?.id, originalJob.id)

@@ -2425,6 +2425,26 @@ public final class SessionEngine {
         return snapshot
     }
 
+    public func localSummaryRequestOrigin(itemId: String, turnId: String) throws -> LocalSummaryRequestOrigin {
+        try LocalSummaryRequestOrigin(repository: repository, snapshot: snapshot, itemId: itemId, turnId: turnId)
+    }
+
+    /// Local summaries arrive as one complete response, not a stream belonging to whichever session is now open.
+    @discardableResult
+    public func completeLocalSummary(origin: LocalSummaryRequestOrigin, content: String) throws -> SessionSnapshot {
+        let parsed = parseSectionedResponse(from: content)
+        try origin.save(repository: repository, rawText: content, text: parsed.response,
+                        summary: parsed.summary, chapters: parsed.chapters)
+        guard origin.matchesPlayback(snapshot) else { return snapshot }
+        snapshot.turnStatus = "complete"
+        snapshot.pendingAiJobCount = try repository.loadAIJobs(sessionId: origin.sessionId).filter { $0.status != "complete" }.count
+        snapshot.spokenUnits = sentenceUnits(in: parsed.response, includeTrailingFragment: true)
+        let phase = snapshot.status.isPlaybackActive && rawAudioTextOffset() != nil
+            ? currentSession?.phase ?? snapshot.phase : .interjectionSummary
+        publish(status: snapshot.status, phase: phase)
+        return snapshot
+    }
+
     @discardableResult
     public func aiStreamDelta(turnId: String, content: String) throws -> SessionSnapshot {
         let session = try resolveSession(nil)
