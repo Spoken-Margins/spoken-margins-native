@@ -37,10 +37,19 @@ extension RenderedSpeechGenerationState {
 public struct RenderedSpeechGenerationProgress: Equatable, Sendable {
     public var completedChunks: Int
     public var totalChunks: Int
+    /// The render chain is resting on purpose with enough listening rendered ahead (#1681), so no progress is due.
+    public var isRestingAhead: Bool
 
-    public init(completedChunks: Int, totalChunks: Int) {
+    public init(completedChunks: Int, totalChunks: Int, isRestingAhead: Bool = false) {
         self.completedChunks = completedChunks
         self.totalChunks = totalChunks
+        self.isRestingAhead = isRestingAhead
+    }
+
+    /// Whether a stall in this progress means rendering is slow: chunks remain and the chain isn't resting. A rest
+    /// reported "Still preparing" and a delay in diagnostics on every pause (#1681 audit).
+    public var watchesForDelay: Bool {
+        completedChunks < totalChunks && !isRestingAhead
     }
 
     public var percent: Int {

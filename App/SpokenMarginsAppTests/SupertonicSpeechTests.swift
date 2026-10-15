@@ -2423,12 +2423,15 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThan(rendered.total, 10)
         XCTAssertLessThanOrEqual(rendered.renders, 5, "the playing chunk and about 0.5 s ahead, not the whole item")
         XCTAssertGreaterThanOrEqual(rendered.renders, 3)
+        XCTAssertTrue(rendered.last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+        XCTAssertFalse(rendered.last.watchesForDelay)
     }
 
     /// A cool phone in front renders the whole item, as before.
     func testWithoutALimitLiveNarrationRendersTheWholeItem() async throws {
         let rendered = try await renderAhead(window: nil, playsAudio: false)
         XCTAssertEqual(rendered.renders, rendered.total)
+        XCTAssertEqual(rendered.restingReports, 0)
     }
 
     /// #1681: a resting chain starts again as playback uses the audio ahead, so the item still plays to the end.
@@ -2438,11 +2441,38 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(rendered.renders, rendered.total)
         XCTAssertGreaterThan(rendered.restarts, 0,
                              "the chain started again as playback moved on, not only when playback ran out of audio")
+        XCTAssertGreaterThan(rendered.restingReports, 0)
+        XCTAssertFalse(rendered.last.isRestingAhead)
+        let reports = rendered.reports
+        XCTAssertTrue(zip(reports, reports.dropFirst()).contains { rest, wake in
+            rest.isRestingAhead && !wake.isRestingAhead
+                && wake.completedChunks == rest.completedChunks && wake.totalChunks == rest.totalChunks
+        }, "a chain that starts again reports its progress without the rest before it renders on")
+    }
+
+    /// #1681 audit: while the chain rested, the app's 45-second watch marked the render delayed, showed "Still
+    /// preparing" and wrote a delay into diagnostics on every rest. A rest starts no watch; waking starts it again.
+    func testARestingRenderChainIsNotWatchedAsADelayedRender() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.updateOnDeviceSpeechGenerationState(.rendering, stopReason: nil)
+        model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 4, totalChunks: 30))
+        XCTAssertNotNil(model.onDeviceSpeechGenerationDelayTask, "a render that owes progress is watched")
+        model.updateOnDeviceSpeechGenerationProgress(
+            RenderedSpeechGenerationProgress(completedChunks: 5, totalChunks: 30, isRestingAhead: true))
+        XCTAssertNil(model.onDeviceSpeechGenerationDelayTask, "a resting chain is not")
+        XCTAssertFalse(model.isOnDeviceSpeechGenerationDelayed)
+        XCTAssertEqual(model.diagnostics["onDeviceSpeechGenerationProgress"], "5/30 resting")
+        model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 5, totalChunks: 30))
+        XCTAssertNotNil(model.onDeviceSpeechGenerationDelayTask, "waking from the rest starts the watch again")
+        model.onDeviceSpeechGenerationDelayTask?.cancel()
     }
 
     private func renderAhead(
         window: TimeInterval?, playsAudio: Bool
-    ) async throws -> (renders: Int, completed: Int, total: Int, restarts: Int) {
+    ) async throws -> (
+        renders: Int, completed: Int, total: Int, restarts: Int, restingReports: Int, last: RenderedSpeechGenerationProgress,
+        reports: [RenderedSpeechGenerationProgress]
+    ) {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
@@ -2482,7 +2512,8 @@ final class SupertonicSpeechTests: XCTestCase {
         let renders = await renderer.renderCount
         let restarts = client.debugRenderAheadRestarts
         try client.stop()
-        return (renders, log.completedChunks, log.totalChunks, restarts)
+        return (renders, log.completedChunks, log.totalChunks, restarts, log.restingProgressReports, log.lastProgress,
+                log.progressReports)
     }
 
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
@@ -4407,7 +4438,16 @@ private final class KittenClientLog: @unchecked Sendable {
     private var noticeReasons: [String] = []
     private var restoreCount = 0
 
-    func record(_ value: RenderedSpeechGenerationProgress) { lock.withLock { progress = value } }
+    private var reports: [RenderedSpeechGenerationProgress] = []
+    func record(_ value: RenderedSpeechGenerationProgress) {
+        lock.withLock {
+            progress = value
+            reports.append(value)
+        }
+    }
+    var progressReports: [RenderedSpeechGenerationProgress] { lock.withLock { reports } }
+    var restingProgressReports: Int { lock.withLock { reports.filter(\.isRestingAhead).count } }
+    var lastProgress: RenderedSpeechGenerationProgress { lock.withLock { progress } }
     func recordFallback(_ reason: String) { lock.withLock { fallbackReasons.append(reason) } }
     func recordNotice(_ reason: String) { lock.withLock { noticeReasons.append(reason) } }
     func recordRestore() { lock.withLock { restoreCount += 1 } }

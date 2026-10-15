@@ -430,6 +430,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// The render chain's next chunk, held back while enough audio waits ahead (#1681). Queued again once playback
     /// has used half the window, the limit lifts, or playback waits for a chunk.
     private var restingRender: RenderRequest?
+    /// The last progress reported, so a resting chain that starts again can report it without the rest (#1681).
+    private var reportedProgress = RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0)
     /// Each rendered chunk's audio length, by start, so the audio ahead counts chunks already played once and played
     /// again after a skip back (#1681). Read only where `generationResults` holds the chunk.
     private var renderedDurations: [Int: TimeInterval] = [:]
@@ -1896,11 +1898,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         guard lock.withLock({ generation == request.generation }) else { return }
+        let next = action.next.flatMap { rendersAhead($0) ? $0 : nil }
         reportGenerationProgress(
             completedChunks: action.completedChunks,
-            totalChunks: action.totalChunks
+            totalChunks: action.totalChunks,
+            restingAhead: action.next != nil && next == nil
         )
-        if let next = action.next, rendersAhead(next) {
+        if let next {
             enqueueRender(next, shouldPlayWhenReady: false)
         }
         if action.complete {
@@ -2864,11 +2868,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onGenerationStateChange?(state, stopReason)
     }
 
-    private func reportGenerationProgress(completedChunks: Int, totalChunks: Int) {
-        onGenerationProgress?(RenderedSpeechGenerationProgress(
+    private func reportGenerationProgress(completedChunks: Int, totalChunks: Int, restingAhead: Bool = false) {
+        let progress = RenderedSpeechGenerationProgress(
             completedChunks: completedChunks,
-            totalChunks: totalChunks
-        ))
+            totalChunks: totalChunks,
+            isRestingAhead: restingAhead
+        )
+        lock.withLock { reportedProgress = progress }
+        onGenerationProgress?(progress)
     }
 
     private func startPlayer(_ nextPlayer: AVPlayer, item: AVPlayerItem, request: RenderRequest) {
@@ -3193,7 +3200,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private func resumeRenderAheadIfWanted() {
         guard lock.withLock({ restingRender != nil }) else { return }
         let window = renderAheadWindow()
-        let resumed = lock.withLock { () -> RenderRequest? in
+        let woke = lock.withLock { () -> (next: RenderRequest?, progress: RenderedSpeechGenerationProgress)? in
             guard let resting = restingRender else { return nil }
             guard resting.generation == generation else {
                 restingRender = nil
@@ -3206,15 +3213,25 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             restingRender = nil
             if !waiting { renderAheadRestarts += 1 }
+            let progress = reportedProgress
             // Another chain may have rendered it meanwhile: carry on from the first chunk still missing.
             guard let index = generationRenderOrder.firstIndex(where: { $0.startOffset == resting.startOffset }) else {
-                return resting
+                return (resting, progress)
             }
-            return generationRenderOrder[index...].first {
+            return (generationRenderOrder[index...].first {
                 generationResults[$0.startOffset] == nil && !inFlightOffsets.contains($0.startOffset)
-            }
+            }, progress)
         }
-        if let resumed { enqueueRender(resumed, shouldPlayWhenReady: false) }
+        guard let woke else { return }
+        // Progress is due again: the app's slow-render watch starts from here, not from when the chain rested. A
+        // report another chain made meanwhile is newer, so it stands.
+        let awake = lock.withLock { () -> RenderedSpeechGenerationProgress? in
+            guard reportedProgress == woke.progress, reportedProgress.isRestingAhead else { return nil }
+            reportedProgress.isRestingAhead = false
+            return reportedProgress
+        }
+        if let awake { onGenerationProgress?(awake) }
+        if let next = woke.next { enqueueRender(next, shouldPlayWhenReady: false) }
     }
 
     /// The listening rendered and waiting past the playing chunk, at the listener's speed: the rendered chunks one
