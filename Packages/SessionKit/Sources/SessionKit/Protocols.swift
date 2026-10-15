@@ -88,6 +88,10 @@ public protocol MediaRepository {
     func saveTranscriptTimeline(_ transcript: SourceTranscriptTimeline) throws
     func loadTranscriptTimeline(id: String) throws -> SourceTranscriptTimeline?
     func loadTranscriptTimeline(itemId: String) throws -> SourceTranscriptTimeline?
+    /// A cheap fingerprint of the record `loadTranscriptTimeline(itemId:)` would return, without reading it (#1696):
+    /// equal fingerprints mean the same record, unchanged. nil when there is none, or when the store can't tell,
+    /// and then a reader has to read the timeline every time.
+    func transcriptTimelineStamp(itemId: String) throws -> String?
     func saveAudioAsset(_ asset: AudioAsset) throws
     func loadAudioAssets(itemId: String) throws -> [AudioAsset]
     func deleteAudioAsset(id: String) throws
@@ -95,6 +99,10 @@ public protocol MediaRepository {
     func loadPodcastDownload(itemId: String) throws -> PodcastDownloadRecord?
     func loadPodcastDownloads() throws -> [PodcastDownloadRecord]
     func deletePodcastDownload(id: String) throws
+}
+
+extension MediaRepository {
+    public func transcriptTimelineStamp(itemId: String) throws -> String? { nil }
 }
 
 public protocol CanonicalSourceRepository {

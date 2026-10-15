@@ -742,17 +742,28 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
         return transcripts.last
     }
 
+    private static let newestTranscriptTimelineRecord =
+        "FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;"
+
+    /// The id, save time and length of the newest timeline record, read without decoding it (#1696). The engine keeps
+    /// the decoded timeline of the item it plays for as long as this doesn't change. A save changes `updated_at`
+    /// (and the id when the timeline is replaced), so a stale copy can't outlive the save that replaced it.
+    public func transcriptTimelineStamp(itemId: String) throws -> String? {
+        var stamp: String?
+        try readTexts(
+            "SELECT id || '|' || updated_at || '|' || length(payload) \(Self.newestTranscriptTimelineRecord)", [itemId], name: "transcript_timeline_stamp"
+        ) { stamp = $0 }
+        return stamp
+    }
+
     /// Only the chapters of an item's source transcript timeline (#777). A two-hour episode's timeline holds thousands
     /// of segments and several megabytes of JSON, so the Margins tab reads just this slice: SQLite cuts it out and only
     /// the small list is decoded. Even the cut has to parse the whole payload, so the answer is kept per timeline
     /// record and only re-read when the record changes (its id, `updated_at` or length), not on every refresh.
     /// Empty when the item has no timeline or the chapters can't be read.
     public func loadTranscriptTimelineChapters(itemId: String) throws -> [MediaTimelineChapter] {
-        let newest = "FROM records WHERE kind = 'source_transcript_timeline' AND item_id = ? ORDER BY updated_at DESC, id DESC LIMIT 1;"
-        var stamp: String?
-        try readTexts(
-            "SELECT id || '|' || updated_at || '|' || length(payload) \(newest)", [itemId], name: "transcript_timeline_stamp"
-        ) { stamp = $0 }
+        let newest = Self.newestTranscriptTimelineRecord
+        let stamp = try transcriptTimelineStamp(itemId: itemId)
         guard let stamp else {
             withConnectionLock { _ = transcriptChaptersByItem.removeValue(forKey: itemId) }
             return []
