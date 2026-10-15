@@ -2416,6 +2416,72 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1681: live narration rendered the whole rest of the item ahead, hot or in the background. With a limit, the
+    /// render chain rests once the window of audio waits ahead and playback hasn't used any of it.
+    func testLiveNarrationStopsRenderingAheadOnceTheWindowIsFull() async throws {
+        let rendered = try await renderAhead(window: 0.5, playsAudio: false)
+        XCTAssertGreaterThan(rendered.total, 10)
+        XCTAssertLessThanOrEqual(rendered.renders, 5, "the playing chunk and about 0.5 s ahead, not the whole item")
+        XCTAssertGreaterThanOrEqual(rendered.renders, 3)
+    }
+
+    /// A cool phone in front renders the whole item, as before.
+    func testWithoutALimitLiveNarrationRendersTheWholeItem() async throws {
+        let rendered = try await renderAhead(window: nil, playsAudio: false)
+        XCTAssertEqual(rendered.renders, rendered.total)
+    }
+
+    /// #1681: a resting chain starts again as playback uses the audio ahead, so the item still plays to the end.
+    func testARestingRenderChainStartsAgainAsPlaybackMovesOn() async throws {
+        let rendered = try await renderAhead(window: 0.5, playsAudio: true)
+        XCTAssertEqual(rendered.completed, rendered.total, "every chunk was rendered in the end")
+        XCTAssertEqual(rendered.renders, rendered.total)
+    }
+
+    private func renderAhead(
+        window: TimeInterval?, playsAudio: Bool
+    ) async throws -> (renders: Int, completed: Int, total: Int) {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                guard playsAudio else { return }
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            // The player's own end moves playback on, which is what lets a resting chain start again.
+            observesPlayerLifecycle: playsAudio,
+            onDeviceRenderingAllowed: { true },
+            onGenerationProgress: { log.record($0) },
+            renderAheadWindow: { window }
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "render-ahead")
+        let deadline = ContinuousClock.now + .seconds(playsAudio ? 30 : 3)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            if log.totalChunks > 0, log.completedChunks == log.totalChunks { break }
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if !playsAudio, ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        let renders = await renderer.renderCount
+        try client.stop()
+        return (renders, log.completedChunks, log.totalChunks)
+    }
+
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
