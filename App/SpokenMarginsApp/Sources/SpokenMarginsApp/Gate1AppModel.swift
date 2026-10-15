@@ -2547,13 +2547,11 @@ final class Gate1AppModel: ObservableObject {
         if command.movesPlaybackPosition { marginMomentConductor?.sourceMoved() } // before any return below (#1656)
         if command == .beginInterjection, !snapshot.isRecording, snapshot.skimBridgeState == nil,
            !handOffPlayingMarginToRecording() { return }
-        // A Margin recording over a held voice is saved or cancelled through the model, which plays the voice on (#1672).
-        if snapshot.isRecording, heldMarginVoice != nil, command == .finishInterjection || command == .cancelInterjection {
+        if snapshot.isRecording, heldMarginVoice != nil, command == .finishInterjection || command == .cancelInterjection { // the model plays the held voice on (#1672)
             if command == .finishInterjection { finishInterjection() } else { cancelInterjection() }
             return
         }
-        // Play and Pause reach the Margin's voice while one has the floor, not the source paused behind it (#1672).
-        if !snapshot.isRecording, marginMomentConductor?.isPlayingVoice == true || ownMarginVoiceHasTransport {
+        if !snapshot.isRecording, marginMomentConductor?.isPlayingVoice == true || ownMarginVoiceHasTransport { // Play and Pause reach the voice, not the source behind it (#1672)
             switch command {
             case .play: resumePlayback(); return
             case .pause: pause(); return
