@@ -2436,11 +2436,13 @@ final class SupertonicSpeechTests: XCTestCase {
         let rendered = try await renderAhead(window: 0.5, playsAudio: true)
         XCTAssertEqual(rendered.completed, rendered.total, "every chunk was rendered in the end")
         XCTAssertEqual(rendered.renders, rendered.total)
+        XCTAssertGreaterThan(rendered.restarts, 0,
+                             "the chain started again as playback moved on, not only when playback ran out of audio")
     }
 
     private func renderAhead(
         window: TimeInterval?, playsAudio: Bool
-    ) async throws -> (renders: Int, completed: Int, total: Int) {
+    ) async throws -> (renders: Int, completed: Int, total: Int, restarts: Int) {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
@@ -2478,8 +2480,9 @@ final class SupertonicSpeechTests: XCTestCase {
             }
         }
         let renders = await renderer.renderCount
+        let restarts = client.debugRenderAheadRestarts
         try client.stop()
-        return (renders, log.completedChunks, log.totalChunks)
+        return (renders, log.completedChunks, log.totalChunks, restarts)
     }
 
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {

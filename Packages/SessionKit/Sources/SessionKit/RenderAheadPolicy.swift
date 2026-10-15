@@ -10,7 +10,8 @@ public enum RenderAheadPolicy {
     public static let window: TimeInterval = 5 * 60
     /// The issue's floor for `window`.
     public static let minimumWindow: TimeInterval = 3 * 60
-    /// At `critical` heat only what keeps playback going: about one chunk past the playing one.
+    /// At `critical` heat only what keeps playback going: a few chunks past the playing one, enough that a seam never
+    /// waits for a render.
     public static let criticalWindow: TimeInterval = 60
 
     /// The listening the chain may render ahead now; nil when it may render the rest of the item.
