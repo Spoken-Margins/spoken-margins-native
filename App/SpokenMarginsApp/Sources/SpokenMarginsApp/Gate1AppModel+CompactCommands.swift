@@ -113,10 +113,11 @@ extension Gate1AppModel {
     /// URL router doesn't add "Unsupported compact control URL." over the message. The record names no item.
     private func openPlaybackFromLiveActivity() -> Bool {
         let screenBefore = String(describing: screen)
+        reconcileNarrationOwnership(trigger: "live_activity_tap")
         if hasActiveSession { openPlayback() } else { reportFailure("Nothing is playing right now.") }
         recordDeveloperDiagnostic("liveActivity.tap", [
             "outcome": screen == .playback && hasActiveSession ? "opened_playback" : (hasActiveSession ? "not_opened" : "no_session"),
-            "narrationClientPlaying": String(snapshot.status.isPlaybackActive),
+            "narrationClientPlaying": String(PlaybackDiagnosticFields.narrationIsPlaying(narrationDiagnostics())),
             "screenBefore": screenBefore,
         ])
         return true
