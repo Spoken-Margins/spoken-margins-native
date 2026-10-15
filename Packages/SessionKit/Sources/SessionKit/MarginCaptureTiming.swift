@@ -35,6 +35,11 @@ public struct MarginCaptureRequest: Equatable, Sendable {
 /// never replaced by the recorder accepting `record()`, or the health check's 100 ms threshold.
 public struct MarginCaptureTiming: Equatable, Sendable {
     public let request: MarginCaptureRequest
+    // The path before the recorder is asked, stamped step by step (#1696): a long tap-to-recorder time then
+    // names the step that took it, even though nothing watches the main actor outside developer recording.
+    private var sourcePausedMs: Int?
+    private var engineEnteredMs: Int?
+    private var anchorReadyMs: Int?
     private var recorderRequestedMs: Int?
     private var recorderStartedMs: Int?
     private var firstAudioObservedMs: Int?
@@ -43,6 +48,21 @@ public struct MarginCaptureTiming: Equatable, Sendable {
     private var recorderInputRoute: String?
 
     public init(request: MarginCaptureRequest) { self.request = request }
+
+    /// The playing source was told to pause: on the tap itself when the app could, else at the engine call.
+    public mutating func sourcePaused(at uptime: TimeInterval) {
+        if sourcePausedMs == nil { sourcePausedMs = milliseconds(at: uptime) }
+    }
+
+    /// The engine's `beginInterjection` was entered: the wait before it is the deferred start (the main actor's queue).
+    public mutating func engineEntered(at uptime: TimeInterval) {
+        if engineEnteredMs == nil { engineEnteredMs = milliseconds(at: uptime) }
+    }
+
+    /// Target and anchor are worked out, the last step before the recorder is asked.
+    public mutating func anchorReady(at uptime: TimeInterval) {
+        if anchorReadyMs == nil { anchorReadyMs = milliseconds(at: uptime) }
+    }
 
     public mutating func recorderRequested(at uptime: TimeInterval) {
         if recorderRequestedMs == nil { recorderRequestedMs = milliseconds(at: uptime) }
@@ -73,6 +93,9 @@ public struct MarginCaptureTiming: Equatable, Sendable {
             "captureID": request.id.uuidString,
             "tapAt": formatter.string(from: request.tappedAt),
             "tapSource": request.startsAtEngineCall ? "engine_call" : "app_tap",
+            "tapToSourcePausedMs": sourcePausedMs.map(String.init) ?? "not_observed",
+            "tapToEngineEnteredMs": engineEnteredMs.map(String.init) ?? "not_observed",
+            "tapToAnchorReadyMs": anchorReadyMs.map(String.init) ?? "not_observed",
             "tapToRecorderRequestedMs": recorderRequestedMs.map(String.init) ?? "not_observed",
             "tapToRecorderStartedMs": recorderStartedMs.map(String.init) ?? "not_observed",
             "tapToFirstAudioObservedMs": firstAudioObservedMs.map(String.init) ?? "not_observed",

@@ -42,6 +42,19 @@ final class PlaybackDockLayoutTests: XCTestCase {
         }
     }
 
+    /// The owner's podcast screenshot (build 32 `25b2cdb`, #1475) had chapters and Back/Skim showing, which no other
+    /// test here mounts: the chapter row carries a Skim arrow either side of the title, and the Now header no longer
+    /// repeats the chapter title above the dock.
+    func testDockStaysCompactForAPodcastWithChaptersAndSkim() async throws {
+        for phone in Self.phones {
+            let model = makePodcastModel(withChapters: true)
+            model.snapshot.skimBridgeState = forwardSkimBridge(for: model)
+            let mounted = try mount(model, size: phone.size)
+            defer { mounted.close() }
+            try await assertCompactDock(mounted, phone: phone.name, size: phone.size)
+        }
+    }
+
     /// The owner scrubbed and a "loading" line appeared under Play/Pause, which pushed the whole dock up (#430).
     /// Starting playback is a status the dock must show without changing its height, so the bar stays where it was.
     func testStartingPlaybackDoesNotMoveTheDock() async throws {

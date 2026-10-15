@@ -172,6 +172,7 @@ extension Gate1AppModel {
         let status = microphoneAccess.status()
         if status == .granted {
             diagnostics["lastMicrophonePermissionResult"] = "granted"
+            pauseSourceOnTap(requestedAt: requestedAt)
             microphoneAccess.record { [weak self] in self?.startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID) }
             return
         }
@@ -180,6 +181,20 @@ extension Gate1AppModel {
             return
         }
         requestMicrophoneThenRecord(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
+    }
+
+    /// #1696: a playing podcast stops on the tap itself, before the deferred start and the engine's anchor work,
+    /// so the listener never talks over it however long the start takes. Cancel (or a failed start) puts it back.
+    private func pauseSourceOnTap(requestedAt: Date) {
+        guard let engine else { return }
+        snapshot = engine.pauseSourceForInterjection(request: .tapped(at: requestedAt))
+    }
+
+    /// The Margin ended before the recorder was asked for (Cancel, or a start that failed): a podcast the tap
+    /// paused plays on from where it stopped. Nothing to do when the tap paused nothing.
+    private func resumeSourcePausedOnTap() {
+        guard let engine, engine.hasPendingInterjectionPause else { return }
+        run { snapshot = try $0.abandonPendingInterjection() }
     }
 
     /// #783: Continue on the line before the microphone prompt goes on to iOS's request.
@@ -220,6 +235,7 @@ extension Gate1AppModel {
             }
         }
         guard !snapshot.isRecording else { return }
+        resumeSourcePausedOnTap() // a start that failed before the engine took over the pause
         marginCapture.clearPresentationContext()
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
         restoreOwedReviewPlace()
@@ -271,6 +287,7 @@ extension Gate1AppModel {
     func cancelInterjection() {
         if isRequestingRecordingPermission && !snapshot.isRecording {
             marginCapture.abandonVoiceRequest()
+            resumeSourcePausedOnTap()
             restoreOwedReviewPlace()
             return
         }
@@ -329,8 +346,12 @@ extension Gate1AppModel {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
         beginWrittenMargin()
-        // A written Margin never records, so the save or cancel below gives a review's place back; if it didn't open, nothing will (#474).
-        if writtenMarginDraft == nil { restoreOwedReviewPlace() }
+        // The pencil refused: nothing else will put the source back, or give a review's place back. A written Margin
+        // that did open never records, so its save or cancel gives that place back (#474).
+        if writtenMarginDraft == nil {
+            resumeSourcePausedOnTap()
+            restoreOwedReviewPlace()
+        }
     }
 
     func saveWrittenMargin(text: String) {
