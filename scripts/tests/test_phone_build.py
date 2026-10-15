@@ -1637,6 +1637,48 @@ class PlanFaultTests(unittest.TestCase):
         self.printed = printed.getvalue()
         return plan
 
+    def test_accepted_restoration_is_absent_but_redesign_for_the_same_open_issue_remains(self):
+        # #1475 stays open for #1551. Closing the whole issue would hide the new screen; leaving
+        # acceptance only on the issue made #1482 appear beside the opposite change in the real plan.
+        issue = self.issue(1475, 'Play an article and a podcast; switch Now, Timeline, Margins.')
+        issue['state'] = 'OPEN'
+        prs = {
+            1551: self.pr(1551, 'Re-land the playback-screen redesign (#1475)', [issue], path=self.PLAYBACK),
+            1549: self.pr(1549, 'Open Text at the playing sentence',
+                          [self.issue(1547, 'Open More > Text at the playing sentence.')], path=self.PLAYBACK),
+            1482: self.pr(1482, 'Restore the pre-redesign playback screen (#1475)', [issue], path=self.PLAYBACK),
+        }
+        plan = self.write(prs)
+        self.assertNotIn('Restore the pre-redesign playback screen', plan)
+        self.assertNotIn('[PR #1482]', plan)
+        self.assertIn('Re-land the playback-screen redesign', plan)
+        self.assertIn('Play an article and a podcast; switch Now, Timeline, Margins.', plan)
+        self.assertIn('3 pull requests merged;', plan)
+
+    def test_accepted_restoration_does_not_return_through_the_waiting_backlog(self):
+        # A plan whose base is after #1482 has no new PR entry to filter. The same accepted check
+        # must also stay out of the earlier-build backlog while #1475 is open.
+        issue = RevertedPRTests.issue(1475, 'Restore the pre-redesign playback screen',
+                                      [(1482, 'Restore the pre-redesign playback screen (#1475)')])
+        plan = self.write({}, waiting=[issue], built_prs=[1482])
+        self.assertNotIn('Restore the pre-redesign playback screen', plan)
+        self.assertNotIn('Still waiting on your check', plan)
+
+    def test_delegated_no_independent_check_is_not_a_phone_action(self):
+        # The actual 437fbc9 plan offered this as step 4 even though #447's screen was reverted.
+        # Retained SessionKit logic may still be listed, but "none beyond" is not an action.
+        for check in ("none beyond #447's feel check.", 'None except #447’s phone check.',
+                      'none other than #447.', 'none apart from #447.'):
+            with self.subTest(check=check):
+                issue = self.issue(448, check)
+                pr = self.pr(1397, 'Preserve Timeline passage breaks across blank lines', [issue],
+                             path='Packages/SessionKit/Sources/SessionKit/TimelineSourceContent.swift')
+                plan = self.write({1397: pr})
+                actions = plan.split('## Try these')[1].split('\n## ')[0]
+                self.assertNotIn('Preserve Timeline passage breaks', actions)
+                self.assertNotIn('Check: ' + check, plan)
+                self.assertIn('## Also changed (no phone check written)', plan)
+
     def test_which_checks_the_owner_cannot_run(self):
         rows = [  # (check, refused)
             ('Run `scripts/xcodebuild-lane -project X.xcodeproj -configuration Release build` and see it succeed.', True),
