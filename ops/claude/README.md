@@ -15,7 +15,7 @@ launchd runs `sm_claude_worker.py` every 10 minutes (a tick). A tick reads, and 
 
 ### The project board (#1621)
 
-Each tick also runs `scripts/sm_project_sync.py --apply` at most once an hour, whatever the Dial says (it uses no model tokens), and a child syncs its issue's card right after its claim and after its stop note. The hourly stamp is `board-sync.json` in the worker's folder, written before the run, so a hang can't repeat it every tick. A missing script, a failure or a timeout (10 minutes) is logged and holds nothing. The cloud dispatch can't do this: the user project's API answers its token with 403, and the Mac's `gh` token has the `project` scope.
+Each tick also runs `scripts/sm_project_sync.py --apply` at most once an hour, whatever the Dial says (it uses no model tokens), and a child syncs its issue's card right after its claim and after its stop note. The hourly stamp is `board-sync.json` in the worker's folder, written before the run, so a hang can't repeat it every tick. The hourly pass records its time and any unknowns in the lane's step ledger (`scripts/lane_ledger.py`, step `project-sync`) when the lane's state folder exists, so three runs in a row with unknowns raise its fault alarm in the log. A missing script, a failure or a timeout (10 minutes) is logged and holds nothing. The cloud dispatch can't do this: the user project's API answers its token with 403, and the Mac's `gh` token has the `project` scope.
 
 ### Job order
 

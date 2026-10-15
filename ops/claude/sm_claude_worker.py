@@ -105,6 +105,7 @@ ROUND_WINDOW = dt.timedelta(hours=24)
 OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
 BOARD_EVERY = dt.timedelta(hours=1)      # the full project-board pass (#1621); claims and stops sync their own card
 BOARD_TIMEOUT_S = 600
+LANE_STATE = Path(os.environ.get('SM_LANE_STATE', str(Path.home() / 'Library' / 'Caches' / 'SpokenMarginsLane')))
 
 REQUIRED_LABEL = 'where:mac'
 # The project's skip list (project instructions) plus a fix that already merged and waits on the phone.
@@ -848,12 +849,14 @@ class Ops:
     def comment(self, number: int, body: str) -> None:
         self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
 
-    def board_sync(self, number: Optional[int] = None) -> str:
-        """Bring project 6's cards (or one issue's) in line with the evidence (#1621). Never raises."""
+    def board_sync(self, number: Optional[int] = None, ledger: Optional[Path] = None) -> str:
+        """Bring project 6's cards (or one issue's) in line with the evidence (#1621). Never raises.
+        With `ledger` (the lane's state folder), the run's time and any unknowns go in the step ledger."""
         script = self.repo_root / 'scripts' / 'sm_project_sync.py'
         if not script.exists():
             return 'skipped: scripts/sm_project_sync.py is not on this checkout'
         cmd = [sys.executable, str(script), '--apply'] + (['--issue', str(number)] if number else [])
+        cmd += ['--ledger-state', str(ledger)] if ledger else []
         try:
             res = self.run(cmd, cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
         except Exception as exc:
@@ -861,7 +864,8 @@ class Ops:
         try:
             report = json.loads(res.stdout or '')
             told = (f"{len(report.get('changes', []))} change(s), {len(report.get('unknown', []))} unknown, "
-                    f"{report.get('api_calls')} calls, {report.get('writes')} writes, {report.get('seconds')} s")
+                    f"{report.get('api_calls')} calls, {report.get('writes')} writes, {report.get('seconds')} s"
+                    + ''.join(f'; ledger: {one_line(alarm)}' for alarm in report.get('ledger_alarms') or []))
         except (ValueError, AttributeError):
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'
@@ -894,7 +898,7 @@ def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
         return None
     ops.home.mkdir(parents=True, exist_ok=True)
     (ops.home / 'board-sync.json').write_text(json.dumps({'last': now.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}))
-    result = ops.board_sync()
+    result = ops.board_sync(ledger=LANE_STATE if LANE_STATE.is_dir() else None)
     ops.log(f'board sync (hourly, #1621): {result}')
     return result
 

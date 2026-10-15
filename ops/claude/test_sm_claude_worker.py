@@ -309,7 +309,7 @@ class TickOps(w.Ops):
         self.tick = [rest(tick_line, ago(minutes=40), 337)]
         self.boards = []
 
-    def board_sync(self, number=None):
+    def board_sync(self, number=None, ledger=None):
         self.boards.append(number)
         return 'exit 0: fake'
 
@@ -410,6 +410,8 @@ class TickTests(unittest.TestCase):
             (root / 'scripts' / 'sm_project_sync.py').write_text('')
             self.assertEqual(ops.board_sync(7), 'exit 0: 1 change(s), 0 unknown, 12 calls, 3 writes, 4.2 s')
             self.assertEqual(sent[-1][1:], [str(root / 'scripts' / 'sm_project_sync.py'), '--apply', '--issue', '7'])
+            ops.board_sync(ledger=root / 'lane')
+            self.assertEqual(sent[-1][2:], ['--apply', '--ledger-state', str(root / 'lane')])
             ops.run = lambda cmd, cwd=None, timeout=300: (_ for _ in ()).throw(OSError('gone'))
             self.assertEqual(ops.board_sync(), 'error: gone')   # never raises into a tick or a run
 
@@ -648,7 +650,7 @@ class IssueRunTests(unittest.TestCase):
     def test_the_claim_and_the_stop_each_sync_the_issues_card(self):
         self.h.plan({'files': {'one.txt': '1'}, 'handoff': 'Done: the model.'})
         ops, seen = self.h.ops(), []
-        ops.board_sync = lambda number=None: seen.append((number, sorted(self.labels()))) or 'exit 0: fake'
+        ops.board_sync = lambda number=None, ledger=None: seen.append((number, sorted(self.labels()))) or 'exit 0: fake'
         self.assertEqual(w.run_issue(ops, 1, 7), 'handoff')
         self.assertEqual(seen, [(7, ['in-progress', 'where:mac']), (7, ['ready', 'where:mac'])])
 
