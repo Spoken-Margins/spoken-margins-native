@@ -291,7 +291,7 @@ extension Gate1AppModel {
         ) { [weak self] command, mediaTimeMs, playbackRate in
             Task { @MainActor [weak self] in
                 self?.syncPlaybackProgressForLifecycle()
-                self?.performGate2CompactCommand(
+                self?.dispatchGate2CompactCommand(
                     command,
                     mediaTimeMs: mediaTimeMs,
                     playbackRate: playbackRate,

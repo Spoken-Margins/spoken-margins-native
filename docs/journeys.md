@@ -46,8 +46,8 @@ Steps are written in terms of what the listener wants, not exact button labels, 
    - Pass: the podcast resumes a few seconds before where it paused (3 seconds). An article, read live or played as prepared audio, resumes at the start of the sentence it paused in. The Margin appears on the item's timeline.
 2. Keep listening for a minute, then open the Margin from the timeline and play it.
    - Pass: the Margin's own voice plays to the end.
-3. Return to the source.
-   - Pass: the podcast continues at a sensible place: where you were, or the Margin's position if you chose to go there. It must not stay silent or stuck.
+3. Let the Margin play to its end. (The source was playing when you started the Margin.)
+   - Pass: the source plays again by itself, where you were. It must not stay silent or stuck, and there is no Return to tap. On a podcast, your later spoken Margins play as playback reaches them. Stopping the Margin yourself leaves the source paused, and so does playing it over a source you had already paused. (Owner's call, 2026-10-14, #1538. "Play this moment" instead continues from its lead-in.)
 4. Force-quit, reopen the app, and play the same Margin again.
    - Pass: it still plays. It must not say the recording is unavailable.
 

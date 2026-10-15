@@ -42,6 +42,8 @@ struct PlaybackScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var selectedPane: PlaybackPane = .now
+    @State private var isTimelineEditing = false
     @State private var followUp = ""
     @State private var selectedInterjection: Interjection?
     @State private var isPastingAssistantResponse = false
@@ -53,7 +55,7 @@ struct PlaybackScreen: View {
     @State private var pendingOptionsDestination: OptionsDestination?
     @Environment(\.openURL) private var openURL
 
-    private enum OptionsDestination { case item, timeline, export, margins, write, sourceText }
+    private enum OptionsDestination { case item, timeline, export, margins, write, paste, sourceText }
     @State private var timelinePullTriggered = false
     @AppStorage("playbackUsesVerboseActions") private var usesVerbosePlaybackActions = true
     @FocusState private var followUpFocused: Bool
@@ -63,55 +65,83 @@ struct PlaybackScreen: View {
             ScrollViewReader { proxy in
                 ZStack {
                     AppColors.listeningBackground.ignoresSafeArea()
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 20) {
-                            if model.snapshot.phase == .finished {
-                                Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                    Group {
+                        switch selectedPane {
+                        case .now:
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 20) {
+                                    if model.snapshot.phase == .finished {
+                                        Text("Finished").font(.headline).foregroundStyle(AppColors.listeningAccent)
+                                    }
+                                    // Keep the promised Margin visible before the large source header (#1577).
+                                    marginMomentControl
+                                    playbackHeader
+                                    capturePermissionRecovery
+                                    importedCommentaryControl
+                                    if model.selectedItem.isNativeAudio {
+                                        PlaybackNowView()
+                                    } else {
+                                        PlaybackLivePassageView { offset in
+                                            sourceTextTarget = PlaybackTextReaderTarget.resolve(
+                                                text: model.selectedItem.text,
+                                                chapters: model.selectedItem.chapters,
+                                                offset: offset,
+                                                fallbackChapterId: model.currentChapter?.id
+                                            )
+                                        }
+                                        recentMarginPreview
+                                    }
+                                    if model.shouldShowGuidedOnboardingCoach {
+                                        GuidedOnboardingPlaybackCard {
+                                            openTimeline()
+                                        }
+                                    }
+                                }
+                                .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
+                                .padding(.vertical, 18)
+                                .frame(maxWidth: 620)
+                                .frame(maxWidth: .infinity, alignment: .top)
                             }
-                            // Keep the promised Margin visible before the large source header (#1577).
-                            marginMomentControl
-                            playbackHeader
-                            capturePermissionRecovery
-                            importedCommentaryControl
-                            recentMarginPreview
-                            if model.shouldShowGuidedOnboardingCoach {
-                                GuidedOnboardingPlaybackCard {
+                            .scrollBounceBehavior(.always)
+                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                                // ScrollGeometry's container is the inset content viewport.
+                                // The offset calculation below expects the whole viewport.
+                                TimelinePullPresentation.overscrollDistance(
+                                    contentOffsetY: geometry.contentOffset.y,
+                                    contentHeight: geometry.contentSize.height,
+                                    containerHeight: geometry.containerSize.height
+                                        + geometry.contentInsets.top + geometry.contentInsets.bottom,
+                                    bottomInset: geometry.contentInsets.bottom,
+                                    topInset: geometry.contentInsets.top
+                                )
+                            } action: { _, distance in
+                                if distance < 1 {
+                                    timelinePullTriggered = false
+                                } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
+                                          !timelinePullTriggered {
+                                    timelinePullTriggered = true
                                     openTimeline()
                                 }
                             }
-                        }
-                        .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
-                        .padding(.vertical, 18)
-                        .frame(maxWidth: 620)
-                        .frame(maxWidth: .infinity, alignment: .top)
-                    }
-                    .scrollBounceBehavior(.always)
-                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                        // ScrollGeometry's container is the inset content viewport.
-                        // The offset calculation below expects the whole viewport.
-                        TimelinePullPresentation.overscrollDistance(
-                            contentOffsetY: geometry.contentOffset.y,
-                            contentHeight: geometry.contentSize.height,
-                            containerHeight: geometry.containerSize.height
-                                + geometry.contentInsets.top + geometry.contentInsets.bottom,
-                            bottomInset: geometry.contentInsets.bottom,
-                            topInset: geometry.contentInsets.top
-                        )
-                    } action: { _, distance in
-                        if distance < 1 {
-                            timelinePullTriggered = false
-                        } else if TimelinePullPresentation.shouldOpenTimeline(overscrollDistance: distance),
-                                  !timelinePullTriggered {
-                            timelinePullTriggered = true
-                            openTimeline()
+
+                        case .timeline:
+                            ExperienceTimelineRailScreen(
+                                onReturnToPlayback: { selectedPane = .now },
+                                onEditorFocusChange: { isTimelineEditing = $0 }
+                            )
+                        case .margins:
+                            PlaybackMarginsView()
                         }
                     }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
-                        playbackControls
+                        if !isTimelineEditing { playbackControls }
                     }
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playback.screen")
+                .onChange(of: model.marginMoment?.target.marginId) { _, target in
+                    if target != nil { selectedPane = .now }
+                }
                 .task(id: model.renderFrontierKey) { await model.observeRenderedFrontier() }
                 .task(id: "\(model.snapshot.itemId ?? "")|\(model.snapshot.status.rawValue)") {
                     guard model.snapshot.status == .starting, let id = model.snapshot.itemId,
@@ -130,15 +160,19 @@ struct PlaybackScreen: View {
             .toolbarBackground(AppColors.listeningBackground, for: .navigationBar)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: model.openLibrary) {
-                        Label("Library", systemImage: "books.vertical")
+                if selectedPane == .timeline {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { selectedPane = .now } label: {
+                            Label("Now Playing", systemImage: "arrow.left")
+                        }
+                        .accessibilityIdentifier("timeline.nowPlaying.button")
                     }
-                    .accessibilityIdentifier("playback.home.button")
                 }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Done") { followUpFocused = false }
+                if selectedPane != .timeline {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { followUpFocused = false }
+                    }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -159,12 +193,18 @@ struct PlaybackScreen: View {
                         VStack(alignment: .leading, spacing: 18) {
                             playbackRateControl
                             mixedAudioControl
+                            PlaybackFollowOptionsView()
+                            PlaybackPreparedAudioView(
+                                fraction: model.renderedFractionForPlayback,
+                                isNativeAudio: model.selectedItem.isNativeAudio
+                            )
                             onDeviceSpeechGenerationControl
                             Button("Write a Margin", systemImage: "square.and.pencil") {
                                 closeOptions(to: .write)
                             }
                             .accessibilityIdentifier("playback.writeMargin.button")
                             reflectionOptions
+                            conversation
                             sessionActionDock
                         }
                         .padding(20)
@@ -184,37 +224,42 @@ struct PlaybackScreen: View {
         }
     }
 
+    /// Spacing only is tightened (owner, 2026-10-13): the rows, their order and their controls stay as approved, so
+    /// the dock is about 40% of a 6.1-inch phone and still leaves the Now pane half of an iPhone SE (#1475).
     private var playbackControls: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 4) {
+            PlaybackPaneSwitchView(selection: $selectedPane)
+                .id("playback.timeline")
+            PlaybackChapterRowView(
+                title: model.playbackChapterHeaderTitle,
+                sourceTitle: model.playbackItemHeaderTitle,
+                canJumpToNextChapter: model.canJumpToNextChapter,
+                waitingText: model.snapshot.status == .starting
+                    ? PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot) : nil,
+                showItem: model.openCurrentPlaybackItem,
+                nextChapter: model.jumpToNextChapter
+            )
             playbackPosition
-            if model.canJumpToNextChapter {
-                Button("Next chapter", systemImage: "forward.end") { model.jumpToNextChapter() }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white)
-                    .frame(minHeight: 44)
-                    .accessibilityIdentifier("playback.nextChapter.button")
-            }
             playbackTransport
-            if !dynamicTypeSize.isAccessibilitySize {
-                PlaybackSecondaryControlsRow {
-                    Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
-                        .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
-                        .accessibilityIdentifier("playback.rate.button")
-                    Button {
-                        isSleepTimerPresented = true
-                    } label: {
-                        Label(model.sleepTimerIsActive ? model.sleepTimerDescription : "Sleep", systemImage: "moon.zzz")
+            PlaybackSecondaryControlsRow {
+                Button(action: model.openLibrary) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        Image(systemName: "books.vertical").frame(minWidth: 44, minHeight: 44)
+                    } else {
+                        Text("Library").frame(minWidth: 44, minHeight: 44)
                     }
-                    .accessibilityIdentifier("playback.sleepTimer.button")
-                    .popover(isPresented: $isSleepTimerPresented) {
-                        sleepTimerPopover.presentationCompactAdaptation(.popover)
-                    }
-                    listeningOptionsButton
                 }
-                .foregroundStyle(.white)
-                .buttonStyle(.plain)
-                .frame(minHeight: 44)
+                .accessibilityLabel("Library")
+                .accessibilityIdentifier("playback.home.button")
+                Button(model.compactPlaybackRateDescription, action: model.cyclePlaybackRate)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Playback speed, \(model.compactPlaybackRateDescription)")
+                    .accessibilityIdentifier("playback.rate.button")
+                listeningOptionsButton
+                    .frame(minWidth: 44, minHeight: 44)
             }
+            .foregroundStyle(.white)
+            .buttonStyle(.plain)
             if model.playingImportedCommentary != nil {
                 Button("Return to Source", action: model.returnToSourceFromImportedCommentary)
                     .buttonStyle(InterjectButtonStyle())
@@ -237,35 +282,10 @@ struct PlaybackScreen: View {
             } else {
                 marginRow
             }
-            HStack(spacing: 18) {
-                Button(action: openTimeline) {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        Image(systemName: "list.bullet.rectangle").frame(minWidth: 52, minHeight: 52)
-                    } else {
-                        Label("Timeline", systemImage: "list.bullet.rectangle")
-                    }
-                }
-                .accessibilityLabel("Timeline")
-                .accessibilityIdentifier("playback.timeline.button")
-                Spacer(minLength: 4)
-                if dynamicTypeSize.isAccessibilitySize {
-                    listeningOptionsButton
-                } else {
-                    Button(action: model.openMargins) {
-                        Label("Margins", systemImage: "quote.bubble")
-                    }
-                    .accessibilityIdentifier("playback.margins.button")
-                }
-            }
-            .font(.subheadline)
-            .foregroundStyle(.white)
-            .buttonStyle(.plain)
-            .frame(minHeight: 44)
-            .id("playback.timeline")
         }
         .padding(.horizontal, 22)
-        .padding(.top, 14)
-        .padding(.bottom, 4)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
         .frame(maxWidth: 620)
         .frame(maxWidth: .infinity)
         .background(AppColors.listeningBackground)
@@ -328,7 +348,11 @@ struct PlaybackScreen: View {
                             Text(InterjectionPositionPresentation.detailDescription(for: note, durationMs: model.snapshot.currentPlaybackDurationMs))
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(AppColors.watchSecondary)
-                            Text(MarginRow(interjection: note, itemTitle: model.selectedItem.title, sessionDate: nil).preview)
+                            Text(PlaybackMarginPreview.text(displayText: note.displayText,
+                                                            cleanedTranscript: note.cleanedTranscript,
+                                                            transcript: note.transcript,
+                                                            transcriptionStatus: note.transcriptionStatus,
+                                                            captureKind: note.captureKind))
                                 .font(.system(.body, design: .serif))
                                 .foregroundStyle(.white)
                                 .multilineTextAlignment(.leading)
@@ -415,9 +439,7 @@ struct PlaybackScreen: View {
             closeOptions(to: .timeline)
             return
         }
-        withAnimation(.snappy(duration: 0.34)) {
-            model.openTimeline()
-        }
+        selectedPane = .timeline
     }
 
     private func closeOptions(to destination: OptionsDestination) {
@@ -434,6 +456,7 @@ struct PlaybackScreen: View {
         case .export: model.openExport()
         case .margins: model.openMargins()
         case .write: model.beginWrittenMargin()
+        case .paste: isPastingAssistantResponse = true
         case .sourceText: openSourceText()
         }
     }
@@ -652,14 +675,21 @@ struct PlaybackScreen: View {
 
     private var playbackHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button(action: model.openCurrentPlaybackItem) {
-                PlaybackHeaderTitle(title: model.playbackItemHeaderTitle)
-                    .foregroundStyle(.white)
+            PlaybackSourceTitleView(
+                title: model.playbackItemHeaderTitle,
+                sleepTimerState: model.sleepTimerState,
+                sleepTimerRemainingSeconds: model.sleepTimerRemainingSeconds,
+                showItem: model.openCurrentPlaybackItem
+            )
+
+            if model.selectedItem.isNativeAudio,
+               let show = model.libraryItems.first(where: { $0.id == model.selectedItem.id })?.sourceTitle,
+               !show.isEmpty {
+                Text(show)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityIdentifier("playback.showTitle")
             }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .accessibilityHint("Opens item details and listening-session history")
-            .accessibilityIdentifier("playback.itemTitle.button")
 
             PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
                 selectedItemId: model.selectedItem.id,
@@ -716,13 +746,11 @@ struct PlaybackScreen: View {
                             mediaScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback
+                    barContent: mediaBarContent,
+                    barPositionUnit: .seconds,
+                    positionAccessibilityValue: "\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))"
                 )
                 .tint(AppColors.accent)
-                .accessibilityLabel("Playback position")
-                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue("\(formatPlaybackTime(Int(scrubberDisplaySeconds * 1_000))) of \(formatPlaybackTime(mediaDurationMs))")
-                .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalMediaSeconds) { value in
                     model.recordDeveloperDiagnostic("scrub.media.display", ["canonical": String(value), "displayed": String(mediaScrubState.displayedValue(canonicalValue: value, range: mediaScrubRange)), "editing": String(mediaScrubState.isEditing), "range": String(mediaScrubRange.upperBound)])
                 }
@@ -761,13 +789,11 @@ struct PlaybackScreen: View {
                             textScrubState.finish()
                         }
                     },
-                    preparedFraction: model.renderedFractionForPlayback
+                    barContent: textBarContent,
+                    barPositionUnit: .characters,
+                    positionAccessibilityValue: textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent"
                 )
                 .tint(AppColors.accent)
-                .accessibilityLabel("Playback position")
-                .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
-                .accessibilityValue(textTimeEstimate?.scrubberAccessibilityValue(percent: textScrubberPercent) ?? "\(textScrubberPercent) percent")
-                .accessibilityIdentifier("playback.scrubber")
                 .onCompatibleChange(of: canonicalTextOffset) { value in
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
@@ -789,16 +815,7 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.progress.label")
                 ProgressView(value: Double(model.displayPlaybackProgressPercent), total: 100)
                     .tint(AppColors.accent)
-                    .overlay(alignment: .bottomLeading) {
-                        if let fraction = model.renderedFractionForPlayback {
-                            GeometryReader { geometry in
-                                Capsule().fill(Color(uiColor: .systemTeal))
-                                    .frame(width: geometry.size.width * fraction, height: 3).offset(y: 7)
-                            }.allowsHitTesting(false).accessibilityHidden(true)
-                        }
-                    }
                     .accessibilityLabel("Playback progress")
-                    .accessibilityHint(model.renderedFractionForPlayback.map { "Prepared audio through \(Int($0 * 100)) percent of source" } ?? "")
                     .accessibilityValue(barLabels.accessibilityValue)
                 Text(barLabels.trailing)
                     .frame(minWidth: 34, alignment: .leading)
@@ -819,7 +836,11 @@ struct PlaybackScreen: View {
                         model.skipBack()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "gobackward.\(model.mediaSkipBackSeconds)" : "backward.end.fill")
+                    if model.isMediaPlaybackSnapshot {
+                        Image(systemName: "gobackward.\(model.mediaSkipBackSeconds)")
+                    } else {
+                        PlaybackTextSkipIcon(direction: .backward, unit: model.skipUnit)
+                    }
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
@@ -849,7 +870,11 @@ struct PlaybackScreen: View {
                         model.skipForward()
                     }
                 } label: {
-                    Image(systemName: model.isMediaPlaybackSnapshot ? "goforward.\(model.mediaSkipForwardSeconds)" : "forward.end.fill")
+                    if model.isMediaPlaybackSnapshot {
+                        Image(systemName: "goforward.\(model.mediaSkipForwardSeconds)")
+                    } else {
+                        PlaybackTextSkipIcon(direction: .forward, unit: model.skipUnit)
+                    }
                 }
                 .buttonStyle(RoundPlaybackButtonStyle())
                 .disabled(!model.hasActiveSession)
@@ -857,19 +882,12 @@ struct PlaybackScreen: View {
                 .accessibilityIdentifier("playback.forward.button")
             }
 
-            if model.snapshot.status == .starting {
-                // #357: say what the silence is, instead of a bare spinner.
-                Text(PlaybackStartWatch.waitingText(isMedia: model.isMediaPlaybackSnapshot))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(AppColors.watchSecondary)
-                    .accessibilityIdentifier("playback.starting.label")
-            }
-
             if model.isMediaPlaybackSnapshot,
                model.snapshot.canSkimBackward || model.snapshot.canSkimForward || model.snapshot.skimBridgeState != nil {
                 HStack(spacing: 14) {
                     Button(action: model.skimBackward) {
                         Label(model.skimBackwardTitle, systemImage: "backward.end.alt.fill")
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .disabled(!model.snapshot.canSkimBackward)
                     .accessibilityLabel(model.skimBackwardTitle + " by scene summary")
@@ -877,6 +895,7 @@ struct PlaybackScreen: View {
 
                     Button(action: model.skimForward) {
                         Label(model.skimForwardTitle, systemImage: "forward.end.alt.fill")
+                            .frame(minWidth: 44, minHeight: 44)
                     }
                     .disabled(!model.snapshot.canSkimForward)
                     .accessibilityLabel(model.skimForwardTitle + " by scene summary")
@@ -1275,6 +1294,40 @@ struct PlaybackScreen: View {
         return model.selectedItem.text.count
     }
 
+    /// The chapters and Margins the bar draws for a playing podcast, where the Timeline lists them (#428).
+    private var mediaBarContent: PlaybackBarContent? {
+        guard model.snapshot.itemId == model.selectedItem.id else { return nil }
+        return PlaybackBarContent.media(
+            durationMs: mediaDurationMs,
+            chapterStartsMs: PlaybackBarContent.chapterStartsMs(
+                mediaChapters: model.selectedItem.mediaChapters,
+                scenes: model.selectedItem.listeningMapScenes
+            ),
+            own: model.selectedItem.interjections,
+            shared: activeImportedMargins
+        )
+    }
+
+    /// The same for a text source. A spoken summary or reply has its own text and no bar content.
+    private var textBarContent: PlaybackBarContent? {
+        guard model.snapshot.itemId == model.selectedItem.id,
+              model.snapshot.targetType != TargetType.assistantTurnTTS.rawValue,
+              model.snapshot.targetType != TargetType.summaryTurnTTS.rawValue
+        else { return nil }
+        return PlaybackBarContent.text(
+            length: textLength,
+            chapterStartChars: model.selectedItem.chapters.map(\.startChar),
+            own: model.selectedItem.interjections,
+            shared: activeImportedMargins
+        )
+    }
+
+    private var activeImportedMargins: [ImportedCommentaryInterjection] {
+        model.selectedItem.importedCommentaryLayers
+            .filter { $0.deletedAt == nil }
+            .flatMap { model.selectedItem.importedCommentaryInterjections[$0.id] ?? [] }
+    }
+
     private var canonicalTextOffset: Double {
         Double(model.snapshot.currentTextStart ?? 0)
     }
@@ -1535,7 +1588,8 @@ struct PlaybackScreen: View {
                     Text("Conversation")
                         .font(.headline)
                     Button {
-                        isPastingAssistantResponse = true
+                        if isPlaybackOptionsPresented { closeOptions(to: .paste) }
+                        else { isPastingAssistantResponse = true }
                     } label: {
                         Image(systemName: "plus")
                             .frame(width: 34, height: 34)
@@ -1570,6 +1624,7 @@ struct PlaybackScreen: View {
                                     .accessibilityLabel("Copy Margins for \(turnTitle(turn))")
                                     .accessibilityIdentifier("conversation.copyTurnInterjections.\(turn.id)")
                                     Button {
+                                        isPlaybackOptionsPresented = false
                                         model.playTurn(turn)
                                     } label: {
                                         Image(systemName: "play.fill")
@@ -1776,95 +1831,6 @@ private struct PastedAssistantResponseView: View {
                 }
             }
             .onAppear { isFocused = true }
-        }
-    }
-}
-
-private struct NativeTextPeekView: View {
-    @Environment(\.dismiss) private var dismiss
-    let title: String
-    let target: PlaybackTextReaderTarget
-    /// Height of the chapter text up to the current sentence, measured at the shown width.
-    @State private var sentenceTop: CGFloat?
-    private static let sentenceAnchor = "nativeText.peek.sentence"
-
-    var body: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 18) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(target.chapterTitle ?? "Full Text")
-                                .font(.headline)
-                            Text(chapterText)
-                                .font(.body)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(alignment: .topLeading) { sentenceMeasure }
-                                .overlay(alignment: .topLeading) { sentenceMarker }
-                        }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(AppColors.inputBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-
-                    }
-                    .padding(20)
-                }
-                .onChange(of: sentenceTop) { _, top in
-                    guard top != nil else { return }
-                    // Next turn of the run loop, once the marker placed at that height is laid out.
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(Self.sentenceAnchor, anchor: UnitPoint(x: 0, y: 0.25))
-                    }
-                }
-            }
-            .navigationTitle(title.isEmpty ? "Source Text" : title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Close") { dismiss() }
-                }
-            }
-            .accessibilityIdentifier("nativeText.peek.sheet")
-        }
-    }
-
-    /// The chapter, with the sentence being read lit.
-    private var chapterText: AttributedString {
-        guard !target.text.isEmpty else { return AttributedString("No native text is available.") }
-        var attributed = AttributedString(target.text)
-        if let sentence = target.sentence,
-           let lower = attributed.characters.index(attributed.startIndex, offsetBy: sentence.lowerBound, limitedBy: attributed.endIndex),
-           let upper = attributed.characters.index(attributed.startIndex, offsetBy: sentence.upperBound, limitedBy: attributed.endIndex) {
-            attributed[lower..<upper].backgroundColor = Color.yellow.opacity(0.28)
-        }
-        return attributed
-    }
-
-    /// The text before the sentence, laid out hidden at the same width, so its height reaches the sentence's line.
-    @ViewBuilder
-    private var sentenceMeasure: some View {
-        if let sentence = target.sentence, sentence.lowerBound > 0 {
-            Text(String(target.text.prefix(sentence.lowerBound)))
-                .font(.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .hidden()
-                .accessibilityHidden(true)
-                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sentenceTop = $0 }
-        }
-    }
-
-    /// A point at the sentence's line for the scroll view to bring into view.
-    @ViewBuilder
-    private var sentenceMarker: some View {
-        if let sentenceTop {
-            Color.clear
-                .frame(width: 1, height: 1)
-                .padding(.top, max(0, sentenceTop - 1))
-                .id(Self.sentenceAnchor)
-                .accessibilityHidden(true)
         }
     }
 }

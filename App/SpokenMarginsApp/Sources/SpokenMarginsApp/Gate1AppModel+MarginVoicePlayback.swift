@@ -1,6 +1,7 @@
 import Foundation
 import SessionKit
 import SessionKitAudio
+import SessionKitPersistence
 #if canImport(AVFoundation)
 import AVFoundation
 #endif
@@ -37,6 +38,9 @@ extension Gate1AppModel {
             reportFailure("This Margin's audio is unavailable.")
             return
         }
+        // The source comes back when this Margin ends if playing it is what paused it (#1538); read before the pause.
+        // A voice that is already playing (another of your Margins, or a shared one) holds the promise made for it.
+        let returnsSource = snapshot.status.isPlaybackActive || sharedMarginReturn.heldByVoice
         if snapshot.status.isPlaybackActive {
             pause()
         }
@@ -47,6 +51,7 @@ extension Gate1AppModel {
                 url: { leveledMarginURL(url, itemId: interjection.itemId, anchorMediaTimeMs: interjection.anchor.mediaTimeMs) },
                 rate: Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate)
             )
+            sharedMarginReturn.voiceStarted(returnToSource: returnsSource)
             reportConfirmation("Playing your Margin.")
         } catch {
             stopInterjectionAudioPlayback()
@@ -55,6 +60,13 @@ extension Gate1AppModel {
         #else
         reportFailure("Margin playback is unavailable on this device.")
         #endif
+    }
+
+    /// While your own Margin plays, the source is the Margin's to bring back only if it stays paused. The listener
+    /// resuming it (Lock Screen, headphones) or a sleep timer ending the listening takes it out of the voice's hands (#1538).
+    func releaseOwnMarginReturn() {
+        guard playingInterjectionAudioId != nil else { return }
+        sharedMarginReturn.voiceStopped()
     }
 
     func stopInterjectionAudioPlayback() {
@@ -226,8 +238,44 @@ extension Gate1AppModel {
 extension Gate1AppModel: MarginVoicePlayerHost {
     var marginVoiceMixesWithOtherAudio: Bool { mixesWithOtherAudio }
 
+    /// Your Margin played to its end. When playing it paused the source, the source plays again, and on a podcast the
+    /// item's later spoken Margins follow as playback reaches them (owner's call on #1538). A stop the listener asks
+    /// for, a recording or a failure never gets here, so none of them resumes anything.
     func marginVoiceOwnPlaybackEnded() {
+        let playedID = playingInterjectionAudioId, playedSessionID = playingInterjectionAudioSessionID
+        let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
         stopInterjectionAudioPlayback()
+        guard returnsSource, snapshot.status == .paused else { return }
+        resumePlayback()
+        if let playedID, let playedSessionID {
+            continueWithLaterMargins(afterOwnMarginID: playedID, sessionID: playedSessionID)
+        }
+    }
+
+    /// A podcast has no later Margins to wait for unless the listener recorded some. An article just resumes.
+    private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String) {
+        guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
+              let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
+              played.itemId == itemID,
+              played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
+        let spoken = inlineSpokenMargins(itemId: itemID, store: store)
+        let playedIdentity = Self.marginIdentity(played)
+        let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
+        guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
+        var voiceURLs: [String: URL] = [:]
+        for margin in spoken {
+            if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
+        }
+        endMarginMoment()
+        startMarginMoment(
+            itemId: itemID,
+            target: MarginMomentAnchor(marginId: playedIdentity, mediaTimeMs: playedMs),
+            otherMargins: anchors,
+            voiceURLs: voiceURLs,
+            title: "Your Margin",
+            isApproximate: false,
+            resumingAtMediaTimeMs: position
+        )
     }
 
     func marginVoiceOwnPlaybackFailed() {
@@ -245,5 +293,37 @@ extension Gate1AppModel: MarginVoicePlayerHost {
 
     func marginVoiceRemoteCommand(_ command: CompactControlCommand) {
         dispatchGate2CompactCommand(command, origin: "imported_margin_remote")
+    }
+}
+
+/// "Play this moment" for your own spoken Margins, moved out of `Gate1AppModel.swift` unchanged (hot-file ratchet, #1538).
+extension Gate1AppModel {
+    /// Spoken podcast Margins get the full moment: lead-in, the Margin inline, then the item's other spoken
+    /// Margins as playback reaches them. Written Margins and text items keep playing from the anchor.
+    func startMarginMomentIfSpoken(_ interjection: Interjection, store: SQLiteSessionStore) {
+        guard interjection.isInlineSpokenMargin, let anchorMs = interjection.anchor.mediaTimeMs else { return }
+        let spoken = inlineSpokenMargins(itemId: interjection.itemId, store: store)
+        var voiceURLs: [String: URL] = [:]
+        for margin in spoken + [interjection] {
+            if let path = margin.audioPath { voiceURLs[Self.marginIdentity(margin)] = resolvedInterjectionAudioURL(for: path) }
+        }
+        startMarginMoment(
+            itemId: interjection.itemId,
+            target: MarginMomentAnchor(marginId: Self.marginIdentity(interjection), mediaTimeMs: anchorMs),
+            otherMargins: spoken.map {
+                MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0)
+            },
+            voiceURLs: voiceURLs,
+            title: "Your Margin",
+            isApproximate: false
+        )
+    }
+
+    /// The listener's spoken Margins on the item, from every session, in no particular order.
+    func inlineSpokenMargins(itemId: String, store: SQLiteSessionStore) -> [Interjection] {
+        let sessions: [Session] = (try? store.loadSessions(itemId: itemId)) ?? []
+        return sessions
+            .flatMap { session -> [Interjection] in (try? store.loadInterjections(sessionId: session.id)) ?? [] }
+            .filter(\.isInlineSpokenMargin)
     }
 }

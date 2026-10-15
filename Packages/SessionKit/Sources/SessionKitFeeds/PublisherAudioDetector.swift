@@ -19,6 +19,8 @@ public enum PublisherAudioDetector {
     public static let minimumBodyWords = 600
     public static let detectedFromFeedEnclosure = "feed_enclosure"
     public static let detectedFromPublisherNarration = "substack_post_voiceover"
+    /// Substack's automatic narration of a post whose author recorded nothing (#810).
+    public static let detectedFromGeneratedNarration = "substack_post_generated_voice"
 
     public static func kind(audioURL: String?, pageURL: String, bodyWordCount: Int?, publisherNarrationConfirmed: Bool = false) -> FeedEntryMediaKind {
         guard let audio = httpsURL(audioURL) else { return .article }
@@ -50,7 +52,8 @@ public enum PublisherAudioDetector {
     /// an article with publisher audio.
     public static func publisherAudio(for entry: FeedEntry, itemId: String) -> PublisherAudio? {
         guard kind(of: entry) == .articleWithPublisherAudio, let audioURL = httpsURL(entry.audioURL) else { return nil }
-        return PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: entry.audioDurationMs, detectedFrom: detectedFromPublisherNarration)
+        return PublisherAudio(itemId: itemId, audioURL: audioURL, durationMs: entry.audioDurationMs,
+                              detectedFrom: entry.publisherNarrationGenerated == true ? detectedFromGeneratedNarration : detectedFromPublisherNarration)
     }
 
     /// An authenticated feed already supplied this text. Do not replace it with a public teaser.

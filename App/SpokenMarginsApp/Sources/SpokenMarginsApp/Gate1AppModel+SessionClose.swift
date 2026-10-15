@@ -44,7 +44,7 @@ extension Gate1AppModel {
         cancelSkimBridge(restoringOrigin: true, resumeSource: false)
         let closedItemId = snapshot.itemId ?? activeItemId
         run { engine in
-            snapshot = try endEngineSession(engine)
+            snapshot = try endEngineSession(engine, reason: navigateHome ? .doneButton : .miniPlayerClose)
             activeItemId = SessionCloseSelection.itemId(closing: closedItemId, pageOnScreen: screen == .item ? selectedItem.id : nil, navigatesHome: navigateHome)
             refreshSelectedItem()
             if let store {

@@ -115,14 +115,20 @@ NOT_LISTENER_PATHS = ('App/SpokenMarginsAppTests/', 'App/SpokenMarginsAppUITests
 NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|verify-tests)\b|^test ', re.I)
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
+# Acceptance belongs to the change, not necessarily its issue. The owner confirmed #1482's Build 30
+# restoration on 2026-10-14 (#1475, 15:55Z); #1475 stays open for the different #1551 redesign check.
+# Keep that accepted half off plans even when the shared issue has a newer, still-pending check.
+ACCEPTED_PR_CHECKS = frozenset({1482})
 # "Owner check: none." (or "n/a", "nothing (lane only)") isn't a check; "Nothing plays twice ..." is (#504).
 # "None this time: ..." and "none needed." aren't either (#927: #811's heading section), nor "none now;
 # ..." / "none at the moment" / "not needed" / "no owner check" (#1193: #177 reached the plan as a check).
+# "None beyond #447's feel check" delegates to another change; it supplies no independent phone action.
 NO_CHECK = re.compile(
-    r'^(?:(?:none|n/?a|nothing)(?:\s+(?:this time|at this time|needed|required|for now|right now|now|yet|currently'
+    r'^(?:none\s+(?:beyond|except|other than|apart from)\s+#\d+\b[^\n]*$|'
+    r'(?:(?:none|n/?a|nothing)(?:\s+(?:this time|at this time|needed|required|for now|right now|now|yet|currently'
     r'|at the moment|at all))*'
     r'|not needed|no (?:(?:owner|phone) )?checks?(?:\s+needed)?)'
-    r'\s*(?:[.;:,(\u2014\u2013]|-\s|$)', re.I)
+    r'\s*(?:[.;:,(\u2014\u2013]|-\s|$))', re.I)
 # "#547" or a link to issue/PR 547 in a check: something it may need on the phone first (#847).
 REFERENCE = re.compile(r'(?<![\w&/])#(\d+)\b|github\.com/' + re.escape(REPO) + r'/(?:issues|pull)/(\d+)\b')
 # "**Owner check:**", "**Owner check (phone):**", "4. Owner check:", "**Phone check:**" (#927). Plain text
@@ -522,6 +528,8 @@ def fetch_waiting() -> list[dict] | None:
         if not info.get('hasNextPage') or not info.get('endCursor'):
             break
         cursor = info['endCursor']
+    else:
+        return None  # Never publish a supposedly complete phone backlog after truncating it (#1600).
     return issues
 
 
@@ -565,6 +573,9 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
             continue
         for number in sorted(named & built - set(prs)):
             prs[number] = {'number': number, 'title': '', 'body': '', 'url': f'https://github.com/{REPO}/pull/{number}'}
+        if prs and set(prs) <= ACCEPTED_PR_CHECKS:
+            continue
+        prs = {number: pr for number, pr in prs.items() if number not in ACCEPTED_PR_CHECKS}
         if not (prs or issue['number'] in named_in_build) or issue['number'] in shown or shown & set(prs):
             continue
         body = next((pr.get('body') or '' for pr in prs.values() if check_field(pr.get('body') or '')), '')
@@ -1118,6 +1129,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     ordered = [prs[n] for n in merged if n in prs]
     facing = [pr for pr in ordered if listener_facing(pr)]
     behind = len(ordered) - len(facing)
+    accepted = [pr for pr in facing if pr['number'] in ACCEPTED_PR_CHECKS]
+    facing = [pr for pr in facing if pr['number'] not in ACCEPTED_PR_CHECKS]
     # Phone-found bugs first, then changes with a written check, then the rest; newest first within each.
     facing.sort(key=lambda pr: (0 if any(FIRST_ON_PHONE & labels(i) for i in pr['issues']) else 1,
                                 0 if owner_check(pr) else 1))
@@ -1193,7 +1206,9 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     left_out = f' {len(passed)} changes whose issues are already closed are left out.' if passed else ''
-    lines += [f'{len(ordered)} pull requests merged; {len(facing)} change something you see or hear.{left_out}', '',
+    if accepted:
+        left_out += f' {len(accepted)} changes whose phone checks were already accepted are left out.'
+    lines += [f'{len(ordered)} pull requests merged; {len(facing) + len(accepted)} change something you see or hear.{left_out}', '',
               '## Try these (about ten minutes)', '']
     if not (screens or budget) and still:
         lines += ['No change new in this build has a phone check. The fixes below, from earlier builds, '
@@ -1334,6 +1349,8 @@ def tail(path: Path, count: int = 30) -> str:
 def prune() -> None:
     builds = sorted(p for p in phone_dir().iterdir() if p.is_dir() and re.match(r'\d{8}-\d{6}-[0-9a-f]{7}$', p.name))
     for old in builds[:-keep_count()] if keep_count() > 0 else []:
+        if old.resolve() == (phone_dir() / 'daily-ready').resolve():
+            continue  # one pinned daily pass survives the rolling build's retention window (#1600)
         say(f'deleting an older build: {old.name}')
         shutil.rmtree(old, ignore_errors=True)
 

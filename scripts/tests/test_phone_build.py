@@ -60,6 +60,32 @@ def iphone(identifier, name='Cole iPhone', transport='wired', pairing='paired', 
 
 
 class InstallerTests(unittest.TestCase):
+    def test_daily_pin_installs_its_binary_even_after_latest_advances(self):
+        folder = self.make_build()
+        (self.phone / 'daily-ready').symlink_to(folder.name)
+        newer = self.phone / '20261014-170000-bbbbbbb'
+        newer.mkdir()
+        (newer / 'SpokenMarginsApp.app').mkdir()
+        (newer / 'build.json').write_text(json.dumps({'sha': 'b' * 40, 'built_at': '2026-10-14T17:00:00'}))
+        (self.phone / 'latest').unlink()
+        (self.phone / 'latest').symlink_to(newer.name)
+        done, calls = self.run_installer([iphone('PHONE-1')])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual([call for call in calls if 'install app' in call],
+                         [f'devicectl device install app --device PHONE-1 {folder.resolve()}/SpokenMarginsApp.app'])
+        self.assertEqual((self.phone / 'installed.txt').read_text().split()[0], self.sha)
+        self.assertFalse(any('uninstall' in call for call in calls))
+
+    def test_already_installed_daily_binary_opens_plan_without_reinstall(self):
+        folder = self.make_build()
+        (self.phone / 'daily-ready').symlink_to(folder.name)
+        (self.phone / 'installed.txt').write_text(self.sha + '\n')
+        done, calls = self.run_installer([])
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn(f'open {folder.resolve()}/test-plan.md', calls)
+        self.assertFalse(any('install app' in call for call in calls))
+        self.assertEqual((self.tmp / 'icloud' / f'Test plan {self.sha[:7]}.md').read_text(), '# plan\n')
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.tmp)
@@ -1610,6 +1636,48 @@ class PlanFaultTests(unittest.TestCase):
             plan = module.write_plan(Path(folder), 'a' * 40, 'host tests').read_text()
         self.printed = printed.getvalue()
         return plan
+
+    def test_accepted_restoration_is_absent_but_redesign_for_the_same_open_issue_remains(self):
+        # #1475 stays open for #1551. Closing the whole issue would hide the new screen; leaving
+        # acceptance only on the issue made #1482 appear beside the opposite change in the real plan.
+        issue = self.issue(1475, 'Play an article and a podcast; switch Now, Timeline, Margins.')
+        issue['state'] = 'OPEN'
+        prs = {
+            1551: self.pr(1551, 'Re-land the playback-screen redesign (#1475)', [issue], path=self.PLAYBACK),
+            1549: self.pr(1549, 'Open Text at the playing sentence',
+                          [self.issue(1547, 'Open More > Text at the playing sentence.')], path=self.PLAYBACK),
+            1482: self.pr(1482, 'Restore the pre-redesign playback screen (#1475)', [issue], path=self.PLAYBACK),
+        }
+        plan = self.write(prs)
+        self.assertNotIn('Restore the pre-redesign playback screen', plan)
+        self.assertNotIn('[PR #1482]', plan)
+        self.assertIn('Re-land the playback-screen redesign', plan)
+        self.assertIn('Play an article and a podcast; switch Now, Timeline, Margins.', plan)
+        self.assertIn('3 pull requests merged;', plan)
+
+    def test_accepted_restoration_does_not_return_through_the_waiting_backlog(self):
+        # A plan whose base is after #1482 has no new PR entry to filter. The same accepted check
+        # must also stay out of the earlier-build backlog while #1475 is open.
+        issue = RevertedPRTests.issue(1475, 'Restore the pre-redesign playback screen',
+                                      [(1482, 'Restore the pre-redesign playback screen (#1475)')])
+        plan = self.write({}, waiting=[issue], built_prs=[1482])
+        self.assertNotIn('Restore the pre-redesign playback screen', plan)
+        self.assertNotIn('Still waiting on your check', plan)
+
+    def test_delegated_no_independent_check_is_not_a_phone_action(self):
+        # The actual 437fbc9 plan offered this as step 4 even though #447's screen was reverted.
+        # Retained SessionKit logic may still be listed, but "none beyond" is not an action.
+        for check in ("none beyond #447's feel check.", 'None except #447’s phone check.',
+                      'none other than #447.', 'none apart from #447.'):
+            with self.subTest(check=check):
+                issue = self.issue(448, check)
+                pr = self.pr(1397, 'Preserve Timeline passage breaks across blank lines', [issue],
+                             path='Packages/SessionKit/Sources/SessionKit/TimelineSourceContent.swift')
+                plan = self.write({1397: pr})
+                actions = plan.split('## Try these')[1].split('\n## ')[0]
+                self.assertNotIn('Preserve Timeline passage breaks', actions)
+                self.assertNotIn('Check: ' + check, plan)
+                self.assertIn('## Also changed (no phone check written)', plan)
 
     def test_which_checks_the_owner_cannot_run(self):
         rows = [  # (check, refused)

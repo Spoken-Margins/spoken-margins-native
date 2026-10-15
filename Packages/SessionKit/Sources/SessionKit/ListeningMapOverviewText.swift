@@ -9,23 +9,49 @@ import Foundation
 public enum ListeningMapOverviewText {
     /// The overview for a map the app derived from headings, chapters or navigation.
     public static func appGenerated(title: String, chapterCount: Int) -> String {
-        let count = chapterCount > 0 ? "\(chapterCount) chapter\(chapterCount == 1 ? "" : "s")." : ""
+        let count = countSentence(chapterCount)
         let heading = sentence(title)
         return [heading, count].filter { !$0.isEmpty }.joined(separator: " ")
     }
 
     /// The text spoken before the item, including its trailing paragraph break, or "" for none.
-    public static func spokenPreface(overview: String, title: String, chapterCount: Int) -> String {
+    /// `textOpening` is the start of the text spoken after the preface. When it opens with the
+    /// title, an app-made preface leaves the title out and says only the chapter count, so the
+    /// listener doesn't hear the title twice in the first few seconds (#1144, owner's pick).
+    public static func spokenPreface(overview: String, title: String, chapterCount: Int, textOpening: String = "") -> String {
         let trimmed = overview.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
-        if trimmed == appGenerated(title: title, chapterCount: chapterCount) {
-            return "\(trimmed)\n\n"
+        guard trimmed == appGenerated(title: title, chapterCount: chapterCount)
+            || isLegacyAppGenerated(trimmed, title: title) else {
+            return "Overview. \(trimmed)\n\n"
         }
-        if isLegacyAppGenerated(trimmed, title: title) {
-            let replacement = appGenerated(title: title, chapterCount: chapterCount)
-            return replacement.isEmpty ? "" : "\(replacement)\n\n"
+        let preface = textOpens(textOpening, with: title)
+            ? countSentence(chapterCount)
+            : appGenerated(title: title, chapterCount: chapterCount)
+        return preface.isEmpty ? "" : "\(preface)\n\n"
+    }
+
+    /// Whether the spoken text starts with the title, ignoring case, accents, punctuation,
+    /// symbols such as a Markdown "#", and how the words are spaced or broken across lines.
+    /// The title must end on a word boundary, so "Agents" does not match a text opening "Agentsia".
+    static func textOpens(_ text: String, with title: String) -> Bool {
+        let titleWords = comparableWords(title)
+        guard !titleWords.isEmpty else { return false }
+        let textWords = comparableWords(String(text.prefix(title.count * 2 + 200)))
+        return textWords.starts(with: titleWords)
+    }
+
+    private static func countSentence(_ chapterCount: Int) -> String {
+        chapterCount > 0 ? "\(chapterCount) chapter\(chapterCount == 1 ? "" : "s")." : ""
+    }
+
+    private static func comparableWords(_ text: String) -> [String] {
+        let folded = text.precomposedStringWithCompatibilityMapping
+            .folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: nil)
+        let kept = folded.unicodeScalars.map { scalar -> Character in
+            CharacterSet.alphanumerics.contains(scalar) ? Character(scalar) : " "
         }
-        return "Overview. \(trimmed)\n\n"
+        return String(kept).split(separator: " ").map(String.init)
     }
 
     /// Sentences earlier builds stored as the overview of maps they derived themselves. The

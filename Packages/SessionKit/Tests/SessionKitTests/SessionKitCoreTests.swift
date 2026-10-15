@@ -1501,6 +1501,45 @@ final class SessionKitCoreTests: XCTestCase {
         XCTAssertEqual(discussion.snapshot.pendingAiJobKind, "assistant_response")
     }
 
+    /// #1030: the headphone click never reached the app while a Margin recorded, because every transport
+    /// command was unavailable then. Now Playing enables its commands from this flag.
+    func testTransportCommandsEndTheMarginOnlyWhileOneRecordsAndTheSurfaceMayFinishIt() throws {
+        func profile(sendsInterjectionCommands: Bool) -> RuntimeCapabilityProfile {
+            var remoteControl = ["display_snapshot", "send_transport_commands"]
+            if sendsInterjectionCommands { remoteControl.append("send_interjection_commands") }
+            return RuntimeCapabilityProfile(
+                id: "lock-screen-widget",
+                displayName: "Lock Screen / Widget",
+                capabilities: [
+                    "timeline": ["chapter_timing"],
+                    "interjection": ["delegate_interjection_to_canonical_runtime"],
+                    "remoteControl": remoteControl
+                ]
+            )
+        }
+        let engine = try compactControlEngine()
+        _ = try engine.startSession(itemId: "item-pill")
+        let dispatcher = CompactControlDispatcher(surfaceProfile: profile(sendsInterjectionCommands: true), canonicalRuntime: engine)
+        let withoutFinish = CompactControlDispatcher(surfaceProfile: profile(sendsInterjectionCommands: false), canonicalRuntime: engine)
+
+        XCTAssertFalse(dispatcher.snapshot().transportCommandsEndMargin, "playing: the click pauses")
+
+        _ = try dispatcher.dispatch(.pause)
+        XCTAssertFalse(dispatcher.snapshot().transportCommandsEndMargin, "paused: the click plays")
+
+        _ = try dispatcher.dispatch(.beginInterjection)
+        let recording = dispatcher.snapshot()
+        XCTAssertTrue(recording.isRecording)
+        XCTAssertTrue(recording.transportCommandsEndMargin, "recording: the click ends the Margin")
+        XCTAssertFalse(recording.availableCommands.contains(.togglePlayPause),
+                       "the dispatcher still refuses transport while recording; the app turns the command into a finish")
+        XCTAssertFalse(withoutFinish.snapshot().transportCommandsEndMargin,
+                       "a surface that can't finish a Margin must not claim the click")
+
+        _ = try dispatcher.dispatch(.finishInterjection)
+        XCTAssertFalse(dispatcher.snapshot().transportCommandsEndMargin, "saved: transport is transport again")
+    }
+
     func testCompactLockScreenDelegatesMediaSeekAndPlaybackRate() throws {
         let canonicalProfile = RuntimeCapabilityProfile(
             id: "phone-tablet-online",
@@ -6032,6 +6071,41 @@ final class SessionKitCoreTests: XCTestCase {
             XCTAssertEqual(spoken, "Evaluation Agents. 2 chapters.\n\nOne. Two. Three.", overview)
             XCTAssertEqual(spoken.components(separatedBy: ". ").first, "Evaluation Agents", "the first spoken unit is the title")
         }
+    }
+
+    /// #1144: a text that opens with its own title (a PDF's printed title) is not preceded by the
+    /// title again; the preface says only the chapter count, and offsets still line up with it.
+    func testFreshStartSkipsTheTitleInThePrefaceWhenTheTextOpensWithIt() throws {
+        let profile = RuntimeCapabilityProfile(
+            id: "phone-tablet-online",
+            displayName: "Phone/Tablet Online",
+            capabilities: [
+                "sync": ["canonical_persistence"],
+                "playback": ["realtime_tts"],
+                "timeline": ["chapter_timing"]
+            ]
+        )
+        let text = "Evaluation Agents\nOne. Two."
+        let item = Item(id: "item-agents", title: "Evaluation Agents", mediaType: "text", text: text, externalReference: nil, status: "ready")
+        let chapters = [
+            Chapter(id: "ch-1", title: "One", startChar: 0, endChar: 22, percent: 0),
+            Chapter(id: "ch-2", title: "Two", startChar: 22, endChar: 27, percent: 81)
+        ]
+        let map = ListeningMap(
+            id: "map-agents",
+            itemId: item.id,
+            overview: ListeningMapOverviewText.appGenerated(title: item.title, chapterCount: chapters.count),
+            chapters: chapters
+        )
+        let audio = RecordingAudioClient()
+        let repo = InMemorySessionRepository(items: [item.id: item], mapsByItemId: [item.id: map])
+        let engine = SessionEngine(profile: profile, repository: repo, audio: audio)
+
+        _ = try engine.startSession(itemId: item.id)
+        XCTAssertEqual(audio.preparedTexts.last, "2 chapters.\n\n\(text)")
+
+        _ = try engine.jumpToChapter(chapterId: "ch-2")
+        XCTAssertEqual(audio.playedOffsets.last, "2 chapters.\n\n".count + 22)
     }
 
     func testInspectSessionDoesNotStartPlayback() throws {
