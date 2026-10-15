@@ -24,6 +24,11 @@ run starts from that branch and that comment. After 3 runs the branch becomes a 
 `needs-mac` with a "Handing to the Mac finisher:" comment. Two runs in a row that add no commit
 park the issue as `blocked` (the waste signal in the issue's Cost and catch).
 
+Project board (#1621): each tick runs `scripts/sm_project_sync.py --apply` at most once an hour, and a
+child syncs its issue's card right after its claim and its stop note. The cloud dispatch can't write
+the user project (its token gets a 403), so the Mac, whose `gh` token has the project scope, keeps
+the board in line. Best effort: a failed sync is logged and never holds a tick or a run.
+
 Holds (every slip fails toward spending less): Dial Off or no Threads box; HALT (usage breaker:
 Claude) on #337; Paced usage at the hold line or ahead of trend, or no fresh report; less than
 MIN_FREE_GIB free; memory pressure not normal; every Dial Claude slot busy.
@@ -98,6 +103,8 @@ MAX_FINISH_ROUNDS = 2
 MAX_WEEKLY_ROUNDS = 4      # finishing rounds per PR in a week, so a PR the worker can't fix stops costing runs
 ROUND_WINDOW = dt.timedelta(hours=24)
 OTHER_FINISHER_HOLD = dt.timedelta(hours=2)
+BOARD_EVERY = dt.timedelta(hours=1)      # the full project-board pass (#1621); claims and stops sync their own card
+BOARD_TIMEOUT_S = 600
 
 REQUIRED_LABEL = 'where:mac'
 # The project's skip list (project instructions) plus a fix that already merged and waits on the phone.
@@ -841,6 +848,24 @@ class Ops:
     def comment(self, number: int, body: str) -> None:
         self.must(['gh', 'issue', 'comment', str(number), '-R', REPO, '--body', body], cwd=self.repo_root)
 
+    def board_sync(self, number: Optional[int] = None) -> str:
+        """Bring project 6's cards (or one issue's) in line with the evidence (#1621). Never raises."""
+        script = self.repo_root / 'scripts' / 'sm_project_sync.py'
+        if not script.exists():
+            return 'skipped: scripts/sm_project_sync.py is not on this checkout'
+        cmd = [sys.executable, str(script), '--apply'] + (['--issue', str(number)] if number else [])
+        try:
+            res = self.run(cmd, cwd=self.repo_root, timeout=BOARD_TIMEOUT_S)
+        except Exception as exc:
+            return f'error: {exc}'
+        try:
+            report = json.loads(res.stdout or '')
+            told = (f"{len(report.get('changes', []))} change(s), {len(report.get('unknown', []))} unknown, "
+                    f"{report.get('api_calls')} calls, {report.get('writes')} writes, {report.get('seconds')} s")
+        except (ValueError, AttributeError):
+            told = one_line(res.stderr or res.stdout or 'no output')
+        return f'exit {res.returncode}: {told}'
+
     def label(self, number: int, add: Optional[str] = None, remove: Optional[str] = None) -> None:
         cmd = ['gh', 'issue', 'edit', str(number), '-R', REPO]
         if add:
@@ -854,12 +879,34 @@ class Ops:
 # Tick (the launchd run)
 # ---------------------------------------------------------------------------
 
+def board_due(home: Path, now: dt.datetime) -> bool:
+    """Whether the hourly board pass is due: no stamp, an unreadable one, or one BOARD_EVERY old."""
+    try:
+        last = parse_time(json.loads((home / 'board-sync.json').read_text())['last'])
+    except (OSError, ValueError, KeyError, TypeError):
+        return True
+    return now - last >= BOARD_EVERY
+
+
+def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
+    """The hourly board pass, stamped before it runs so a crash or a hang can't repeat it every tick."""
+    if not board_due(ops.home, now):
+        return None
+    ops.home.mkdir(parents=True, exist_ok=True)
+    (ops.home / 'board-sync.json').write_text(json.dumps({'last': now.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}))
+    result = ops.board_sync()
+    ops.log(f'board sync (hourly, #1621): {result}')
+    return result
+
+
 def tick(ops: Ops, dry_run: bool = False, spawn: Optional[Callable] = None) -> dict:
     """Decide and maybe start one child. Returns the decision for logging and tests."""
     now = ops.now()
     say = print if dry_run else ops.log
     tag = 'dry-run ' if dry_run else ''
     decision: dict = {'start': None, 'why': None}
+    if not dry_run:   # bookkeeping, no tokens: it runs whatever the Dial says
+        decision['board'] = board_pass(ops, now)
 
     gate = load_dial_gate()
     if gate is None:
@@ -1067,6 +1114,7 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
                 ops.label(number, add=add)
             except Exception as exc:
                 ops.log(f'#{number} slot {slot}: could not add {add}: {exc}')
+        ops.log(f'#{number} slot {slot}: board card: {ops.board_sync(number)}')
 
     try:
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -1088,6 +1136,7 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
         ops.label(number, remove='ready')
         ops.comment(number, claim_text(slot, now, run))
         ops.log(f'#{number} slot {slot}: claimed as "{worker_title(slot)}", run {run} of {MAX_RUNS}')
+        ops.log(f'#{number} slot {slot}: board card: {ops.board_sync(number)}')
 
         ops.must(['git', 'fetch', '--quiet', 'origin', BASE_BRANCH], cwd=ops.repo_root, timeout=600)
         clear_worktree(ops, wt)
