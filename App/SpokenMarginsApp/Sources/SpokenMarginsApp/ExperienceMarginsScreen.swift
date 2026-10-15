@@ -72,44 +72,14 @@ struct ExperienceMarginsScreen: View {
         }
     }
 
-    /// The scope control and the Margins count. The control is a menu whose label is one line, cut with an ellipsis,
-    /// so a long item title can't wrap into the filters and the group heading under it (#1631). The menu's own rows
-    /// still show the full titles.
     private var scopeRow: some View {
-        HStack(spacing: 8) {
-            Menu {
-                Picker("Scope", selection: scopeTag) {
-                    Text("All items").tag(String?.none)
-                    if !collections.isEmpty {
-                        Section("Collections") {
-                            ForEach(collections) { collection in
-                                Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
-                            }
-                        }
-                    }
-                    Section("Items") {
-                        ForEach(model.marginScopeItems) { item in Text(item.title).tag(Optional(item.id)) }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Text(scopeTitle)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
-                }
-                .frame(minHeight: 44, alignment: .leading)
-            }
-            .layoutPriority(1)
-            .accessibilityLabel("Scope")
-            .accessibilityValue(scopeTitle)
-            .accessibilityIdentifier("margins.scope.picker")
-            Spacer(minLength: 8)
-            Text("\(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count) Margins")
-                .font(.caption).foregroundStyle(AppColors.secondaryText)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-        }
+        MarginsScopeRow(
+            title: scopeTitle,
+            countText: "\(model.marginCollectionQuery.filter == .shared ? model.visibleSharedMarginRows.count : filteredRows.count) Margins",
+            selection: scopeTag,
+            collections: collections,
+            items: model.marginScopeItems
+        )
     }
 
     /// What the scope control reads: the collection, the item, or all items.
@@ -525,5 +495,53 @@ struct MarginParentContextView: View {
         .accessibilityIdentifier("margin.parentContext.text")
         Button("Hear what it answers", systemImage: "play.fill") { model.playMarginParent(context) }
             .accessibilityIdentifier("margin.parentContext.play.button")
+    }
+}
+
+/// The scope control and the Margins count. The control is a menu whose label is one line, cut with an ellipsis,
+/// so a long item title can't wrap into the filters and the group heading under it (#1631). The menu's own rows
+/// still show the full titles. A view of its own so a test can measure its height without the screen around it.
+struct MarginsScopeRow: View {
+    let title: String
+    let countText: String
+    @Binding var selection: String?
+    let collections: [ItemCollection]
+    let items: [LibraryItemRow]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Picker("Scope", selection: $selection) {
+                    Text("All items").tag(String?.none)
+                    if !collections.isEmpty {
+                        Section("Collections") {
+                            ForEach(collections) { collection in
+                                Text(collection.name).tag(Optional(MarginCollectionQuery.collectionTagPrefix + collection.id))
+                            }
+                        }
+                    }
+                    Section("Items") {
+                        ForEach(items) { item in Text(item.title).tag(Optional(item.id)) }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(title)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Image(systemName: "chevron.up.chevron.down").font(.caption2)
+                }
+                .frame(minHeight: 44, alignment: .leading)
+            }
+            .layoutPriority(1)
+            .accessibilityLabel("Scope")
+            .accessibilityValue(title)
+            .accessibilityIdentifier("margins.scope.picker")
+            Spacer(minLength: 8)
+            Text(countText)
+                .font(.caption).foregroundStyle(AppColors.secondaryText)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
     }
 }
