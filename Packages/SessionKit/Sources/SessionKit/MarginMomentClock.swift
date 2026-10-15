@@ -24,9 +24,11 @@ public enum MarginMomentClock: Sendable, Equatable {
     }
 
     /// Progress ticks of a text source advance by a sentence or more, not by half a second, so the largest forward
-    /// move that still counts as playback is longer than a media clock's. A long sentence is about 30 s of speech.
+    /// move that still counts as playback is longer than a media clock's. 25 s of speech is about 350 characters,
+    /// a long sentence. It stays under the 30 s lead-in, so one reading that jumps from the start of the lead-in to
+    /// the Margin (a skip, or a stale reading at the Margin's place) is never taken for playback.
     public var tickAdvanceLimitMs: Int {
-        isNarratedText ? 45_000 : MarginMomentSequence.maxTickAdvanceMs
+        isNarratedText ? 25_000 : MarginMomentSequence.maxTickAdvanceMs
     }
 
     private var charactersPerSecond: Double {

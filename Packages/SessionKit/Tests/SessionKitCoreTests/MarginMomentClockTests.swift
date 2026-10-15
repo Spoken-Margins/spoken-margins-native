@@ -43,7 +43,8 @@ final class MarginMomentClockTests: XCTestCase {
 
     func testOnlyATextClockTicksBySentences() {
         XCTAssertEqual(MarginMomentClock.media.tickAdvanceLimitMs, MarginMomentSequence.maxTickAdvanceMs)
-        XCTAssertGreaterThan(clock.tickAdvanceLimitMs, 30_000, "a long sentence, about 400 characters, is one tick")
+        XCTAssertGreaterThanOrEqual(clock.tickAdvanceLimitMs, 20_000, "a long sentence, about 300 characters, is one tick")
+        XCTAssertLessThan(clock.tickAdvanceLimitMs, ListeningMoment.rule(for: .playThisMoment).leadInMs)
     }
 
     // MARK: The lead-in rule on the narration clock
@@ -92,6 +93,15 @@ final class MarginMomentClockTests: XCTestCase {
 
         XCTAssertEqual(play(limit: clock.tickAdvanceLimitMs), target)
         XCTAssertNil(play(limit: MarginMomentSequence.maxTickAdvanceMs), "why a text clock needs its own limit")
+    }
+
+    /// A reading at the Margin's own place right after the lead-in starts (a stale reading from the speech client, or a
+    /// 30-second skip) is not playback reaching it.
+    func testAReadingThatJumpsTheWholeLeadInDoesNotPlayTheMargin() {
+        let target = MarginMomentAnchor(marginId: "s::ij-1", mediaTimeMs: clock.position(forTextOffset: 1_214))
+        var sequence = MarginMomentSequence(
+            itemId: "article", target: target, otherMargins: [], tickAdvanceLimitMs: clock.tickAdvanceLimitMs)
+        XCTAssertNil(sequence.progressed(from: sequence.startMediaTimeMs, to: target.mediaTimeMs))
     }
 
     func testAForwardJumpLongerThanASentenceIsASkipAndDoesNotPlayTheMargin() {
