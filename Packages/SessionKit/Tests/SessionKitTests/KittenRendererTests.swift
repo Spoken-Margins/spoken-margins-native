@@ -128,19 +128,26 @@ final class KittenRendererTests: XCTestCase {
     /// isn't ready, when it is. No pause between chunks may pass 1 s. `SPEECH_SOAK_MINUTES` sets the length
     /// (30 for the full soak; 6 by default so the fast loop stays short). This is the renderer on the Mac: the
     /// phone's speed is the owner's Low Power Mode check, and the in-app wiring is `SupertonicSpeechTests`.
+    ///
+    /// Compute time, not wall time (#1648): a render's cost is the CPU time the process spent on it, which a busy Mac
+    /// can't stretch the way it stretches the clock (the wall-clock version failed at load averages of 60 and up with
+    /// the same code). The model runs on one thread here, so CPU time is what the render would take alone on a core;
+    /// the app's two threads measured faster than one (C2 M2), so passing the bars on one is the stricter check.
+    /// The wall-clock time is printed for the log and is not asserted.
     func testALongArticleThroughTheFallbackVoiceNeverPausesOverOneSecond() async throws {
         let minutes = Int(ProcessInfo.processInfo.environment["SPEECH_SOAK_MINUTES"] ?? "") ?? 6
         let text = article(minutes: minutes)
         let spoken = NarrationChunkPlanner.spokenPlan(spokenText: SpeechTextNormalizer.normalize(text), articleText: text, articleSpokenStart: 0)
         let chunks = NarrationChunkPlanner.splittingFirstChunk(
             of: spoken.chunks, spokenText: SpeechTextNormalizer.normalize(text), playheadOffset: 0)
-        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, governor: OnDeviceVoiceGovernor())
+        let renderer = try KittenNarrationRenderer(assets: Self.assets, outputDirectory: outputDirectory, threads: 1, governor: OnDeviceVoiceGovernor())
 
-        var renderedChunks = 0, rendered = 0.0, audio = 0.0, ends = 0.0, longestPause = 0.0, firstReady = 0.0, memoryAfterFirst = 0.0, peak = 0.0
+        var renderedChunks = 0, rendered = 0.0, wall = 0.0, audio = 0.0, ends = 0.0, longestPause = 0.0, firstReady = 0.0, memoryAfterFirst = 0.0, peak = 0.0
         for (index, chunk) in chunks.enumerated() {
-            let started = Date()
+            let started = Date(), cpuStarted = OnDeviceVoiceGovernor.processCPUTime()
             let result = try await renderer.render(text: chunk.text)
-            rendered += Date().timeIntervalSince(started)
+            wall += Date().timeIntervalSince(started)
+            rendered += OnDeviceVoiceGovernor.processCPUTime() - cpuStarted
             audio += result.duration
             renderedChunks += 1
             // The player starts this chunk when the previous one ends, or when this one is ready.
@@ -151,8 +158,9 @@ final class KittenRendererTests: XCTestCase {
             await renderer.discardGeneratedAudio(at: result.audioURL)
             if audio >= Double(minutes) * 60 { break }
         }
-        print(String(format: "SOAK %d min article: %.0f s of audio from %d chunks in %.0f s (%.1fx), first audio after %.2f s, longest pause %.2f s, memory %.0f MB after the first chunk, peak %.0f MB",
-                     minutes, audio, renderedChunks, rendered, audio / rendered, firstReady, longestPause, memoryAfterFirst, peak))
+        print(String(format: "SOAK %d min article: %.0f s of audio from %d chunks in %.0f s of compute (%.1fx; %.0f s on the clock, %.1fx), first audio after %.2f s, longest pause %.2f s, memory %.0f MB after the first chunk, peak %.0f MB",
+                     minutes, audio, renderedChunks, rendered, audio / rendered, wall, audio / wall, firstReady, longestPause, memoryAfterFirst, peak))
+        XCTAssertGreaterThan(rendered, 0, "the process CPU clock could not be read")
         XCTAssertGreaterThanOrEqual(audio, Double(minutes) * 60 * 0.95)
         XCTAssertLessThanOrEqual(longestPause, 1.0)
         XCTAssertGreaterThan(audio / rendered, 4, "the 4x bar from C2 M2")
