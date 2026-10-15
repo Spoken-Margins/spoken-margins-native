@@ -634,7 +634,7 @@ struct PlaybackScreen: View {
                     Button("Skip to the item", systemImage: "forward.end.fill", action: model.skipMarginMomentVoice)
                         .buttonStyle(SecondaryButtonStyle())
                         .accessibilityIdentifier("marginMoment.skip")
-                } else if let countdown = moment.targetCountdown(currentMediaTimeMs: model.snapshot.currentMediaTimeMs) {
+                } else if let countdown = moment.targetCountdown(currentMediaTimeMs: model.marginMomentPositionMs) {
                     Label("\(model.marginMomentTitle) in \(countdown)", systemImage: "text.bubble")
                         .font(.headline)
                         .foregroundStyle(.white)
