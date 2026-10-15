@@ -32,7 +32,7 @@ public struct MarginMomentSequence: Sendable, Equatable {
     /// Progress ticks arrive every 0.5 s, so even 3× playback advances well under this. A bigger forward move
     /// is a seek or skip, and skipping over a Margin shouldn't play it.
     public static let maxTickAdvanceMs = 4_000
-    /// The same limit for this moment's clock; a text clock ticks by whole sentences (see `MarginMomentClock`).
+    /// The same limit for this moment's clock; a text clock reads in characters, so its limit differs (see `MarginMomentClock`).
     public let tickAdvanceLimitMs: Int
 
     public enum Phase: Sendable, Equatable {
@@ -62,12 +62,7 @@ public struct MarginMomentSequence: Sendable, Equatable {
         self.itemId = itemId
         self.target = target
         self.tickAdvanceLimitMs = tickAdvanceLimitMs
-        let start = ListeningMoment(
-            use: .playThisMoment,
-            margin: ListeningMoment.Margin(id: target.marginId, position: target.mediaTimeMs),
-            source: .media(),
-            leadInMs: leadInMs
-        ).sourceStartPosition
+        let start = Self.leadInStartMediaTimeMs(forTarget: target, leadInMs: leadInMs)
         startMediaTimeMs = start
         let others = otherMargins.filter { $0.marginId != target.marginId && $0.mediaTimeMs >= start }
         unplayed = Self.inPlaybackOrder([target] + others)
@@ -89,6 +84,16 @@ public struct MarginMomentSequence: Sendable, Equatable {
         startMediaTimeMs = position
         phase = .listening
         unplayed = Self.inPlaybackOrder(otherMargins.filter { $0.marginId != playedMargin.marginId && $0.mediaTimeMs > position })
+    }
+
+    /// Where the lead-in before `target` starts, by the single lead-in rule (#807).
+    public static func leadInStartMediaTimeMs(forTarget target: MarginMomentAnchor, leadInMs: Int = defaultLeadInMs) -> Int {
+        ListeningMoment(
+            use: .playThisMoment,
+            margin: ListeningMoment.Margin(id: target.marginId, position: target.mediaTimeMs),
+            source: .media(),
+            leadInMs: leadInMs
+        ).sourceStartPosition
     }
 
     private static func inPlaybackOrder(_ margins: [MarginMomentAnchor]) -> [MarginMomentAnchor] {

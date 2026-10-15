@@ -305,8 +305,9 @@ extension Gate1AppModel {
         guard interjection.isSpokenItemMargin else { return }
         let clock: MarginMomentClock = snapshot.targetType == TargetType.itemTextTTS.rawValue ? .liveNarration : .media
         let spoken = spokenItemMargins(itemId: interjection.itemId, store: store)
+        let text = clock.isNarratedText ? ((try? store.loadItem(id: interjection.itemId))?.text ?? "") : ""
         guard let anchors = MarginMomentPlanner.anchors(
-            played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs
+            played: interjection, among: spoken, clock: clock, targetMediaTimeMs: snapshot.currentMediaTimeMs, text: text
         ) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken + [interjection] {
@@ -362,9 +363,7 @@ extension Gate1AppModel {
             conductor.startListening(atMediaTimeMs: snapshot.currentMediaTimeMs)
         } else if clock.isNarratedText {
             let text = (try? store?.loadItem(id: itemId))?.text ?? ""
-            let start = MarginMomentClock.sentenceStart(
-                atOrAfter: clock.textOffset(forPosition: conductor.sequence.startMediaTimeMs),
-                before: clock.textOffset(forPosition: target.mediaTimeMs), in: text)
+            let start = clock.leadInStartOffset(forTargetPosition: target.mediaTimeMs, in: text)
             seekText(toCharOffset: start)
             conductor.startListening(atMediaTimeMs: clock.position(forTextOffset: start))
         } else {
