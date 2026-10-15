@@ -4052,6 +4052,51 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.screen, .playback)
     }
 
+    /// #1670: the owner's phone, build 32: playback was set to 1× on screen, but tapping one of his Margins on a podcast
+    /// played the Margin's voice and the podcast faster. The Margin's own session came back at the rate it last played
+    /// at (here 1.5×, as from a text item), while the screen showed the global media rate. The test layer that should
+    /// have caught it is this one: the action, with the stored session rate and the shown rate disagreeing.
+    func testPlayThisMomentPlaysAtTheShownRateNotTheMarginsStoredSessionRate() throws {
+        for (shown, stored) in [(1.0, 1.5), (1.5, 1.0)] {
+            defer { UserDefaults.standard.removeObject(forKey: "mediaPlaybackRate") }
+            let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-rate-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let databaseURL = root.appending(path: "library.sqlite")
+            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+            model.resetAndSeed()
+            defer { model.endMarginMoment(); model.pause() }
+            let store = try SQLiteSessionStore(path: databaseURL.path)
+            try store.saveItem(Item(id: "rate-source", title: "Rate source", mediaType: "podcast", text: nil,
+                externalReference: "local", status: "ready",
+                media: ItemMedia(sourceType: .nativeMediaFile, url: root.appending(path: "source.m4a").absoluteString,
+                    durationMs: 180_000, nativeMediaId: "rate-source")))
+            model.startItem(id: "rate-source")
+            var margin = shareableInterjection(itemId: "rate-source")
+            margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+            margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+                anchorBefore: "", anchorAfter: "", mediaTimeMs: 120_000)
+            margin.audioPath = root.appending(path: "margin.m4a").path
+            margin.audioStatus = "recorded"
+            try store.saveInterjection(margin)
+            // The listener's speed now, and the rate the Margin's session last played at.
+            model.setMediaPlaybackRate(shown)
+            var session = try XCTUnwrap(try store.loadSession(id: margin.sessionId))
+            session.playbackRate = stored
+            try store.saveSession(session)
+            model.refreshMarginRows()
+            let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
+
+            XCTAssertTrue(model.playMarginMoment(row))
+
+            XCTAssertEqual(model.snapshot.playbackRate, shown, "the source plays at the speed shown (stored \(stored))")
+            XCTAssertEqual(model.mediaPlaybackRate, shown)
+            XCTAssertEqual(model.diagnostics["marginVoice.rate"],
+                           String(format: "moment;voice=%.2f;source=%.2f;shown=%.2f;player=n/a;voicePlayer=n/a", shown, shown, shown),
+                           "the Margin's voice reads the same rate, and Diagnostics say so")
+        }
+    }
+
     /// #1577: the owner's phone, build 32: on an article read aloud on the device, Play this moment showed no
     /// countdown and played only the source from the Margin's text anchor, because a Margin anchored by text position
     /// has no media time and the moment needed one. The moment now counts narration time, so the card appears,
