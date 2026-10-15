@@ -674,6 +674,40 @@ final class PreparedAudioCoordinatorTests: XCTestCase {
         XCTAssertEqual(PreparedAudioCoordinator.completedIndexes(withStandIn, plan: plan, sourceText: "First chunk. Second chunk.", retryingStandInsFor: job), [0, 1])
     }
 
+    // #1680: every Kitten chunk was committed and never read again, so each restart on a hot phone rendered the same
+    // chunks from scratch. Its own engine finds the saved stand-in; Supertonic's lookup still never plays it (#363),
+    // and Supertonic's chunk still replaces it.
+    func testASavedKittenChunkIsFoundForKittenOnlyAndSupertonicStillReplacesIt() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let coordinator = PreparedAudioCoordinator(repository: fixture.store, rootDirectory: fixture.prepared)
+        let plan = plans()
+        let source = "First chunk. Second chunk."
+        _ = try await coordinator.begin(itemId: "item", sourceText: source, signature: signature("one"), plan: plan)
+        try await commit(plan[0], data: Data([5, 5]), coordinator: coordinator, fixture: fixture, engine: KittenNarrationRenderer.engine)
+
+        let kitten = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: source,
+                                                          engine: KittenNarrationRenderer.engine)
+        XCTAssertEqual(kitten.flatMap { try? Data(contentsOf: $0.audioURL) }, Data([5, 5]), "Kitten's saved audio is found for Kitten")
+        let asSupertonic = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: source)
+        XCTAssertNil(asSupertonic, "and never played as Supertonic (#363)")
+        let asSupertonicByName = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0],
+                                                                      sourceText: source, engine: "supertonic")
+        XCTAssertNil(asSupertonicByName)
+        let asSystemVoice = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: source,
+                                                                 engine: SupertonicNarrationResult.systemVoiceEngine)
+        XCTAssertNil(asSystemVoice, "another stand-in engine doesn't match")
+        let manifest = try XCTUnwrap(fixture.store.loadPreparedAudioManifest(id: "prepared-item-one"))
+        XCTAssertTrue(PreparedAudioCoordinator.hasStandIns(manifest), "it still holds back assembly")
+
+        try await commit(plan[0], data: Data([2, 3]), coordinator: coordinator, fixture: fixture, engine: "supertonic")
+        let replaced = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: source)
+        XCTAssertEqual(replaced.flatMap { try? Data(contentsOf: $0.audioURL) }, Data([2, 3]), "Supertonic's chunk replaces it once allowed")
+        let gone = try await coordinator.committedChunk(itemId: "item", signature: signature("one"), plan: plan[0], sourceText: source,
+                                                        engine: KittenNarrationRenderer.engine)
+        XCTAssertNil(gone)
+    }
+
     // #278: Prepare on an article whose narration the fallback detached answered "already
     // available offline". A needs-repreparation manifest now restarts, keeping only intact chunks.
     func testBeginRestartsAManifestThatNeedsRepreparationKeepingIntactChunks() async throws {

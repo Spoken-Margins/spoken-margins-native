@@ -386,6 +386,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onChunkHandOverGap: ChunkHandOverGapHandler?
     private let onPreparedAudio: PreparedAudioHandler?
     private let preparedChunkLookup: PreparedChunkLookup?
+    /// The bundled voice's saved stand-in for a chunk (#1680): played, not rendered again, while that voice holds
+    /// narration, after a restart too. nil in tests that don't save audio.
+    private let bundledVoiceChunkLookup: PreparedChunkLookup?
     private let onPreparationPlan: PreparationPlanHandler?
     private let onPreparedChunk: PreparedChunkHandler?
     private let interruptionHandler: InterruptionHandler?
@@ -470,6 +473,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private var bundledVoiceNoticeGeneration: UUID?
     /// What refused Supertonic when the bundled voice took `bundledVoiceGeneration`, for the notice (#849 audit).
     private var bundledVoiceBlock: SpeechFallbackReason?
+    /// The generation playing a run of saved Supertonic audio in place of the bundled voice (#1680). Set at a seam
+    /// for a long enough run; the run ends at its first chunk without saved audio, where the bundled voice takes the
+    /// generation back.
+    private var savedRunGeneration: UUID?
     /// The playhead chunk as the article plan has it, keyed by its start, when a fallback play split it for a quick
     /// start (#849 audit): saved Supertonic audio for the whole chunk still plays when there is some.
     private var fastStartOriginals: [Int: RenderRequest] = [:]
@@ -609,6 +616,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onPreparedChunk: PreparedChunkHandler? = nil,
         articleText: ArticleTextLookup? = nil,
         preparedChunkLookup: PreparedChunkLookup? = nil,
+        bundledVoiceChunkLookup: PreparedChunkLookup? = nil,
         onPreparedAudio: PreparedAudioHandler? = nil,
         onFallback: FallbackHandler? = nil,
         onRestore: RestoreHandler? = nil,
@@ -661,6 +669,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onPreparationPlan = onPreparationPlan
         self.onPreparedChunk = onPreparedChunk
         self.preparedChunkLookup = preparedChunkLookup
+        self.bundledVoiceChunkLookup = bundledVoiceChunkLookup
         self.onPreparedAudio = onPreparedAudio
         self.onFallback = onFallback
         self.onRestore = onRestore
@@ -855,7 +864,74 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard self.generation == generation else { return }
             if bundledVoiceGeneration != generation { bundledVoiceBlock = block }
             bundledVoiceGeneration = generation
+            savedRunGeneration = nil
         }
+    }
+
+    /// #1680: while the bundled voice holds narration, or Supertonic may not render now, whether `request` plays saved
+    /// Supertonic audio. Inside a saved run, any chunk with saved audio does. Otherwise only a chunk at a seam (a
+    /// paragraph's first chunk boundary, or where the play starts) does, and only when the saved run from it is long
+    /// enough (`SavedVoiceRunRule`); the run then starts and the bundled voice lets go of the generation. So the
+    /// voice changes at most once each way per run.
+    private func choosesSavedSupertonicRun(for request: RenderRequest) async -> Bool {
+        let state = lock.withLock { () -> (inRun: Bool, atSeam: Bool, rate: Double, plan: [RenderRequest])? in
+            guard generation == request.generation else { return nil }
+            let canonical = preparationPlan.contains { $0.startOffset == request.startOffset }
+            let plan = canonical ? preparationPlan : generationPlan
+            guard let index = plan.firstIndex(where: { $0.startOffset == request.startOffset }) else { return nil }
+            let playStart = request.startOffset == generationRenderOrder.first?.startOffset
+            let projection = preparedSpeechProjection
+            let atSeam = playStart || SavedVoiceRunRule.isParagraphSeam(
+                in: preparedSourceText,
+                previousStart: index == 0 ? nil : projection.sourceOffset(atSpokenCharacterOffset: plan[index - 1].startOffset),
+                start: projection.sourceOffset(atSpokenCharacterOffset: request.startOffset))
+            return (savedRunGeneration == request.generation, atSeam, Double(playbackRate), Array(plan[index...]))
+        }
+        guard let state, let first = state.plan.first else { return false }
+        guard let firstDuration = await savedSupertonicAudio(for: first)?.duration else {
+            // The run ends at its first chunk without saved audio.
+            if state.inRun { lock.withLock { if savedRunGeneration == request.generation { savedRunGeneration = nil } } }
+            return false
+        }
+        if state.inRun { return true }
+        guard state.atSeam else { return false }
+        var run = [firstDuration]
+        var reachesEnd = state.plan.count == 1
+        for planned in state.plan.dropFirst() {
+            if SavedVoiceRunRule.isLongEnough(run, reachesEnd: false, playbackRate: state.rate) { break }
+            guard let duration = await savedSupertonicAudio(for: planned)?.duration else { break }
+            run.append(duration)
+            if planned.startOffset == state.plan.last?.startOffset { reachesEnd = true }
+        }
+        let choice = SavedVoiceRunRule.choice(inSavedRun: false, atSeam: true, savedRun: run, reachesEnd: reachesEnd,
+                                              playbackRate: state.rate)
+        guard choice == .savedSupertonic else { return false }
+        return lock.withLock {
+            guard generation == request.generation else { return false }
+            savedRunGeneration = request.generation
+            if bundledVoiceGeneration == request.generation { bundledVoiceGeneration = nil }
+            return true
+        }
+    }
+
+    /// A play's first chunk came from the bundled voice's saved audio, not a render: the export says so, since the
+    /// resume decision before it can only say `restart_rendering` after a cold launch (#1680).
+    private func reportSavedBundledVoiceStart(request: RenderRequest) {
+        guard let onResumeDecision,
+              lock.withLock({ generation == request.generation && startedTargetId == nil
+                  && request.startOffset == generationRenderOrder.first?.startOffset }) else { return }
+        onResumeDecision(["path": "play_saved", "engine": KittenNarrationRenderer.engine,
+                          "chunkStart": String(request.startOffset)])
+    }
+
+    /// The saved Supertonic audio for `planned`, from prepared audio or the disk cache; nil when there is none.
+    private func savedSupertonicAudio(for planned: RenderRequest) async -> SupertonicNarrationResult? {
+        if let articleChunk = articleChunkPlan(for: planned),
+           let recovered = await preparedChunkLookup?(planned.targetId, articleChunk.identity, articleChunk.plan) {
+            return SupertonicNarrationResult(audioURL: recovered.audioURL, duration: recovered.duration, sampleRate: 0,
+                                             renderDuration: 0, sessionLoadCount: 0)
+        }
+        return diskCache?.cachedAudio(text: planned.text, voice: voice, language: "en", speed: 1.0, synthesisSteps: 8)
     }
 
     /// I14: the chosen voice comes back once the condition that forced the fallback clears.
@@ -1630,14 +1706,18 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 var ownsResult = false
                 // A split head's whole chunk may have saved Supertonic audio; it plays in place of both halves.
                 var chunk = request
-                // Once the bundled voice holds this generation it renders every later chunk, saved Supertonic audio
-                // included, so the voice stays the same until a play releases it (#849 audit).
+                // Once the bundled voice holds this generation it renders every later chunk, so the voice stays the
+                // same until a play releases it (#849 audit). Saved Supertonic audio takes over from it only as a
+                // whole run from a seam, and the same rule holds while Supertonic may not render, so the voice never
+                // bounces back and forth (#1680).
                 let holdsBundledVoice = pressureRenderer != nil && self?.holdsBundledVoice(for: request.generation) == true
-                let articleChunk = holdsBundledVoice ? nil : self?.articleChunkPlan(for: request)
-                if let unsplit = await self?.savedAudioForUnsplitChunk(request) {
+                let guardsVoice = pressureRenderer != nil && (holdsBundledVoice || self?.onDeviceRenderingAllowed() == false)
+                let playsSavedSupertonic = guardsVoice ? await self?.choosesSavedSupertonicRun(for: request) == true : true
+                let articleChunk = self?.articleChunkPlan(for: request)
+                if playsSavedSupertonic, let unsplit = await self?.savedAudioForUnsplitChunk(request) {
                     chunk = unsplit.request
                     result = unsplit.result
-                } else if let articleChunk,
+                } else if playsSavedSupertonic, let articleChunk,
                    let recovered = await self?.preparedChunkLookup?(request.targetId, articleChunk.identity, articleChunk.plan) {
                     result = SupertonicNarrationResult(
                         audioURL: recovered.audioURL,
@@ -1646,7 +1726,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                         renderDuration: 0,
                         sessionLoadCount: 0
                     )
-                } else if !holdsBundledVoice, let cached = self?.diskCache?.cachedAudio(
+                } else if playsSavedSupertonic, let cached = self?.diskCache?.cachedAudio(
                     text: request.text,
                     voice: voice,
                     language: "en",
@@ -1654,6 +1734,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     synthesisSteps: 8
                 ) {
                     result = cached
+                } else if guardsVoice, let articleChunk,
+                          let saved = await self?.bundledVoiceChunkLookup?(request.targetId, articleChunk.identity, articleChunk.plan) {
+                    // The bundled voice's own saved audio for these words: played, not rendered again, after a
+                    // restart too (#1680). Still a stand-in, so it holds back assembly as #363 intended.
+                    self?.holdBundledVoice(for: request.generation)
+                    result = SupertonicNarrationResult(
+                        audioURL: saved.audioURL, duration: saved.duration, sampleRate: 0, renderDuration: 0,
+                        sessionLoadCount: 0, engine: KittenNarrationRenderer.engine
+                    )
+                    self?.reportSavedBundledVoiceStart(request: request)
                 } else {
                     // Supertonic is not allowed now, or the bundled voice holds this generation: the bundled Kitten
                     // voice renders the chunk when there is one, otherwise the iOS voice takes the passage (#849).

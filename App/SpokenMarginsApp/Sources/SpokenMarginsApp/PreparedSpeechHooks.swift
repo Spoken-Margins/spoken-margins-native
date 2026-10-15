@@ -41,9 +41,10 @@ struct PreparedSpeechHooks: Sendable {
         try? await coordinator.commit(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, audioURL: audioURL, durationMs: durationMs, engine: engine)
     }
 
-    func lookup(itemId: String, articleIdentity: String, plan: PreparedChunkPlan) async -> PreparedChunkLookupResult? {
+    /// `engine` nil: the voice's own saved audio. Another engine: that engine's saved stand-in (#1680).
+    func lookup(itemId: String, articleIdentity: String, plan: PreparedChunkPlan, engine: String? = nil) async -> PreparedChunkLookupResult? {
         guard let signature = try? await signatureTask.value,
               let sourceText = sourceText(itemId: itemId, articleIdentity: articleIdentity) else { return nil }
-        return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText)
+        return try? await coordinator.committedChunk(itemId: itemId, signature: signature, plan: plan, sourceText: sourceText, engine: engine)
     }
 }
