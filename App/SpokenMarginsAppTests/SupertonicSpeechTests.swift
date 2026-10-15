@@ -2464,6 +2464,7 @@ final class SupertonicSpeechTests: XCTestCase {
     func testALongSavedSupertonicRunTakesOverAtASeamAndHandsBackAtItsEnd() async throws {
         let text = Self.pressureArticle(paragraphs: 14)
         let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        XCTAssertEqual(Set(run.plan.map(\.text)).count, run.plan.count, "chunk texts are unique, so texts identify chunks")
         let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(run.indices), declaredSeconds: 70)
         XCTAssertEqual(outcome.supertonicRenders, 0, "Supertonic may not render")
         XCTAssertTrue(outcome.bundledTexts.allSatisfy { !run.texts.contains($0) }, "the saved run plays: \(outcome.bundledTexts)")
@@ -2493,10 +2494,11 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(outcome.bundledTexts, [], "saved Supertonic plays throughout")
     }
 
-    /// An article of paragraphs for the pressure tests: the planner runs chunks across the breaks.
+    /// An article of paragraphs for the pressure tests: the planner runs chunks across the breaks. Every sentence
+    /// names its paragraph, so no two chunks have the same text and a chunk's text says which chunk it is.
     private static func pressureArticle(paragraphs: Int) -> String {
         (1...paragraphs).map {
-            "Section \($0). The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks. Most of the objections concerned cost, and a smaller group worried about the timeline."
+            "Section \($0). The committee met on day \($0) to discuss proposal \($0), which had been circulating among members for several weeks. Most of the objections to proposal \($0) concerned cost, and a smaller group worried about its timeline."
         }.joined(separator: "\n\n")
     }
 
