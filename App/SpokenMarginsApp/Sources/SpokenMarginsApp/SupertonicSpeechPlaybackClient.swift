@@ -301,6 +301,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     typealias ChunkHandOverGapHandler = @Sendable (ChunkHandOverGapRecorder.Gap) -> Void
     /// One line on how fast chunks render against how fast they play, after each chunk the phone renders (#540).
     typealias RenderPaceHandler = @Sendable (_ summary: String) -> Void
+    /// The count of seams that came while the app was away, by how each went, after every one (#538).
+    typealias BackgroundSeamHandler = @Sendable (_ summary: String) -> Void
     typealias PreparedAudioHandler = @Sendable (_ itemId: String, _ prepared: PreparedTextAudio) -> Void
     // Prepared audio is matched by the article plan's identity (NarrationChunkPlanner, #312), not by
     // comparing texts: plans are in the article's own coordinates, never the spoken preface's.
@@ -324,6 +326,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         var url: URL
         var duration: TimeInterval
         var request: RenderRequest
+    }
+
+    /// The chunk after the playing one, already on the player's queue (#538). The cache keeps its audio until the
+    /// player reaches it.
+    private struct QueuedChunk {
+        var cached: CachedAudio
+        var item: AVPlayerItem
+        var player: AVQueuePlayer
     }
 
     private final class RenderTaskControl: @unchecked Sendable {
@@ -407,6 +417,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     )
     private var activeSourceText = ""
     private var player: AVPlayer?
+    /// The item the chunk bookkeeping below describes. With a queue the player may already have moved on to the
+    /// next one, so the player's own current item is not the answer (#538).
+    private var activeItem: AVPlayerItem?
+    private var queuedChunk: QueuedChunk?
+    private var queuedEndObserver: NSObjectProtocol?
+    private var queuedStatusObservation: NSKeyValueObservation?
+    private var backgroundSeams = BackgroundSeamLog()
     private var playbackEndObserver: NSObjectProtocol?
     private var playerItemStatusObservation: NSKeyValueObservation?
     private var audioSessionObservers: [NSObjectProtocol] = []
@@ -477,6 +494,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     private let onStall: StallHandler?
     private let onSystemPause: SystemPauseHandler?
     private let onRenderPace: RenderPaceHandler?
+    /// Whether the app is in front. With it the player is a queue, and while the app is away the next rendered
+    /// chunk goes onto it before the playing one ends, so the seam needs no app code (#538). nil leaves every seam as
+    /// it was: one player per chunk. Read on the main thread; anywhere else the app counts as in front.
+    private let applicationIsActive: (@Sendable () -> Bool)?
+    private let onBackgroundSeams: BackgroundSeamHandler?
+    private var lifecycleObservers: [NSObjectProtocol] = []
     /// Background time over the moment between one chunk ending and the next playing (#540).
     private let handOverHold: HandOverBackgroundHold?
     /// Background time while an interruption waits to end, so a backgrounded app isn't suspended before iOS
@@ -524,6 +547,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// How often the client asked to stop lowering other apps' audio.
     private(set) var debugBackgroundAudioReleaseCount = 0
     var debugHasStallMonitor: Bool { lock.withLock { stallMonitor != nil } }
+    /// Where the chunk queued behind the playing one starts, nil when none is queued (#538).
+    var debugQueuedChunkStart: Int? { lock.withLock { queuedChunk?.cached.request.startOffset } }
+    /// The count of seams that came with the app away, as the export shows it (#538).
+    var debugBackgroundSeamSummary: String? { lock.withLock { backgroundSeams.summary } }
     #endif
     private let articleText: ArticleTextLookup?
     /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
@@ -595,7 +622,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         renderWaitLimit: Duration = .seconds(15),
         onRenderPace: RenderPaceHandler? = nil,
         handOverHold: HandOverBackgroundHold? = nil,
-        interruptionHold: InterruptionBackgroundHold? = nil
+        interruptionHold: InterruptionBackgroundHold? = nil,
+        applicationIsActive: (@Sendable () -> Bool)? = nil,
+        onBackgroundSeams: BackgroundSeamHandler? = nil
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -647,8 +676,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.onRenderPace = onRenderPace
         self.handOverHold = handOverHold
         self.interruptionHold = interruptionHold
+        self.applicationIsActive = applicationIsActive
+        self.onBackgroundSeams = onBackgroundSeams
         super.init()
         installAudioSessionObservers()
+        installLifecycleObservers()
     }
 
     deinit {
@@ -668,6 +700,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         for observer in audioSessionObservers {
             audioSessionNotificationCenter.removeObserver(observer)
         }
+        for observer in lifecycleObservers {
+            audioSessionNotificationCenter.removeObserver(observer)
+        }
+        if let queuedEndObserver {
+            NotificationCenter.default.removeObserver(queuedEndObserver)
+        }
+        queuedStatusObservation?.invalidate()
     }
 
     func configureSpeechSettings(voiceIdentifier: String?, rate: Float) throws {
@@ -699,6 +738,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func play(targetId: String, from charOffset: Int, isSeek: Bool) throws {
+        applyQueuedAdvance(finished: nil)
         settleHandOverBeforePlay()
         interruptionWaitEnded(.listenerActed)
         try activateAudioSession(forPlayback: false)
@@ -841,6 +881,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func currentCharOffset() -> Int? {
+        applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock {
             (
                 fallbackIsActive,
@@ -868,6 +909,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     func currentRecoveryCharOffset() -> Int? {
+        applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock {
             (fallbackIsActive, currentStartOffset, preparedSpeechProjection, initialRequestedSpokenOffset)
         }
@@ -892,6 +934,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     #endif
 
     func currentPlaybackPosition() -> PlaybackPosition? {
+        applyQueuedAdvance(finished: nil)
         let snapshot = lock.withLock {
             (
                 currentTargetId,
@@ -1205,7 +1248,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func playbackItemFinished(_ item: AVPlayerItem) {
-        guard lock.withLock({ player?.currentItem === item && transportIntent == .playing }) else { return }
+        // The queue already moved on to the chunk behind this one, with no app code: catch the bookkeeping up. When
+        // the item that ended is the chunk that was queued (the app was away through the whole of the one before),
+        // its own end is handled below (#538).
+        if applyQueuedAdvance(finished: item), lock.withLock({ activeItem !== item }) { return }
+        guard lock.withLock({
+            (player?.currentItem === item || (player != nil && activeItem === item)) && transportIntent == .playing
+        }) else { return }
         removePlaybackEndObserver()
         let snapshot = lock.withLock { () -> (Int, String?, Int, CachedAudio?, TimeInterval, UUID, URL?, RenderedSpeechChunkBoundary) in
             // Set with the finished player detached, so the monitor never sees the old player as the next one.
@@ -1220,6 +1269,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let finishedURL = activeAudioURL
             player?.replaceCurrentItem(with: nil)
             player = nil
+            activeItem = nil
             activeAudioURL = nil
             activeAudioDuration = 0
             initialRequestedSpokenOffset = nil
@@ -1266,6 +1316,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 boundary: snapshot.7,
                 nextChunkWasReady: snapshot.3 != nil
             )
+        }
+        // A seam that came with the app away and was not a queued one: say why (#538).
+        if let applicationIsActive, !applicationIsActive() {
+            let isStandIn = lock.withLock { standInOffsets.contains(snapshot.0) }
+            recordBackgroundSeam(BackgroundChunkSeam.missedOutcome(
+                nextChunkIsRendered: snapshot.3 != nil, nextChunkIsStandIn: isStandIn
+            ))
         }
         if let cached = snapshot.3 {
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
@@ -1797,6 +1854,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         if let autoplay = action.autoplay {
             playRenderedAudio(autoplay.url, duration: autoplay.duration, request: autoplay.request)
         }
+        // The chunk may be the one behind the playing chunk, and the app may be away (#538).
+        queueNextChunkIfWanted()
         if let articleChunk = articleChunkPlan(for: request) {
             await onPreparedChunk?(
                 request.targetId,
@@ -2065,7 +2124,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             let level = lock.withLock { playbackVolume }
             let item = AVPlayerItem(url: audioURL)
             item.audioTimePitchAlgorithm = .timeDomain
-            let nextPlayer = AVPlayer(playerItem: item)
+            let nextPlayer: AVPlayer
+            if applicationIsActive != nil, observesPlayerLifecycle {
+                // A queue that acts like a single-item player (it stays on the item at its end) until a chunk is
+                // queued behind it while the app is away (#538).
+                let queue = AVQueuePlayer(items: [item])
+                queue.actionAtItemEnd = .pause
+                nextPlayer = queue
+            } else {
+                nextPlayer = AVPlayer(playerItem: item)
+            }
             nextPlayer.volume = level
             rateChangeLock.withLock { lastRateChange = nil }
             if observesPlayerLifecycle {
@@ -2073,6 +2141,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             }
             lock.withLock {
                 player = nextPlayer
+                activeItem = item
+                queuedChunk = nil
                 playerCreatedAt = ContinuousClock.now
                 playerStartedAt = nil
                 activeRequest = request
@@ -2795,6 +2865,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         } else {
             nextPlayer.playImmediately(atRate: rate)
         }
+        queueNextChunkIfWanted()
     }
 
     private func discardAudio(_ url: URL) {
@@ -3032,14 +3103,182 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             NotificationCenter.default.removeObserver(playbackEndObserver)
             self.playbackEndObserver = nil
         }
+        dropQueuedChunk()
+    }
+
+    /// Takes the queued chunk's observers off and forgets it. Its player is being discarded, or its end is handled.
+    private func dropQueuedChunk() {
+        if let queuedEndObserver {
+            NotificationCenter.default.removeObserver(queuedEndObserver)
+            self.queuedEndObserver = nil
+        }
+        queuedStatusObservation?.invalidate()
+        queuedStatusObservation = nil
+        lock.withLock { queuedChunk = nil }
+    }
+
+    /// Leaving the app is when a queued chunk matters: the chunk behind the playing one may already be rendered.
+    private func installLifecycleObservers() {
+        #if canImport(UIKit) && os(iOS)
+        guard applicationIsActive != nil, observesPlayerLifecycle else { return }
+        lifecycleObservers.append(audioSessionNotificationCenter.addObserver(
+            forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.queueNextChunkIfWanted() })
+        #endif
+    }
+
+    /// While the app is away, puts the next rendered chunk on the player behind the playing one, so the seam between
+    /// them needs no app code and a backgrounded app that iOS suspends in a silent gap can't stall there (#538).
+    /// Runs wherever the answer can change: a chunk starts, a render lands, the app leaves the front, a queued chunk
+    /// becomes the playing one. It does nothing when there is nothing to queue.
+    private func queueNextChunkIfWanted() {
+        guard let applicationIsActive, observesPlayerLifecycle else { return }
+        let appIsActive = applicationIsActive()
+        lock.withLock {
+            guard !appIsActive, let queue = player as? AVQueuePlayer, let playing = activeItem,
+                  queue.currentItem === playing else { return }
+            let nextOffset = currentStartOffset + max(1, currentChunkLength)
+            let cached = renderedCache[nextOffset]
+            let facts = BackgroundChunkSeam.Facts(
+                appIsActive: appIsActive,
+                intendsToPlay: transportIntent == .playing && !fallbackIsActive && handOverAwaitingStart == nil,
+                nextChunkExists: nextOffset < preparedSpeechProjection.text.count,
+                nextChunkIsRendered: cached != nil,
+                nextChunkIsStandIn: standInOffsets.contains(nextOffset),
+                alreadyQueued: queuedChunk != nil
+            )
+            guard BackgroundChunkSeam.shouldQueueAhead(facts), let cached,
+                  cached.request.generation == generation,
+                  cached.request.targetId == currentTargetId else { return }
+            let item = AVPlayerItem(url: cached.url)
+            item.audioTimePitchAlgorithm = .timeDomain
+            guard queue.canInsert(item, after: nil) else { return }
+            let request = cached.request
+            queuedEndObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+            ) { [weak self, weak item] _ in
+                guard let item else { return }
+                self?.playbackItemFinished(item)
+            }
+            queuedStatusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] observed, _ in
+                guard observed.status == .failed else { return }
+                Task { @MainActor [weak self, weak observed] in
+                    guard let observed else { return }
+                    self?.playbackItemFailed(observed, request: request)
+                }
+            }
+            queuedChunk = QueuedChunk(cached: cached, item: item, player: queue)
+            queue.actionAtItemEnd = .advance
+            queue.insert(item, after: nil)
+        }
+    }
+
+    /// The player has moved on to the chunk queued behind the one the bookkeeping describes, by itself and with no
+    /// app code, or is about to: bring the bookkeeping to that chunk the way `playRenderedAudio` does for a chunk it
+    /// starts (#538). `finished` is the item whose end was just heard, if any. True when it did.
+    @discardableResult
+    private func applyQueuedAdvance(finished: AVPlayerItem?) -> Bool {
+        guard applicationIsActive != nil else { return false }
+        var finishedURL: URL?
+        let applied = lock.withLock { () -> Bool in
+            guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item,
+                  (finished != nil && (finished === activeItem || finished === queued.item))
+                      || queued.player.currentItem === queued.item
+            else { return false }
+            let request = queued.cached.request
+            finishedURL = activeAudioURL
+            queuedChunk = nil
+            renderedCache.removeValue(forKey: request.startOffset)
+            activeItem = queued.item
+            playerStartedAt = ContinuousClock.now
+            activeRequest = request
+            activeAudioURL = queued.cached.url
+            activeAudioDuration = queued.cached.duration
+            currentTargetId = request.targetId
+            currentStartOffset = request.startOffset
+            currentChunkLength = request.sourceLength
+            currentChunkBoundary = request.boundary
+            pendingStartTargetId = nil
+            startedTargetId = request.targetId
+            playbackFailure = nil
+            initialRequestedSpokenOffset = nil
+            // The chime decider hears every passage in playing order; a queued one is never a stand-in.
+            if voiceChangeCueGeneration != request.generation {
+                voiceChangeCueGeneration = request.generation
+                voiceChangeCueDecider = NarrationVoiceChangeCue()
+            }
+            _ = voiceChangeCueDecider.leadIn(forStandIn: false)
+            // Back to a player that stays on its item at the end, until another chunk is queued behind this one.
+            queued.player.actionAtItemEnd = .pause
+            return true
+        }
+        guard applied else { return false }
+        // The queued chunk's end observer and failure watch take over from the finished chunk's.
+        if let finishedChunkObserver = playbackEndObserver {
+            NotificationCenter.default.removeObserver(finishedChunkObserver)
+        }
+        playbackEndObserver = queuedEndObserver
+        queuedEndObserver = nil
+        playerItemStatusObservation?.invalidate()
+        playerItemStatusObservation = queuedStatusObservation
+        queuedStatusObservation = nil
+        if let finishedURL,
+           !lock.withLock({ generationResults.values.contains(where: { $0.audioURL == finishedURL }) }) {
+            discardAudio(finishedURL)
+        }
+        recordBackgroundSeam(.queuedAhead)
+        queueNextChunkIfWanted()
+        return true
+    }
+
+    /// Counts a seam that came with the app away; the first of each kind also goes into the event log (#538).
+    private func recordBackgroundSeam(_ outcome: BackgroundChunkSeam.Outcome) {
+        let recorded = lock.withLock { () -> (isNew: Bool, summary: String?) in
+            let isNew = backgroundSeams.record(outcome)
+            return (isNew, backgroundSeams.summary)
+        }
+        if let summary = recorded.summary { onBackgroundSeams?(summary) }
+        if recorded.isNew {
+            onStall?("supertonic.background_seam", [
+                "outcome": outcome.rawValue,
+                "appState": Self.applicationStateName(),
+                "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled)
+            ])
+        }
+    }
+
+    /// Whether the app is in front, for the queue's decision. Off the main thread it answers "in front", which
+    /// leaves a seam as it was.
+    static func isApplicationActive() -> Bool {
+        #if canImport(UIKit) && os(iOS)
+        guard Thread.isMainThread else { return true }
+        return MainActor.assumeIsolated { UIApplication.shared.applicationState == .active }
+        #else
+        return true
+        #endif
     }
 
     private func playbackItemFailed(_ item: AVPlayerItem, request: RenderRequest) {
+        // A chunk queued behind the playing one that can't play comes off the queue; its seam then goes through the
+        // app as it always did (#538).
+        applyQueuedAdvance(finished: nil)
+        if lock.withLock({ queuedChunk?.item === item }) {
+            lock.withLock {
+                if let queued = queuedChunk {
+                    queued.player.remove(item)
+                    queued.player.actionAtItemEnd = .pause
+                }
+            }
+            dropQueuedChunk()
+            return
+        }
         let failedURL = lock.withLock { () -> URL? in
-            guard generation == request.generation, player?.currentItem === item else { return nil }
+            guard generation == request.generation,
+                  player?.currentItem === item || (player != nil && activeItem === item) else { return nil }
             player?.pause()
             player?.replaceCurrentItem(with: nil)
             player = nil
+            activeItem = nil
             let url = activeAudioURL
             activeAudioURL = nil
             activeAudioDuration = 0

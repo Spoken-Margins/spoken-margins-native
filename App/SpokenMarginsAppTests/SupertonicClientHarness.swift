@@ -13,6 +13,9 @@ import XCTest
 /// - A render can be held until the test releases it (`heldRenders`, counted in render order from 1).
 /// - `finishPlayingChunk()` ends the playing chunk by posting the player item's own
 ///   `AVPlayerItemDidPlayToEndTime`, the notification the client observes on a real device.
+/// - With `applicationIsActive` the client plays on a queue, and while the app is away the next chunk is queued
+///   behind the playing one (#538). `finishPlayingChunkInTheQueue()` ends a chunk the way the system does then: the
+///   queue moves on by itself, and the app hears about it afterwards.
 ///
 /// A test reads like the listener's story:
 ///
@@ -40,7 +43,10 @@ final class SupertonicClientHarness {
         text: String = SupertonicClientHarness.defaultText,
         heldRenders: Set<Int> = [],
         chunkSeconds: Double = 30,
-        stallRecoveryCooldown: Duration = .seconds(30)
+        stallRecoveryCooldown: Duration = .seconds(30),
+        standInRenders: Set<Int> = [],
+        applicationIsActive: (@Sendable () -> Bool)? = nil,
+        notificationCenter: NotificationCenter = .default
     ) throws {
         root = FileManager.default.temporaryDirectory
             .appending(path: "supertonic-harness-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -48,10 +54,13 @@ final class SupertonicClientHarness {
         let template = try Self.silentChunk(seconds: chunkSeconds, in: root)
         self.text = text
         chunkStarts = RenderedSpeechChunker.sourceSlices(from: SpeechTextNormalizer.normalize(text)).map(\.startOffset)
-        renderer = ScriptedSupertonicRenderer(template: template, duration: chunkSeconds, heldRenders: heldRenders)
+        renderer = ScriptedSupertonicRenderer(
+            template: template, duration: chunkSeconds, heldRenders: heldRenders, standIns: standInRenders
+        )
         let players = players
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionNotificationCenter: notificationCenter,
             audioSessionActivator: {},
             audioPlayerStarter: { player, rate in
                 players.started(player)
@@ -60,7 +69,8 @@ final class SupertonicClientHarness {
             },
             observesPlayerLifecycle: true,
             fallbackClient: RecordingFallbackAudioClient(),
-            stallRecoveryCooldown: stallRecoveryCooldown
+            stallRecoveryCooldown: stallRecoveryCooldown,
+            applicationIsActive: applicationIsActive
         )
     }
 
@@ -117,6 +127,45 @@ final class SupertonicClientHarness {
         }.value
     }
 
+    /// How many items the newest player holds: the playing chunk, and the one queued behind it (#538).
+    var itemsOnThePlayer: Int { (players.newest as? AVQueuePlayer)?.items().count ?? 0 }
+
+    /// Waits until the chunk queued behind the playing one starts at `start` (nil: none is queued); true when it does.
+    func waitForQueuedChunk(_ start: Int?) async -> Bool {
+        for _ in 0..<150 where client.debugQueuedChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
+        return client.debugQueuedChunkStart == start
+    }
+
+    /// Waits until the client is playing the chunk that starts at `start`; true when it is.
+    func waitForPlayingChunk(_ start: Int) async -> Bool {
+        for _ in 0..<150 where playingChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
+        return playingChunkStart == start
+    }
+
+    /// The system moves a queue player on to its next item by itself, with the app suspended or not running any
+    /// code. The app learns of it when it next runs (#538).
+    func advanceTheQueueWithoutTellingTheApp() {
+        guard let queue = players.newest as? AVQueuePlayer else {
+            XCTFail("the client is not playing on a queue")
+            return
+        }
+        queue.advanceToNextItem()
+    }
+
+    /// Ends the playing chunk as the system does for a chunk with another queued behind it: the queue moves on by
+    /// itself, then the ended item posts its end notification.
+    func finishPlayingChunkInTheQueue() async {
+        guard let queue = players.newest as? AVQueuePlayer, let item = queue.currentItem else {
+            XCTFail("the client is not playing a chunk on a queue")
+            return
+        }
+        queue.advanceToNextItem()
+        let box = HarnessItemBox(item)
+        await Task.detached {
+            NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: box.item)
+        }.value
+    }
+
     func tearDown() {
         try? client.stop()
         renderer.releaseAll()
@@ -141,15 +190,17 @@ final class SupertonicClientHarness {
 final class ScriptedSupertonicRenderer: SupertonicRendering, @unchecked Sendable {
     private let template: URL
     private let duration: TimeInterval
+    private let standIns: Set<Int>
     private let lock = NSLock()
     private var held: Set<Int>
     private var waiting: [Int: CheckedContinuation<Void, Never>] = [:]
     private var started = 0
     private var finished = 0
 
-    init(template: URL, duration: TimeInterval, heldRenders: Set<Int>) {
+    init(template: URL, duration: TimeInterval, heldRenders: Set<Int>, standIns: Set<Int> = []) {
         self.template = template
         self.duration = duration
+        self.standIns = standIns
         held = heldRenders
     }
 
@@ -195,7 +246,9 @@ final class ScriptedSupertonicRenderer: SupertonicRendering, @unchecked Sendable
         try FileManager.default.copyItem(at: template, to: url)
         lock.withLock { finished += 1 }
         return SupertonicNarrationResult(
-            audioURL: url, duration: duration, sampleRate: 8_000, renderDuration: 0.01, sessionLoadCount: 1
+            audioURL: url, duration: duration, sampleRate: 8_000, renderDuration: 0.01, sessionLoadCount: 1,
+            engine: standIns.contains(index)
+                ? SupertonicNarrationResult.systemVoiceEngine : SupertonicNarrationResult.supertonicEngine
         )
     }
 
