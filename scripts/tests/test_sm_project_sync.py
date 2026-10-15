@@ -198,11 +198,30 @@ class Reconciliation(unittest.TestCase):
         result = self.run_sync(api, True)
         self.assertEqual([(c['issue'], c['status']) for c in result['changes']], [(7, 'Done')])
         self.assertTrue(result['changes'][0]['verified'])
-        self.assertNotIn('issues/7', api.reads)
+        self.assertIn('issues/7', api.reads)          # a card about to be written is read from the issue first
         self.assertEqual(api.items[7], {'Status': 'Done'})
-        targeted = self.run_sync(api, only=[7])   # a hook for one issue still reads it
+        api.reads.clear()
+        again = self.run_sync(api, True)
+        self.assertEqual((again['changes'], again['unchanged']), ([], 2))
+        self.assertNotIn('issues/7', api.reads)       # already Done: the project read alone settles it
+        targeted = self.run_sync(api, only=[7])       # a hook for one issue still reads it
         self.assertIn('issues/7', api.reads)
         self.assertEqual(targeted['changes'], [])
+
+    def test_an_issue_reopened_during_the_run_is_never_set_done(self):
+        # The project read says CLOSED and the open list was read before the reopen; Done would make the board's
+        # Auto-close workflow close the owner's reopened issue again.
+        api = API([issue(state='closed')], {7: {'Status': 'Needs your check'}})
+        graphql = api.graphql
+        def reopened_after_the_board_read(query, **v):
+            data = graphql(query, **v)
+            if 'items(first:' in query:
+                api.routes['issues/7'] = issue(labels=['status: needs-human-validation'])
+            return data
+        api.graphql = reopened_after_the_board_read
+        result = self.run_sync(api, True)
+        self.assertNotIn('Done', [c['status'] for c in result['changes']])
+        self.assertEqual(api.items[7]['Status'], 'Needs your check')
 
     def test_stale_claim_routine_comments_do_not_count_as_implementer(self):
         api = API([issue(labels=['in-progress'])])

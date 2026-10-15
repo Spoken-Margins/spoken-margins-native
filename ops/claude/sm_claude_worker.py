@@ -866,7 +866,7 @@ class Ops:
             told = (f"{len(report.get('changes', []))} change(s), {len(report.get('unknown', []))} unknown, "
                     f"{report.get('api_calls')} calls, {report.get('writes')} writes, {report.get('seconds')} s"
                     + ''.join(f'; ledger: {one_line(alarm)}' for alarm in report.get('ledger_alarms') or []))
-        except (ValueError, AttributeError):
+        except (ValueError, AttributeError, TypeError):
             told = one_line(res.stderr or res.stdout or 'no output')
         return f'exit {res.returncode}: {told}'
 
@@ -896,8 +896,13 @@ def board_pass(ops: Ops, now: dt.datetime) -> Optional[str]:
     """The hourly board pass, stamped before it runs so a crash or a hang can't repeat it every tick."""
     if not board_due(ops.home, now):
         return None
-    ops.home.mkdir(parents=True, exist_ok=True)
-    (ops.home / 'board-sync.json').write_text(json.dumps({'last': now.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}))
+    try:
+        ops.home.mkdir(parents=True, exist_ok=True)
+        (ops.home / 'board-sync.json').write_text(
+            json.dumps({'last': now.astimezone(dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}))
+    except OSError as exc:   # no stamp, no pass: an unwritable folder must not run it every tick
+        ops.log(f'board sync (hourly, #1621): skipped, could not write its stamp ({exc})')
+        return None
     result = ops.board_sync(ledger=LANE_STATE if LANE_STATE.is_dir() else None)
     ops.log(f'board sync (hourly, #1621): {result}')
     return result

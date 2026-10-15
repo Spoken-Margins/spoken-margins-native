@@ -184,9 +184,12 @@ def claim_activity(api, issue, now):
 
 
 def closed_card(item, n, only):
-    """A closed issue's card, judged from the project read itself: Done needs nothing else, and reading each of the
-    ~90 closed cards one by one was most of a full run's calls. An --issue run still reads the issue."""
-    if only or not item or item.get('state') != 'CLOSED':
+    """A closed issue whose card already shows Done with no Check health: nothing would be written, so the project
+    read is enough (reading the ~90 closed cards one by one was most of a full run's calls). Any card that would be
+    written is read from the issue itself first, so an issue reopened during the run is never set Done, which the
+    board's Auto-close workflow would turn into closing it again. An --issue run always reads the issue."""
+    values = (item or {}).get('values') or {}
+    if only or not item or item.get('state') != 'CLOSED' or values.get('Status') != 'Done' or values.get(HEALTH):
         return None
     return {'number': n, 'state': 'closed', 'labels': []}
 
