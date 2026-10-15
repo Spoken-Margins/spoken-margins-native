@@ -23,6 +23,7 @@ public enum PlaybackDiagnosticFields {
         case doneButton = "done_button"
         case chapterActionSwitchItem = "chapter_action_switch_item"
         case startNewSession = "start_new_session"
+        case itemTrashed = "item_trashed"
     }
 
     /// Whether the narration client says it is still reading, from the fields `narration(...)` builds.
