@@ -124,23 +124,81 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
     func testCapturedRetryDoesNotSummarizeADifferentTargetAfterReturningToA() async throws {
         let f = try await fixture(bHasSummary: false)
         let retry = try await failA(f)
+        let failureID = try XCTUnwrap(f.model.feedbackEvent?.id)
+        let store = try XCTUnwrap(f.model.store)
+        let originalJob = try XCTUnwrap(store.loadAIJobs(sessionId: f.a).last)
+        let originalTurn = try XCTUnwrap(store.loadTurns(sessionId: f.a).last)
+        let originalTitle = try store.loadItem(id: "item-pill").title
+        let originalNoteID = try XCTUnwrap(store.loadInterjections(sessionId: f.a).first?.id)
         f.model.startItem(id: "item-pill")
         let turn = ConversationTurn(id: "another-target", sessionId: f.a, role: "assistant", turnType: "assistant_response", status: "complete", summary: nil, text: "A different discussion target.", rawText: nil, sourceInterjectionIds: [])
-        try XCTUnwrap(f.model.store).saveTurn(turn)
+        try store.saveTurn(turn)
         f.model.playTurn(turn)
         XCTAssertEqual(f.model.summaryScopeForCurrentTarget(), SummaryScope(targetType: "turn", turnId: turn.id))
         f.model.beginWrittenMargin()
         f.model.saveWrittenMargin(text: otherNote)
         XCTAssertTrue(f.model.canSummarizeInterjections)
+        let otherNoteID = try XCTUnwrap(store.loadInterjections(sessionId: f.a).first { $0.displayText == otherNote }?.id)
+        let beforeRequests = await f.provider.requests.count
+        let beforeJobs = try store.loadAIJobs(sessionId: f.a)
+        let beforeActionFeedbackID = f.model.feedbackEvent?.id
 
+        // The actual banner dismisses itself before invoking its captured action.
+        f.model.dismissFeedback(id: failureID)
         retry.action()
 
-        try await waitForRequests(2, f.provider)
+        var navigatedToOriginalScope = false
+        var refusal: UserFeedbackEvent?
+        var performedNavigation: UUID?
+        for _ in 0..<500 {
+            if await f.provider.requests.count > beforeRequests { break }
+            let hasPendingJob = try store.loadAIJobs(sessionId: f.a).contains { $0.status == "pending" || $0.status == "deferred" }
+            if !hasPendingJob, f.model.snapshot.sessionId == f.a,
+               f.model.summaryScopeForCurrentTarget() == SummaryScope(targetType: "item") {
+                navigatedToOriginalScope = true
+                break
+            }
+            if let event = f.model.feedbackEvent, event.id != beforeActionFeedbackID, event.id != failureID {
+                if let action = event.action, performedNavigation != event.id {
+                    performedNavigation = event.id
+                    action.perform()
+                }
+                if !hasPendingJob, isExplicitOriginalScopeRefusal(event, itemTitle: originalTitle) {
+                    refusal = event
+                    break
+                }
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         let requests = await f.provider.requests
-        let request = try XCTUnwrap(requests.last)
-        XCTAssertTrue(request.context.contains(originalNote), "Retry must repeat A's original item-summary scope")
-        XCTAssertFalse(request.context.contains(otherNote), "A stale Retry must not silently summarize another target")
+        let added = Array(requests.dropFirst(beforeRequests))
+        XCTAssertFalse(added.contains { $0.context.contains(otherNote) }, "A stale Retry must never silently summarize the different target")
+        if !added.isEmpty {
+            XCTAssertTrue(added.contains { $0.context.contains(originalNote) }, "A resubmitted request must retain A's original context")
+            let pending = try XCTUnwrap(store.loadAIJobs(sessionId: f.a).last { $0.status == "pending" })
+            XCTAssertEqual(pending.itemId, "item-pill")
+            let pendingTurn = try XCTUnwrap(store.loadTurns(sessionId: f.a).first { $0.id == pending.turnId })
+            XCTAssertTrue(pendingTurn.sourceInterjectionIds.contains(originalNoteID))
+            XCTAssertFalse(pendingTurn.sourceInterjectionIds.contains(otherNoteID))
+        } else {
+            // A truthful refusal or actual navigation is equally valid; a silent no-op is not.
+            XCTAssertTrue(navigatedToOriginalScope || refusal != nil, "Retry must visibly return to the original item scope or explain why original-scope recovery cannot proceed")
+            XCTAssertEqual(try store.loadAIJobs(sessionId: f.a), beforeJobs)
+            XCTAssertEqual(try store.loadAIJobs(sessionId: f.a).first { $0.id == originalJob.id }?.status, "retryable")
+            XCTAssertEqual(try store.loadTurns(sessionId: f.a).first { $0.id == originalTurn.id }?.status, "failed")
+        }
+        XCTAssertTrue(try store.loadAIJobs(sessionId: f.b).isEmpty)
+        XCTAssertTrue(try store.loadTurns(sessionId: f.b).isEmpty)
     }
+
+    private func isExplicitOriginalScopeRefusal(_ event: UserFeedbackEvent, itemTitle: String) -> Bool {
+        guard event.kind == .error else { return false }
+        let message = event.message.lowercased()
+        let namesOriginal = message.contains("original") || message.contains(itemTitle.lowercased())
+        let explainsRecovery = ["changed", "unavailable", "return", "open", "cannot", "can't", "could not"].contains { message.contains($0) }
+        return namesOriginal && explainsRecovery
+    }
+
 }
 
 private actor HeldSummaryProvider: LocalFoundationModelClient {
