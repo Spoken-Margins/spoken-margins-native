@@ -83,6 +83,7 @@ class API:
                 'nodes': fields, 'pageInfo': {'hasNextPage': False}}}}}
         if 'items(first:' in query:
             nodes = [{'id': f'item{n}', 'content': {'__typename': 'Issue', 'id': f'I{n}', 'number': n,
+                                                 'state': (self.routes.get(f'issues/{n}') or {}).get('state', 'open').upper(),
                                                  'repository': {'nameWithOwner': self.repo}},
                       'fieldValues': self.field_values(values)} for n, values in self.items.items()]
             # Unrelated content deliberately has no usable issue fields.
@@ -189,6 +190,19 @@ class Reconciliation(unittest.TestCase):
         for labels, wanted in (([], 'Done'), (['found-on-phone', 'priority'], 'Done')):
             api = API([issue(labels=labels, state='closed')], {7: {'Status': 'Checking'}})
             self.assertEqual(self.run_sync(api)['changes'][0]['status'], wanted)
+
+    def test_closed_card_is_done_from_the_project_read_alone(self):
+        # A full run used to GET every closed card's issue one by one: 90 of a live run's 162 calls (2026-10-15).
+        api = API([issue(labels=['found-on-phone'], state='closed'), issue(8)],
+                  {7: {'Status': 'Checking', sync.HEALTH: 'Waiting on checks/review'}, 8: {'Status': 'Todo'}})
+        result = self.run_sync(api, True)
+        self.assertEqual([(c['issue'], c['status']) for c in result['changes']], [(7, 'Done')])
+        self.assertTrue(result['changes'][0]['verified'])
+        self.assertNotIn('issues/7', api.reads)
+        self.assertEqual(api.items[7], {'Status': 'Done'})
+        targeted = self.run_sync(api, only=[7])   # a hook for one issue still reads it
+        self.assertIn('issues/7', api.reads)
+        self.assertEqual(targeted['changes'], [])
 
     def test_stale_claim_routine_comments_do_not_count_as_implementer(self):
         api = API([issue(labels=['in-progress'])])
