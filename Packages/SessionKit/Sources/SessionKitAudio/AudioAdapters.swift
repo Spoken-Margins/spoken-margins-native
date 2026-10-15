@@ -2097,6 +2097,16 @@ public final class AVPlayerStreamPlaybackClient: AudioPlaybackClient, @unchecked
         #endif
     }
 
+    public func currentPlayerRate() -> Double? {
+        #if canImport(AVFoundation)
+        guard let player else { return nil }
+        // A playing player reports its own rate; stalled or paused (rate 0) it will resume at the one asked for.
+        return player.rate > 0 ? Double(player.rate) : playbackRate
+        #else
+        return nil
+        #endif
+    }
+
     @discardableResult
     public func armPostResumeAudioSample(_ request: PostResumeAudioSampleRequest) -> Bool {
         #if canImport(AVFoundation) && canImport(MediaToolbox) && canImport(ShazamKit) && !os(watchOS)
@@ -3183,6 +3193,14 @@ public final class RoutedAudioPlaybackClient: AudioPlaybackClient, @unchecked Se
         case nil:
             try media.setPlaybackRate(rate)
             try speech.setPlaybackRate(rate)
+        }
+    }
+
+    public func currentPlayerRate() -> Double? {
+        switch activeRoute {
+        case .media: return media.currentPlayerRate()
+        case .speech: return speech.currentPlayerRate()
+        case nil: return nil
         }
     }
 

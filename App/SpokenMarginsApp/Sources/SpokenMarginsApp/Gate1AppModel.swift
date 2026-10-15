@@ -1284,7 +1284,7 @@ final class Gate1AppModel: ObservableObject {
             // target validation and the reversible playback transaction.
             try prepareSourceMediaPlayback(itemId: session.itemId)
             endMarginMoment()
-            snapshot = try engine.playInterjectionAnchor(interjection)
+            snapshot = try playAnchorAtShownRate(interjection, engine: engine)
             streamingSpeechQueue.relinquishToCanonicalPlayback()
             stopInterjectionAudioPlayback()
             activeItemId = session.itemId
@@ -1368,7 +1368,7 @@ final class Gate1AppModel: ObservableObject {
             ),
             voiceURL: leveledVoiceURL(voiceURLs, itemId: itemId, margins: [target] + otherMargins)
         )
-        conductor.voiceRate = Float(Self.marginPlaybackRate(itemPlaybackRate: snapshot.playbackRate))
+        conductor.voiceRate = Float(recordMarginVoiceRate("moment"))
         conductor.prepareAudioSession = {
             #if os(iOS)
             try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
