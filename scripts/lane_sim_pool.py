@@ -35,7 +35,6 @@ import re
 import subprocess
 import sys
 
-import lane_audio
 import lane_sim
 from lane_sim import BootError
 from lane_slots import state_dir
@@ -264,7 +263,6 @@ def shut_down(udid: str) -> None:
     """Shut a device down without the pool lock. `--retire` does this first: a crash flood must stop at once,
     and release() may wait for the lock behind another run's erase (up to ERASE_TIMEOUT)."""
     simctl_quietly('shutdown', udid)
-    lane_audio.settle(drop=udid)
 
 
 def retire_now(udid: str) -> None:
