@@ -4167,6 +4167,97 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(startChars, [1_300, fixture.targetChar], "jumping over a Margin doesn't play it")
     }
 
+    /// #1660: a Skim summary lands further on in the episode, and the moment must not play the Margin the landing
+    /// passed. Reading stands at 100 s, another spoken Margin sits 1 s ahead and the next scene starts 2 s on, under the
+    /// 4,000 ms reading limit, so without `sourceMoved()` in `skimSeekOrStage` the next reading crosses the Margin and plays it.
+    /// The moment's lead-in has the target at 120 s; the Margin ahead sits between the reading and the target.
+    func testPlayThisMomentOnAPodcastSkimLandingDoesNotPlayTheMarginItPasses() throws {
+        let outcome = try skimLandingOnAPodcastMoment(landingAheadMs: 2_000, otherMarginAheadMs: 1_000)
+
+        XCTAssertEqual(outcome.landedAtMs, 102_000, "the Skim landed on the next scene")
+        XCTAssertEqual(outcome.unplayedMs, [101_000, 120_000], "skimming over a Margin doesn't play it")
+        XCTAssertNil(outcome.voiceAttempt, "no voice was started for the Margin the Skim passed")
+    }
+
+    /// #1660: the neighbouring landings. Each Margin sits half way to the landing. Without `sourceMoved()` the conductor
+    /// takes the first three for playback and the last two for a seek (`testASkimLandingIsReadAsPlaybackOnlyWhenItIsUnderTheReadingLimit`
+    /// in SessionKit pins that split); with it, none of them plays a Margin.
+    func testPlayThisMomentOnAPodcastSkimLandingsOfEveryLengthDoNotPlayTheMarginsTheyPass() throws {
+        for landingAheadMs in [500, 2_000, 3_900, 4_100, 30_000] {
+            let outcome = try skimLandingOnAPodcastMoment(landingAheadMs: landingAheadMs, otherMarginAheadMs: landingAheadMs / 2)
+
+            XCTAssertEqual(outcome.landedAtMs, 100_000 + landingAheadMs, "landing \(landingAheadMs) ms on")
+            XCTAssertEqual(outcome.unplayedMs, [100_000 + landingAheadMs / 2, 120_000], "landing \(landingAheadMs) ms on")
+            XCTAssertNil(outcome.voiceAttempt, "landing \(landingAheadMs) ms on")
+        }
+    }
+
+    private struct SkimLandingOutcome {
+        let landedAtMs: Int?
+        /// Where the moment's unplayed Margins sit, in playback order.
+        let unplayedMs: [Int]
+        /// Set when the conductor tried to play a Margin's voice (the test voices don't exist, so it reports them missing).
+        let voiceAttempt: String?
+    }
+
+    /// A podcast moment on a Margin at 120 s, the source reading at 100 s and another spoken Margin `otherMarginAheadMs`
+    /// past that reading. A Skim then lands `landingAheadMs` past it: the bridge record is what the controller keeps
+    /// for a summary that is playing, and `completeSkimBridge()` runs the landing the app runs when the summary ends.
+    /// The progress ticker runs on a timer, so the test takes the readings itself, as the ticker would.
+    private func skimLandingOnAPodcastMoment(landingAheadMs: Int, otherMarginAheadMs: Int) throws -> SkimLandingOutcome {
+        let readingMs = 100_000
+        let root = FileManager.default.temporaryDirectory.appending(path: "margin-moment-skim-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        let databaseURL = root.appending(path: "library.sqlite")
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: databaseURL)
+        model.resetAndSeed()
+        defer { model.endMarginMoment(); model.pause() }
+        let store = try SQLiteSessionStore(path: databaseURL.path)
+        try store.saveItem(Item(id: "moment-source", title: "Moment source", mediaType: "podcast", text: nil,
+            externalReference: "local", status: "ready",
+            media: ItemMedia(sourceType: .nativeMediaFile, url: root.appending(path: "source.m4a").absoluteString,
+                durationMs: 180_000, nativeMediaId: "moment-source")))
+        model.startItem(id: "moment-source")
+        var margin = shareableInterjection(itemId: "moment-source")
+        margin.sessionId = try XCTUnwrap(model.snapshot.sessionId)
+        margin.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+            anchorBefore: "", anchorAfter: "", mediaTimeMs: 120_000)
+        margin.audioPath = root.appending(path: "margin.m4a").path
+        margin.audioStatus = "recorded"
+        try store.saveInterjection(margin)
+        var other = margin
+        other.id = "other-ahead"
+        other.anchor = Anchor(anchorType: .transcript, startChar: 0, endChar: 0,
+            anchorBefore: "", anchorAfter: "", mediaTimeMs: readingMs + otherMarginAheadMs)
+        try store.saveInterjection(other)
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.marginRows.first { $0.interjection.id == margin.id })
+        XCTAssertTrue(model.playMarginMoment(row))
+        XCTAssertEqual(try XCTUnwrap(model.marginMoment).unplayed.count, 2, "the Margin ahead is part of the moment")
+
+        // The listener is mid-episode: one reading at 100 s gives the conductor its place.
+        XCTAssertTrue(model.seekMedia(toMediaTimeMs: readingMs))
+        XCTAssertEqual(model.snapshot.currentMediaTimeMs, readingMs)
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+
+        model.snapshot.skimBridgeState = SkimBridgeState(
+            direction: .forward, itemId: "moment-source", originMediaTimeMs: readingMs, summarySceneId: "scene-0",
+            destinationSceneId: "scene-1", destinationMediaTimeMs: readingMs + landingAheadMs,
+            summaryAssetId: "summary", wasSourcePlaying: false, status: .playing
+        )
+        model.completeSkimBridge()
+        XCTAssertNil(model.snapshot.skimBridgeState, "the summary is over")
+        let landedAtMs = model.snapshot.currentMediaTimeMs
+        model.marginMomentConductor?.observe(mediaTimeMs: model.marginMomentPositionMs)
+
+        return SkimLandingOutcome(
+            landedAtMs: landedAtMs,
+            unplayedMs: model.marginMoment?.unplayed.map(\.mediaTimeMs) ?? [],
+            voiceAttempt: model.diagnostics["marginMoment.voiceUnavailable"]
+        )
+    }
+
     private func textAnchoredMomentFixture(
         otherMarginChars: [Int] = [],
         chapterStartChars: [Int] = []
