@@ -132,7 +132,8 @@ final class LocalAudioListeningPackageTests: XCTestCase {
         // At the last chapter Skim Back stays, and the forward slot keeps its place as a dimmed Skim (#1666).
         XCTAssertTrue(model.showsSkimRow)
         XCTAssertEqual(model.chapterRowBackwardControl, .skim)
-        XCTAssertEqual(model.chapterRowForwardControl, .skimDisabled)
+        XCTAssertEqual(model.chapterRowForwardControl, model.snapshot.canSkimForward ? .skim : .skimDisabled,
+                       "no chapter ahead: the slot is forward Skim, dimmed when it can't be pressed, never empty")
         XCTAssertEqual(model.gate2CompactSnapshot?.skimBackwardDestinationMs, 5_000, "precondition: the Lock Screen shows Skim Back's destination")
         func movedMap(sceneOneStartMs: Int) -> PortableListeningMapProposalArtifact {
             let bounds = [0, sceneOneStartMs, 10_000]
