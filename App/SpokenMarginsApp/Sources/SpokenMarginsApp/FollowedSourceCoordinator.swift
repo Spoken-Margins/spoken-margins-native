@@ -178,8 +178,10 @@ actor FollowedSourceCoordinator {
         let host = url.host?.lowercased() ?? candidate.source.host
         let canonical = URL(string: parsed.feedURL ?? url.absoluteString) ?? url
         let sourceId = "source-\(Self.digest(canonical.absoluteString.lowercased()))"
-        // Following a feed again keeps its new-item choice (#466).
-        let previousPolicy = try repository.loadFeedSubscriptions().first { $0.id == "subscription-\(sourceId)" }?.newItemPolicy
+        // Following a feed again keeps its new-item choice (#466) and its follow moment (#1589):
+        // a feed already followed has no new back catalogue, and its waiting entries stay New.
+        let previous = try repository.loadFeedSubscriptions().first { $0.id == "subscription-\(sourceId)" }
+        let previousPolicy = previous?.newItemPolicy
         let subscription = FeedSubscription(
             id: "subscription-\(sourceId)",
             source: SourceIdentity(
@@ -189,12 +191,13 @@ actor FollowedSourceCoordinator {
                 host: canonical.host?.lowercased() ?? host,
                 title: parsed.title
             ),
+            createdAt: previous?.createdAt ?? Date(),
             newItemPolicy: previousPolicy
         )
         try repository.saveFeedSubscription(subscription)
-        // What the feed has right now is its back catalogue: only entries it publishes after this
-        // moment are New (#1589). The entries are kept, stamped with it.
-        try save(entries: parsed.items, subscription: subscription, followMoment: subscription.createdAt)
+        // What a feed has the first time it is followed is its back catalogue: only entries it
+        // publishes after this moment are New (#1589). The entries are kept, stamped with it.
+        try save(entries: parsed.items, subscription: subscription, followMoment: previous == nil ? subscription.createdAt : nil)
         artwork.recordFeedArtwork(parsed.imageURL, for: subscription.id)
         return subscription
     }

@@ -63,6 +63,20 @@ final class FollowBaselineRefreshTests: XCTestCase {
         XCTAssertEqual(afterRefollow, [], "the new follow is the new baseline, even for an episode dated after it")
     }
 
+    func testFollowingAFollowedFeedAgainKeepsItsWaitingEntriesNew() async throws {
+        let repository = InMemorySessionRepository()
+        let coordinator = coordinator(repository)
+        let first = try await coordinator.follow(urlString: "https://archive.example/dated.json")
+        ArchiveFeedURLProtocol.newEpisodes = 1
+        _ = await coordinator.refreshStale(force: true)
+
+        // Pasting the link of a feed that is already followed must not move its baseline.
+        let again = try await coordinator.follow(urlString: "https://archive.example/dated.json")
+        XCTAssertEqual(again.createdAt, first.createdAt)
+        let titles = try await newTitles(coordinator, repository)
+        XCTAssertEqual(titles, ["Fresh 1"])
+    }
+
     func testAFeedWithoutDatesDoesNotFloodNewEither() async throws {
         let repository = InMemorySessionRepository()
         let coordinator = coordinator(repository)

@@ -4476,7 +4476,7 @@ final class Gate1AppModel: ObservableObject {
 
     /// Re-reads the inbox without a refresh, which skips while another one runs (#477).
     func reloadFollowedSourceEntries() async {
-        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { followedSourceEntries = entries }
+        if let coordinator = followedSourceCoordinator, let entries = try? await coordinator.entries() { feedSubscriptions = storedFeedSubscriptions(); followedSourceEntries = entries } // subscriptions first: New hides a back catalogue by them (#1589)
     }
 
     func requireLocalSourceImporter() throws -> LocalSourceImporter {
