@@ -2090,13 +2090,19 @@ public final class SessionEngine {
         return snapshot
     }
 
-    /// - Parameter resumesSource: as for `finishInterjection`.
+    /// What a Cancel or Write instead is told when a Save has already stored the Margin or closed its recording.
+    static let marginAlreadyStored = "This Margin is already saved. Finish it with Save."
+
+    /// - Parameter resumesSource: as for `finishInterjection`. A Cancel after a Save that stored the Margin and failed a
+    ///   later step throws and changes nothing: the Margin is kept, and Save again finishes it (#1713).
     @discardableResult
     public func cancelInterjection(resumesSource: Bool = true) throws -> SessionSnapshot {
         playbackRequestedAt = now(); defer { playbackRequestedAt = nil } // the resume's first audio counts from here (#357)
         guard var session = currentSession else {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
+        // The Margin is in the Library already (#1121). A Cancel now would tell the listener it was not saved.
+        if let pending = storedMarginFinish, pending.interjection.sessionId == session.id { throw SessionKitError.invalidCommandForState(Self.marginAlreadyStored) }
         pendingInterjectionPause = nil // a Cancel that finds the tap's pause still pending resumes below like any other
         removeRecordingDraft() // first: a kill between the two leaves a file nobody recovers, so a Cancel stays cancelled
         try recorder.cancelRecording()
@@ -2134,7 +2140,8 @@ public final class SessionEngine {
     /// - Parameter resumesSource: false when something else is to play on instead (a Margin's voice the recording
     ///   held, as for `cancelInterjection`): the source stays paused after the written Margin.
     ///
-    /// A call that finds no recording to switch changes nothing and the recording, if any, runs on. The recording's
+    /// A call that finds no recording to switch changes nothing and the recording, if any, runs on. The same holds
+    /// after a Save that closed the recording or stored the Margin and then failed: Save again finishes it (#1713). The recording's
     /// note is removed before the recorder is asked to cancel, as for `cancelInterjection`, so a recorder that won't
     /// cancel throws with the recording still running but no longer journaled.
     @discardableResult
@@ -2146,6 +2153,12 @@ public final class SessionEngine {
               let targetType = recordingTargetType,
               let targetId = recordingTargetId else {
             throw SessionKitError.invalidCommandForState("switchRecordingToWrittenInterjection")
+        }
+        // A Save that closed the recording or stored the Margin and failed a later step (#911, #1121) leaves the
+        // recording screen up. Writing instead would drop the recording, or write a second Margin at the place of
+        // the stored one, so the listener finishes with Save (#1713).
+        if storedMarginFinish != nil || closedRecordingRef != nil {
+            throw SessionKitError.invalidCommandForState(Self.marginAlreadyStored)
         }
         let returnsToFinished = returnsToFinishedSource(targetType: targetType)
         let capture = WrittenInterjectionCapture(

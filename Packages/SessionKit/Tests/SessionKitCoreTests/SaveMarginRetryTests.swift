@@ -204,6 +204,90 @@ final class SaveMarginRetryTests: XCTestCase {
         XCTAssertEqual(try margins(engine).count, 1)
     }
 
+    /// Fails the first time it is asked to schedule a transcription, then works.
+    private final class FlakyTranscriber: TranscriptionClient {
+        private(set) var attempts = 0
+        func scheduleTranscription(interjection: Interjection) throws {
+            attempts += 1
+            if attempts == 1 { throw SessionKitError.persistenceFailed("transcription_unavailable") }
+        }
+    }
+
+    /// #1713: the failed Save leaves the recording screen up with the Margin already in the Library. Write instead would
+    /// have dropped the recording and written a second Margin at the same place.
+    func testWriteInsteadAfterAStepFailsFollowingTheStoredMarginIsRefused() throws {
+        let transcriber = FlakyTranscriber()
+        let (engine, recorder) = try recordingEngine(transcriber: transcriber)
+        _ = try engine.beginInterjection()
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "scheduling the transcription fails after the Margin is stored")
+        XCTAssertEqual(try margins(engine).count, 1, "the Margin was already stored")
+
+        XCTAssertThrowsError(try engine.switchRecordingToWrittenInterjection(), "the Margin is stored; finish it with Save")
+        XCTAssertEqual(try margins(engine).count, 1, "no second Margin")
+        XCTAssertEqual(engine.snapshot.status, .recording, "the screen is still on recording")
+
+        XCTAssertNoThrow(try engine.finishInterjection(audioRef: nil), "Save finishes the stored Margin")
+        let saved = try margins(engine)
+        XCTAssertEqual(saved.map(\.audioPath), [recorder.recordings[0]], "one spoken Margin, with the recording that was made")
+        XCTAssertFalse(saved.contains { $0.captureKind == .written }, "and nothing written beside it")
+    }
+
+    /// #1713: Cancel would keep the stored Margin and tell the listener it was not saved.
+    func testCancelAfterAStepFailsFollowingTheStoredMarginIsRefused() throws {
+        let transcriber = LockingTranscriber(path: databasePath)
+        let (engine, recorder) = try recordingEngine(transcriber: transcriber)
+        _ = try engine.beginInterjection()
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil))
+        transcriber.release()
+
+        XCTAssertThrowsError(try engine.cancelInterjection(), "the Margin is stored; finish it with Save")
+        XCTAssertEqual(try margins(engine).count, 1)
+        XCTAssertEqual(engine.snapshot.status, .recording)
+
+        XCTAssertNoThrow(try engine.finishInterjection(audioRef: nil))
+        XCTAssertEqual(try margins(engine).map(\.audioPath), [recorder.recordings[0]])
+    }
+
+    /// A note left by another session's failed Save does not stop a Cancel here.
+    func testCancelInAnotherSessionIsNotStoppedByAnEarlierSessionsStoredMargin() throws {
+        let other = Item(id: "item-other", title: "Other", mediaType: "text", text: "Other text here.", externalReference: nil, status: "ready")
+        try store.saveItem(other)
+        let transcriber = FlakyTranscriber()
+        let (engine, _) = try recordingEngine(transcriber: transcriber)
+        _ = try engine.beginInterjection()
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil))
+
+        _ = try engine.startSession(itemId: other.id)
+
+        XCTAssertNoThrow(try engine.cancelInterjection(), "the stored Margin belongs to the first session")
+    }
+
+    /// #1713: a Save that closed the recording and failed before storing it keeps the recording for the next Save.
+    func testWriteInsteadAfterASaveThatClosedTheRecordingButStoredNothingIsRefused() throws {
+        let (engine, recorder) = try recordingEngine()
+        _ = try engine.beginInterjection()
+        let lock = try WriteLock(path: databasePath)
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil), "the write lock outlasts the store's 1 s wait")
+        lock.release()
+
+        XCTAssertThrowsError(try engine.switchRecordingToWrittenInterjection(), "the closed recording is still to be saved")
+        XCTAssertEqual(engine.snapshot.status, .recording)
+
+        XCTAssertNoThrow(try engine.finishInterjection(audioRef: nil))
+        XCTAssertEqual(try margins(engine).map(\.audioPath), [recorder.recordings[0]], "the recording survived the refused switch")
+    }
+
+    /// Cancel before any Save, and after a Save that stored nothing, still work (#911).
+    func testWriteInsteadBeforeAnySaveStillSwitches() throws {
+        let (engine, _) = try recordingEngine()
+        _ = try engine.beginInterjection()
+
+        let capture = try engine.switchRecordingToWrittenInterjection()
+        _ = try engine.saveWrittenInterjection(captureId: capture.id, text: "Written.")
+
+        XCTAssertEqual(try margins(engine).map { $0.captureKind == .written }, [true])
+    }
+
     /// The next Margin after one that needed a retry starts clean.
     func testAMarginRecordedAfterARetriedSaveIsFinishedOnItsOwn() throws {
         let transcriber = LockingTranscriber(path: databasePath)
