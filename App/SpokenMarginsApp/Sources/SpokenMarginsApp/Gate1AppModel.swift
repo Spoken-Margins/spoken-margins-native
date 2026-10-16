@@ -2803,10 +2803,47 @@ final class Gate1AppModel: ObservableObject {
     }
 
     // MARK: Portable listening editions and personal knowledge output
-    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) {
+    @discardableResult
+    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) -> Bool {
         do {
             try performListeningEditionImport(data, replaceMap: replaceMap)
-        } catch { reportFailure(error, context: "Listening edition import failed") }
+            return true
+        } catch {
+            reportFailure(error, context: "Listening edition import failed")
+            return false
+        }
+    }
+
+    /// One already-decoded edition from the Listening Edition screen. Opens the item, as a single file always has.
+    @discardableResult
+    func importListeningEdition(_ edition: ListeningEdition, replaceMap: Bool = false) -> Bool {
+        do {
+            try openAfterImporting(edition, replaceMap: replaceMap)
+            return true
+        } catch {
+            reportFailure(error, context: "Listening edition import failed")
+            return false
+        }
+    }
+
+    /// Several editions at once (#1472): saves each one and leaves the listener where they are. It opens no item
+    /// and starts no playback, and a source that already has a different map keeps it (replacing that stays
+    /// on the single-file path, with its toggle). One result line per entry.
+    func importListeningEditions(_ entries: [ListeningEditionBatch.Entry]) -> [ListeningEditionBatch.Line] {
+        defer {
+            if let store, let rows = try? loadLibraryRows(store: store) { libraryItems = rows }
+            refreshSelectedItem()
+        }
+        return ListeningEditionBatch.run(entries, existing: { edition in
+            guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
+            guard let previous = try ListeningEditionStore.application().load(itemID: edition.itemID) else { return .none }
+            if previous != edition { return .different }
+            // Saved edition but the item is gone from the Library: import it again.
+            return (try? requireStore().loadItem(id: edition.itemID)) == nil ? .none : .identical
+        }, importOne: { edition in
+            try saveListeningEdition(edition, replaceMap: false)
+            scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
+        })
     }
 
     func importListeningEditionDataForShortcut(_ data: Data) throws {
@@ -2815,7 +2852,23 @@ final class Gate1AppModel: ObservableObject {
 
     private func performListeningEditionImport(_ data: Data, replaceMap: Bool) throws {
         guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-        let edition = try ListeningEdition.decode(data)
+        try openAfterImporting(try ListeningEdition.decode(data), replaceMap: replaceMap)
+    }
+
+    private func openAfterImporting(_ edition: ListeningEdition, replaceMap: Bool) throws {
+        try saveListeningEdition(edition, replaceMap: replaceMap)
+        let store = try requireStore()
+        activeItemId = edition.itemID
+        libraryItems = try loadLibraryRows(store: store)
+        refreshSelectedItem()
+        screen = .item
+        scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
+        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
+    }
+
+    /// Saves the item, the edition and its map. Navigates nowhere.
+    private func saveListeningEdition(_ edition: ListeningEdition, replaceMap: Bool) throws {
+        guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
         let editions = try ListeningEditionStore.application()
         if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
             throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
@@ -2835,12 +2888,6 @@ final class Gate1AppModel: ObservableObject {
         if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
             activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
         }
-        activeItemId = edition.itemID
-        libraryItems = try loadLibraryRows(store: store)
-        refreshSelectedItem()
-        screen = .item
-        scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
-        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
     }
 
     func importListeningEditionFile(_ url: URL) {
