@@ -247,9 +247,16 @@ final class FeedbackBannerTests: XCTestCase {
 
     /// Only the summary and transcription failure paths set an origin; every other event keeps the banner.
     func testAFailureWithoutOriginKeepsTheBannerOnTheNowScreen() {
+        // A James or Lily choice left pending on the Terms holds the start, so nothing plays and the
+        // Now screen never opens. Choose the iPhone voice, as the other playback tests here do, and put
+        // the shared voice preferences back afterwards (#1448).
+        let preferences = VoicePreferencesSnapshot.capture()
+        defer { preferences.restore() }
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
+        model.declineCurrentTerms()
         model.startItem(id: "item-pill")
+        XCTAssertTrue(model.hasActiveSession, "The item must be playing before the Now screen can open")
         model.openPlayback()
         XCTAssertEqual(model.screen, .playback)
 
