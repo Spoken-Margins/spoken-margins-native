@@ -2026,8 +2026,9 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
     }
 
-    // The iOS voice can't start (a session that won't activate): the seam goes back to waiting for the chosen
-    // voice, so B still plays when it lands. It must never end with nothing left to play it (#1673 review).
+    // The iOS voice can't start (a session that won't activate): the hand-over touches nothing of the chosen voice's,
+    // so the seam waits for B as it always did and B plays when it lands, with the render queue behind it intact
+    // (#1673 review and audit).
     func testAHandOverTheIOSVoiceCannotStartFallsBackToWaitingForTheChosenVoice() async throws {
         let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false })
         defer { harness.tearDown() }
