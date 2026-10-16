@@ -23,24 +23,21 @@ struct ExperienceRootTabs: View {
 
     var body: some View {
         TabView(selection: rootSelection) {
-            ExperienceLibraryScreen(addSourceRoute: addSourceRoute)
-                .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceLibraryScreen(addSourceRoute: addSourceRoute) }
                 .tabItem {
                     Label("Library", systemImage: AppRoot.library.systemImage)
                         .accessibilityIdentifier("navigation.tab.library")
                 }
                 .tag(AppRoot.library)
 
-            ExperienceSourcesScreen(scrollMemory: $navigation.followingScroll)
-                .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceSourcesScreen(scrollMemory: $navigation.followingScroll) }
                 .tabItem {
                     Label("Following", systemImage: AppRoot.sources.systemImage)
                         .accessibilityIdentifier("navigation.tab.sources")
                 }
                 .tag(AppRoot.sources)
 
-            ExperienceMarginsScreen()
-                .safeAreaInset(edge: .bottom, spacing: 8) { miniPlayer }
+            MiniPlayerDock(showsMiniPlayer: showsMiniPlayer) { ExperienceMarginsScreen() }
                 .tabItem {
                     Label("Margins", systemImage: AppRoot.margins.systemImage)
                         .accessibilityIdentifier("navigation.tab.margins")
@@ -52,15 +49,6 @@ struct ExperienceRootTabs: View {
         .sheet(item: addSourceRoute) { route in
             ExperienceAddSourceFlow(initialRoute: route)
                 .environmentObject(model)
-        }
-    }
-
-    @ViewBuilder
-    private var miniPlayer: some View {
-        if showsMiniPlayer {
-            MiniPlayerBar()
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
         }
     }
 
