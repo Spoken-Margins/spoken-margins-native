@@ -8,6 +8,8 @@ struct BatchExportScreen: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isShareSheetPresented = false
+    /// Kept while the sheet closes, so its content does not blank out mid-animation.
+    @State private var sharedFileURLs: [URL] = []
 
     private static let destinationAnchor = "batchExport.share"
 
@@ -79,13 +81,14 @@ struct BatchExportScreen: View {
                     }
                 }
             }
-            .onChange(of: model.batchExportShare) { _, files in isShareSheetPresented = files != nil }
+            .onChange(of: model.batchExportShare) { _, files in
+                if let files { sharedFileURLs = files.fileURLs }
+                isShareSheetPresented = files != nil
+            }
             #if canImport(UIKit)
             .sheet(isPresented: $isShareSheetPresented, onDismiss: model.batchShareSheetDismissed) {
-                if let files = model.batchExportShare {
-                    BatchShareActivityView(fileURLs: files.fileURLs) { completed, activityType in
-                        model.batchShareSheetFinished(completed: completed, activityType: activityType)
-                    }
+                BatchShareActivityView(fileURLs: sharedFileURLs) { completed, activityType in
+                    model.batchShareSheetFinished(completed: completed, activityType: activityType)
                 }
             }
             #endif

@@ -129,8 +129,11 @@ extension Gate1AppModel {
     /// The sheet closed. iOS may report the outcome just after the close, so give it a moment before
     /// treating the sheet as cancelled.
     func batchShareSheetDismissed() {
+        // Only the share that was open when the sheet closed: a newer share must not be cleared by this one.
+        guard let closing = batchExportShare?.directory else { return }
         Task { @MainActor [self] in
             try? await Task.sleep(for: .milliseconds(600))
+            guard batchExportShare?.directory == closing else { return }
             batchShareSheetFinished(completed: false, activityType: nil)
         }
     }
