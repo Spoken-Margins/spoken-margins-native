@@ -2126,6 +2126,55 @@ public final class SessionEngine {
         return snapshot
     }
 
+    /// The listener chose to write the Margin they were recording (#1669). The recording is dropped, as Cancel
+    /// does, and a written Margin opens at the place the recording was locked to, answering the same shared Margin.
+    /// The source follows the written Margin the way it would have followed the spoken one: it plays on after
+    /// Save or Cancel, except on a finished source, which stays finished.
+    ///
+    /// - Parameter resumesSource: false when something else is to play on instead (a Margin's voice the recording
+    ///   held, as for `cancelInterjection`): the source stays paused after the written Margin.
+    ///
+    /// A call that finds no recording to switch changes nothing and the recording, if any, runs on. The recording's
+    /// note is removed before the recorder is asked to cancel, as for `cancelInterjection`, so a recorder that won't
+    /// cancel throws with the recording still running but no longer journaled.
+    @discardableResult
+    public func switchRecordingToWrittenInterjection(resumesSource: Bool = true) throws -> WrittenInterjectionCapture {
+        guard var session = currentSession,
+              session.phase == .recordingInterjection,
+              pendingWrittenInterjection == nil,
+              let anchor = recordingAnchor,
+              let targetType = recordingTargetType,
+              let targetId = recordingTargetId else {
+            throw SessionKitError.invalidCommandForState("switchRecordingToWrittenInterjection")
+        }
+        let returnsToFinished = returnsToFinishedSource(targetType: targetType)
+        let capture = WrittenInterjectionCapture(
+            id: UUID().uuidString,
+            sessionId: session.id,
+            itemId: session.itemId,
+            targetType: targetType,
+            targetId: targetId,
+            anchor: anchor,
+            roughPercent: interjectionPercent(for: session, targetType: targetType, targetId: targetId, anchor: anchor),
+            wasPlaying: resumesSource && !returnsToFinished,
+            replyTo: recordingReplyTo
+        )
+        removeRecordingDraft() // first, as for Cancel: a kill between the two leaves a file nobody recovers
+        try recorder.cancelRecording()
+        session.phase = returnsToFinished ? .finished : (priorPhase ?? priorPhaseForResume(targetType: targetType))
+        recordingAnchor = nil
+        recordingTargetType = nil
+        recordingTargetId = nil
+        recordingReplyTo = nil
+        closedRecordingRef = nil
+        storedMarginFinish = nil
+        currentSession = session
+        try persistSession(session)
+        pendingWrittenInterjection = capture
+        publish(status: .paused, phase: session.phase)
+        return capture
+    }
+
     @discardableResult
     public func generateInterjectionSummary(scope: SummaryScope) throws -> SessionSnapshot {
         try require("generateInterjectionSummary", category: "ai", capabilities: ["summarize_interjections", "defer_ai_jobs"])

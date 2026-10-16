@@ -5,6 +5,8 @@ struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var isDiscardConfirmationPresented = false
+    /// #1669: Write instead on a recording that holds something worth keeping asks first.
+    @State private var isWriteInsteadConfirmationPresented = false
     /// Ignores a stray second tap of a double tap on Add a Margin (#148).
     @State private var saveTapGuard = RecordingSaveTapGuard(appearedAt: Date())
 
@@ -237,11 +239,19 @@ struct ExperienceRecordingView: View {
                 .disabled(model.isFinishingInterjection)
                 .accessibilityIdentifier("recording.retryMicrophone.button")
             }
-            if isPreparing {
-                Button("Write instead", systemImage: "square.and.pencil", action: model.switchPendingVoiceCaptureToWrittenMargin)
+            if isPreparing || model.snapshot.isRecording {
+                Button("Write instead", systemImage: "square.and.pencil", action: writeInstead)
                     .foregroundStyle(.white)
                     .frame(minHeight: 44)
+                    .disabled(model.isFinishingInterjection)
                     .accessibilityIdentifier("recording.writeInstead.button")
+                    // Attached to the button, so on iPad the dialog points at it.
+                    .confirmationDialog("Write this Margin instead?", isPresented: $isWriteInsteadConfirmationPresented, titleVisibility: .visible) {
+                        Button("Discard recording and write", role: .destructive, action: model.switchRecordingToWrittenMargin)
+                        Button("Keep recording", role: .cancel) {}
+                    } message: {
+                        Text("The recording has not been saved. Writing starts at the same listening position, without it.")
+                    }
             }
             HStack(spacing: 12) {
                 cancelControl
@@ -268,6 +278,18 @@ struct ExperienceRecordingView: View {
     private func requestFinish() {
         guard saveTapGuard.accepts(tapAt: Date()) else { return }
         model.requestFinishInterjection()
+    }
+
+    /// Before the recording starts nothing is lost. Once it holds sound, the listener confirms the discard, as for Cancel.
+    private func writeInstead() {
+        guard !model.isFinishingInterjection else { return }
+        if isPreparing {
+            model.switchPendingVoiceCaptureToWrittenMargin()
+        } else if model.recordingHasKeepableAudio {
+            isWriteInsteadConfirmationPresented = true
+        } else {
+            model.switchRecordingToWrittenMargin()
+        }
     }
 
     private func requestDiscard() {
