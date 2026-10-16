@@ -983,8 +983,9 @@ final class Gate1FlowUITests: XCTestCase {
 
         XCTAssertTrue(jump.isEnabled)
         jump.tap()
-        XCTAssertTrue(element("batchExport.chooseFolder.button").waitForExistence(timeout: 2))
-        XCTAssertTrue(element("batchExport.chooseFolder.button").isHittable)
+        XCTAssertTrue(element("batchExport.export.button").waitForExistence(timeout: 2))
+        XCTAssertTrue(element("batchExport.export.button").isHittable)
+        XCTAssertFalse(element("batchExport.chooseFolder.button").exists, "Export Sessions has no remembered folder (#1528)")
     }
 
     func testBuild23SenderStagesInvalidateStalePreviewAndUseSystemShare() throws {
