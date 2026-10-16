@@ -109,6 +109,41 @@ final class SystemVoiceChunkRendererTests: XCTestCase {
         XCTAssertEqual(try AVAudioFile(forReading: output).length, 0, "nothing was written after the timeout")
     }
 
+    // #1688: on a speech service still starting, `AVSpeechSynthesisVoice(identifier:)` blocked
+    // for minutes, and the render called it on its caller's thread before the timeout was set, so
+    // the timeout never fired. The lookup now runs in the timed write, and a write whose lookup
+    // returns after the timeout is never started.
+    func testATimeoutFiresWhileTheVoiceLookupIsBlocked() async throws {
+        let release = DispatchSemaphore(value: 0)
+        let looked = expectation(description: "the blocked lookup returned")
+        let wrote = LockedFlag()
+        let renderer = SystemVoiceChunkRenderer(
+            usesApplicationAudioSession: false, releaseDelay: 0.05,
+            voiceLookup: { _ in
+                _ = release.wait(timeout: .now() + 5)
+                looked.fulfill()
+                return nil
+            },
+            speechWrite: { _, _, _ in wrote.set() }
+        )
+        let started = Date()
+        do {
+            _ = try await renderer.render(
+                text: text, voiceIdentifier: "com.apple.voice.compact.en-US.Samantha",
+                matching: try reference(), to: root.appending(path: "lookup.wav"), timeout: 0.3
+            )
+            XCTFail("a blocked voice lookup timed out")
+        } catch let failure as SystemVoiceChunkRenderer.Failure {
+            XCTAssertEqual(failure, .timedOut)
+        }
+        let waited = Date().timeIntervalSince(started)
+        release.signal()
+        XCTAssertLessThan(waited, 2, "the timeout fired after \(waited) s, not when the lookup returned")
+        await fulfillment(of: [looked], timeout: 5)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertFalse(wrote.value, "no write starts after the render timed out")
+    }
+
     // The real synthesizer on this Mac: a stand-in is written in the reference's format, and the
     // synthesizer is let go after it finishes.
     func testTheSystemVoiceWritesAStandInAndLetsGoOfItsSynthesizer() async throws {
@@ -140,5 +175,12 @@ private final class SynthesizerBox: @unchecked Sendable {
         guard let synthesizer, let utterance = lock.withLock({ utterance }) else { return }
         synthesizer.delegate?.speechSynthesizer?(synthesizer, didFinish: utterance)
     }
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+    var value: Bool { lock.withLock { flag } }
+    func set() { lock.withLock { flag = true } }
 }
 #endif
