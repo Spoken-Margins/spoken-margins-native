@@ -38,6 +38,12 @@ final class J1TextChaptersJourneyUITests: XCTestCase {
             playPause.tap()
             let paused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Play"), object: playPause)
             XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 5), .completed, "Article did not pause")
+            // Let the last progress tick land, then take the position that must hold.
+            let settling = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label != %@", element("playback.progress.label").label),
+                object: element("playback.progress.label"))
+            settling.isInverted = true
+            _ = XCTWaiter().wait(for: [settling], timeout: 1.5)
             pausedPosition = element("playback.progress.label").label
             let options = element("playback.options.button")
             XCTAssertTrue(options.waitForExistence(timeout: 5), "The More control is missing")

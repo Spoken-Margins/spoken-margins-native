@@ -40,6 +40,8 @@ struct NativeTextPeekView: View {
                         Text("\(position.number) of \(position.count)")
                             .font(.subheadline)
                             .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize()
+                            .accessibilityLabel("Chapter \(position.number) of \(position.count)")
                     }
                 }
                 if !reader.text.isEmpty {

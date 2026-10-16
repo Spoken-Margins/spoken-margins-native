@@ -12,6 +12,10 @@ public struct PlaybackTextReaderBrowser: Sendable, Equatable {
     private let text: String
     private let chapters: [Chapter]
     private let opening: PlaybackTextReaderTarget
+    /// Chapter indices in reading order, and each one's start clamped into the text. Worked out once: a long
+    /// transcript has many chapters, and counting its Characters for each of them on every redraw is slow.
+    private let order: [Int]
+    private let starts: [Int]
     /// What the reader shows now.
     public private(set) var current: PlaybackTextReaderTarget
 
@@ -20,6 +24,9 @@ public struct PlaybackTextReaderBrowser: Sendable, Equatable {
         self.chapters = chapters
         self.opening = opening
         self.current = opening
+        let length = text.count
+        self.order = PlaybackTextReaderTarget.readingOrder(chapters)
+        self.starts = chapters.map { PlaybackTextReaderTarget.clamp($0.startChar, length) }
     }
 
     public var isAtOpening: Bool { current == opening }
@@ -27,9 +34,9 @@ public struct PlaybackTextReaderBrowser: Sendable, Equatable {
     /// The shown chapter's place among the chapters that start at different points, for "2 of 7"; nil with no chapters.
     public var position: (number: Int, count: Int)? {
         guard let index = current.chapterIndex, chapters.indices.contains(index) else { return nil }
-        let starts = distinctStarts
-        guard let number = starts.firstIndex(of: clampedStart(index)) else { return nil }
-        return (number + 1, starts.count)
+        let distinct = distinctStarts
+        guard let number = distinct.firstIndex(of: starts[index]) else { return nil }
+        return (number + 1, distinct.count)
     }
 
     public func canStep(_ direction: Direction) -> Bool { neighbour(direction) != nil }
@@ -37,32 +44,32 @@ public struct PlaybackTextReaderBrowser: Sendable, Equatable {
     /// Shows the neighbouring chapter; does nothing at either end of the item.
     public mutating func step(_ direction: Direction) {
         guard let index = neighbour(direction) else { return }
-        current = index == opening.chapterIndex
+        // Chapters that share a start show the same text, so reaching the opening's start is the opening.
+        current = openingStart == starts[index]
             ? opening
             : PlaybackTextReaderTarget.resolve(text: text, chapters: chapters, chapterIndex: index)
     }
 
     public mutating func returnToOpening() { current = opening }
 
-    private var length: Int { text.count }
-
-    private func clampedStart(_ index: Int) -> Int { PlaybackTextReaderTarget.clamp(chapters[index].startChar, length) }
+    private var openingStart: Int? {
+        opening.chapterIndex.flatMap { starts.indices.contains($0) ? starts[$0] : nil }
+    }
 
     private var distinctStarts: [Int] {
         var seen = Set<Int>()
-        return PlaybackTextReaderTarget.readingOrder(chapters).map(clampedStart).filter { seen.insert($0).inserted }
+        return order.map { starts[$0] }.filter { seen.insert($0).inserted }
     }
 
     private func neighbour(_ direction: Direction) -> Int? {
         guard let index = current.chapterIndex, chapters.indices.contains(index) else { return nil }
-        let here = clampedStart(index)
-        let order = PlaybackTextReaderTarget.readingOrder(chapters)
+        let here = starts[index]
         let target: Int?
         switch direction {
-        case .next: target = order.map(clampedStart).first(where: { $0 > here })
-        case .previous: target = order.map(clampedStart).last(where: { $0 < here })
+        case .next: target = order.map { starts[$0] }.first(where: { $0 > here })
+        case .previous: target = order.map { starts[$0] }.last(where: { $0 < here })
         }
         // Of chapters sharing that start, the last in reading order is the one `resolve` picks.
-        return target.flatMap { start in order.last(where: { clampedStart($0) == start }) }
+        return target.flatMap { start in order.last(where: { starts[$0] == start }) }
     }
 }

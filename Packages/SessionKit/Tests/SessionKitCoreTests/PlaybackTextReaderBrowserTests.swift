@@ -134,4 +134,40 @@ final class PlaybackTextReaderBrowserTests: XCTestCase {
         XCTAssertNil(outside.chapterIndex)
         XCTAssertEqual(outside.range, 0..<book.text.count)
     }
+
+    func testSteppingBackToATiedOpeningChapterIsTheOpening() {
+        let book = article(chapterCount: 3)
+        let c = book.chapters
+        // The playhead is unknown, so the reader opens at the named chapter: the first of two that share a start.
+        let tied = [c[0], c[1], Chapter(id: "dup", title: "Dup", startChar: c[1].startChar, endChar: c[1].endChar, percent: 0), c[2]]
+        let opening = PlaybackTextReaderTarget.resolve(text: book.text, chapters: tied, offset: nil, fallbackChapterId: "ch2")
+        XCTAssertEqual(opening.chapterTitle, "Chapter 2")
+        var reader = PlaybackTextReaderBrowser(text: book.text, chapters: tied, opening: opening)
+        reader.step(.next)
+        XCTAssertEqual(reader.current.chapterTitle, "Chapter 3")
+        reader.step(.previous)
+        XCTAssertEqual(reader.current, opening, "Back at the opening's start, the opening shows, not its tied twin")
+        XCTAssertTrue(reader.isAtOpening, "So the way-back control goes away")
+    }
+
+    func testManyChaptersOverLongTextStaysQuick() {
+        var text = ""
+        var chapters: [Chapter] = []
+        for number in 0..<400 {
+            chapters.append(Chapter(id: "c\(number)", title: "C\(number)", startChar: text.count, endChar: text.count, percent: 0))
+            text += String(repeating: "Wörds énd héré. ", count: 100)
+        }
+        let opening = PlaybackTextReaderTarget.resolve(text: text, chapters: chapters, offset: 0)
+        var reader = PlaybackTextReaderBrowser(text: text, chapters: chapters, opening: opening)
+        let started = Date()
+        for _ in 0..<200 {
+            _ = reader.position
+            _ = reader.canStep(.next)
+            _ = reader.canStep(.previous)
+            _ = reader.isAtOpening
+        }
+        reader.step(.next)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.0, "Redraws must not recount the text per chapter")
+        XCTAssertEqual(reader.position?.number, 2)
+    }
 }
