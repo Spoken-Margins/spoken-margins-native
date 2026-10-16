@@ -171,11 +171,22 @@ final class SharedArticleReferencePolicyTests: XCTestCase {
         XCTAssertFalse(changed.importMatches)
     }
 
-    func testTheImportsTextCleaningDoesNotMakeAMovedPageLookDifferent() throws {
-        // `normalizeImportedText` rewrites addresses and keeps abbreviations; the sender's hash is over that result.
-        let page = "The U.S. economy grew 3.5% in Q3, i.e. 12 points. See example.net/path and https://example.com. At 9 a.m. it fell."
+    func testTheImportsLinkCleaningDoesNotMakeAMovedPageLookDifferent() throws {
+        // The import removes addresses written in the text, and the sender's hash is over that result.
+        let page = "The economy grew in Q3. See example.net/path and https://example.com for the data."
         let shared = try packet(url: sender, markdown: page)
         XCTAssertNotEqual(try storedItem(url: sender, markdown: page).text, page, "the page has to be one the cleaning changes")
+        let moved = try verdicts(shared, landedAt: "https://m.news.example.com/story", markdown: page)
+        XCTAssertTrue(moved.check)
+        XCTAssertTrue(moved.importMatches)
+    }
+
+    func testAbbreviationsAndNumbersDoNotChangeWhatTheImportStores() throws {
+        // Answers #1259's question: the import keeps these words as written, so they cannot make hashes differ.
+        let page = "The U.S. economy grew 3.5% in Q3, i.e. 12 points, at 9 a.m. on Dr. Lee's 2nd call."
+        let stored = try XCTUnwrap(try storedItem(url: sender, markdown: page).text)
+        XCTAssertEqual(stored, page)
+        let shared = try packet(url: sender, markdown: page)
         let moved = try verdicts(shared, landedAt: "https://m.news.example.com/story", markdown: page)
         XCTAssertTrue(moved.check)
         XCTAssertTrue(moved.importMatches)
