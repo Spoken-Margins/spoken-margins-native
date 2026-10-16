@@ -2386,6 +2386,106 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1681: live narration rendered the whole rest of the item ahead, hot or in the background. With a limit, the
+    /// render chain rests once the window of audio waits ahead and playback hasn't used any of it.
+    func testLiveNarrationStopsRenderingAheadOnceTheWindowIsFull() async throws {
+        let rendered = try await renderAhead(window: 0.5, playsAudio: false)
+        XCTAssertGreaterThan(rendered.total, 10)
+        XCTAssertLessThanOrEqual(rendered.renders, 5, "the playing chunk and about 0.5 s ahead, not the whole item")
+        XCTAssertGreaterThanOrEqual(rendered.renders, 3)
+        XCTAssertTrue(rendered.last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+        XCTAssertFalse(rendered.last.watchesForDelay)
+    }
+
+    /// A cool phone in front renders the whole item, as before.
+    func testWithoutALimitLiveNarrationRendersTheWholeItem() async throws {
+        let rendered = try await renderAhead(window: nil, playsAudio: false)
+        XCTAssertEqual(rendered.renders, rendered.total)
+        XCTAssertEqual(rendered.restingReports, 0)
+    }
+
+    /// #1681: a resting chain starts again as playback uses the audio ahead, so the item still plays to the end.
+    func testARestingRenderChainStartsAgainAsPlaybackMovesOn() async throws {
+        let rendered = try await renderAhead(window: 0.5, playsAudio: true)
+        XCTAssertEqual(rendered.completed, rendered.total, "every chunk was rendered in the end")
+        XCTAssertEqual(rendered.renders, rendered.total)
+        XCTAssertGreaterThan(rendered.restarts, 0,
+                             "the chain started again as playback moved on, not only when playback ran out of audio")
+        XCTAssertGreaterThan(rendered.restingReports, 0)
+        XCTAssertFalse(rendered.last.isRestingAhead)
+        let reports = rendered.reports
+        XCTAssertTrue(zip(reports, reports.dropFirst()).contains { rest, wake in
+            rest.isRestingAhead && !wake.isRestingAhead
+                && wake.completedChunks == rest.completedChunks && wake.totalChunks == rest.totalChunks
+        }, "a chain that starts again reports its progress without the rest before it renders on")
+    }
+
+    /// #1681 audit: while the chain rested, the app's 45-second watch marked the render delayed, showed "Still
+    /// preparing" and wrote a delay into diagnostics on every rest. A rest starts no watch; waking starts it again.
+    func testARestingRenderChainIsNotWatchedAsADelayedRender() {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.updateOnDeviceSpeechGenerationState(.rendering, stopReason: nil)
+        model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 4, totalChunks: 30))
+        XCTAssertNotNil(model.onDeviceSpeechGenerationDelayTask, "a render that owes progress is watched")
+        model.updateOnDeviceSpeechGenerationProgress(
+            RenderedSpeechGenerationProgress(completedChunks: 5, totalChunks: 30, isRestingAhead: true))
+        XCTAssertNil(model.onDeviceSpeechGenerationDelayTask, "a resting chain is not")
+        XCTAssertFalse(model.isOnDeviceSpeechGenerationDelayed)
+        XCTAssertEqual(model.diagnostics["onDeviceSpeechGenerationProgress"], "5/30 resting")
+        model.updateOnDeviceSpeechGenerationProgress(RenderedSpeechGenerationProgress(completedChunks: 5, totalChunks: 30))
+        XCTAssertNotNil(model.onDeviceSpeechGenerationDelayTask, "waking from the rest starts the watch again")
+        model.onDeviceSpeechGenerationDelayTask?.cancel()
+    }
+
+    private func renderAhead(
+        window: TimeInterval?, playsAudio: Bool
+    ) async throws -> (
+        renders: Int, completed: Int, total: Int, restarts: Int, restingReports: Int, last: RenderedSpeechGenerationProgress,
+        reports: [RenderedSpeechGenerationProgress]
+    ) {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                guard playsAudio else { return }
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+            },
+            // The player's own end moves playback on, which is what lets a resting chain start again.
+            observesPlayerLifecycle: playsAudio,
+            onDeviceRenderingAllowed: { true },
+            onGenerationProgress: { log.record($0) },
+            renderAheadWindow: { window }
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "render-ahead")
+        let deadline = ContinuousClock.now + .seconds(playsAudio ? 30 : 3)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            if log.totalChunks > 0, log.completedChunks == log.totalChunks { break }
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if !playsAudio, ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        let renders = await renderer.renderCount
+        let restarts = client.debugRenderAheadRestarts
+        try client.stop()
+        return (renders, log.completedChunks, log.totalChunks, restarts, log.restingProgressReports, log.lastProgress,
+                log.progressReports)
+    }
+
     /// #1680: every chunk Kitten rendered was saved and never read again, so after a cold launch on a hot phone the
     /// player rendered the same chunks from scratch. With the bundled voice's saved audio there, nothing renders, and
     /// the export says the play started from saved audio.
@@ -4447,7 +4547,16 @@ private final class KittenClientLog: @unchecked Sendable {
     private var noticeReasons: [String] = []
     private var restoreCount = 0
 
-    func record(_ value: RenderedSpeechGenerationProgress) { lock.withLock { progress = value } }
+    private var reports: [RenderedSpeechGenerationProgress] = []
+    func record(_ value: RenderedSpeechGenerationProgress) {
+        lock.withLock {
+            progress = value
+            reports.append(value)
+        }
+    }
+    var progressReports: [RenderedSpeechGenerationProgress] { lock.withLock { reports } }
+    var restingProgressReports: Int { lock.withLock { reports.filter(\.isRestingAhead).count } }
+    var lastProgress: RenderedSpeechGenerationProgress { lock.withLock { progress } }
     func recordFallback(_ reason: String) { lock.withLock { fallbackReasons.append(reason) } }
     func recordNotice(_ reason: String) { lock.withLock { noticeReasons.append(reason) } }
     func recordRestore() { lock.withLock { restoreCount += 1 } }

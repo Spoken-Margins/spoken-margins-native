@@ -104,9 +104,10 @@ extension Gate1AppModel {
         if canPrepareLibraryAudio { startForegroundAudioPreparationIfNeeded() }
         isOnDeviceSpeechGenerationDelayed = false
         diagnostics["onDeviceSpeechGenerationProgress"] = "\(progress.completedChunks)/\(progress.totalChunks)"
+            + (progress.isRestingAhead ? " resting" : "")
         onDeviceSpeechGenerationDelayTask?.cancel()
         onDeviceSpeechGenerationDelayTask = nil
-        guard progress.completedChunks < progress.totalChunks else { return }
+        guard progress.watchesForDelay else { return }
         onDeviceSpeechGenerationDelayTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(45))
             guard !Task.isCancelled, let self,

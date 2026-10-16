@@ -13,7 +13,8 @@ Codex). So the worker never takes a slot the Dial has already given to a project
 
 Job order (as the Codex worker's, which this replaces after 2026-10-15):
 1. A stalled PR into `next`: `needs-mac` (after the Mac finisher's hour), a lane FAIL on its
-   head, or audit findings on its head. At most two rounds per PR in 24 h.
+   head, or audit findings on its head. At most two rounds per PR in 24 h. Never a PR labelled
+   `blocked`, `needs-owner` or `deferred`: it waits for a human.
 2. A `ready` issue that carries `where:mac`. A pending hand-off first, then `priority`,
    regressions and reverts, `found-on-phone`, the focus milestone, then oldest.
 
@@ -110,6 +111,9 @@ LANE_STATE = Path(os.environ.get('SM_LANE_STATE', str(Path.home() / 'Library' / 
 REQUIRED_LABEL = 'where:mac'
 # The project's skip list (project instructions) plus a fix that already merged and waits on the phone.
 EXCLUDED_LABELS = {'in-progress', 'needs-owner', 'deferred', 'blocked', 'status: needs-human-validation'}
+# A PR parked for a human. A run's stop restores the labels it started with, so `needs-mac`
+# can come back after someone removed it; these keep the PR out of the finisher anyway (#1154).
+PR_HOLD_LABELS = {'needs-owner', 'deferred', 'blocked'}
 CLAIM_RE = re.compile(r'[*_\s]*Claimed by project thread "([^"]+)"')
 STOP_RE = re.compile(r'[*_\s]*Thread "([^"]+)" stopping:\s*(.*)')
 THREAD_RE = re.compile(r'Claude Mac worker (\d+)$')
@@ -532,6 +536,9 @@ def finish_eligible(pr: dict, now: dt.datetime, held: set = frozenset()) -> tupl
         return False, 'protected branch belongs to the owner'
     if pr['number'] in held:
         return False, 'held by a live Claude Mac worker slot'
+    hold = sorted(label_names(pr) & PR_HOLD_LABELS)
+    if hold:
+        return False, f'held for a human ({", ".join(hold)})'
     stalled = stalled_since(pr)
     if not stalled:
         return False, 'no needs-mac, code failure or audit findings on head'

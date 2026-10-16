@@ -545,6 +545,16 @@ class FinishEligibleTests(unittest.TestCase):
         own = c(w.OWN_FINISHER_CLAIM, ago(minutes=90))
         self.assertTrue(self.ok(labels=('needs-mac',), handing_at=ago(hours=9), comments=[own])[0])
 
+    def test_a_pr_held_for_a_human_is_never_finished(self):
+        # PR #1154: an owner hold put `blocked` on it, but a run's stop restored `needs-mac`,
+        # so the finisher took it again and again with nothing to do.
+        findings = c('**Claude audit on `aaaaaaa`**\nbad', ago(hours=2))
+        for label in ('blocked', 'needs-owner', 'deferred'):
+            with self.subTest(label):
+                ok, why = self.ok(labels=('needs-mac', label), handing_at=ago(hours=3), comments=[findings])
+                self.assertFalse(ok)
+                self.assertIn(label, why)
+
     def test_drafts_forks_and_protected_branches_are_never_finished(self):
         for change in ({'isDraft': True}, {'isCrossRepository': True}, {'headRefName': 'next'}, {'baseRefName': 'main'}):
             with self.subTest(change):
