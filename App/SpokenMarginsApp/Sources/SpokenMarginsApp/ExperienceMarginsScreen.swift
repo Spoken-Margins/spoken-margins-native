@@ -559,11 +559,20 @@ struct MarginsScopeRow: View {
 /// The Margins search field, at least 44 pt tall (#151). The rounded-border style alone is about 34 pt.
 struct MarginsSearchField: View {
     @Binding var text: String
+    @FocusState private var isFocused: Bool
 
     var body: some View {
+        // A single-line field stays about 34 pt tall inside the 44 pt frame, so a tap catcher behind it focuses
+        // the field when the tap lands in the extra room above or below. Taps on the field itself never reach it.
         TextField("Search your notes or an item", text: $text)
             .textFieldStyle(.roundedBorder)
+            .focused($isFocused)
             .frame(minHeight: TapTarget.minimum)
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { isFocused = true }
+            }
             .accessibilityIdentifier("margins.search.field")
     }
 }
