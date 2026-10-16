@@ -58,7 +58,7 @@ final class SessionMarkdownFileWriterTests: XCTestCase {
 
 @MainActor
 final class BatchSessionExportWorkflowTests: XCTestCase {
-    func testBatchExportDefaultsToSessionsWithInterjectionsAndWritesSelectedMarkdown() throws {
+    func testBatchExportDefaultsToSessionsWithInterjectionsAndSharesSelectedMarkdown() throws {
         let defaults = UserDefaults.standard
         let bookmarkKey = "batchExportFolderBookmark"
         let nameKey = "batchExportFolderName"
@@ -66,11 +66,7 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         let priorSpeechPreferences = Dictionary(uniqueKeysWithValues: speechKeys.map { ($0, defaults.object(forKey: $0)) })
         let priorBookmark = defaults.data(forKey: bookmarkKey)
         let priorName = defaults.string(forKey: nameKey)
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("batch-session-export-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer {
-            try? FileManager.default.removeItem(at: root)
             for key in speechKeys {
                 if let value = priorSpeechPreferences[key] ?? nil { defaults.set(value, forKey: key) }
                 else { defaults.removeObject(forKey: key) }
@@ -123,18 +119,43 @@ final class BatchSessionExportWorkflowTests: XCTestCase {
         model.exportIncludesListeningMap = false
         model.exportIncludesInterjections = true
         model.exportIncludesTurns = true
-        model.configureBatchExportFolder(url: root)
-        model.exportSelectedSessionsToFolder()
+        model.prepareSelectedSessionsForSharing()
 
-        let result = try XCTUnwrap(model.batchExportResult)
-        XCTAssertTrue(result.failures.isEmpty)
-        XCTAssertEqual(result.exportedFileNames.count, 1)
-        let fileName = try XCTUnwrap(result.exportedFileNames.first)
-        XCTAssertTrue(fileName.hasPrefix("Batch Export Article — "))
-        XCTAssertTrue(fileName.hasSuffix(".md"))
-        let markdown = try String(contentsOf: root.appendingPathComponent(fileName), encoding: .utf8)
+        // #1528: the files are built for the share sheet; nothing is written to a remembered folder or
+        // called shared yet.
+        let files = try XCTUnwrap(model.batchExportShare)
+        XCTAssertTrue(files.failures.isEmpty)
+        XCTAssertEqual(files.fileURLs.count, 1)
+        XCTAssertNil(model.batchExportResult, "nothing is reported before the sheet completes")
+        let fileURL = try XCTUnwrap(files.fileURLs.first)
+        XCTAssertTrue(fileURL.lastPathComponent.hasPrefix("Batch Export Article — "))
+        XCTAssertEqual(fileURL.pathExtension, "md")
+        XCTAssertEqual(fileURL.deletingLastPathComponent().deletingLastPathComponent().standardizedFileURL.path,
+                       SessionShareFiles.shareRoot().standardizedFileURL.path)
+        let markdown = try String(contentsOf: fileURL, encoding: .utf8)
         XCTAssertTrue(markdown.contains("# Spoken Margins AI Handoff: Batch Export Article"))
         XCTAssertTrue(markdown.contains("A source passage that should survive the Markdown export."))
         XCTAssertTrue(markdown.contains(marginText), "the Margin reaches the exported file")
+        XCTAssertEqual(defaults.data(forKey: bookmarkKey), priorBookmark, "the remembered export folder is not touched")
+        XCTAssertEqual(defaults.string(forKey: nameKey), priorName)
+
+        // Cancelled: the files go, and there is no result panel and no "saved" or "shared" message.
+        model.batchShareSheetFinished(completed: false, activityType: nil)
+        XCTAssertNil(model.batchExportShare)
+        XCTAssertNil(model.batchExportResult)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path), "the temporary file is removed when the sheet closes")
+        XCTAssertFalse(model.statusMessage.hasPrefix("Shared"))
+
+        // Completed: "Shared 1 file" naming the activity iOS gives, and the onboarding step is marked.
+        model.prepareSelectedSessionsForSharing()
+        let again = try XCTUnwrap(model.batchExportShare)
+        model.batchShareSheetFinished(completed: true, activityType: "com.apple.UIKit.activity.AirDrop")
+        let result = try XCTUnwrap(model.batchExportResult)
+        XCTAssertEqual(result.sharedFileNames, again.fileURLs.map(\.lastPathComponent))
+        XCTAssertEqual(result.activityType, "com.apple.UIKit.activity.AirDrop")
+        XCTAssertTrue(result.failures.isEmpty)
+        XCTAssertEqual(model.statusMessage, "Shared 1 file with AirDrop")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(again.fileURLs.first).path))
+        XCTAssertEqual(defaults.data(forKey: bookmarkKey), priorBookmark)
     }
 }

@@ -1,11 +1,13 @@
 import Foundation
 
-struct SessionMarkdownFileWriter {
+/// Writes one session export as a named `.md` file. Moved to SessionKit so the batch share files are
+/// built and tested on the host (#1528).
+public struct SessionMarkdownFileWriter {
     private let fileManager: FileManager
     private let calendar: Calendar
     private let locale: Locale
 
-    init(
+    public init(
         fileManager: FileManager = .default,
         calendar: Calendar = .current,
         locale: Locale = Locale(identifier: "en_US_POSIX")
@@ -15,7 +17,7 @@ struct SessionMarkdownFileWriter {
         self.locale = locale
     }
 
-    func write(
+    public func write(
         markdown: String,
         itemTitle: String,
         sessionDate: Date?,
@@ -32,7 +34,7 @@ struct SessionMarkdownFileWriter {
         return destination
     }
 
-    func availableDestinationURL(
+    public func availableDestinationURL(
         itemTitle: String,
         sessionDate: Date?,
         sessionId: String,
@@ -50,7 +52,7 @@ struct SessionMarkdownFileWriter {
         return candidate
     }
 
-    func fileBaseName(itemTitle: String, sessionDate: Date?, sessionId: String) -> String {
+    public func fileBaseName(itemTitle: String, sessionDate: Date?, sessionId: String) -> String {
         let cleanTitle = Self.sanitizedFileNameComponent(itemTitle)
         let sessionLabel: String
         if let sessionDate {
@@ -67,7 +69,7 @@ struct SessionMarkdownFileWriter {
         return "\(cleanTitle.isEmpty ? "Untitled" : cleanTitle) — \(sessionLabel)"
     }
 
-    static func sanitizedFileNameComponent(_ value: String) -> String {
+    public static func sanitizedFileNameComponent(_ value: String) -> String {
         let invalid = CharacterSet(charactersIn: "/\\:")
             .union(.controlCharacters)
             .union(.newlines)

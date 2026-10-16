@@ -49,9 +49,7 @@ public struct PlaybackTextReaderTarget: Sendable, Equatable, Identifiable {
         let length = characters.count
         let playhead = offset.flatMap { $0 >= 0 ? min($0, length) : nil }
 
-        let order = chapters.indices.sorted {
-            chapters[$0].startChar == chapters[$1].startChar ? $0 < $1 : chapters[$0].startChar < chapters[$1].startChar
-        }
+        let order = readingOrder(chapters)
         let chosen: Int?
         if order.isEmpty {
             chosen = nil
@@ -60,7 +58,30 @@ public struct PlaybackTextReaderTarget: Sendable, Equatable, Identifiable {
         } else {
             chosen = fallbackChapterId.flatMap { id in order.first(where: { chapters[$0].id == id }) } ?? order.first
         }
+        return make(text: text, characters: characters, chapters: chapters, order: order, chosen: chosen, playhead: playhead)
+    }
 
+    /// The reader target for the chapter at `chapterIndex` of `chapters`, shown from its top with no sentence lit.
+    /// An index outside `chapters` is treated as no chapter: the whole text.
+    public static func resolve(text: String, chapters: [Chapter], chapterIndex: Int) -> PlaybackTextReaderTarget {
+        let characters = Array(text)
+        return make(
+            text: text, characters: characters, chapters: chapters, order: readingOrder(chapters),
+            chosen: chapters.indices.contains(chapterIndex) ? chapterIndex : nil, playhead: nil
+        )
+    }
+
+    /// Chapter indices by where each starts in the text, ties kept in stored order.
+    static func readingOrder(_ chapters: [Chapter]) -> [Int] {
+        chapters.indices.sorted {
+            chapters[$0].startChar == chapters[$1].startChar ? $0 < $1 : chapters[$0].startChar < chapters[$1].startChar
+        }
+    }
+
+    private static func make(
+        text: String, characters: [Character], chapters: [Chapter], order: [Int], chosen: Int?, playhead: Int?
+    ) -> PlaybackTextReaderTarget {
+        let length = characters.count
         let range: Range<Int>
         if let chosen {
             let start = clamp(chapters[chosen].startChar, length)
@@ -105,7 +126,7 @@ public struct PlaybackTextReaderTarget: Sendable, Equatable, Identifiable {
         )
     }
 
-    private static func clamp(_ value: Int, _ length: Int) -> Int {
+    static func clamp(_ value: Int, _ length: Int) -> Int {
         max(0, min(value, length))
     }
 }
