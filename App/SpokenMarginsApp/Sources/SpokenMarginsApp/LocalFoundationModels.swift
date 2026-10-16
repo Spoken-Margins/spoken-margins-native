@@ -37,31 +37,6 @@ enum LocalFoundationModelAvailability: Equatable, Sendable {
     }
 }
 
-struct LocalListeningMapLabel: Codable, Equatable, Sendable {
-    let title: String
-    let description: String
-    var eligibility: PortableSceneEligibility? = nil
-    var eligibilityReason: String? = nil
-}
-
-struct LocalInterjectionSummaryRecord: Codable, Equatable, Sendable {
-    let id: String
-    let anchorBefore: String
-    let anchorAfter: String
-    let note: String
-}
-
-struct LocalInterjectionSummaryPayload: Codable, Equatable, Sendable {
-    let schemaVersion: String
-    let itemTitle: String
-    let interjections: [LocalInterjectionSummaryRecord]
-}
-
-struct LocalInterjectionMeaningSlots: Codable, Equatable, Sendable {
-    let question: String?
-    let points: [String]
-}
-
 @Generable(description: "The complete substantive meaning of one dictated interjection")
 struct LocalInterjectionClaimInventory {
     @Guide(
