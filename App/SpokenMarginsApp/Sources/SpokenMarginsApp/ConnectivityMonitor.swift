@@ -9,7 +9,7 @@ import SessionKit
 /// Shared, so it is started once and never cancelled while the app runs: the downloader is rebuilt when the
 /// store changes, and a cancelled `NWPathMonitor` can't be restarted.
 @MainActor
-final class ConnectivityMonitor: ObservableObject {
+final class ConnectivityMonitor: ObservableObject, ConnectivityProviding {
     @Published private(set) var transport: PodcastNetworkTransport = .other
     /// True only when the path is unsatisfied (Airplane Mode, no signal). Until the first update the state is
     /// unknown and counts as online, so nothing is blocked on a guess.

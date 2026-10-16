@@ -1664,8 +1664,7 @@ private struct GuidedOnboardingPlaybackCard: View {
                         .font(.headline)
                     Spacer()
                     Button(action: model.pauseGuidedOnboarding) {
-                        Image(systemName: "xmark")
-                            .frame(width: 32, height: 32)
+                        TapTargetIcon(systemName: "xmark")
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Pause guided tour")
@@ -1788,7 +1787,7 @@ private struct PastedAssistantResponseView: View {
                     .font(.body)
                     .frame(height: 180)
                     .padding(8)
-                    .background(AppColors.inputBackground)
+                    .inputEditorBackground()
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
                     .focused($isFocused)
