@@ -233,7 +233,7 @@ final class SourceLinkImportTests: XCTestCase {
     func testFeedAliasesUseFinalResponseIdentityWithoutSelfLink() async throws {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [AliasedFeedURLProtocol.self]
-        let coordinator = FollowedSourceCoordinator(repository: InMemorySessionRepository(), session: URLSession(configuration: configuration))
+        let coordinator = FollowedSourceCoordinator(repository: InMemorySessionRepository(), session: URLSession(configuration: configuration), signals: .app)
         let candidates = try await coordinator.discover(urlString: "https://example.com/article", requiringItemMembership: true)
         XCTAssertEqual(candidates.count, 1)
         XCTAssertEqual(candidates.first?.source.canonicalURL, "https://example.com/canonical-feed")
@@ -248,7 +248,7 @@ final class SourceLinkImportTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
         let repository = InMemorySessionRepository()
-        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration), signals: .app)
 
         let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
 
@@ -273,7 +273,7 @@ final class SourceLinkImportTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [VoiceoverFeedURLProtocol.self]
         let repository = InMemorySessionRepository()
-        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        let coordinator = FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration), signals: .app)
         let subscription = try await coordinator.follow(urlString: "https://voiceovers.example/feed")
         XCTAssertEqual(subscription.source.kind, .podcastFeed)
         let entries = try repository.loadFeedEntries(subscriptionId: subscription.id)
@@ -358,7 +358,8 @@ final class SourceLinkImportTests: XCTestCase {
         let repository = InMemorySessionRepository()
         let coordinator = FollowedSourceCoordinator(
             repository: repository,
-            session: URLSession(configuration: configuration)
+            session: URLSession(configuration: configuration),
+            signals: .app
         )
 
         let subscription = try await coordinator.follow(urlString: "https://example.com/feed.json")

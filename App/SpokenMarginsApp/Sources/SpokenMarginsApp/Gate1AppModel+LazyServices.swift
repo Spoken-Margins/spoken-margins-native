@@ -1,4 +1,5 @@
 import Foundation
+import SessionKitFeeds
 import SessionKitPersistence
 
 extension Gate1AppModel {
@@ -28,7 +29,7 @@ extension Gate1AppModel {
     /// passes the artwork file; this fallback never does, as before (#1003).
     func requireFollowedSourceCoordinator(store: SQLiteSessionStore) -> FollowedSourceCoordinator {
         if let followedSourceCoordinator { return followedSourceCoordinator }
-        let coordinator = FollowedSourceCoordinator(repository: store)
+        let coordinator = FollowedSourceCoordinator(repository: store, signals: .app)
         followedSourceCoordinator = coordinator
         return coordinator
     }

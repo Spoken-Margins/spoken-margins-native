@@ -19,7 +19,7 @@ final class OPMLImportTests: XCTestCase {
         store = try SQLiteSessionStore(path: root.appendingPathComponent("library.sqlite").path)
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [OPMLFeedsURLProtocol.self]
-        coordinator = FollowedSourceCoordinator(repository: store, session: URLSession(configuration: configuration))
+        coordinator = FollowedSourceCoordinator(repository: store, session: URLSession(configuration: configuration), signals: .app)
         OPMLFeedsURLProtocol.reset()
         // Also catch a download made through URLSession.shared rather than the coordinator's session.
         URLProtocol.registerClass(OPMLFeedsURLProtocol.self)

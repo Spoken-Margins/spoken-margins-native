@@ -3,6 +3,7 @@ import Combine
 import XCTest
 @testable import SessionKit
 import SessionKitAudio
+import SessionKitFeeds
 import SessionKitPersistence
 @testable import SpokenMarginsApp
 import SQLite3
