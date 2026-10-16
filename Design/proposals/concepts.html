@@ -86,6 +86,9 @@ p { margin: 0; max-width: 62ch }
 .row .play { width: 36px; height: 36px; border-radius: 18px; background: var(--soft); color: var(--green); display: flex; align-items: center; justify-content: center; flex: none; border: 0; cursor: pointer; padding: 0 }
 .row .chev { color: var(--ink2); flex: none; display: flex }
 .row .num { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; flex: none }
+.row .tag { font-size: 10px; font-weight: 700; color: var(--ink2); border: 1px solid var(--rule); border-radius: 4px; padding: 0 4px; margin-left: 4px; vertical-align: 1px; letter-spacing: .02em }
+.row .ico.art.p { background: var(--blue); color: #fff; font-family: var(--ios); font-size: 13px }
+.sect .lnk { font: inherit; font-size: 12px; font-weight: 700; color: var(--green); background: none; border: 0; padding: 0 2px; min-height: 36px; cursor: pointer; display: inline-flex; gap: 4px; align-items: center }
 .row .count { font-size: 11px; font-weight: 700; color: var(--blue); border: 1.5px solid var(--blue); border-radius: 999px; padding: 1px 7px; flex: none }
 .row.fold .txt .t::before { content: "▸ "; color: var(--ink2) } .row.fold.open .txt .t::before { content: "▾ " }
 .sub { margin-left: 22px; border-left: 2px solid var(--rule) }
@@ -158,8 +161,9 @@ td.n.hit { color: var(--blue); font-weight: 700 }
 <div class="wrap">
   <div class="intro">
     <h1>Five ways through Spoken Margins</h1>
-    <p class="lead">Today's app and four structures, each one a phone you can tap. Tabs switch, a show opens, the plus opens the Add sheet, a Margin row plays. Now Playing is left out on purpose. The counter under each phone counts your taps from the Library.</p>
-    <p class="legend"><span>Playing or the app's accent</span><span class="a">Your own Margin</span><span class="b">Shared, or something new</span><span class="n">Nothing here is final: no colours, type or pixels were chosen for the app itself</span></p>
+    <p class="lead">Today's app and four structures, each one a phone you can tap. Tabs switch, a show opens, a plus opens the Add sheet or the Follow sheet, a Margin row plays. Now Playing is left out on purpose. The counter under each phone counts your taps from the Library.</p>
+    <p>Revised after your first read: the Library's plus only adds a source, Margins stay grouped by item with the newest group first, and the Following, New and Up next phones show where a friend and a book club would go. The friend and club content is made up.</p>
+    <p class="legend"><span>Playing or the app's accent</span><span class="a">Your own Margin</span><span class="b">Shared, or something new</span><span class="n">A word sits beside every colour, so none of them carries meaning alone. Nothing here is final: no colours, type or pixels were chosen for the app itself</span></p>
   </div>
 
   <div class="phones" id="phones"></div>
@@ -170,9 +174,9 @@ td.n.hit { color: var(--blue); font-weight: 700 }
 
   <div class="pick">
     <h2>The pick: Four tabs</h2>
-    <p>The numbers barely separate the three structures. Most of the saving comes from path fixes they all share: Margins newest first, a row that plays its moment, Share this Margin, Export all as one button, Settings one tap away. What separates them is whether a newcomer can guess where things live.</p>
+    <p>The numbers do not separate the three structures at all. Most of the saving comes from path fixes they all share: Margins grouped by item with the newest group first, a row that plays its moment, Share this Margin, Export all as one button, Settings one tap away. What separates them is whether a newcomer can guess where things live, and where a friend or a club would go.</p>
     <ol>
-      <li><b>Four tabs</b> names four of six newcomer questions with a word on the tab bar. A show is a place you go, so the three-times-a-day show is one row with a count and can never flood anything.</li>
+      <li><b>Four tabs</b> names four of six newcomer questions with a word on the tab bar. A show is a place you go, so the three-times-a-day show is one row with a count and can never flood anything. A friend and a club are two more rows on Following, not a new place.</li>
       <li><b>Stream</b> is the right one if you listen by day rather than by show. Watch for this: if on Four tabs you open three shows in a row to collect the day's episodes, switch to Stream.</li>
       <li><b>Up next</b> is your own idea, and it hands the app a judgment call. It wins only if your first tap after launch is Up next, not Library.</li>
       <li><b>Same tabs</b> is the control. It gets everything but the two Manage feeds jobs under the ceiling and changes nothing a current listener would notice.</li>
@@ -227,10 +231,10 @@ td.n.hit { color: var(--blue); font-weight: 700 }
     hardfork: { title: 'Hard Fork: AI week', sub: '52 min · Hard Fork · Podcast', kind: 'head' },
   };
   const MARGINS = [
-    { time: 'Today 09:12', place: 'Tides · around 61%', text: 'the second tide is the one that matters for the marsh', own: true, spoken: true },
+    { time: 'Today 09:12', place: 'Tides · around 61%', text: 'the second tide is the one that matters for the marsh', own: true, spoken: true, newest: true },
     { time: 'Today 08:40', place: 'Tides · around 23%', text: 'salt marsh: check the figure against the Hakai piece', own: true, spoken: false },
     { time: 'Yesterday', place: 'Hard Fork · 41:10', text: 'agents as interns, not oracles. Sam will disagree', own: true, spoken: true },
-    { time: 'Yesterday', place: 'Tides · around 18%', text: 'Sam: "this is the bit I meant on the phone"', own: false, spoken: true },
+    { time: 'Yesterday', place: 'Tides · around 18%', text: 'this is the bit I meant on the phone', own: false, spoken: true, by: 'Sam' },
     { time: 'Last week', place: 'A short history of salt · 02:12', text: 'Roman roads were salt roads first', own: true, spoken: true },
   ];
   const SHOWS = [
@@ -238,6 +242,17 @@ td.n.hit { color: var(--blue); font-weight: 700 }
     { id: 'hardfork', name: 'Hard Fork', count: 1, when: 'Tue', newest: 'Hard Fork: AI week', dur: '52m', letter: 'H' },
     { id: 'nautilus', name: 'Nautilus', count: 0, when: 'last week', newest: 'Why cities hum', dur: '18m', letter: 'N' },
     { id: 'hakai', name: 'Hakai Magazine', count: 0, when: 'Oct 2', newest: 'How whales sleep', dur: '12m', letter: 'Hk' },
+  ];
+  const FRIEND = { name: 'Sam', kind: 'Friend', now: 'listening to Tides', count: 2, what: 'new Margins', when: 'today', letter: 'S' };
+  const CLUB = { name: 'Salt Club', kind: 'Club', now: 'A short history of salt · ch. 4', count: 3, what: 'new in the thread', when: 'yesterday', letter: 'SC' };
+  const SAM_MARGINS = [
+    { time: 'Today', place: 'Tides · around 40%', text: 'the marsh figure again. You were right about the second tide', own: false, by: 'Sam' },
+    { time: 'Yesterday', place: 'Tides · around 18%', text: 'this is the bit I meant on the phone', own: false, by: 'Sam' },
+  ];
+  const THREAD = [
+    { time: 'Yesterday', place: 'ch. 4 · 02:12', text: 'Roman roads were salt roads first', own: true, by: 'You' },
+    { time: 'Yesterday', place: 'ch. 4 · 06:40', text: 'the Venice chapter is coming, hold that thought', own: false, by: 'Priya' },
+    { time: 'Today', place: 'ch. 4 · 11:05', text: 'is the tax story in the book or in the film?', own: false, by: 'Sam' },
   ];
   const QUIET = [ { name: '99% Invisible', letter: '99' }, { name: 'Lex Fridman', letter: 'L' } ];
   const EPISODES = [
@@ -254,7 +269,9 @@ td.n.hit { color: var(--blue); font-weight: 700 }
   };
   const showRow = (s, o) => `<button class="row"${act({ go: 'show', show: s.id })}><span class="ico art">${s.letter}</span><span class="txt"><span class="t">${s.name}</span><span class="s">${s.count ? `<span class="new">${s.count} new</span> · ` : ''}${s.newest} · ${s.when}</span></span>${o && o.play ? `<span class="play"${act({ play: s.newest })}>${ic('playo', 18)}</span>` : ''}<span class="chev">${ic('chev')}</span></button>`;
   const quietRow = q => `<button class="row"${act({ go: 'show', show: 'daily' })}><span class="ico art q">${q.letter}</span><span class="txt"><span class="t">${q.name}</span><span class="s">Quiet · not shown until you open it</span></span><span class="chev">${ic('chev')}</span></button>`;
-  const margin = (m, o) => { const oo = o || {}; return `<button class="row"${act(oo.detail ? { go: 'margin', m: m.place } : { play: m.place.split(' · ')[0], moment: true })}><span class="diam ${m.own ? 'own' : 'shared'}"></span><span class="txt"><span class="s">${m.time} · ${m.place}${m.own ? '' : ' · <span class="new">Shared</span>'}</span><span class="q">${m.text}</span></span>${oo.detail ? '' : `<span class="chev"${act({ go: 'margin', m: m.place })}>${ic('chev')}</span>`}</button>`; };
+  const margin = (m, o) => { const oo = o || {}; return `<button class="row"${act(oo.detail ? { go: 'margin', m: m.place } : { play: m.place.split(' · ')[0], moment: true })}><span class="diam ${m.own ? 'own' : 'shared'}"></span><span class="txt"><span class="s">${m.by ? m.by + ' · ' : ''}${m.time} · ${m.place}${m.own ? '' : ' · <span class="new">Shared</span>'}${m.newest ? ' · <span class="new">Newest</span>' : ''}</span><span class="q">${m.text}</span></span>${oo.detail ? '' : `<span class="chev"${act({ go: 'margin', m: m.place })}>${ic('chev')}</span>`}</button>`; };
+  const peopleRow = (p, go, o) => { const oo = o || {}; return `<button class="row"${act({ go, title: p.name })}><span class="ico art p">${p.letter}</span><span class="txt"><span class="t">${p.name}<span class="tag">${p.kind}</span></span><span class="s"><span class="new">${p.count} ${p.what}</span> · ${oo.sub || p.now} · ${p.when}</span></span><span class="chev">${ic('chev')}</span></button>`; };
+  const shareItem = n => `<button class="lnk"${act({ toast: `A packet of the Margins on ${n} goes to Share Margins, then Share N. 3 taps from the Library, as today.` })}>${ic('share', 12)}Share</button>`;
   const sect = (b, aside) => `<div class="sect"><b>${b}</b><span>${aside || ''}</span></div>`;
   const group = (label, rows, collapsedAfter, key, st) => {
     const open = st.open[key];
@@ -278,12 +295,25 @@ td.n.hit { color: var(--blue); font-weight: 700 }
     const sortChips = (sorts || ['Added', 'Published', 'Publisher', 'Topic']).map(s => `<button class="chip${sort === s ? ' on' : ''}"${act({ sort: s })}>${sort === s ? ic('sort', 14) : ''}${s}</button>`).join('');
     return search('Search title, source, or author') + `<div class="chips">${sortChips}</div>` + rows;
   };
-  const marginsBody = (st, o) => sect('Your Margins, newest first', `${MARGINS.length} Margins`) + chips([{ l: 'Mine', on: true }, { l: 'Starred' }, { l: 'Shared' }]) + MARGINS.map(m => margin(m, o)).join('') + `<p class="note">Tap a Margin to hear its moment. The chevron opens it, with Share this Margin.</p>`;
+  const marginsBody = (st, o) => chips([{ l: 'All', on: true }, { l: 'Mine' }, { l: 'Starred' }, { l: 'Shared' }])
+    + sect('Tides', `3 Margins · ${shareItem('Tides')}`) + margin(MARGINS[3], o) + margin(MARGINS[1], o) + margin(MARGINS[0], o)
+    + sect('Hard Fork', `1 Margin · ${shareItem('Hard Fork')}`) + margin(MARGINS[2], o)
+    + sect('A short history of salt', `1 Margin · ${shareItem('Salt')}`) + margin(MARGINS[4], o)
+    + `<p class="note">Grouped by item, the item with the newest Margin first; inside a group, source order, and the newest Margin says so. Tap a Margin to hear its moment. The chevron opens it, with Share this Margin. Share beside a heading shares that item's Margins.</p>`;
   const marginsBuilt = () => search('Search your notes or an item') + chips([{ l: 'All items', i: 'sort' }, { l: 'Mine', on: true }, { l: 'Starred' }, { l: 'Shared' }]) + sect('Tides', '3 Margins · Share') + margin(MARGINS[3], { detail: true }) + margin(MARGINS[1], { detail: true }) + margin(MARGINS[0], { detail: true }) + sect('Hard Fork', '1 Margin · Share') + margin(MARGINS[2], { detail: true }) + sect('A short history of salt', '1 Margin · Share') + margin(MARGINS[4], { detail: true }) + `<p class="note">Grouped by item, and each item's Margins read in source order. Today's newest Margin is the third row.</p>`;
   const showBody = (st, o) => {
     const oo = o || {};
     return `<div class="card"><div class="line"><span class="ico art" style="width:44px;height:44px;border-radius:9px;background:var(--green);color:var(--ongreen);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-weight:700;font-size:16px">D</span><span class="txt" style="flex:1"><div class="t">The Daily</div><div class="s">Following since March · 3 new</div></span></div>${oo.manage !== false ? `<div class="line"><button class="chip${st.quiet ? ' on' : ''}"${act({ quiet: 1 })}>${st.quiet ? 'Quiet' : 'Quiet this show'}</button><button class="chip"${act({ unfollow: 1 })}>${ic('minus', 14)}Unfollow</button></div>` : ''}</div>` +
       sect('Episodes') + EPISODES.map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="num">${e.d}</span><span class="txt"><span class="t">${e.t}</span><span class="s">${e.m}</span></span><span class="play"${act({ play: e.t })}>${ic('playo', 18)}</span></button>`).join('');
+  };
+  const friendBody = (st) => `<div class="card"><div class="line"><span class="ico art p" style="width:44px;height:44px;border-radius:9px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px">S</span><span class="txt" style="flex:1"><div class="t">Sam<span class="tag">Friend</span></div><div class="s">Listening to Tides · ch. 3 · since Tuesday</div></span></div><div class="line"><button class="chip"${act({ toast: 'Sam stays followed and leaves the list.' })}>Quiet</button><button class="chip"${act({ toast: 'Unfollowed Sam.', btn: 'Undo' })}>${ic('minus', 14)}Unfollow</button></div></div>`
+    + sect('Margins Sam left', 'newest first') + SAM_MARGINS.map(m => margin(m)).join('') + `<p class="note">Each one plays at its moment in your own copy of the item. Example content.</p>`;
+  const clubBody = (st) => `<div class="card"><div class="kind">Club · 4 members</div><div class="t" style="font-size:17px">Salt Club</div><div class="s">This week: A short history of salt, chapter 4</div><div class="line"><button class="chip on"${act({ play: 'A short history of salt' })}>${ic('play', 14)}Start chapter 4</button><button class="chip"${act({ toast: 'Leaves the club. Undo in the toast.', btn: 'Undo' })}>${ic('minus', 14)}Leave</button></div></div>`
+    + sect('Thread on chapter 4', '3 new') + THREAD.map(m => margin(m)).join('') + `<p class="note">A thread is Margins on the club's item, by everyone in it. Amber is yours, blue is theirs, and the name says who. Example content.</p>`;
+  const followSheet = (st, o) => {
+    const oo = o || {};
+    const tiles = [{ l: 'Browse shows and writers', i: 'grid', a: { toast: 'Finds a show; Follow lives on its screen.' } }, { l: 'Import from another app', i: 'down', a: { toast: 'The file picker opens at once, then Follow N.' } }];
+    return `<div class="sheet"${act({ close: 1 })}><div class="pane"><div class="grab"></div><h4>Follow a show or a friend <button${act({ close: 1 })}>Cancel</button></h4><div class="tiles">${tiles.map(t => `<button class="tile"${act(t.a)}>${ic(t.i, 22)}${t.l}</button>`).join('')}</div><button class="paste"${act({ close: 1, toast: 'Followed The Daily. It is at the top of ' + (oo.where || 'Following') + '.', btn: 'Undo' })}>Paste</button><p class="hint">A copied show link, or a friend's invite link, is followed at once. Undo in the toast.</p></div></div>`;
   };
   const settingsBody = (st, o) => {
     const oo = o || {};
@@ -315,19 +345,22 @@ td.n.hit { color: var(--blue); font-weight: 700 }
     const tiles = [
       { l: 'Link or podcast episode', i: 'link' }, { l: 'Paste text', i: 'pen' }, { l: 'Document or book', i: 'doc' }, { l: 'Audiobook', i: 'head' },
     ];
-    if (oo.follow) tiles.push({ l: 'Browse podcasts and writers', i: 'grid', a: { toast: 'Finds a show; Follow lives on its screen.' } }, { l: 'Import from another app', i: 'down', a: { toast: 'The file picker opens at once, then Follow N.' } });
-    return `<div class="sheet"${act({ close: 1 })}><div class="pane" onclick="event.stopPropagation()"><div class="grab"></div><h4>Add <button${act({ close: 1 })}>Cancel</button></h4><div class="tiles">${tiles.map(t => `<button class="tile${t.wide ? ' wide' : ''}"${act(t.a || { toast: 'Opens the ' + t.l.toLowerCase() + ' page.' })}>${ic(t.i, 22)}${t.l}</button>`).join('')}</div><button class="paste"${act({ toast: oo.follow ? 'A copied feed link offers “Follow The Daily”. An article link is added as an item.' : 'A copied article link is added to the Library.' })}>Paste</button><p class="hint">${oo.follow ? 'Paste knows a feed link from an article link.' : 'Paste adds a copied link to the Library.'}</p></div></div>`;
+    return `<div class="sheet"${act({ close: 1 })}><div class="pane"><div class="grab"></div><h4>Add <button${act({ close: 1 })}>Cancel</button></h4><div class="tiles">${tiles.map(t => `<button class="tile${t.wide ? ' wide' : ''}"${act(t.a || { toast: 'Opens the ' + t.l.toLowerCase() + ' page.' })}>${ic(t.i, 22)}${t.l}</button>`).join('')}</div><button class="paste"${act({ close: 1, toast: 'Added to the Library.' })}>Paste</button><p class="hint">${oo.built ? 'Paste adds a copied link to the Library.' : 'Paste adds a copied link to the Library. Following a show is on ' + (oo.where || 'Following') + '.'}</p></div></div>`;
   };
   const manageFeedsBody = (st) => `<div class="field"><span class="in">Paste a feed link</span><button class="go">Follow</button></div>` + group('', [{ l: 'Browse podcasts and writers', i: 'grid', nav: 1 }, { l: 'Import from another app', i: 'down', nav: 1, a: { toast: 'The file picker opens at once.' } }], 0, 'mf', st) + sect('6 feeds') + SHOWS.concat(QUIET.map(q => ({ ...q, count: 0, newest: '', when: 'quiet', id: 'daily' }))).map(s => `<button class="row"${act({ toast: 'Manage (…) menu: Quiet, Unfollow. A menu item counts 2.' })}><span class="ico art${s.when === 'quiet' ? ' q' : ''}">${s.letter}</span><span class="txt"><span class="t">${s.name}</span><span class="s">${s.when === 'quiet' ? 'Quiet' : (s.count ? s.count + ' new' : 'nothing new')}</span></span><span class="chev">${ic('dots')}</span></button>`).join('');
   const upNextBody = (st) => sect('Continue') + `<div class="card"><div class="line"><span class="t">Tides</span><span class="s">ch. 3 · 12:40 left</span><button class="play"${act({ play: 'Tides' })}>${ic('play', 18)}</button></div></div>`
     + sect('From your shows') + SHOWS.filter(s => s.count).map(s => `<div class="card"><div class="line"><span class="ico art" style="width:36px;height:36px;border-radius:8px;background:var(--green);color:var(--ongreen);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-weight:700">${s.letter}</span><span class="t" style="display:grid;gap:2px"><span>${s.newest}</span><span class="s">${s.name} · ${s.dur}</span></span><button class="play"${act({ play: s.newest })}>${ic('playo', 18)}</button></div>${s.count > 1 ? `<button class="more"${act({ go: 'show', show: s.id })}>and ${s.count - 1} more from ${s.name} ${ic('chev', 12)}</button>` : ''}</div>`).join('')
-    + sect('Added, not started') + item('whales') + sect('Shared with you') + margin(MARGINS[3]) + `<p class="note">Up next stops here. The Library is the see-all.</p>`;
-  const streamBody = (st) => sect('Today') + fold(SHOWS[0], st.folds.daily) + item('cities', { sub: 'Added · Nautilus · 18 min' }) + margin(MARGINS[3]) + sect('Yesterday') + fold(SHOWS[1], st.folds.hardfork) + item('salt', { sub: 'Added · Audiobook · 41 min' }) + sect('Earlier this week') + item('whales', { sub: 'Added · Hakai Magazine · 12 min' }) + `<p class="note">A Quiet show never appears here. Set Quiet on the show's screen.</p>`;
+    + sect('Added, not started') + item('whales')
+    + sect('From your friends') + `<div class="card"><div class="line"><span class="ico art p" style="width:36px;height:36px;border-radius:8px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700">S</span><span class="t" style="display:grid;gap:2px"><span>Sam<span class="tag">Friend</span> · <span class="new">2 new Margins</span></span><span class="s">on Tides, around 40%</span></span><button class="play"${act({ play: 'Tides', moment: true })}>${ic('playo', 18)}</button></div><button class="more"${act({ go: 'friend', title: 'Sam' })}>and 1 more from Sam ${ic('chev', 12)}</button></div>`
+    + sect('Your clubs') + `<div class="card"><div class="line"><span class="ico art p" style="width:36px;height:36px;border-radius:8px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px">SC</span><span class="t" style="display:grid;gap:2px"><span>Salt Club<span class="tag">Club</span> · <span class="new">3 new in the thread</span></span><span class="s">A short history of salt · ch. 4</span></span><button class="play"${act({ play: 'A short history of salt' })}>${ic('playo', 18)}</button></div><button class="more"${act({ go: 'club', title: 'Salt Club' })}>open the thread ${ic('chev', 12)}</button></div>`
+    + `<p class="note">Up next stops here. The Library is the see-all. Friend and club cards are example content.</p>`;
+  const streamBody = (st) => sect('Today') + fold(SHOWS[0], st.folds.daily) + item('cities', { sub: 'Added · Nautilus · 18 min' }) + peopleRow(FRIEND, 'friend', { sub: 'on Tides' }) + sect('Yesterday') + fold(SHOWS[1], st.folds.hardfork) + peopleRow(CLUB, 'club') + item('salt', { sub: 'Added · Audiobook · 41 min' }) + sect('Earlier this week') + item('whales', { sub: 'Added · Hakai Magazine · 12 min' }) + `<p class="note">A Quiet show never appears here. Set Quiet on the show's screen. The Sam and Salt Club rows are what the stream grows into.</p>`;
   const followingBuilt = (st, o) => `<button class="row"${act({ go: 'manage' })}><span class="ico">${ic('radio', 18)}</span><span class="txt"><span class="t">6 feeds · Manage</span></span><span class="chev">${ic('chev')}</span></button>` + chips([{ l: 'All', on: true }, { l: 'Feeds' }, { l: 'Quick Folder' }, { l: 'Subject', i: 'sort' }]) + sect('New', (o && o.fold ? '5' : '7') + ' · Clear') + (o && o.fold ? fold(SHOWS[0], st.folds.daily) : EPISODES.slice(0, 3).map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="ico art">D</span><span class="txt"><span class="t">${e.t}</span><span class="s">The Daily · ${e.m}</span></span><span class="chev">${ic('chev')}</span></button>`).join('')) + `<button class="row"${act({ go: 'item', title: 'Hard Fork: AI week' })}><span class="ico art">H</span><span class="txt"><span class="t">Hard Fork: AI week</span><span class="s">Hard Fork · 52m</span></span><span class="chev">${ic('chev')}</span></button>` + (o && o.fold ? '' : EPISODES.slice(3).map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="ico art">D</span><span class="txt"><span class="t">${e.t}</span><span class="s">The Daily · ${e.m}</span></span><span class="chev">${ic('chev')}</span></button>`).join('')) + `<button class="row"${act({ go: 'item', title: 'Why cities hum' })}><span class="ico art">N</span><span class="txt"><span class="t">Why cities hum</span><span class="s">Nautilus · 18m</span></span><span class="chev">${ic('chev')}</span></button>` + `<p class="note">${o && o.fold ? 'A noisy show folds to one row. Nothing on this tab manages a feed.' : 'Swipe a row right to add it, or left to dismiss it. Press and hold for more.'}</p>`;
-  const showsTabBody = (st) => sect('Shows you follow', 'newest first') + SHOWS.map(s => showRow(s, { play: true })).join('') + group('Quiet', QUIET.map(q => ({ l: q.name, v: 'Quiet', nav: 1, a: { go: 'show', show: 'daily' } })), 1, 'quiet', st) + `<p class="note">The tab lists and plays. Quiet and Unfollow live on the show's screen.</p>`;
+  const followingTabBody = (st) => sect('Following', 'newest first') + showRow(SHOWS[0], { play: true }) + peopleRow(FRIEND, 'friend') + peopleRow(CLUB, 'club') + SHOWS.slice(1).map(s => showRow(s, { play: true })).join('') + group('Quiet', QUIET.map(q => ({ l: q.name, v: 'Quiet', nav: 1, a: { go: 'show', show: 'daily' } })), 1, 'quiet', st) + `<p class="note">Shows, friends and clubs in one list, sorted by newest, each with what is new. The tab lists and plays. Quiet and Unfollow live on the show's, friend's or club's screen.</p>`;
 
   // ---------- the five concepts ----------
-  const gear = { i: 'gear', a: { go: 'settings' } }, plus = { i: 'plus', a: { sheet: 'add' } }, plusFollow = { i: 'plus', a: { sheet: 'addFollow' } };
+  const gear = { i: 'gear', a: { go: 'settings' } }, plus = { i: 'plus', a: { sheet: 'add' } }, plusFollowSheet = { i: 'plus', a: { sheet: 'follow' } }, followBtn = { t: 'Follow', i: 'plus', a: { sheet: 'follow' } };
+  const friendScreen = { title: 'Sam', back: 1, body: friendBody }, clubScreen = { title: 'Salt Club', back: 1, body: clubBody };
   const exportAll = { t: 'Export all', i: 'share', a: { toast: 'A Markdown bundle goes to the share sheet. 2 taps from the Library.' } };
   const P = [
     { id: 'built', kicker: 'As built, Build 33', name: 'Today', try: 'Try: <b>Margins</b>, then look for today\'s newest Margin. Try <b>Following</b>, then <b>6 feeds · Manage</b>.',
@@ -342,41 +375,44 @@ td.n.hit { color: var(--blue); font-weight: 700 }
         item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title).replace('<div class="s">Published Oct 14, 2026 · Added today, 08:02</div>', '') },
         margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m).replace('Share this Margin', 'Share as Markdown') },
         show: { title: 'The Daily', back: 1, body: st => `<p class="note">There is no show screen today. Episodes appear only in Following.</p>` },
-      }, sheets: { add: st => addSheet(st) } },
-    { id: 'stream', kicker: 'Proposal 1', name: 'Stream', try: 'Try: <b>New</b>, open the folded <b>The Daily</b>, then its <b>Show</b> button. Try the <b>+</b> on Library.',
+      }, sheets: { add: st => addSheet(st, { built: true }) } },
+    { id: 'stream', kicker: 'Proposal 1', name: 'Stream', try: 'Try: <b>New</b>, open the folded <b>The Daily</b>, then <b>Sam</b>. Try <b>Follow</b> on New, then <b>Paste</b>.',
       tabs: [{ id: 'new', l: 'New', i: 'radio' }, { id: 'library', l: 'Library', i: 'books' }, { id: 'margins', l: 'Margins', i: 'quote' }],
       screens: {
-        new: { title: 'New', lead: gear, trail: [], body: streamBody },
-        library: { title: 'Library', lead: gear, trail: [plusFollow], body: st => libraryBody(st, 'Added', ['Added', 'Published', 'Publisher', 'Topic', 'Shows']) },
+        new: { title: 'New', lead: gear, trail: [followBtn], body: streamBody },
+        library: { title: 'Library', lead: gear, trail: [plus], body: st => libraryBody(st, 'Added', ['Added', 'Published', 'Publisher', 'Topic', 'Shows']) },
+        friend: friendScreen, club: clubScreen,
         margins: { title: 'Margins', lead: gear, trail: [exportAll], body: marginsBody },
         settings: { title: 'Settings', back: 1, body: settingsBody },
         show: { title: 'The Daily', back: 1, body: showBody },
         item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
         margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
-      }, sheets: { addFollow: st => addSheet(st, { follow: true }), add: st => addSheet(st) } },
-    { id: 'upnext', kicker: 'Proposal 2', name: 'Up next', try: 'Try: <b>Up next</b>, then <b>and 2 more</b>. Try the gear, then <b>Shows you follow</b>.',
+      }, sheets: { follow: st => followSheet(st, { where: 'New' }), add: st => addSheet(st, { where: 'New, with the Follow button' }) } },
+    { id: 'upnext', kicker: 'Proposal 2', name: 'Up next', try: 'Try: <b>Up next</b>, then <b>and 2 more</b>. Try the gear, then <b>Shows you follow</b>, then <b>Paste</b>.',
       tabs: [{ id: 'upnext', l: 'Up next', i: 'star' }, { id: 'library', l: 'Library', i: 'books' }, { id: 'margins', l: 'Margins', i: 'quote' }],
       screens: {
         upnext: { title: 'Up next', lead: gear, trail: [], body: upNextBody },
-        library: { title: 'Library', lead: gear, trail: [plusFollow], body: st => libraryBody(st, 'Added') },
+        library: { title: 'Library', lead: gear, trail: [plus], body: st => libraryBody(st, 'Added') },
         margins: { title: 'Margins', lead: gear, trail: [exportAll], body: marginsBody },
         settings: { title: 'Settings', back: 1, body: st => settingsBody(st, { showsRow: true }) },
-        shows: { title: 'Shows you follow', back: 1, body: st => `<div class="field"><span class="in">Paste a feed link</span><button class="go">Follow</button></div>` + group('', [{ l: 'Browse podcasts and writers', i: 'grid', nav: 1 }, { l: 'Import from another app', i: 'down', nav: 1, a: { toast: 'The file picker opens at once.' } }], 0, 'sf', st) + sect('6 shows', 'newest first') + SHOWS.map(s => showRow(s)).join('') + QUIET.map(quietRow).join('') },
+        shows: { title: 'Shows you follow', back: 1, body: st => `<div class="field"><span class="in">A copied show link</span><button class="go"${act({ toast: 'Followed The Daily. It is in the list below.', btn: 'Undo' })}>Paste</button></div>` + group('', [{ l: 'Browse shows and writers', i: 'grid', nav: 1 }, { l: 'Import from another app', i: 'down', nav: 1, a: { toast: 'The file picker opens at once.' } }], 0, 'sf', st) + sect('6 shows', 'newest first') + SHOWS.map(s => showRow(s)).join('') + QUIET.map(quietRow).join('') + `<p class="note">Paste follows at once; Undo is in the toast. Friends and clubs would be listed beside this, under People and clubs.</p>` },
+        friend: friendScreen, club: clubScreen,
         show: { title: 'The Daily', back: 1, body: showBody },
         item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
         margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
-      }, sheets: { addFollow: st => addSheet(st, { follow: true }), add: st => addSheet(st) } },
-    { id: 'four', kicker: 'Proposal 3, the pick', name: 'Four tabs', try: 'Try: <b>Shows</b>, then <b>The Daily</b>. Try <b>Settings</b>, then <b>Show all</b>.',
-      tabs: [{ id: 'library', l: 'Library', i: 'books' }, { id: 'shows', l: 'Shows', i: 'radio' }, { id: 'margins', l: 'Margins', i: 'quote' }, { id: 'settings', l: 'Settings', i: 'gear' }],
+      }, sheets: { add: st => addSheet(st, { where: 'Shows you follow, under Settings' }) } },
+    { id: 'four', kicker: 'Proposal 3, the pick', name: 'Four tabs', try: 'Try: <b>Following</b>, then its <b>+</b>, then <b>Paste</b>. Try <b>Sam</b> and <b>Salt Club</b>. Try <b>Margins</b> and find <b>Newest</b>.',
+      tabs: [{ id: 'library', l: 'Library', i: 'books' }, { id: 'following', l: 'Following', i: 'radio' }, { id: 'margins', l: 'Margins', i: 'quote' }, { id: 'settings', l: 'Settings', i: 'gear' }],
       screens: {
-        library: { title: 'Library', lead: null, trail: [plusFollow], body: st => libraryBody(st, 'Added') },
-        shows: { title: 'Shows', lead: null, trail: [plusFollow], body: showsTabBody },
+        library: { title: 'Library', lead: null, trail: [plus], body: st => libraryBody(st, 'Added') },
+        following: { title: 'Following', lead: null, trail: [plusFollowSheet], body: followingTabBody },
+        friend: friendScreen, club: clubScreen,
         margins: { title: 'Margins', lead: null, trail: [exportAll], body: marginsBody },
         settings: { title: 'Settings', lead: null, trail: [], body: settingsBody },
         show: { title: 'The Daily', back: 1, body: showBody },
         item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
         margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
-      }, sheets: { addFollow: st => addSheet(st, { follow: true }), add: st => addSheet(st) } },
+      }, sheets: { follow: st => followSheet(st), add: st => addSheet(st, { where: 'the Following tab' }) } },
     { id: 'same', kicker: 'Proposal 4, the control', name: 'Same tabs', try: 'Try: <b>Margins</b> first. Then <b>Following</b>, then <b>6 feeds · Manage</b>: still two taps deep.',
       tabs: [{ id: 'library', l: 'Library', i: 'books' }, { id: 'following', l: 'Following', i: 'radio' }, { id: 'margins', l: 'Margins', i: 'quote' }],
       screens: {
@@ -388,7 +424,7 @@ td.n.hit { color: var(--blue); font-weight: 700 }
         show: { title: 'The Daily', back: 1, body: st => showBody(st, { manage: false }) + `<p class="note">In the control, Quiet and Unfollow stay in Manage feeds.</p>` },
         item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
         margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
-      }, sheets: { add: st => addSheet(st) } },
+      }, sheets: { add: st => addSheet(st, { built: true }) } },
   ];
 
   // ---------- phone runtime ----------
@@ -407,20 +443,21 @@ td.n.hit { color: var(--blue); font-weight: 700 }
       phone.innerHTML = `<div class="statusbar"><span>9:41</span><span class="pill"></span><span>●●●● ◔</span></div>
         <div class="navbar"><span class="slot">${lead}</span><span class="title">${cur.title || scr.title}</span><span class="slot r wide">${trail}</span></div>
         <div class="screen">${scr.body(st, cur)}</div>
-        ${st.toast ? `<div class="toast">${st.toast}<button class="u"${act({ untoast: 1 })}>OK</button></div>` : ''}
+        ${st.toast ? `<div class="toast">${st.toast}<button class="u"${act({ untoast: 1 })}>${st.toastBtn || 'OK'}</button></div>` : ''}
         <div class="dock"><div class="mini"${act({ toast: 'Now Playing is unchanged in every proposal; it comes last.' })}><span class="txt"><div class="t">${st.playing.t}</div><div class="s">${st.playing.s}</div></span><span class="mic"${act({ toast: 'Record a Margin, from anywhere, as today.' })}>${ic('mic', 18)}</span><span class="pp">${ic('pause', 18)}</span></div><div class="tabs">${tabs}</div></div>
         ${st.sheet ? p.sheets[st.sheet](st) : ''}`;
       tally.textContent = st.taps;
     }
     phone.addEventListener('click', ev => {
       const t = ev.target.closest('[data-act]'); if (!t || !phone.contains(t)) return;
+      if (t.classList.contains('sheet') && ev.target.closest('.pane')) return; // a tap inside the sheet's pane is not a tap on the backdrop
       ev.stopPropagation();
       const a = JSON.parse(t.getAttribute('data-act'));
       if (a.untoast) { st.toast = null; render(); return; }
-      st.taps += a.cost || 1; st.toast = null;
+      st.taps += a.cost || 1; st.toast = null; st.toastBtn = a.btn || null;
       if (a.tab) { st.tab = a.tab; st.stack = []; st.sheet = null; if (a.tab === p.tabs[0].id && p.tabs[0].id === 'library') st.taps = 0; }
       else if (a.back) { st.stack.pop(); }
-      else if (a.close) { st.sheet = null; }
+      else if (a.close) { st.sheet = null; if (a.toast) st.toast = a.toast; }
       else if (a.sheet) { st.sheet = a.sheet; }
       else if (a.go) { st.stack.push({ id: a.go, title: a.title || a.m || (a.go === 'show' ? 'The Daily' : null), m: a.m }); st.sheet = null; }
       else if (a.fold) { st.folds[a.fold] = !st.folds[a.fold]; }
@@ -440,9 +477,9 @@ td.n.hit { color: var(--blue); font-weight: 700 }
 
   // ---------- tap table ----------
   const JOBS = [
-    ['Import an OPML file', 6, 5, 4, 5, 4], ['Follow a podcast from a link', 5, 4, 3, 3, 3], ['Unfollow a show', 5, 4, 3, 3, 3],
-    ['Share one Margin with a friend', 5, 3, 3, 3, 3], ['Free up storage', 5, 3, 3, 3, 3], ['Export all Margins', 6, 2, 2, 2, 2],
-    ['Change the reading voice', 4, 3, 3, 3, 3], ['Hear a Margin\'s moment', 3, 2, 2, 2, 2], ['Find your newest Margin', '1, but not on top', 1, 1, 1, 1],
+    ['Import an OPML file', 6, 5, 5, 5, 5], ['Follow a podcast from a link', 5, 4, 3, 3, 3], ['Unfollow a show', 5, 4, 3, 3, 3],
+    ['Share one Margin with a friend', 5, 3, 3, 3, 3], ['Share all of an item\'s Margins', 3, 3, 3, 3, 3], ['Free up storage', 5, 3, 3, 3, 3], ['Export all Margins', 6, 2, 2, 2, 2],
+    ['Change the reading voice', 4, 3, 3, 3, 3], ['Hear a Margin\'s moment', 3, 2, 2, 2, 2], ['Find your newest Margin', '1, but not labelled', 1, 1, 1, 1],
     ['Write a Margin while listening', 2, 2, 2, 2, 2], ['Open the Timeline', 2, 2, 2, 2, 2], ['Add an article from the clipboard', 2, 2, 2, 2, 2],
     ['Get help', 2, 2, 2, 2, 2], ['See an item\'s details', '1, no dates', 1, 1, 1, 1], ['See new episodes from a show', 1, 1, 1, 1, 1], ['Open a packet a friend sent', 2, 2, 2, 2, 2],
   ];
