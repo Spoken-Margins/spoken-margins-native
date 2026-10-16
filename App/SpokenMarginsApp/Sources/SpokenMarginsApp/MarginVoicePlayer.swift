@@ -60,6 +60,8 @@ final class MarginVoicePlayer: ObservableObject {
     /// The options the voice's session was set up with, so a resume after a recording sets them again (#1672).
     private var sessionOptions: AVAudioSession.CategoryOptions = [.duckOthers]
     #endif
+    /// A recording holds the voice and the system transport is the session's again: the poll mustn't publish over it (#1672).
+    private var transportHandedBack = false
     private weak var host: (any MarginVoicePlayerHost)?
 
     init(host: any MarginVoicePlayerHost) {
@@ -150,6 +152,7 @@ final class MarginVoicePlayer: ObservableObject {
         try AVAudioSession.sharedInstance().setActive(true)
         sessionOptions = options
         #endif
+        transportHandedBack = false
         let item = AVPlayerItem(url: url())
         item.audioTimePitchAlgorithm = .timeDomain
         let player = AVPlayer(playerItem: item)
@@ -200,6 +203,7 @@ final class MarginVoicePlayer: ObservableObject {
     /// The system transport goes back to a shared voice that a recording was holding (#1672); `beginShared` installed it first.
     func installSharedRemoteControls() {
         guard sharedMargin != nil else { return }
+        transportHandedBack = false
         remoteControls.install { [weak self] command in
             guard let self, self.sharedMargin != nil else { return }
             self.host?.marginVoiceRemoteCommand(command)
@@ -252,7 +256,7 @@ final class MarginVoicePlayer: ObservableObject {
     }
 
     private func publishNowPlaying() {
-        guard let host, !host.marginVoiceMixesWithOtherAudio, let prompt = sharedMargin else { return }
+        guard let host, !host.marginVoiceMixesWithOtherAudio, !transportHandedBack, let prompt = sharedMargin else { return }
         let player = currentPlayer
         remoteControls.publish(
             sender: prompt.senderLabel, elapsed: player?.currentTime().seconds ?? 0,
@@ -272,6 +276,7 @@ final class MarginVoicePlayer: ObservableObject {
     }
 
     func endRemoteControls() {
+        transportHandedBack = true
         remoteControls.end()
     }
 

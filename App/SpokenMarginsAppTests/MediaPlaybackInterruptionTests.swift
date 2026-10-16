@@ -966,6 +966,72 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertFalse(model.isPlayingInterjectionAudio(own))
     }
 
+    /// #1672 audit: tapping a shared Margin in the Timeline while your own Margin is loaded and paused plays the shared
+    /// Margin's moment. The moment resumes the source with `resumePlayback()`, which now plays a paused own Margin on
+    /// first; the own voice has to be let go before that, as for a Margin of your own (`playMarginMoment`).
+    func testTappingASharedMarginLetsGoOfYourPausedOwnMarginAndPlaysTheMoment() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV)
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.endMarginMoment(); model.stopInterjectionAudioPlayback(); model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        let own = try fixture.addOwnMargin(sessionID: try XCTUnwrap(model.snapshot.sessionId))
+        model.toggleInterjectionAudioPlayback(own)
+        model.playPause()
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "precondition: your Margin is loaded and paused")
+        model.refreshMarginRows()
+        let row = try XCTUnwrap(model.sharedMarginRows.first { $0.interjection.id == fixture.record.id })
+
+        model.playSharedMarginMoment(row)
+
+        XCTAssertFalse(model.isPlayingInterjectionAudio(own), "your Margin is let go, not picked up again")
+        XCTAssertFalse(model.ownMarginVoiceIsPaused)
+        try waitUntil("playback reaches the shared Margin and its voice plays", timeout: 10) {
+            model.marginMoment?.isPlayingMargin == true
+        }
+    }
+
+    /// #1672 audit: Add a Margin over a sounding Margin, then "Write instead" while the microphone question is up,
+    /// leaves no hold behind. A later Add a Margin over the same Margin, which the listener left paused, must not
+    /// play it on after Save.
+    func testWritingInsteadLeavesNoHoldThatPlaysAPausedMarginAfterALaterSave() async throws {
+        let gate = MicrophoneQuestionGate()
+        let fixture = try SharedMarginHearingFixture(
+            itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient(),
+            microphonePermissionRequest: { await gate.request() }
+        )
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.stopInterjectionAudioPlayback(); model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        let own = try fixture.addOwnMargin(sessionID: try XCTUnwrap(model.snapshot.sessionId))
+        model.toggleInterjectionAudioPlayback(own)
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
+        try waitUntil("the voice has played a little") { player.currentTime().seconds > 0.2 }
+
+        model.beginInterjection()
+        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        XCTAssertNotNil(gate.continuation, "the microphone question is up")
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "your sounding Margin is held while it waits")
+        model.switchPendingVoiceCaptureToWrittenMargin()
+        model.cancelWrittenMargin()
+        gate.finish(true)
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "it stays where it stopped")
+
+        model.beginInterjection()
+        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
+        gate.finish(true)
+        for _ in 0..<100 where !model.snapshot.isRecording { await Task.yield() }
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.finishInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "a Margin the listener left paused stays paused after Save")
+    }
+
     // MARK: Leveled Margins (#467)
 
     /// The owner's report (#181): Margins played from the raw recording, so a whisper was far quieter than
@@ -1042,6 +1108,20 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     }
 }
 
+/// Holds the microphone question open until the test answers it.
+@MainActor
+private final class MicrophoneQuestionGate {
+    var continuation: CheckedContinuation<Bool, Never>?
+    func request() async -> Bool {
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func finish(_ granted: Bool) {
+        let pending = continuation
+        continuation = nil
+        pending?.resume(returning: granted)
+    }
+}
+
 private final class InterruptionEventRecorder: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [AudioPlaybackInterruptionEvent] = []
@@ -1071,6 +1151,7 @@ private struct SharedMarginHearingFixture {
         itemID: String,
         makeWAV: (TimeInterval) throws -> URL,
         recordingClient: RecordingClient? = nil,
+        microphonePermissionRequest: (() async -> Bool)? = nil,
         layerIsMuted: Bool = true
     ) throws {
         root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
@@ -1080,7 +1161,7 @@ private struct SharedMarginHearingFixture {
         files = [sourceURL, voiceURL]
         let db = root.appending(path: "library.sqlite")
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: AVPlayerStreamPlaybackClient())
-        model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, databaseURLOverride: db)
+        model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, microphonePermissionRequest: microphonePermissionRequest, databaseURLOverride: db)
         model.resetAndSeed()
         store = try SQLiteSessionStore(path: db.path)
         if itemID == "real-source" {

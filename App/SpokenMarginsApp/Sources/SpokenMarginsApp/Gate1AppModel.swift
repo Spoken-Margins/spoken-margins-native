@@ -1321,7 +1321,7 @@ final class Gate1AppModel: ObservableObject {
             reportFailure("This shared Margin contains reviewed text but no playable voice recording.")
             return
         }
-        endMarginMoment()
+        endMarginMoment(); stopInterjectionAudioPlayback() // one Margin voice at a time: a paused one of yours mustn't take the resume below (#1672)
         if snapshot.itemId != itemID || !hasActiveSession { startItem(id: itemID) }
         guard snapshot.itemId == itemID else { return }
         // The moment plays this voice; the automatic shared-Margin prompt mustn't play it again.

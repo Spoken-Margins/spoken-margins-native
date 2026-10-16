@@ -346,10 +346,9 @@ extension Gate1AppModel {
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
-        if heldMarginVoice?.kind == .shared { // a card up blocks writing; the Margin is let go, as Add a Margin used to do (#1672)
-            marginVoiceHeldForRecording = nil
-            stopImportedCommentaryPlayback(resumeSource: false)
-        }
+        let heldShared = heldMarginVoice?.kind == .shared
+        marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is and nothing is left to play it on (#1672)
+        if heldShared { stopImportedCommentaryPlayback(resumeSource: false) } // a card up blocks writing; the Margin is let go, as Add a Margin used to do
         beginWrittenMargin()
         if writtenMarginDraft == nil { resumeSourcePausedOnTap() } // the pencil refused: nothing else will put the source back
     }

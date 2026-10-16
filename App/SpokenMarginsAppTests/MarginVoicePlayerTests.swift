@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import SessionKit
 import XCTest
 @testable import SpokenMarginsApp
@@ -180,6 +181,33 @@ final class MarginVoicePlayerTests: XCTestCase {
         try player.setOwnPaused(true)
         player.releasePlayer()
         XCTAssertFalse(player.ownIsPaused, "releasing the player clears the held state")
+    }
+
+    /// #1672: while a recording holds a shared voice the system transport is the session's again, and the voice's
+    /// poll must not write "Shared Margin" over what the session shows. (Fails without `transportHandedBack`.)
+    func testAHeldSharedVoiceDoesNotPublishOverTheSessionsNowPlaying() throws {
+        let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
+        let player = MarginVoicePlayer(host: host)
+        let wav = try makeWAV(duration: 5)
+        try player.prepareShared(try makePrompt(voice: wav), url: { wav }, rate: 1,
+                                 mixesWithOtherAudio: false, lowersBackgroundAudio: false, mixedPlaybackVolume: 1)
+        player.beginShared(installRemoteControls: false)
+        defer { player.endRemoteControls(); player.resetSharedState(); player.releasePlayer(); MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
+        try waitUntil("the voice publishes its line") {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Shared Margin"
+        }
+
+        try player.setSharedPaused(true)
+        player.endRemoteControls()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: "Recording"]
+        RunLoop.main.run(until: Date().addingTimeInterval(0.7)) // three polls
+        XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "Recording")
+
+        player.installSharedRemoteControls()
+        try waitUntil("the voice publishes again once it has the transport back") {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Shared Margin"
+        }
     }
 
     private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () -> Bool) throws {
