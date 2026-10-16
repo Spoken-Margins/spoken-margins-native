@@ -144,15 +144,27 @@ struct ExperienceMarginsScreen: View {
             ForEach(groupedRows) { group in
                 VStack(alignment: .leading, spacing: 0) {
                     HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(group.itemTitle)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(AppColors.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("\(group.rows.count) Margins")
-                            .font(.caption)
-                            .foregroundStyle(AppColors.secondaryText)
+                    // The heading opens the item, as the Library row does (#1256). The chevron says it goes somewhere.
+                    Button { model.openItem(id: group.itemID) } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("\(group.itemTitle) \(Text(Image(systemName: "chevron.right")).font(.caption.weight(.bold)).foregroundStyle(AppColors.secondaryText))")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(AppColors.text)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("\(group.rows.count) Margins")
+                                .font(.caption)
+                                .foregroundStyle(AppColors.secondaryText)
+                        }
+                        .frame(minHeight: 44, alignment: .topLeading)
+                        .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("\(group.itemTitle), \(group.rows.count) Margins")
+                    .accessibilityHint("Opens the item.")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("margins.openItem.\(group.itemID)")
                     Spacer(minLength: 8)
                     Button { model.openMarginItemExport(itemID: group.itemID) } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
