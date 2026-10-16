@@ -173,9 +173,8 @@ struct ExperienceLibraryScreen: View {
                     Button {
                         model.libraryQuery.query = ""
                     } label: {
-                        Image(systemName: "xmark.circle.fill")
+                        TapTargetIcon(systemName: "xmark.circle.fill")
                             .foregroundStyle(AppColors.secondaryText)
-                            .frame(width: 32, height: 32)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Clear search")
@@ -400,19 +399,7 @@ private struct ExperienceLibraryCompactRow: View {
             .accessibilityIdentifier("library.row.\(row.id)")
 
             Button(action: onPlay) {
-                ZStack(alignment: .bottomTrailing) {
-                    Image(systemName: row.offlineState == .readyOffline ? "play.fill" : "play")
-                        .foregroundStyle(AppColors.evergreen)
-                        .frame(width: 40, height: 40)
-                        .background(AppColors.softGreen, in: Circle())
-                    if row.startupAudioState == .preparing {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .tint(AppColors.evergreen)
-                            .padding(2)
-                            .background(AppColors.panel, in: Circle())
-                    }
-                }
+                LibraryRowPlayLabel(isReadyOffline: row.offlineState == .readyOffline, isPreparing: row.startupAudioState == .preparing)
             }
             .buttonStyle(.plain)
             .accessibilityLabel(playActionTitle)
@@ -595,5 +582,28 @@ private extension View {
         ))
         .listRowBackground(AppColors.bone)
         .listRowSeparator(.hidden)
+    }
+}
+
+/// The Library row's play button face: a 40 pt circle inside a 44 pt hit area (#151).
+struct LibraryRowPlayLabel: View {
+    let isReadyOffline: Bool
+    let isPreparing: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            Image(systemName: isReadyOffline ? "play.fill" : "play")
+                .foregroundStyle(AppColors.evergreen)
+                .frame(width: 40, height: 40)
+                .background(AppColors.softGreen, in: Circle())
+                .minimumTapTarget()
+            if isPreparing {
+                ProgressView()
+                    .controlSize(.mini)
+                    .tint(AppColors.evergreen)
+                    .padding(2)
+                    .background(AppColors.panel, in: Circle())
+            }
+        }
     }
 }

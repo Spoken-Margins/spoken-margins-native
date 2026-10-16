@@ -57,6 +57,30 @@ struct ExperienceSurface<Content: View>: View {
     }
 }
 
+/// Apple's minimum hit area for a control. A control drawn smaller keeps its look and gets this much room to tap (#151).
+enum TapTarget {
+    static let minimum: CGFloat = 44
+}
+
+extension View {
+    /// Gives a small control at least 44 × 44 pt to tap. Apply it after the visible background or clip, so the
+    /// drawn shape stays the same size and only the hit area grows.
+    func minimumTapTarget() -> some View {
+        frame(minWidth: TapTarget.minimum, minHeight: TapTarget.minimum)
+            .contentShape(Rectangle())
+    }
+}
+
+/// A bare icon button label (dismiss ✕, clear search) with a 44 pt hit area around the unchanged glyph (#151).
+struct TapTargetIcon: View {
+    let systemName: String
+
+    var body: some View {
+        Image(systemName: systemName)
+            .minimumTapTarget()
+    }
+}
+
 struct ExperienceFilterChip<Content: View>: View {
     let isActive: Bool
     let content: Content
@@ -77,6 +101,7 @@ struct ExperienceFilterChip<Content: View>: View {
             .overlay {
                 Capsule().stroke(isActive ? AppColors.evergreen : AppColors.border)
             }
+            .minimumTapTarget()
     }
 }
 

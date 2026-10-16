@@ -23,6 +23,10 @@ struct MiniPlayerDock<Content: View>: View {
 }
 
 struct MiniPlayerBar: View {
+    /// Space between the record, play and close buttons. At 4 pt a near-miss on close ended the session and a
+    /// near-miss on record started a recording (#151); 12 pt is the gap the issue's default picked.
+    static let controlSpacing: CGFloat = 12
+
     @EnvironmentObject private var model: Gate1AppModel
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -64,7 +68,7 @@ struct MiniPlayerBar: View {
             .accessibilityValue("\(model.playbackItemHeaderTitle), \(model.playbackChapterHeaderTitle ?? "Source"), \(model.displayPlaybackProgressPercent) percent")
             .accessibilityIdentifier("miniPlayer.open.button")
 
-            HStack(spacing: 4) {
+            HStack(spacing: Self.controlSpacing) {
                 if dynamicTypeSize.isAccessibilitySize {
                     if let chapter = model.playbackChapterHeaderTitle {
                         Text(chapter)

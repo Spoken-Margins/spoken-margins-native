@@ -1656,8 +1656,7 @@ private struct GuidedOnboardingPlaybackCard: View {
                         .font(.headline)
                     Spacer()
                     Button(action: model.pauseGuidedOnboarding) {
-                        Image(systemName: "xmark")
-                            .frame(width: 32, height: 32)
+                        TapTargetIcon(systemName: "xmark")
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Pause guided tour")
