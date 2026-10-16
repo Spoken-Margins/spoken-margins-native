@@ -49,6 +49,13 @@ final class ItemMetadataTests: XCTestCase {
                        "First paragraph with bold & a \"quote\".\n\nSecond paragraph.\n\nOne\n\nTwo")
     }
 
+    func testInlineTagsLeaveNoStraySpaces() {
+        XCTAssertEqual(ItemMetadata.plainDescription(from: "Visit <a href=\"https://example.com\">example.com</a>."), "Visit example.com.")
+        XCTAssertEqual(ItemMetadata.plainDescription(from: "<em>S</em>tart, <STRONG class=x>bold</STRONG>, <span>a</span><i>b</i>"), "Start, bold, ab")
+        // Block tags and <br> still break lines, and a tag that only starts with an inline name is not inline.
+        XCTAssertEqual(ItemMetadata.plainDescription(from: "One<br>Two<p>Three</p><abbr>x</abbr>"), "One\nTwo\nThree\nx")
+    }
+
     func testDescriptionDecodesEntitiesAndLeavesLookalikesAlone() {
         XCTAssertEqual(ItemMetadata.plainDescription(from: "Tom &amp; Jerry &#8212; a caf&#xE9; &lt;3"), "Tom & Jerry — a café <3")
         XCTAssertEqual(ItemMetadata.plainDescription(from: "AT&T and R&D; fish & chips"), "AT&T and R&D; fish & chips")
@@ -78,6 +85,8 @@ final class ItemMetadataTests: XCTestCase {
         XCTAssertFalse(ItemMetadata.needsExpansion("One\nTwo\nThree"))
         XCTAssertTrue(ItemMetadata.needsExpansion("One\nTwo\nThree\nFour"))
         XCTAssertTrue(ItemMetadata.needsExpansion(String(repeating: "x", count: 200)))
+        // A 100-character paragraph can be cut at 3 lines at the largest text sizes, so it offers More.
+        XCTAssertTrue(ItemMetadata.needsExpansion(String(repeating: "word ", count: 20)))
         XCTAssertTrue(ItemMetadata.needsExpansion(String(repeating: "word ", count: 80)))
     }
 

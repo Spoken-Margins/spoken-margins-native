@@ -51,7 +51,11 @@ public enum ItemMetadata {
     /// collapsed and the result cut at `descriptionLimit` on a word boundary. Nil when nothing readable is left.
     public static func plainDescription(from summary: String?) -> String? {
         guard let summary, !summary.isEmpty else { return nil }
-        let stripped = HTMLTextStripping.stripHTML(summary)
+        // Inline tags vanish without a space, so "<em>S</em>tart" stays "Start"; block tags still break lines.
+        let inline = summary.replacingOccurrences(
+            of: #"</?(a|b|i|u|em|strong|span|code|small|sup|sub|font|mark)(\s[^>]*)?>"#, with: "",
+            options: [.regularExpression, .caseInsensitive])
+        let stripped = HTMLTextStripping.stripHTML(inline)
         let decoded = decodeEntities(stripped)
         var lines: [String] = []
         for rawLine in decoded.components(separatedBy: .newlines) {
@@ -71,9 +75,10 @@ public enum ItemMetadata {
         return cut.trimmingCharacters(in: .whitespacesAndNewlines) + "…"
     }
 
-    /// Whether the three-line preview hides anything, so the screen knows to offer More. A rough count of
-    /// characters per line: it errs toward offering More, never toward hiding text with no way to read it.
-    public static func needsExpansion(_ description: String, previewLines: Int = 3, charactersPerLine: Int = 45) -> Bool {
+    /// Whether the three-line preview might hide anything, so the screen knows to offer More. It assumes the
+    /// narrowest line (about 15 characters, the largest accessibility text size on a small phone), so it errs
+    /// toward offering More and never toward hiding text with no way to read it.
+    public static func needsExpansion(_ description: String, previewLines: Int = 3, charactersPerLine: Int = 15) -> Bool {
         let lines = description.components(separatedBy: "\n")
         if lines.count > previewLines { return true }
         return lines.reduce(0) { $0 + max(1, ($1.count + charactersPerLine - 1) / charactersPerLine) } > previewLines
