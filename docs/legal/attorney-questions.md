@@ -42,3 +42,10 @@ Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md
 ## 6. Data bundled in the app
 
 19. **May the app ship a starter list of podcasts built from Apple's Top Charts, with Apple-hosted artwork? If not, is a hand-picked list rebuilt from each show's own feed safe?** 192 of the 200 starter shows come from Apple's Top Charts feeds, and their artwork loads from Apple's image server. Apple's site terms forbid copying or distributing its content "for publication or distribution or for any commercial enterprise" without written consent, and its artwork terms require a link to Apple's store, which the app doesn't show. The options are keep it, serve it only from my server, or rebuild it from the publishers' own feeds; my pick is the rebuild (`docs/launch/app-store-submission.md` §6, "The starter podcast catalog"; #632).
+
+## 7. Open-source licence
+
+20. **Is AGPLv3 plus a section 7 permission for App Store distribution sound, and what wording should the permission use?** I plan to publish the app's source under AGPLv3 and add a permission so that anyone, not just me, can ship it through the App Store. Signal and Nextcloud use similar exceptions. I'd like to copy proven wording rather than write my own (owner's call, 2026-10-16; #1381).
+21. **What do I need from contributors so I can relicense to MPL-2.0 later?** The plan is to switch to MPL-2.0 once there's momentum. Every copyright holder must agree to that, so I'd like to know whether a short contributor licence agreement is enough, or whether the LLC should hold the copyright by assignment.
+22. **How much of the code can I claim copyright in, when AI agents wrote most of it under my direction?** This affects what the licence can actually enforce and what the LLC would own. It doesn't affect whether I may publish.
+23. **Should I assign the copyright to the LLC before the first public release, and how?** I'd rather the LLC be the licensor on day one than transfer it later.
