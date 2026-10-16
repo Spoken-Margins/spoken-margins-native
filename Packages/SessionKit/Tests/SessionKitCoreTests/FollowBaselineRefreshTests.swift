@@ -1,6 +1,10 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
-import SessionKit
-@testable import SpokenMarginsApp
+@testable import SessionKit
+@testable import SessionKitFeeds
 
 /// #1589: following a feed with a large archive leaves its old episodes out of New, on the follow,
 /// on every refresh, and after unfollowing and following again. The coordinator stamps the feed's

@@ -29,10 +29,10 @@ Defaults taken on 2026-10-16. Veto any by number.
 - **D4. 30-day retention, deleted on a valid report.** After a takedown we keep only the report record (link id, reason, date), unless law enforcement asks us to preserve something or question 3's answer says the law requires it.
 - **D5. Sharing terms are accepted at the first share**, as a separate agreement, so the main Terms version doesn't change and nobody else is interrupted. Accepting at the point of use is the usual pattern.
 - **D6. The Open RAIL-M voice keeps its tap-to-accept at download**, recording the terms version and date. No custom App Store EULA. Only listeners who download that voice use it, so only they need to agree.
-- **D7. Synthesized-voice audio in a shared item is labeled machine-generated** (#1731).
+- **D7. Nothing shared today is machine-generated audio.** Shared Margins carry only the listener's own recording or text. If a later feature shares synthesized voice, such as a paid server voice, it is labeled as synthetic; the packet format and the recipient's label for that already exist (`tts_audio_and_text`).
 - **D8. Privacy laws.** The CCPA's revenue and volume thresholds are far above ours. For the GDPR, we store nothing linked to a person. The first public App Store release starts on the U.S. storefront and widens after a privacy check; TestFlight testers abroad are fine because nothing about them is stored.
 - **D9. App Store privacy label:** declare the App Attest key as Device ID, not linked to the user, used for fraud prevention. That is the conservative reading of Apple's definitions.
-- **D10. The listener's own OpenAI key.** The privacy policy says the app sends that text straight to OpenAI under the listener's account, and our server never sees it.
+- **D10. The listener's own OpenAI key is not a shipped feature.** The code exists but is switched off in every build (`SMRemoteProviderExperienceEnabled: false` in `project.yml`). The privacy policy covers it only if it is ever turned on.
 - **D11. Age rating:** answer Apple's questionnaire as written for an app whose shared links anyone can open, and take at least 13+. The app isn't directed at children and has no age gate.
 - **D12. A protection service such as Cloudflare is named in the published privacy policy in advance**, so it can be switched on during an attack without a policy change first.
 - **D13. The starter podcast list is rebuilt from each show's own feed**, with no Apple chart data or Apple-hosted artwork (#1732). This was Cole's pick on #632.
@@ -43,7 +43,6 @@ Defaults taken on 2026-10-16. Veto any by number.
 - #1728: block repeat abusers by device with DeviceCheck, storing no device ID.
 - #1729: Report and Hide this sender in the app, for App Store guideline 1.2.
 - #1730: listening maps with anchors that quote nothing, transcripts that never touch disk, and summaries checked for copying.
-- #1731: label synthesized-voice audio as machine-generated.
 - #1732: rebuild the starter podcast list from publisher feeds.
 
 The open-source licence is settled (owner, 2026-10-16) and isn't on this list.

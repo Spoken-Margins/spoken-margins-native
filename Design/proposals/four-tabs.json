@@ -1,12 +1,12 @@
 {
  "name": "four-tabs",
- "title": "Four tabs: Library, Shows, Margins, Settings",
+ "title": "Four tabs: Library, Following, Margins, Settings",
  "base": "../flow-map/flow-map.json",
  "base_commit": "32173207",
  "start": "ExperienceLibraryScreen",
- "summary": "Every home gets a name on the tab bar. Shows is a list of followed shows, sorted by newest episode, each row with its unplayed count and a play button for the newest; a show is a place you go, so a noisy one never floods anything, and Quiet shows sink to a collapsed group. The Library holds items only, one sortable list. Settings becomes a tab, which makes voice, storage, help and the import jobs cheap and gives feed management a visible neighbour. Following's stream and Manage feeds both go away.",
+ "summary": "Every home gets a name on the tab bar. Following lists what you follow: shows now, friends and clubs later, one row each, sorted by newest with 'N new'; a show is a place you go, so a noisy one never floods anything, and Quiet shows sink to a collapsed group. Following's plus opens its own sheet, Follow a show or a friend; the Library's plus only adds a source. The Library holds items only, one sortable list. Settings becomes a tab, which makes voice, storage and help cheap. The old Following stream and Manage feeds both go away; Quiet and Unfollow live on the Show screen.",
  "shared_fixes": [
-  "Margins list newest first; a Margin row plays its moment and a chevron opens its details.",
+  "Margins stay grouped by item, with Share beside each item's heading. Groups are ordered by their most recent Margin and that Margin carries a Newest label, so the newest one is in the first group. Inside a group the Margins keep source order. A Margin row plays its moment; its chevron opens its details.",
   "Margin details offer Share this Margin (a one-Margin packet to the share sheet).",
   "Item details show the published date and the date added.",
   "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
@@ -17,7 +17,7 @@
  ],
  "groups": [
   "Library",
-  "Shows",
+  "Following",
   "Margins",
   "Now Playing",
   "Settings",
@@ -40,17 +40,25 @@
   {
    "id": "ManageFeedsScreen",
    "change": "rename",
-   "title": "Shows",
-   "group": "Shows",
-   "note": "Becomes the Shows tab: followed shows sorted by newest episode, each row with 'N new', the newest episode's title and a play button. Quiet shows in a collapsed group at the bottom (two rows, then Show all). Toolbar + opens the Add sheet, which carries Paste, Browse and Import from another app. The tab only lists and plays; Quiet and Unfollow live on the Show screen, so no landing tab manages a feed."
+   "title": "Following",
+   "group": "Following",
+   "note": "Becomes the Following tab: everything you follow, one row each, sorted by newest. Today that is shows, each row with 'N new', the newest episode's title and a play button; later a friend's story and a book club are rows in the same list. Quiet shows in a collapsed group at the bottom (two rows, then Show all). Toolbar plus opens the Follow sheet, not the Library's Add sheet. The tab only lists and plays; Quiet and Unfollow live on the Show screen, so no landing tab manages a feed."
   },
   {
    "id": "ShowScreen",
    "change": "add",
    "title": "Show",
-   "group": "Shows",
+   "group": "Following",
    "kind": "screen",
    "note": "One followed show: its episodes with dates, play buttons, Quiet toggle, Unfollow. Also the landing after Browse finds a show (Follow lives here)."
+  },
+  {
+   "id": "FollowSheet",
+   "change": "add",
+   "title": "Follow a show or a friend",
+   "group": "Following",
+   "kind": "sheet",
+   "note": "Its own sheet, separate from the Library's Add sheet: Paste (a copied show link is followed at once, with an Undo toast), Browse shows and writers, Import from another app. Later, a friend's invite link pastes here too. The Library's plus means only 'add a source'."
   },
   {
    "id": "SettingsScreen",
@@ -61,14 +69,14 @@
   {
    "id": "CatalogDrawerView",
    "change": "move",
-   "group": "Library",
-   "note": "Opened from a Browse tile in the Add sheet."
+   "group": "Following",
+   "note": "Opened from the Browse tile in the Follow sheet."
   },
   {
    "id": "OPMLImportScreen",
    "change": "move",
-   "group": "Library",
-   "note": "Opened from an Import tile in the Add sheet. It presents the file picker at once."
+   "group": "Following",
+   "note": "Opened from the Import tile in the Follow sheet. It presents the file picker at once."
   },
   {
    "id": "ReadLaterScreen",
@@ -91,36 +99,6 @@
   }
  ],
  "edges": [
-  {
-   "id": "p006",
-   "from": "ExperienceAddSourceFlow",
-   "to": "CatalogDrawerView",
-   "control": "Browse podcasts and writers tile",
-   "control_kind": "button",
-   "presentation": "sheet",
-   "file": null,
-   "line": null,
-   "anchor": null,
-   "present_line": null,
-   "condition": "",
-   "notes": "",
-   "proposed": true
-  },
-  {
-   "id": "p007",
-   "from": "ExperienceAddSourceFlow",
-   "to": "OPMLImportScreen",
-   "control": "Import from another app tile (the file picker opens at once)",
-   "control_kind": "button",
-   "presentation": "push",
-   "file": null,
-   "line": null,
-   "anchor": null,
-   "present_line": null,
-   "condition": "",
-   "notes": "",
-   "proposed": true
-  },
   {
    "id": "p008",
    "from": "CatalogDrawerView",
@@ -215,7 +193,7 @@
    "id": "p030",
    "from": "ExperienceLibraryScreen",
    "to": "ManageFeedsScreen",
-   "control": "Shows tab",
+   "control": "Following tab",
    "control_kind": "tab",
    "presentation": "tab",
    "file": null,
@@ -320,7 +298,7 @@
    "id": "p037",
    "from": "ExperienceMarginsScreen",
    "to": "ManageFeedsScreen",
-   "control": "Shows tab",
+   "control": "Following tab",
    "control_kind": "tab",
    "presentation": "tab",
    "file": null,
@@ -365,7 +343,7 @@
    "id": "p040",
    "from": "SettingsScreen",
    "to": "ManageFeedsScreen",
-   "control": "Shows tab",
+   "control": "Following tab",
    "control_kind": "tab",
    "presentation": "tab",
    "file": null,
@@ -424,8 +402,8 @@
   {
    "id": "p052",
    "from": "ManageFeedsScreen",
-   "to": "ExperienceAddSourceFlow",
-   "control": "Add (plus)",
+   "to": "FollowSheet",
+   "control": "Follow (plus)",
    "control_kind": "toolbar",
    "presentation": "sheet",
    "file": null,
@@ -433,7 +411,7 @@
    "anchor": null,
    "present_line": null,
    "condition": "",
-   "notes": "The same Add sheet as the Library's.",
+   "notes": "Following's own sheet. The Library's plus opens the Add sheet, which adds a source and nothing else.",
    "proposed": true
   },
   {
@@ -495,6 +473,36 @@
    "condition": "a listening session is active",
    "notes": "",
    "proposed": true
+  },
+  {
+   "id": "p057",
+   "from": "FollowSheet",
+   "to": "CatalogDrawerView",
+   "control": "Browse shows and writers tile",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p058",
+   "from": "FollowSheet",
+   "to": "OPMLImportScreen",
+   "control": "Import from another app tile (the file picker opens at once)",
+   "control_kind": "button",
+   "presentation": "push",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
   }
  ],
  "removed_edges": [
@@ -519,17 +527,18 @@
    "id": "j01",
    "name": "Import an OPML file",
    "via": [
-    "ExperienceAddSourceFlow"
+    "FollowSheet"
    ],
    "target": "OPMLImportScreen",
    "final_cost": 2,
    "final": "Pick the .opml file in the picker that opened, then tap Follow N.",
-   "note": "Library, Add, Import from another app.",
+   "note": "Following tab, Follow, Import from another app, then the picker. One tap more than before, because the import left the Library plus.",
    "taps": {
     "as_built": 6,
-    "proposed": 4,
+    "proposed": 5,
     "route": [
-     "Add (plus)",
+     "Following tab",
+     "Follow (plus)",
      "Import from another app tile (the file picker opens at once)"
     ]
    }
@@ -538,15 +547,16 @@
    "id": "j02",
    "name": "Follow a podcast from a link",
    "via": [],
-   "target": "ExperienceAddSourceFlow",
-   "final_cost": 2,
-   "final": "Tap Paste; the sheet recognises a feed link and offers Follow <show>; tap it.",
-   "note": "Paste already imports a copied article link; a feed link follows instead.",
+   "target": "FollowSheet",
+   "final_cost": 1,
+   "final": "Tap Paste. The copied show link is followed at once; an Undo toast replaces a confirmation.",
+   "note": "Following tab, Follow, Paste. The Library plus is not involved.",
    "taps": {
     "as_built": 5,
     "proposed": 3,
     "route": [
-     "Add (plus)"
+     "Following tab",
+     "Follow (plus)"
     ]
    }
   },
@@ -557,12 +567,12 @@
    "target": "ShowScreen",
    "final_cost": 1,
    "final": "Tap Unfollow. An Undo toast replaces the confirmation.",
-   "note": "Shows tab, the show row, Unfollow. Works the same for every followed show.",
+   "note": "Following tab, the show row, Unfollow. Works the same for every followed show.",
    "taps": {
     "as_built": 5,
     "proposed": 3,
     "route": [
-     "Shows tab",
+     "Following tab",
      "Show row"
     ]
    }
@@ -574,7 +584,7 @@
    "target": "ExperienceMarginsScreen",
    "final_cost": 0,
    "final": "",
-   "note": "The list is newest first, so it is the top row.",
+   "note": "Groups are ordered by their newest Margin and the newest one is labelled, so it is in the first group on the tab.",
    "taps": {
     "as_built": 1,
     "proposed": 1,
@@ -770,12 +780,12 @@
    "target": "ManageFeedsScreen",
    "final_cost": 0,
    "final": "",
-   "note": "The Shows tab, sorted by newest episode, shows each show's count and newest title; the Show screen lists them all (2).",
+   "note": "The Following tab, sorted by newest, shows each show's count and newest title; the Show screen lists them all (2).",
    "taps": {
     "as_built": 1,
     "proposed": 1,
     "route": [
-     "Shows tab"
+     "Following tab"
     ]
    }
   },
@@ -795,6 +805,28 @@
      "open a .spokenmargins packet file (Files, Mail, AirDrop, Messages)"
     ]
    }
+  },
+  {
+   "id": "j17",
+   "name": "Share all of an item's Margins",
+   "via": [],
+   "target": "SHARE_SHEET",
+   "final_cost": 0,
+   "final": "Choosing the friend in the share sheet is not counted.",
+   "note": "Margins tab, Share beside the item's heading, Share N. Unchanged: the grouping by item is what makes this 3.",
+   "taps": {
+    "as_built": 3,
+    "proposed": 3,
+    "route": [
+     "Margins tab",
+     "Share (square.and.arrow.up), 'Share Margins from <item>'",
+     "Share N (square.and.arrow.up)"
+    ]
+   },
+   "via_edges": [
+    "e147",
+    "e168"
+   ]
   }
  ]
 }
