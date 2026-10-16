@@ -142,7 +142,10 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
     private func enforceLimit(protecting protectedURL: URL?) {
         var entries = cacheEntries().sorted { $0.modifiedAt < $1.modifiedAt }
         var total = entries.reduce(0) { $0 + $1.size }
-        while total > limitBytes, let index = entries.firstIndex(where: { $0.url != protectedURL }) {
+        // The directory listing can spell the same file as /private/var/... where the stored URL says /var/...
+        // (and the reverse), so the file just stored is matched by its standardized path.
+        let protectedPath = protectedURL?.standardizedFileURL.path
+        while total > limitBytes, let index = entries.firstIndex(where: { $0.url.standardizedFileURL.path != protectedPath }) {
             let entry = entries.remove(at: index)
             try? fileManager.removeItem(at: entry.url)
             total -= entry.size
