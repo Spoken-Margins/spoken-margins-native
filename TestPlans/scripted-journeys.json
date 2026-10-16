@@ -7,6 +7,10 @@
       "journey": "J1"
     },
     {
+      "test": "SpokenMarginsAppUITests/J1TextChaptersJourneyUITests",
+      "journey": "J1"
+    },
+    {
       "test": "SpokenMarginsAppUITests/J2PodcastSurvivesRelaunchJourneyUITests",
       "journey": "J2"
     },
