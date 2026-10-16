@@ -12,8 +12,14 @@ struct Gate1RootView: View {
     @State private var navigation = AppNavigationState()
     @State private var keyboardIsPresented = false
 
+    /// The tabs and the Timeline place their own mini player.
+    private var showsRootMiniPlayer: Bool {
+        model.screen != .home && model.screen != .timeline && !model.recordingNavigationIsLocked
+            && model.shouldShowMiniPlayer && !keyboardIsPresented
+    }
+
     var body: some View {
-        Group {
+        MiniPlayerDock(showsMiniPlayer: showsRootMiniPlayer) {
             if model.writtenMarginDraft != nil {
                 ExperienceWrittenMarginScreen()
             } else if model.snapshot.isRecording || model.isRequestingRecordingPermission {
@@ -42,13 +48,6 @@ struct Gate1RootView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .modifier(AppFeedbackPresentation())
-        .safeAreaInset(edge: .bottom, spacing: 8) {
-            if model.screen != .home && model.screen != .timeline && !model.recordingNavigationIsLocked && model.shouldShowMiniPlayer && !keyboardIsPresented {
-                MiniPlayerBar()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, model.screen == .home ? 54 : 4)
-            }
-        }
         .edgeSwipeBack(enabled: !model.recordingNavigationIsLocked && model.screen != .home, action: model.openHome)
         .onAppear {
             model.bootstrapLibraryIfNeeded()
@@ -206,6 +205,27 @@ private struct AIDataSharingConsentView: View {
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("aiConsent.sheet")
+    }
+}
+
+/// Puts the mini player under the content instead of over it (#1716). A `.safeAreaInset` outside a
+/// NavigationStack reaches only the stack's root, so pushed screens (Manage Feeds → Import, Settings
+/// pages) and their own bottom bars ran under the pill. Stacking gives every screen in the stack a
+/// frame that ends above the pill, so scroll content and bottom controls stay reachable.
+struct MiniPlayerDock<Content: View>: View {
+    let showsMiniPlayer: Bool
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 8) {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if showsMiniPlayer {
+                MiniPlayerBar()
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+            }
+        }
     }
 }
 
