@@ -1,9 +1,10 @@
 import SessionKit
 import SwiftUI
 
-/// A summary or transcription failure about what's playing, as one orange line under the title instead of
-/// a banner over it (#430). The icon's shape tells an error (octagon) from a warning (triangle), so orange
-/// carries no meaning alone. Retry keeps its name, and the full message stays on the item.
+/// A summary or transcription failure about what's playing, as one orange line at the top of the playback
+/// screen instead of a banner over the title (#430). The icon's shape tells an error (octagon) from a
+/// warning (triangle), so orange carries no meaning alone. Retry keeps its name, and the full message
+/// stays on the item.
 struct PlaybackFeedbackTagView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize

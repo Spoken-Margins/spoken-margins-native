@@ -20,9 +20,10 @@ public struct FeedbackOrigin: Equatable, Sendable {
     }
 }
 
-/// A one-line tag under the playback title, in place of a banner over it (#430). It shows only while the
-/// Now screen is playing the event's own item and session; a late failure from another listen keeps the
-/// banner, so it can't read as being about what's playing. The full message stays on the item.
+/// A one-line tag at the top of the playback screen, in place of a banner over its title (#430). It shows
+/// only while that screen is playing the event's own item and session, on any pane; a late failure from
+/// another listen keeps the banner, so it can't read as being about what's playing. The full message
+/// stays on the item.
 public struct PlaybackFeedbackTag: Equatable, Sendable {
     public let text: String
     public let isFailure: Bool

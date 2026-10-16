@@ -23,6 +23,11 @@ extension Gate1AppModel {
         "\(interjection.sessionId)::\(interjection.id)"
     }
 
+    /// Names a failed transcription's Retry offer, so retrying or transcribing the Margin another way withdraws it.
+    static func transcriptionRetryKey(_ interjection: Interjection) -> String {
+        "transcription:\(marginIdentity(interjection))"
+    }
+
     /// Margin IDs repeat per session, so per-Margin diagnostics carry a hashed session token.
     static func marginDiagnosticKey(_ name: String, sessionId: String, interjectionId: String) -> String {
         PodcastAnchorCaptureDiagnostics.marginKey(name, sessionId: sessionId, interjectionId: interjectionId)
@@ -53,6 +58,7 @@ extension Gate1AppModel {
     }
 
     func retryInterjectionTranscription(_ interjection: Interjection) {
+        withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
         guard interjection.captureKind != .written, interjection.audioPath != nil else {
             reportFailure("The saved Margin audio is unavailable.")
             return
@@ -72,7 +78,7 @@ extension Gate1AppModel {
                 reportFailure(
                     $0,
                     itemId: interjection.itemId,
-                    retry: .init(key: "transcription:\(interjection.id)") { [weak self] in self?.retryInterjectionTranscription(interjection) },
+                    retry: .init(key: Self.transcriptionRetryKey(interjection)) { [weak self] in self?.retryInterjectionTranscription(interjection) },
                     origin: origin
                 )
             }

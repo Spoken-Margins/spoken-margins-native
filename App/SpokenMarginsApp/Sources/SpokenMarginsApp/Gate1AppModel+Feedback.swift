@@ -53,7 +53,7 @@ extension Gate1AppModel {
         feedbackEvent = event
     }
 
-    /// The current event as a tag under the Now screen's title, or nil when it belongs in the top banner (#430).
+    /// The current event as the playback screen's one-line tag, or nil when it belongs in the top banner (#430).
     var playbackFeedbackTag: (event: UserFeedbackEvent, tag: PlaybackFeedbackTag)? {
         guard let event = feedbackEvent,
               let tag = PlaybackFeedbackTag(

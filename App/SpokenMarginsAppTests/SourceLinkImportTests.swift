@@ -1630,6 +1630,22 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.interjections.first?.displayText, "The complete saved interjection is restored from its original audio.")
         XCTAssertFalse(model.isRetryingInterjectionTranscription(interjection))
         XCTAssertTrue(model.retryingInterjectionTranscriptionIds.isEmpty, "a failed retry leaves no stored identity behind")
+
+        // #430: the failure names its Margin's listen and offers Retry. Retrying from the Margin withdraws that
+        // offer, so the "Retranscribing" confirmation isn't held back behind a stale Retry.
+        let failure = try XCTUnwrap(model.feedbackEvent)
+        XCTAssertEqual(failure.kind, .error)
+        XCTAssertEqual(failure.origin, FeedbackOrigin(itemId: interjection.itemId, sessionId: interjection.sessionId, work: .marginTranscription))
+        XCTAssertEqual(failure.retry?.key, Gate1AppModel.transcriptionRetryKey(interjection))
+        XCTAssertNotEqual(Gate1AppModel.transcriptionRetryKey(interjection), Gate1AppModel.transcriptionRetryKey(sameIdElsewhere))
+        model.retryInterjectionTranscription(try XCTUnwrap(model.selectedItem.interjections.first))
+        XCTAssertEqual(model.feedbackEvent?.kind, .success)
+        XCTAssertEqual(model.feedbackEvent?.message, "Retranscribing the saved Margin audio.")
+        let fourthRequested = await transcriber.waitUntilRequested(4)
+        XCTAssertTrue(fourthRequested, "the third retry never reached the transcriber")
+        await transcriber.settleNext(.success("The complete saved interjection is restored from its original audio."))
+        try await waitFor("third retry settles") { !model.isRetryingInterjectionTranscription(interjection) }
+        XCTAssertNil(model.feedbackEvent?.retry, "a transcribed Margin leaves no Retry offer behind")
     }
 
     func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {

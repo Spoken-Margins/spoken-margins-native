@@ -69,7 +69,7 @@ struct StickyTopBanners: View {
 }
 
 /// A confirmation or warning, drawn over the content below the navigation bar where an error would sit.
-/// Neither banner shows an event that the Now screen draws as the tag under its title (#430).
+/// Neither banner shows an event that the playback screen draws as its one-line tag (#430).
 struct FloatingFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
 
