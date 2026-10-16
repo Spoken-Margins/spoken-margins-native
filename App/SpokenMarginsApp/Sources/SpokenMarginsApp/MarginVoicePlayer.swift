@@ -44,6 +44,10 @@ final class MarginVoicePlayer: ObservableObject {
     @Published private(set) var sharedPhase: SharedMarginPlaybackPhase = .loading
     @Published private(set) var ownMarginID: String?
     @Published private(set) var ownMarginSessionID: String?
+    /// Your own Margin is loaded and held, not playing: the listener paused it, or recording a Margin over it holds it (#1672).
+    @Published private(set) var ownIsPaused = false
+    /// The Margins just saved over this one while it was held (#1672), by `marginIdentity`: they don't play next when this ends.
+    var ownRecordedOverMarginIdentities: Set<String> = []
     /// The rate of the voice that is playing, 1 when none is.
     @Published private(set) var rate: Double = 1
 
@@ -54,6 +58,12 @@ final class MarginVoicePlayer: ObservableObject {
     private(set) var completionTask: Task<Void, Never>?
     private var cuePlayer: AVAudioPlayer?
     private let remoteControls = ImportedMarginRemoteControls()
+    #if os(iOS)
+    /// The options the voice's session was set up with, so a resume after a recording sets them again (#1672).
+    private var sessionOptions: AVAudioSession.CategoryOptions = [.duckOthers]
+    #endif
+    /// A recording holds the voice and the system transport is the session's again: the poll mustn't publish over it (#1672).
+    private var transportHandedBack = false
     private weak var host: (any MarginVoicePlayerHost)?
 
     init(host: any MarginVoicePlayerHost) {
@@ -78,6 +88,7 @@ final class MarginVoicePlayer: ObservableObject {
         #if os(iOS)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
         try AVAudioSession.sharedInstance().setActive(true)
+        sessionOptions = [.duckOthers]
         #endif
         let item = AVPlayerItem(url: url())
         item.audioTimePitchAlgorithm = .timeDomain
@@ -86,6 +97,8 @@ final class MarginVoicePlayer: ObservableObject {
         currentPlayer = player
         ownMarginID = interjection.id
         ownMarginSessionID = interjection.sessionId
+        ownIsPaused = false
+        ownRecordedOverMarginIdentities = []
         self.rate = rate
         completionTask = Task { @MainActor [weak self, weak item] in
             while !Task.isCancelled, let item {
@@ -105,6 +118,24 @@ final class MarginVoicePlayer: ObservableObject {
         player.playImmediately(atRate: Float(rate))
     }
 
+    /// Pauses your own Margin's voice where it is, or plays it on from there (#1672). The poll keeps watching the
+    /// player, and a paused player is not at its end, so the Margin neither ends nor restarts. A throw while resuming
+    /// leaves it paused.
+    func setOwnPaused(_ paused: Bool) throws {
+        guard ownMarginID != nil, let player = currentPlayer else { return }
+        if paused {
+            player.pause()
+        } else {
+            #if os(iOS)
+            // A recording over the voice changed the category; the voice plays in its own again.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: sessionOptions)
+            try AVAudioSession.sharedInstance().setActive(true)
+            #endif
+            player.playImmediately(atRate: Float(rate))
+        }
+        ownIsPaused = paused
+    }
+
     // MARK: A shared Margin
 
     /// Loads a shared Margin's voice and publishes it: session, item, player, volume, rate, then the prompt, the
@@ -122,7 +153,9 @@ final class MarginVoicePlayer: ObservableObject {
         let options = PlaybackAudioSessionPolicy.options(mixes: mixesWithOtherAudio, lowersBackground: lowersBackgroundAudio)
         try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: options)
         try AVAudioSession.sharedInstance().setActive(true)
+        sessionOptions = options
         #endif
+        transportHandedBack = false
         let item = AVPlayerItem(url: url())
         item.audioTimePitchAlgorithm = .timeDomain
         let player = AVPlayer(playerItem: item)
@@ -170,6 +203,16 @@ final class MarginVoicePlayer: ObservableObject {
         player.playImmediately(atRate: Float(rate))
     }
 
+    /// The system transport goes back to a shared voice that a recording was holding (#1672); `beginShared` installed it first.
+    func installSharedRemoteControls() {
+        guard sharedMargin != nil else { return }
+        transportHandedBack = false
+        remoteControls.install { [weak self] command in
+            guard let self, self.sharedMargin != nil else { return }
+            self.host?.marginVoiceRemoteCommand(command)
+        }
+    }
+
     /// Pauses or resumes the shared voice and records it: the paused flag, the health record and the phase are
     /// separate writes, and a throw while resuming leaves all of them as they were.
     func setSharedPaused(_ paused: Bool) throws {
@@ -181,6 +224,8 @@ final class MarginVoicePlayer: ObservableObject {
             #endif
         } else {
             #if os(iOS)
+            // A recording over the voice (#1672) changed the category; the voice plays in its own again.
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: sessionOptions)
             try AVAudioSession.sharedInstance().setActive(true)
             #endif
             player.playImmediately(atRate: Float(rate))
@@ -214,7 +259,7 @@ final class MarginVoicePlayer: ObservableObject {
     }
 
     private func publishNowPlaying() {
-        guard let host, !host.marginVoiceMixesWithOtherAudio, let prompt = sharedMargin else { return }
+        guard let host, !host.marginVoiceMixesWithOtherAudio, !transportHandedBack, let prompt = sharedMargin else { return }
         let player = currentPlayer
         remoteControls.publish(
             sender: prompt.senderLabel, elapsed: player?.currentTime().seconds ?? 0,
@@ -234,6 +279,7 @@ final class MarginVoicePlayer: ObservableObject {
     }
 
     func endRemoteControls() {
+        transportHandedBack = true
         remoteControls.end()
     }
 
@@ -246,6 +292,8 @@ final class MarginVoicePlayer: ObservableObject {
         completionTask = nil
         ownMarginID = nil
         ownMarginSessionID = nil
+        ownIsPaused = false
+        ownRecordedOverMarginIdentities = []
         rate = 1
     }
 

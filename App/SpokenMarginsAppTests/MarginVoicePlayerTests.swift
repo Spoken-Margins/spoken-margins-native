@@ -1,4 +1,5 @@
 import AVFoundation
+import MediaPlayer
 import SessionKit
 import XCTest
 @testable import SpokenMarginsApp
@@ -141,6 +142,72 @@ final class MarginVoicePlayerTests: XCTestCase {
         XCTAssertEqual(player.rate, 2)
         XCTAssertNil(player.sharedMargin)
         XCTAssertNotNil(player.completionTask)
+    }
+
+    /// #1672: your own Margin pauses in place and plays on from there. It neither ends nor starts over while paused,
+    /// and releasing the player clears the paused flag. (Fails without `setOwnPaused`, or if it replaced the item.)
+    func testAnOwnMarginPausesInPlaceAndPlaysOnFromThere() throws {
+        let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
+        let player = MarginVoicePlayer(host: host)
+        let wav = try makeWAV(duration: 3)
+        let own = Interjection(
+            id: "own", itemId: "item", sessionId: "session", targetType: .item, targetId: "item",
+            createdAt: Date(), roughPercent: 0,
+            anchor: Anchor(anchorType: .transcript, startChar: 0, endChar: 0, anchorBefore: "", anchorAfter: "", mediaTimeMs: 1_000),
+            audioPath: wav.path, audioStatus: "recorded", transcriptionStatus: "complete",
+            transcript: nil, cleanedTranscript: nil, displayText: nil, status: "active"
+        )
+        try player.startOwn(own, url: { wav }, rate: 1)
+        defer { player.releasePlayer() }
+        let avPlayer = try XCTUnwrap(player.currentPlayer)
+        try waitUntil("the voice has played a little") { avPlayer.currentTime().seconds > 0.3 }
+
+        try player.setOwnPaused(true)
+        XCTAssertTrue(player.ownIsPaused)
+        XCTAssertEqual(avPlayer.rate, 0, "the voice is held")
+        let heldAt = avPlayer.currentTime().seconds
+        RunLoop.main.run(until: Date().addingTimeInterval(0.6))
+        XCTAssertEqual(avPlayer.currentTime().seconds, heldAt, accuracy: 0.05, "it stays where it stopped")
+        XCTAssertEqual(host.ownEnded, 0)
+        XCTAssertTrue(player.isPlayingOwn(own), "a paused Margin is still the Margin that is loaded")
+
+        try player.setOwnPaused(false)
+        XCTAssertFalse(player.ownIsPaused)
+        try waitUntil("it plays on past where it stopped") { avPlayer.currentTime().seconds > heldAt + 0.3 }
+        XCTAssertGreaterThanOrEqual(avPlayer.currentTime().seconds, heldAt, "it did not start over")
+        try waitUntil("it reaches its end", timeout: 8) { host.ownEnded > 0 }
+
+        try player.setOwnPaused(true)
+        player.releasePlayer()
+        XCTAssertFalse(player.ownIsPaused, "releasing the player clears the held state")
+    }
+
+    /// #1672: while a recording holds a shared voice the system transport is the session's again, and the voice's
+    /// poll must not write "Shared Margin" over what the session shows. (Fails without `transportHandedBack`.)
+    func testAHeldSharedVoiceDoesNotPublishOverTheSessionsNowPlaying() throws {
+        let host = ScriptedVoiceHost()
+        defer { withExtendedLifetime(host) {} }
+        let player = MarginVoicePlayer(host: host)
+        let wav = try makeWAV(duration: 5)
+        try player.prepareShared(try makePrompt(voice: wav), url: { wav }, rate: 1,
+                                 mixesWithOtherAudio: false, lowersBackgroundAudio: false, mixedPlaybackVolume: 1)
+        player.beginShared(installRemoteControls: false)
+        defer { player.endRemoteControls(); player.resetSharedState(); player.releasePlayer(); MPNowPlayingInfoCenter.default().nowPlayingInfo = nil }
+        try waitUntil("the voice publishes its line") {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Shared Margin"
+        }
+
+        try player.setSharedPaused(true)
+        player.endRemoteControls()
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: "Recording"]
+        RunLoop.main.run(until: Date().addingTimeInterval(0.7)) // three polls
+        XCTAssertEqual(MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String, "Recording")
+
+        player.installSharedRemoteControls()
+        try waitUntil("the voice publishes again once it has the transport back") {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo?[MPMediaItemPropertyTitle] as? String == "Shared Margin"
+        }
     }
 
     private func waitUntil(_ what: String, timeout: TimeInterval = 5, _ condition: () -> Bool) throws {

@@ -207,6 +207,7 @@ extension Gate1AppModel {
             case .stale:
                 return
             case .denied:
+                resumeHeldMarginVoice(heldMarginVoice) // no recording will come of it: the Margin it paused plays on (#1672)
                 reportFailure("Microphone access is required to record Margins. Enable microphone access in Settings and try again.")
             case .granted:
                 startInterjectionRecording(requestedAt: requestedAt, captureID: voiceCaptureRequestID)
@@ -233,6 +234,7 @@ extension Gate1AppModel {
         guard !snapshot.isRecording else { return }
         resumeSourcePausedOnTap() // a start that failed before the engine took over the pause
         marginCapture.clearPresentationContext()
+        resumeHeldMarginVoice(heldMarginVoice) // no recording came of it: the Margin it paused plays on (#1672)
         streamingSpeechQueue.resumeAfterInterjection() // the recorder wouldn't start and the engine put the source back (#1034)
     }
 
@@ -260,9 +262,11 @@ extension Gate1AppModel {
 
     func finishInterjection() {
         guard snapshot.isRecording, let verdict = verdictForSavingRecording() else { return }
+        let held = heldMarginVoice // a Margin recorded over a voice leaves the source paused for it to play on (#1672)
         run { engine in
             defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
-            snapshot = try engine.finishInterjection(audioRef: nil)
+            snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil)
+            if held?.kind == .own { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
             transcribeAndRecordSavedSpokenMargin()
@@ -271,6 +275,7 @@ extension Gate1AppModel {
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()
             refreshMarginRows()
+            resumeHeldMarginVoice(held)
         }
         streamingSpeechQueue.resumeAfterInterjection()
     }
@@ -280,19 +285,22 @@ extension Gate1AppModel {
     }
 
     func cancelInterjection() {
+        let held = heldMarginVoice
         if isRequestingRecordingPermission && !snapshot.isRecording {
             marginCapture.abandonVoiceRequest()
             resumeSourcePausedOnTap()
+            resumeHeldMarginVoice(held)
             return
         }
         recordFinalCaptureDiagnostics("cancelled")
         run { engine in
-            snapshot = try engine.cancelInterjection()
+            snapshot = try engine.cancelInterjection(resumesSource: held == nil)
             refreshSelectedItem()
             reportSuccess("Cancelled Margin.")
         }
         if !snapshot.isRecording {
             marginCapture.clearPresentationContext()
+            resumeHeldMarginVoice(held)
         }
         streamingSpeechQueue.resumeAfterInterjection()
     }
@@ -339,6 +347,9 @@ extension Gate1AppModel {
     func switchPendingVoiceCaptureToWrittenMargin() {
         guard isRequestingRecordingPermission, !snapshot.isRecording else { return }
         marginCapture.abandonVoiceRequest()
+        let heldShared = heldMarginVoice?.kind == .shared
+        marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is and nothing is left to play it on (#1672)
+        if heldShared { stopImportedCommentaryPlayback(resumeSource: false) } // a card up blocks writing; the Margin is let go, as Add a Margin used to do
         beginWrittenMargin()
         if writtenMarginDraft == nil { resumeSourcePausedOnTap() } // the pencil refused: nothing else will put the source back
     }
