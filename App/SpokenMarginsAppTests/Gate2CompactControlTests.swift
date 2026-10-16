@@ -260,22 +260,104 @@ final class Gate2CompactControlTests: XCTestCase {
         XCTAssertFalse(availability.canSkipForward)
     }
 
+    /// A model that has just started recording a Margin, with a capture clock the test moves (#1708).
+    private func modelRecordingAMargin(clock: @escaping () -> Int) -> Gate1AppModel {
+        let model = Gate1AppModel(
+            audioPlaybackClient: NoopAudioPlaybackClient(),
+            recordingClient: NoopRecordingClient()
+        )
+        model.captureWatcher = MarginCaptureWatcher(autoPoll: false, nowMs: clock)
+        model.resetAndSeed()
+        model.startItem(id: "item-pill")
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        return model
+    }
+
+    /// The test that let #1708 ship: it sent the click the instant recording began, which is when Bluetooth
+    /// headphones send a `play` nobody pressed. A click counts once the first moment has passed.
     func testHeadphoneTransportCommandEndsARecordingMarginAndKeepsIt() {
         for command in [CompactControlCommand.togglePlayPause, .play, .pause, .skipForward] {
-            let model = Gate1AppModel(
-                audioPlaybackClient: NoopAudioPlaybackClient(),
-                recordingClient: NoopRecordingClient()
-            )
-            model.resetAndSeed()
-            model.startItem(id: "item-pill")
-            model.dispatchGate2CompactCommand(.beginInterjection)
+            var nowMs = 10_000
+            let model = modelRecordingAMargin { nowMs }
             XCTAssertTrue(model.snapshot.isRecording, "\(command.rawValue): the Margin records")
+            nowMs += RecordingTransportGuard.startGraceMs
 
             model.dispatchGate2CompactCommand(command, origin: "now_playing_live_speech")
 
             XCTAssertFalse(model.snapshot.isRecording, "\(command.rawValue) from the headphones ends the Margin")
             XCTAssertEqual(model.diagnostics["gate2LastCommand"], "finishInterjection", command.rawValue)
         }
+    }
+
+    /// #1708: the phantom `play` came 50 ms and 440 ms after recording began, from the system Now Playing path.
+    func testTransportCommandInTheFirstMomentOfARecordingDoesNotEndTheMargin() {
+        for command in [CompactControlCommand.togglePlayPause, .play, .pause, .skipForward] {
+            for origin in ["now_playing", "now_playing_live_speech"] {
+                var nowMs = 10_000
+                let model = modelRecordingAMargin { nowMs }
+                nowMs += 50
+
+                model.dispatchGate2CompactCommand(command, origin: origin)
+                nowMs += 390 // 440 ms in
+                model.dispatchGate2CompactCommand(command, origin: origin)
+
+                XCTAssertTrue(model.snapshot.isRecording, "\(command.rawValue) from \(origin) must not end a Margin that just began")
+                XCTAssertNotEqual(model.diagnostics["gate2LastCommand"], "finishInterjection", "\(command.rawValue) from \(origin)")
+            }
+        }
+    }
+
+    func testTransportCommandJustAfterTheRouteChangesDoesNotEndTheMargin() {
+        var nowMs = 10_000
+        let model = modelRecordingAMargin { nowMs }
+        nowMs += 5_000
+        model.captureWatcher.routeChanged() // the headset switches profile mid-recording
+        nowMs += RecordingTransportGuard.routeChangeGraceMs - 1
+
+        model.dispatchGate2CompactCommand(.play, origin: "now_playing")
+
+        XCTAssertTrue(model.snapshot.isRecording, "a play right after a route change is the headset, not the listener")
+
+        nowMs += 1
+        model.dispatchGate2CompactCommand(.play, origin: "now_playing")
+
+        XCTAssertFalse(model.snapshot.isRecording, "once the route has settled a click ends the Margin again")
+    }
+
+    func testTheCaptureWatcherForgetsAnEarlierRecordingsRouteChange() {
+        var nowMs = 1_000
+        let watcher = MarginCaptureWatcher(autoPoll: false, nowMs: { nowMs })
+        watcher.start(reading: { nil }, restart: {}, changed: { _, _ in })
+        XCTAssertNil(watcher.msSinceRouteChange)
+        nowMs += 400
+        watcher.routeChanged()
+        nowMs += 100
+        XCTAssertEqual(watcher.msSinceRouteChange, 100)
+
+        watcher.stop()
+        XCTAssertNil(watcher.msSinceRouteChange)
+        watcher.start(reading: { nil }, restart: {}, changed: { _, _ in })
+
+        XCTAssertNil(watcher.msSinceRouteChange, "a route change from the last recording must not hold back this one's click")
+        watcher.stop()
+    }
+
+    func testTheCaptureWatcherNotesTheSystemsRouteChangeWhileWatching() async throws {
+        let center = NotificationCenter()
+        var nowMs = 1_000
+        let watcher = MarginCaptureWatcher(autoPoll: false, notificationCenter: center, nowMs: { nowMs })
+        center.post(name: AVAudioSession.routeChangeNotification, object: nil)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(watcher.msSinceRouteChange, "nothing records")
+
+        watcher.start(reading: { nil }, restart: {}, changed: { _, _ in })
+        nowMs += 300
+        center.post(name: AVAudioSession.routeChangeNotification, object: nil)
+        for _ in 0..<50 where watcher.msSinceRouteChange == nil { try await Task.sleep(for: .milliseconds(20)) }
+        nowMs += 50
+
+        XCTAssertEqual(watcher.msSinceRouteChange, 50)
+        watcher.stop()
     }
 
     func testQueuedWidgetPlayPauseDoesNotEndARecordingMargin() {

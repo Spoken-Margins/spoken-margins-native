@@ -28,10 +28,28 @@ extension Gate1AppModel {
     ) {
         // A headphone click, car button or Lock Screen play/pause while a Margin records ends it (#1030).
         // Only from Now Playing: a stale queued widget command must not save a Margin. A save already
-        // under way from the screen is not asked twice.
+        // under way from the screen is not asked twice. Bluetooth headphones switching to the hands-free
+        // profile for the microphone send a `play` nobody pressed, so one in the first moment of a recording
+        // or just after the route changed is logged and ignored (#1708).
         if snapshot.isRecording, command.endsRecordingMargin, origin.hasPrefix("now_playing") {
             guard !isFinishingInterjection else { return }
-            recordDeveloperDiagnostic("transport.ends_margin", ["command": command.rawValue, "origin": origin])
+            let recordingMs = captureWatcher.elapsedMs
+            let sinceRouteChangeMs = captureWatcher.msSinceRouteChange
+            if case .ignore(let reason) = RecordingTransportGuard.verdict(recordingMs: recordingMs, sinceRouteChangeMs: sinceRouteChangeMs) {
+                recordDeveloperDiagnostic("transport.ignored_during_recording", [
+                    "command": command.rawValue,
+                    "origin": origin,
+                    "reason": reason.rawValue,
+                    "recordingMs": String(recordingMs),
+                    "sinceRouteChangeMs": sinceRouteChangeMs.map(String.init) ?? "none",
+                ])
+                return
+            }
+            recordDeveloperDiagnostic("transport.ends_margin", [
+                "command": command.rawValue,
+                "origin": origin,
+                "recordingMs": String(recordingMs),
+            ])
             performGate2CompactCommand(.finishInterjection, origin: origin)
             return
         }
