@@ -2091,6 +2091,54 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse(client.isSystemVoiceActive)
     }
 
+    // The bundled voice holds the article's generation (the phone was hot), and the phone has cooled by the time a
+    // background seam finds the next chunk unrendered and the hand-over fails. The chunk is rendered again by the same
+    // voice: no mid-paragraph change to Supertonic that nobody asked for (#849, #1673 audit).
+    func testAFailedBackgroundHandOverKeepsTheBundledVoiceThatHeldTheGeneration() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        defer { openGate.finish() }
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 2, gate: gate)
+        let fallback = RecordingFallbackAudioClient()
+        fallback.playError = NSError(domain: "test", code: 1)
+        let allowed = KittenAllowedFlag()
+        let starts = HarnessStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                starts.add()
+            },
+            observesPlayerLifecycle: true,
+            onDeviceRenderingAllowed: { allowed.value },
+            pressureRenderer: bundled,
+            fallbackClient: fallback,
+            applicationIsActive: { false }
+        )
+        defer { try? client.stop() }
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "gap-held")
+        for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 1, "the first chunk plays, rendered by the bundled voice")
+        var bundledRenders = await bundled.renderCount
+        for _ in 0..<250 where bundledRenders < 2 {
+            try await Task.sleep(for: .milliseconds(20))
+            bundledRenders = await bundled.renderCount
+        }
+
+        allowed.value = true                                   // the phone cooled; the bundled voice keeps the article
+
+        for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0, "the voice never changes to Supertonic mid-article")
+        XCTAssertFalse(client.isSystemVoiceActive)
+    }
+
     // Leaving the app while a chunk plays: the next chunk is ready already, so it goes onto the player then.
     func testLeavingTheAppQueuesTheNextChunk() async throws {
         let presence = AppPresence()

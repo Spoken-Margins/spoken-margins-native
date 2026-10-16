@@ -1482,7 +1482,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             if !isSystemVoiceActive {
                 // The iOS voice could not start, and the hand-over cancelled the render: go back to waiting for the
                 // chosen voice, as a seam always did, rather than leave nothing to play the chunk.
-                waitForChosenVoiceAfterFailedHandOver(targetId: targetId, spokenOffset: snapshot.0)
+                waitForChosenVoiceAfterFailedHandOver(
+                    targetId: targetId, spokenOffset: snapshot.0, previousGeneration: snapshot.5
+                )
             }
         } else {
             try? releaseBackgroundAudio()
@@ -2242,8 +2244,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// lands, the chunk after it is next in the order, so rendering ahead comes back without a restart. The render
     /// goes straight to `enqueueRender`, not through the held-queue restart, which would hold it for a phone that
     /// may not render with Supertonic and leave nothing to play until the listener's next play.
-    private func waitForChosenVoiceAfterFailedHandOver(targetId: String, spokenOffset: Int) {
+    private func waitForChosenVoiceAfterFailedHandOver(targetId: String, spokenOffset: Int, previousGeneration: UUID) {
         let newGeneration = lock.withLock { () -> UUID in
+            // The hand-over moved the article to a new generation. A voice that held the old one keeps the new one, so
+            // the chunk renders in the voice the paragraph began in (#849), not in whichever voice may render now.
+            if bundledVoiceGeneration == previousGeneration { bundledVoiceGeneration = generation }
+            if savedRunGeneration == previousGeneration { savedRunGeneration = generation }
             generationDisabledReasons.removeValue(forKey: targetId)
             resourceFallbackTargetIds.remove(targetId)
             playbackFailure = nil
