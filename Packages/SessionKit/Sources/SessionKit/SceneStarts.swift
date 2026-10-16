@@ -5,6 +5,8 @@ import Foundation
 public struct SceneStarts: Equatable, Sendable {
     public let scenes: [PortableListeningMapScene]
     public let sceneStarts: [Int?]
+    /// Where each scene ends on the recipient's clock, in proposal order; nil when the end can't be placed.
+    public let sceneEnds: [Int?]
 
     public init(scenes: [PortableListeningMapScene], projection: ResolvedListeningMapProjection?) {
         self.scenes = scenes.sorted { $0.order < $1.order }
@@ -19,6 +21,7 @@ public struct SceneStarts: Equatable, Sendable {
                 ?? (exactIdentityProjection ? sourceTimeMs : nil)
         }
         self.sceneStarts = self.scenes.map { projectedTime($0.startAnchor.mediaTimeMs) }
+        self.sceneEnds = self.scenes.map { projectedTime($0.endAnchor.mediaTimeMs) }
     }
 
     public struct SkimPlan: Equatable, Sendable {
@@ -81,6 +84,22 @@ public struct SceneStarts: Equatable, Sendable {
                 startMs: startMs,
                 transcriptSegmentId: scene.startAnchor.transcriptSegmentId ?? scene.id
             )
+        }.sorted { $0.startMs < $1.startMs }
+    }
+}
+
+extension SceneStarts {
+    /// Every placed scene as a span on the recipient's clock, in time order, carrying the summary Now may show (#1629).
+    /// A scene without a usable summary still gets a span, so its time never shows the scene before it.
+    public var summarySpans: [SceneSummarySpan] {
+        scenes.indices.compactMap { index -> SceneSummarySpan? in
+            guard let startMs = sceneStarts[index] else { return nil }
+            let scene = scenes[index]
+            let summary = scene.eligibility == .eligible
+                ? scene.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty : nil
+            // An end at or before the start can't be right; treat it as unknown rather than hiding the scene.
+            let endMs = sceneEnds[index].flatMap { $0 > startMs ? $0 : nil }
+            return SceneSummarySpan(sceneId: scene.id, startMs: startMs, endMs: endMs, summary: summary)
         }.sorted { $0.startMs < $1.startMs }
     }
 }
