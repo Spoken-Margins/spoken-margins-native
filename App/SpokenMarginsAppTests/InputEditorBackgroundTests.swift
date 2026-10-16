@@ -29,7 +29,7 @@ final class InputEditorBackgroundTests: XCTestCase {
                 throw XCTSkip("TextEditor is not backed by a UITextView on this OS, so there is no view to inspect")
             }
             var alpha: CGFloat = 1
-            (textView.backgroundColor ?? .clear).resolvedColor(with: host.traitCollection).getRed(nil, green: nil, blue: nil, alpha: &alpha)
+            (textView.backgroundColor ?? .clear).resolvedColor(with: textView.traitCollection).getRed(nil, green: nil, blue: nil, alpha: &alpha)
             XCTAssertEqual(alpha, 0, accuracy: 0.01, "\(style == .dark ? "dark" : "light") mode: the editor paints its own background over the input colour")
         }
     }
