@@ -3258,8 +3258,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard let applicationIsActive, observesPlayerLifecycle else { return }
         let appIsActive = applicationIsActive()
         lock.withLock {
+            // `playing` is the last item on the queue: either the one it is on, or the one it is about to move on
+            // to, when the end of the chunk before it was heard first (#1762).
             guard !appIsActive, let queue = player as? AVQueuePlayer, let playing = activeItem,
-                  queue.currentItem === playing else { return }
+                  queue.items().last === playing else { return }
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
             let nextCached = renderedCache[nextOffset]
             let facts = BackgroundChunkSeam.Facts(
@@ -3308,13 +3310,22 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item else { return false }
             let current = queued.player.currentItem
             if finished != nil, finished === activeItem, current === activeItem {
-                // The end of the playing chunk was heard but the queue has not moved on (it is paused at the end,
-                // or has not got to the next item yet): the queued chunk is not playing. Take it off and let the
-                // seam go through the app, which still has its audio in the cache.
-                queued.player.remove(queued.item)
-                queued.player.actionAtItemEnd = .pause
-                queuedChunk = nil
-                return false
+                // The end of the playing chunk was heard while the player still names it. With the queued chunk
+                // still on a player that advances, the queue is moving on to it: the end notification reaches the
+                // main thread before `currentItem` does, late when the app is away. Taking it off to start it again
+                // through the app played its first words twice at every seam (#1762). Only when it is no longer
+                // there, or the player stops at the end, is it not playing: take it off and let the seam go through
+                // the app, which still has its audio in the cache.
+                let queueMovesOn = BackgroundChunkSeam.queueMovesOnAtEnd(
+                    queuedChunkIsOnThePlayer: queued.player.items().contains(queued.item),
+                    playerAdvancesAtItemEnd: queued.player.actionAtItemEnd == .advance
+                )
+                if !queueMovesOn {
+                    queued.player.remove(queued.item)
+                    queued.player.actionAtItemEnd = .pause
+                    queuedChunk = nil
+                    return false
+                }
             }
             let endHeard = finished != nil && (finished === activeItem || finished === queued.item)
             guard endHeard || current === queued.item else { return false }

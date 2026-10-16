@@ -2206,10 +2206,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "stand_in_voice 1")
     }
 
-    // The end of A is heard while the queue has not moved on (paused at the end, or not there yet) and B is queued
-    // behind it. B is not playing, so the seam must go through the app, which still has B's audio. Treating B as
-    // playing would leave the player silent until the stall watchdog fired.
-    func testAChunkEndHeardBeforeTheQueueMovedOnIsHandledThroughTheApp() async throws {
+    // #1762: the end of A reaches the app while the player still names A as current, with B queued behind it. The
+    // queue is moving on to B, which is playing from its start. The app must follow it, not take B off and start it
+    // again on a new player, which played B's first words twice at every seam on the owner's phone.
+    func testAChunkEndHeardBeforeTheQueueMovedOnFollowsTheQueueToTheNextChunk() async throws {
         let harness = try SupertonicClientHarness(applicationIsActive: { false })
         defer { harness.tearDown() }
         let chunk = harness.chunkStarts
@@ -2218,12 +2218,56 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(queued)
         let before = harness.playerStarts
 
-        await harness.finishPlayingChunk()                          // the end notification; the queue stays on A
+        await harness.finishPlayingChunk()                          // the end notification; the queue is still on A
+        let caughtUp = await harness.waitForPlayingChunk(chunk[1])
+        XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        harness.advanceTheQueueWithoutTellingTheApp()               // the player gets to B a moment later
+
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B")
+        XCTAssertEqual(harness.playerStarts, before, "B was not started again on a new player")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
+    }
+
+    // The player stops at the end of an item (nothing will move on to B): B is not playing, so the seam goes
+    // through the app, which still has B's audio. Treating B as playing would leave the player silent until the
+    // stall watchdog fired.
+    func testAChunkEndHeardOnAPlayerThatStopsAtTheEndIsHandledThroughTheApp() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+        let before = harness.playerStarts
+        let queue = try XCTUnwrap(harness.newestQueuePlayer)
+        queue.actionAtItemEnd = .pause
+
+        await harness.finishPlayingChunk()
 
         let next = await harness.waitForPlayerStarts(before + 1)
         XCTAssertTrue(next, "B was started through the app")
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "rendered_not_queued 1")
+    }
+
+    // #1762: the real queue, with nothing driving it. Each chunk is a second of its own tone; the app is away
+    // through four of them. Every seam must be the queue's own: no new player, one `queued_ahead` per seam.
+    func testTheRealQueuePlaysThroughSeveralSeamsWithTheAppAwayAndNoNewPlayer() async throws {
+        let harness = try SupertonicClientHarness(
+            chunkSeconds: 1, distinctTones: true, applicationIsActive: { false }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        XCTAssertGreaterThanOrEqual(chunk.count, 4)
+        try await harness.start(waitingForRenders: 3)
+        let starts = harness.playerStarts
+
+        let reached = await harness.waitForPlayingChunk(chunk[3], seconds: 12)
+
+        XCTAssertTrue(reached, "the real queue played on to the fourth chunk by itself")
+        XCTAssertEqual(harness.playerStarts, starts, "no seam started a new player")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 3")
     }
 
     // The listener pauses with a chunk queued: nothing is lost. Playing again carries on, and the queued chunk

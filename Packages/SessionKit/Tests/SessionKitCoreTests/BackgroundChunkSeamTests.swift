@@ -76,4 +76,13 @@ final class BackgroundChunkSeamTests: XCTestCase {
             )
         }
     }
+
+    // #1762: the end of a chunk heard while the player still names it as current, with the next chunk queued behind
+    // it on a player that advances, is a queue moving on. Only the other three cases go through the app.
+    func testAQueuedChunkOnAnAdvancingPlayerIsTheOneThatPlaysNext() {
+        XCTAssertTrue(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: true, playerAdvancesAtItemEnd: true))
+        XCTAssertFalse(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: false, playerAdvancesAtItemEnd: true))
+        XCTAssertFalse(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: true, playerAdvancesAtItemEnd: false))
+        XCTAssertFalse(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: false, playerAdvancesAtItemEnd: false))
+    }
 }
