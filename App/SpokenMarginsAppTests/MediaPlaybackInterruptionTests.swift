@@ -1034,6 +1034,54 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         XCTAssertTrue(model.ownMarginVoiceIsPaused, "a Margin the listener left paused stays paused after Save")
     }
 
+    /// #1672 audit: the listener resumed the source over their own Margin (Lock Screen, headphones, #1538), so the source
+    /// is what is playing. Add a Margin lets that Margin go, as before the hold existed, and Save puts the source back;
+    /// holding the Margin would leave the source paused for good, because the Margin no longer owes it back.
+    func testAddMarginWhileTheSourcePlaysOverYourMarginPutsTheSourceBackAfterSave() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.stopInterjectionAudioPlayback(); model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        let own = try fixture.addOwnMargin(sessionID: try XCTUnwrap(model.snapshot.sessionId))
+        model.toggleInterjectionAudioPlayback(own)
+        model.resumePlayback()
+        XCTAssertTrue(model.snapshot.status.isPlaybackActive, "precondition: the source plays over your Margin")
+
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        XCTAssertFalse(model.isPlayingInterjectionAudio(own), "the source has the transport, so your Margin is let go")
+        model.finishInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertEqual(model.snapshot.status, .playing, "Save puts the source back")
+    }
+
+    /// #1672 audit: a hold marker left by an earlier recording (a Margin cut short by lost headphones keeps it) says the
+    /// voice was sounding. A Margin the listener has paused since must stay paused through a later Margin's Save.
+    func testALeftoverHoldMarkerDoesNotPlayAMarginTheListenerPausedAfterALaterSave() throws {
+        let fixture = try SharedMarginHearingFixture(itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient())
+        defer { fixture.cleanUp() }
+        let model = fixture.model
+        model.startItem(id: "real-source")
+        defer { model.stopInterjectionAudioPlayback(); model.pause() }
+        try waitUntil("the source plays") { (model.snapshot.currentMediaTimeMs ?? 0) > 0 || model.snapshot.status == .playing }
+        let own = try fixture.addOwnMargin(sessionID: try XCTUnwrap(model.snapshot.sessionId))
+        model.toggleInterjectionAudioPlayback(own)
+        let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
+        try waitUntil("the voice has played a little") { player.currentTime().seconds > 0.2 }
+        model.setOwnMarginPaused(true)
+        model.marginVoiceHeldForRecording = HeldMarginVoice(kind: .own, wasSounding: true)
+
+        model.beginInterjection()
+        XCTAssertTrue(model.snapshot.isRecording)
+        model.finishInterjection()
+
+        XCTAssertFalse(model.snapshot.isRecording)
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "the listener paused it; a marker from an earlier recording doesn't play it")
+    }
+
     // MARK: Leveled Margins (#467)
 
     /// The owner's report (#181): Margins played from the raw recording, so a whisper was far quieter than

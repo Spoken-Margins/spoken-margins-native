@@ -77,10 +77,10 @@ extension Gate1AppModel {
     /// moves to the playing Margin's place so the new Margin is anchored there. False when that move failed: nothing
     /// records, rather than recording at the wrong place.
     func handOffPlayingMarginToRecording() -> Bool {
-        let prior = heldMarginVoice // a second tap before recording starts finds the voice already held
+        let prior = heldMarginVoice // a second tap before recording starts finds the voice already held; a marker left by an earlier recording doesn't count
         marginVoiceHeldForRecording = nil
         func held(_ kind: HeldMarginVoice.Kind, paused: Bool) -> HeldMarginVoice {
-            HeldMarginVoice(kind: kind, wasSounding: prior?.kind == kind ? prior?.wasSounding ?? !paused : !paused)
+            HeldMarginVoice(kind: kind, wasSounding: isRequestingRecordingPermission && prior?.kind == kind ? prior?.wasSounding ?? !paused : !paused)
         }
         let handoff: MarginCaptureHandoff
         if let prompt = playingImportedCommentary {
@@ -101,8 +101,12 @@ extension Gate1AppModel {
             // Your own Margin heard from its detail: it sits where it was recorded.
             let margin = playingInterjectionAudioSessionID.flatMap { try? store?.loadInterjections(sessionId: $0) }?.first { $0.id == playingID }
             handoff = margin.map { MarginCaptureHandoff(localMargin: $0) } ?? MarginCaptureHandoff(itemId: nil, place: nil)
-            marginVoiceHeldForRecording = held(.own, paused: ownMarginVoiceIsPaused)
-            setOwnMarginPaused(true)
+            if ownMarginVoiceHasTransport {
+                marginVoiceHeldForRecording = held(.own, paused: ownMarginVoiceIsPaused)
+                setOwnMarginPaused(true)
+            } else {
+                stopInterjectionAudioPlayback() // the source was resumed over it (#1538): Save and Cancel put the source back, not the Margin
+            }
         } else {
             return true
         }

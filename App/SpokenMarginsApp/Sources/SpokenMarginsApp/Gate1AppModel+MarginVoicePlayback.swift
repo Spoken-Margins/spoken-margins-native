@@ -318,26 +318,27 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     /// for, a recording or a failure never gets here, so none of them resumes anything.
     func marginVoiceOwnPlaybackEnded() {
         let playedID = playingInterjectionAudioId, playedSessionID = playingInterjectionAudioSessionID
+        let recordedOver = marginVoicePlayer.ownRecordedOverMarginIdentity
         let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
         stopInterjectionAudioPlayback()
         guard returnsSource, snapshot.status == .paused else { return }
         resumePlayback()
         if let playedID, let playedSessionID {
-            continueWithLaterMargins(afterOwnMarginID: playedID, sessionID: playedSessionID)
+            continueWithLaterMargins(afterOwnMarginID: playedID, sessionID: playedSessionID, skipping: recordedOver)
         }
     }
 
     /// A podcast has no later Margins to wait for unless the listener recorded some. An article just resumes.
-    private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String) {
+    private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String, skipping recordedOver: String?) {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
               let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
               played.itemId == itemID,
               played.isInlineSpokenMargin, let playedMs = played.anchor.mediaTimeMs else { return }
         let spoken = inlineSpokenMargins(itemId: itemID, store: store)
         let playedIdentity = Self.marginIdentity(played)
-        // A Margin recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
+        // The Margin just recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
         let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
-            .filter { $0.marginId == playedIdentity || abs($0.mediaTimeMs - playedMs) > 250 }
+            .filter { $0.marginId != recordedOver }
         guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken {

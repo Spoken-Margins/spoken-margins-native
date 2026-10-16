@@ -46,6 +46,8 @@ final class MarginVoicePlayer: ObservableObject {
     @Published private(set) var ownMarginSessionID: String?
     /// Your own Margin is loaded and held, not playing: the listener paused it, or recording a Margin over it holds it (#1672).
     @Published private(set) var ownIsPaused = false
+    /// The Margin just saved over this one while it was held (#1672), by `marginIdentity`: it doesn't play next when this ends.
+    var ownRecordedOverMarginIdentity: String?
     /// The rate of the voice that is playing, 1 when none is.
     @Published private(set) var rate: Double = 1
 
@@ -96,6 +98,7 @@ final class MarginVoicePlayer: ObservableObject {
         ownMarginID = interjection.id
         ownMarginSessionID = interjection.sessionId
         ownIsPaused = false
+        ownRecordedOverMarginIdentity = nil
         self.rate = rate
         completionTask = Task { @MainActor [weak self, weak item] in
             while !Task.isCancelled, let item {
@@ -290,6 +293,7 @@ final class MarginVoicePlayer: ObservableObject {
         ownMarginID = nil
         ownMarginSessionID = nil
         ownIsPaused = false
+        ownRecordedOverMarginIdentity = nil
         rate = 1
     }
 
