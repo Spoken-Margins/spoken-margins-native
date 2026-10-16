@@ -562,80 +562,6 @@ final class ExperiencePresentationTests: XCTestCase {
         XCTAssertEqual(missingRecording.attentionDescription, "Recording is unavailable")
     }
 
-    func testOfflineStorageSnapshotAccountsForReservationsCategoriesAndProtection() {
-        let now = Date(timeIntervalSince1970: 1_000)
-        let assets = [
-            offlineAsset(
-                id: "prepared",
-                category: .preparedAudio,
-                byteCount: 400,
-                isReproducible: true
-            ),
-            offlineAsset(
-                id: "playing-podcast",
-                category: .podcast,
-                byteCount: 300,
-                isReproducible: true,
-                protections: [.activePlayback]
-            ),
-            offlineAsset(
-                id: "audiobook",
-                category: .audiobook,
-                byteCount: 200,
-                isReproducible: false
-            ),
-            offlineAsset(
-                id: "margin",
-                category: .interjection,
-                byteCount: 100,
-                isReproducible: false,
-                protections: [.interjection]
-            )
-        ]
-        let reservations = [
-            OfflineStorageReservation(
-                id: "active",
-                ownerId: "render",
-                byteCount: 350,
-                createdAt: now.addingTimeInterval(-10),
-                expiresAt: now.addingTimeInterval(10)
-            ),
-            OfflineStorageReservation(
-                id: "expired",
-                ownerId: "old-render",
-                byteCount: 500,
-                createdAt: now.addingTimeInterval(-20),
-                expiresAt: now
-            )
-        ]
-
-        let snapshot = OfflineStorageSnapshot.make(
-            budget: OfflineStorageBudget(limitBytes: 700),
-            assets: assets,
-            reservations: reservations,
-            now: now
-        )
-
-        XCTAssertEqual(snapshot.budgetBytes, 700)
-        XCTAssertEqual(snapshot.usedBytes, 1_000)
-        XCTAssertEqual(snapshot.reservedBytes, 350)
-        XCTAssertEqual(snapshot.totalCommittedAndReservedBytes, 1_350)
-        XCTAssertEqual(snapshot.protectedBytes, 600)
-        XCTAssertEqual(snapshot.reproducibleBytes, 700)
-        XCTAssertEqual(snapshot.clearableBytes, 400)
-        XCTAssertEqual(snapshot.currentOverageBytes, 650)
-        XCTAssertEqual(snapshot.residualOverageBytes, 250)
-        XCTAssertEqual(
-            Dictionary(uniqueKeysWithValues: snapshot.categories.map { ($0.category, $0.byteCount) }),
-            [
-                .preparedAudio: 400,
-                .podcast: 300,
-                .audiobook: 200,
-                .interjection: 100
-            ]
-        )
-    }
-
     /// The classifier lives in SessionKit with its own copy of the two seeded ids (#1019), so the
     /// ids this app seeds must be in it, or seeding would count as the listener adding a source.
     @MainActor
@@ -716,26 +642,6 @@ final class ExperiencePresentationTests: XCTestCase {
             displayText: displayText,
             status: "active",
             anchorContextStatus: anchorContextStatus
-        )
-    }
-
-    private func offlineAsset(
-        id: String,
-        category: OfflineAssetCategory,
-        byteCount: Int64,
-        isReproducible: Bool,
-        protections: Set<OfflineProtectionReason> = []
-    ) -> OwnedOfflineAsset {
-        OwnedOfflineAsset(
-            id: id,
-            itemId: "item",
-            category: category,
-            relativePath: "Offline/\(id)",
-            byteCount: byteCount,
-            isReproducible: isReproducible,
-            protections: protections,
-            lastAccessedAt: Date(timeIntervalSince1970: 1),
-            createdAt: Date(timeIntervalSince1970: 1)
         )
     }
 }

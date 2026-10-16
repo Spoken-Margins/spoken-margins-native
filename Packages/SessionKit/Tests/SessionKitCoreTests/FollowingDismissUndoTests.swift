@@ -1,6 +1,10 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
-import SessionKit
-@testable import SpokenMarginsApp
+@testable import SessionKit
+@testable import SessionKitFeeds
 
 /// #477: Dismiss in Following can be undone. Undo restores the entry's previous state through the
 /// existing entry-state path, so the Build 29 database is untouched.

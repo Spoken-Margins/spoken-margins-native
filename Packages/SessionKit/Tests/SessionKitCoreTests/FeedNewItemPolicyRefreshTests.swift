@@ -1,6 +1,10 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import XCTest
-import SessionKit
-@testable import SpokenMarginsApp
+@testable import SessionKit
+@testable import SessionKitFeeds
 
 /// A refresh of a feed set to "Add every new item" hands back only the episode published since the
 /// last refresh, once; "Let me pick", a muted feed and the back catalogue at follow time hand back
@@ -16,7 +20,7 @@ final class FeedNewItemPolicyRefreshTests: XCTestCase {
     private func coordinator(_ repository: InMemorySessionRepository) -> FollowedSourceCoordinator {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [GrowingFeedURLProtocol.self]
-        return FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        return FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration), signals: nil)
     }
 
     func testAddEveryNewItemReturnsTheNewEpisodeOnceAndNeverTheBackCatalogue() async throws {

@@ -179,7 +179,7 @@ package.dependencies = [
     .package(url: "https://github.com/apple/swift-crypto.git", exact: "3.15.1"),
 ]
 package.targets.append(.systemLibrary(name: "SQLite3", path: "Linux/SQLite3", providers: [.apt(["libsqlite3-dev"])]))
-for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitCoreTests" {
+for target in package.targets where target.name == "SessionKit" || target.name == "SessionKitFeeds" || target.name == "SessionKitCoreTests" {
     target.dependencies.append(.product(name: "Crypto", package: "swift-crypto"))
 }
 for target in package.targets where target.name == "SessionKitPersistence" {

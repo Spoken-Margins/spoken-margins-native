@@ -10,6 +10,8 @@ A running list of design ideas the owner has seen and rejected, so no session of
 4. **2026-09-25, confirm-by-ear placement of a shared Margin** ("Listen around the suggested spot", "This is the spot", "Hear their Margin", #158). Reverted: too many buttons for a case better evidence should make rare.
 5. **2026-10-16, ten reference apps, screen by screen** (Overcast, Pocket Casts, Castro, Apple Podcasts, Snipd, Reader, Matter, Apple Books, Libby, Spotify). He found all of them unimpressive: none solves finding recent Margins, dates on items, clusters or high-volume sources. Reference board: https://claude.ai/artifact/5fUXBVM2dWfq6BCuQEE4sP.
 6. **2026-10-16, a screen-first redesign process** that started from Now Playing. He wants flows and jobs fixed first, screens after.
+7. **2026-10-16, the Library's plus recognising feed links** (in the first structure round, Paste on the Add sheet followed a show when the copied link was a feed, and the Add sheet carried Browse and Import tiles). "I'm a little confused how to follow a podcast in the four tabs proposal. The plus button adds a source." Replaced by a Follow sheet of its own: on Following's plus in Four tabs, on a Follow button in Stream, and in Shows you follow in Up next. In `Design/proposals/`.
+8. **2026-10-16, a flat Margins list, newest first**, in place of today's grouping by item. "I really think that we should make sure that we have the Margins grouped by the item, so that the user can quickly share the item." The grouping stays in every proposal; groups are ordered by their newest Margin and that Margin is labelled. In `Design/proposals/`.
 
 ## Rejected by the structure round before showing (2026-10-16)
 

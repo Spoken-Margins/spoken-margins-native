@@ -6,7 +6,7 @@
  "start": "ExperienceLibraryScreen",
  "summary": "Keeps Library, Following and Margins exactly where they are and changes only paths: the eight shared fixes, plus Following folds a noisy show to one row with a Quiet option, Manage feeds keeps following and importing but gets a Paste button and opens the file picker at once. This is the least structural proposal. It is here to show how much of the tap-count gain comes from path fixes alone, so the structural proposals are judged on what they add beyond it: guessability, screen count and the noisy show.",
  "shared_fixes": [
-  "Margins list newest first; a Margin row plays its moment and a chevron opens its details.",
+  "Margins stay grouped by item, with Share beside each item's heading. Groups are ordered by their most recent Margin and that Margin carries a Newest label, so the newest one is in the first group. Inside a group the Margins keep source order. A Margin row plays its moment; its chevron opens its details.",
   "Margin details offer Share this Margin (a one-Margin packet to the share sheet).",
   "Item details show the published date and the date added.",
   "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
@@ -225,7 +225,7 @@
    "target": "ExperienceMarginsScreen",
    "final_cost": 0,
    "final": "",
-   "note": "The list is newest first, so it is the top row.",
+   "note": "Groups are ordered by their newest Margin and the newest one is labelled, so it is in the first group on the tab.",
    "taps": {
     "as_built": 1,
     "proposed": 1,
@@ -446,6 +446,28 @@
      "open a .spokenmargins packet file (Files, Mail, AirDrop, Messages)"
     ]
    }
+  },
+  {
+   "id": "j17",
+   "name": "Share all of an item's Margins",
+   "via": [],
+   "target": "SHARE_SHEET",
+   "final_cost": 0,
+   "final": "Choosing the friend in the share sheet is not counted.",
+   "note": "Margins tab, Share beside the item's heading, Share N. Unchanged: the grouping by item is what makes this 3.",
+   "taps": {
+    "as_built": 3,
+    "proposed": 3,
+    "route": [
+     "Margins tab",
+     "Share (square.and.arrow.up), 'Share Margins from <item>'",
+     "Share N (square.and.arrow.up)"
+    ]
+   },
+   "via_edges": [
+    "e147",
+    "e168"
+   ]
   }
  ]
 }
