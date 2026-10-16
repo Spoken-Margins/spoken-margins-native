@@ -1592,52 +1592,22 @@ final class SupertonicSpeechTests: XCTestCase {
         return url
     }
 
-    /// The guard's stand-in is real iOS speech synthesis. After an 8.5-minute simulator boot, two
-    /// tests that allowed 8 and 10 s for the whole play failed, while the two guard tests that
-    /// simply await the render passed in the same run (#417): synthesis was slow, not wrong. Wait
-    /// for the guard's own report instead, for longer than the synthesizer's 30 s limit, and check
-    /// that it stood in, so a failure says which of the two happened. The client's own render wait
-    /// must outlast that too, or after 15 s it hands the play to its fallback and drops the stand-in.
+    /// The client's render wait for a stand-in chunk. These tests used to wait on real iOS speech
+    /// synthesis (#417), so it outlasts the synthesizer's 30 s limit; with `copyStandIn` it is spare.
     private let standInRenderWaitLimit: Duration = .seconds(60)
 
-    /// #1230: on the lane, the first iOS-voice write in a fresh simulator waited on Apple's speech
-    /// service for 30 s to over 3 minutes. A spindump showed `AVSpeechSynthesizer.write` blocked on
-    /// a semaphore inside TextToSpeech while `axassetsd` loaded the synthesis provider. That is the
-    /// simulator starting its speech service, not what these tests check, and it always landed on
-    /// whichever stand-in test ran first. So each stand-in test first waits, once per run, for one
-    /// write to finish, with the longest allowance the plan permits (180 s).
-    ///
-    /// #1622: the wait used to fail the test at 100 s, and 2 of 14 lane runs landed just past it
-    /// (the others ran 0.9 to 98 s) while every later stand-in case passed: the service did start,
-    /// only late. Now only a write that errors fails here. A write still waiting after
-    /// `iOSVoiceWarmUpWait` is noted and left running; the writes are serial, so the test's own
-    /// renders queue behind it with 30 s timeouts each, and a service that never starts fails that
-    /// test and every later stand-in test with their "guard never reported" messages. Cost: such a
-    /// failure now names the stand-in test, not the warm-up, so the timeout note goes in the first
-    /// test's log and activity list.
-    /// The wait leaves 60 s of the first test's 180 s for its own renders and waits.
-    private let iOSVoiceWarmUpWait: TimeInterval = 120
-
-    private func warmUpTheIOSVoice() async throws {
-        guard await IOSVoiceWarmUp.shared.claimAttempt() else { return }
-        executionTimeAllowance = 180
-        let root = FileManager.default.temporaryDirectory.appending(path: "warm-up-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: root) }
-        let started = Date()
-        do {
-            _ = try await SystemVoiceChunkRenderer().render(
-                text: "The iOS voice is ready.", voiceIdentifier: nil,
-                matching: try guardTemplate(root), to: root.appending(path: "warm-up.wav"), timeout: iOSVoiceWarmUpWait
-            )
-            print("#1230 iOS voice warm-up took \(Date().timeIntervalSince(started)) s")
-        } catch SystemVoiceChunkRenderer.Failure.timedOut {
-            let note = "#1622 the simulator's speech service had not finished a first iOS-voice write in \(Int(iOSVoiceWarmUpWait)) s; the stand-in renders decide whether it ever starts"
-            print(note)
-            XCTContext.runActivity(named: note) { _ in }
-        } catch {
-            XCTFail("the simulator's speech service failed its first iOS-voice write: \(error)")
-        }
+    /// #1688: the guard tests check which file the guard keeps, caches, assembles and deletes, not
+    /// Apple's synthesis. They used real iOS speech, and on a freshly cloned lane simulator the
+    /// first voice lookup or write waited 2 to 6 minutes behind the simulator's background-task
+    /// daemon (`dasd`) settling after boot. Waiting longer (#1230, #1623, #1689) and naming a
+    /// built-in voice (#1694) did not help, and the same head passed and failed. So the guard is
+    /// given a stand-in that copies the Supertonic chunk, already in its format. Real synthesis is
+    /// covered by `SystemVoiceSessionTests` (which skips a stalled runtime, #768) and on the host by
+    /// `SystemVoiceChunkRendererTests`.
+    private let copyStandIn: SupertonicOutputGuard.StandInRender = { _, _, reference, output in
+        try FileManager.default.copyItem(at: reference, to: output)
+        let file = try AVAudioFile(forReading: output)
+        return Double(file.length) / file.processingFormat.sampleRate
     }
 
     private func awaitStandIn(_ reports: GuardReports) async throws {
@@ -1648,11 +1618,12 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #311: the guard's iOS-voice file is deleted when the player discards it.
     func testGuardDeletesItsStandInFileOnDiscard() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let guardRenderer = SupertonicOutputGuard(
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn
+        )
         let result = try await guardRenderer.render(
             text: "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries.",
             voice: .m2, language: "en", speed: 1, synthesisSteps: 8
@@ -1694,7 +1665,6 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #311: a stand-in isn't cached under the Supertonic key, so the next play re-checks Supertonic.
     func testStandInIsNotCachedAsSupertonic() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-cache-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1704,7 +1674,7 @@ final class SupertonicSpeechTests: XCTestCase {
         let reports = GuardReports()
         let client = SupertonicSpeechPlaybackClient(
             renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20),
-                                            systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
+                                            systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }, standIn: copyStandIn),
             voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             diskCache: cache, audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
             observesPlayerLifecycle: false, fallbackClient: RecordingFallbackAudioClient(),
@@ -1723,11 +1693,12 @@ final class SupertonicSpeechTests: XCTestCase {
     // every flagged chunk left an iOS-voice file behind. The render is discarded once kept, or on
     // failure.
     func testABackgroundRenderIsDiscardedOnceKeptOrOnFailure() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "guard-keep-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let guardRenderer = SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil)
+        let guardRenderer = SupertonicOutputGuard(
+            wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: 20), systemVoiceIdentifier: nil, standIn: copyStandIn
+        )
         let text = "Table 3 reports 91.1% 8.9% 0.0 and 7,494 tool decisions across 2,548 summaries."
         var standIn: URL?
         let kept = try await guardRenderer.render(text: text, voice: .m2, language: "en", speed: 1, synthesisSteps: 8) { rendered in
@@ -1770,7 +1741,6 @@ final class SupertonicSpeechTests: XCTestCase {
     // item's audio, so the stand-in played forever. It isn't assembled while a stand-in remains;
     // with Supertonic's own audio it still is.
     func testAnArticleWithAStandInIsNotAssembledButOneWithoutIs() async throws {
-        try await warmUpTheIOSVoice()
         let root = FileManager.default.temporaryDirectory.appending(path: "assemble-standin-\(UUID().uuidString)", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -1783,7 +1753,7 @@ final class SupertonicSpeechTests: XCTestCase {
             let reports = GuardReports()
             let client = SupertonicSpeechPlaybackClient(
                 renderer: SupertonicOutputGuard(wrapping: BabbleSupertonicRenderer(template: try guardTemplate(root), seconds: seconds),
-                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }),
+                                                systemVoiceIdentifier: nil, onReplacement: { reports.add($0) }, standIn: copyStandIn),
                 voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
                 preparedAudioDirectory: root.appending(path: "assembled-\(Int(seconds))", directoryHint: .isDirectory),
                 audioSessionActivator: {}, audioPlayerStarter: { _, _ in },
@@ -4574,16 +4544,6 @@ private final class GuardReports: @unchecked Sendable {
     func add(_ report: String) {
         lock.withLock { entries.append(report) }
         reported.fulfill()
-    }
-}
-
-/// Makes the iOS-voice warm-up happen once per test run (#1230).
-private actor IOSVoiceWarmUp {
-    static let shared = IOSVoiceWarmUp()
-    private var attempted = false
-    func claimAttempt() -> Bool {
-        defer { attempted = true }
-        return !attempted
     }
 }
 

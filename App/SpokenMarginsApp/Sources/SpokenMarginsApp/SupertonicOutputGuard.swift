@@ -8,9 +8,18 @@ import SessionKitSupertonic
 /// it is cached, played or assembled. If the iOS voice can't render it either, the original stays.
 /// Each replacement is reported so diagnostics show why the voice changed for that chunk.
 final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
+    /// Reads `text` with the iOS voice into `output`, in `reference`'s format, and returns its
+    /// duration in seconds.
+    typealias StandInRender = @Sendable (_ text: String, _ voiceIdentifier: String?, _ reference: URL, _ output: URL) async throws -> TimeInterval
+
+    static let systemVoiceStandIn: StandInRender = { text, voiceIdentifier, reference, output in
+        try await SystemVoiceChunkRenderer().render(text: text, voiceIdentifier: voiceIdentifier, matching: reference, to: output)
+    }
+
     private let inner: SupertonicRendering
     private let systemVoiceIdentifier: String?
     private let onReplacement: @Sendable (String) -> Void
+    private let standIn: StandInRender
     private let lock = NSLock()
     private var replacements = 0
     /// iOS-voice files this guard wrote. The renderer deletes only its own output, so the guard
@@ -20,11 +29,13 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
     init(
         wrapping inner: SupertonicRendering,
         systemVoiceIdentifier: String?,
-        onReplacement: @escaping @Sendable (String) -> Void = { _ in }
+        onReplacement: @escaping @Sendable (String) -> Void = { _ in },
+        standIn: @escaping StandInRender = SupertonicOutputGuard.systemVoiceStandIn
     ) {
         self.inner = inner
         self.systemVoiceIdentifier = systemVoiceIdentifier
         self.onReplacement = onReplacement
+        self.standIn = standIn
     }
 
     func render(
@@ -50,12 +61,7 @@ final class SupertonicOutputGuard: SupertonicRendering, @unchecked Sendable {
         let replacementURL = rendered.audioURL.deletingLastPathComponent()
             .appending(path: "system-voice-\(UUID().uuidString).wav")
         do {
-            let duration = try await SystemVoiceChunkRenderer().render(
-                text: text,
-                voiceIdentifier: systemVoiceIdentifier,
-                matching: rendered.audioURL,
-                to: replacementURL
-            )
+            let duration = try await standIn(text, systemVoiceIdentifier, rendered.audioURL, replacementURL)
             await inner.discardGeneratedAudio(at: rendered.audioURL)
             lock.withLock { _ = replacementURLs.insert(replacementURL) }
             report("system_voice:\(problem)")

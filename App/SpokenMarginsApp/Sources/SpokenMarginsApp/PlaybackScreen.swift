@@ -704,20 +704,8 @@ struct PlaybackScreen: View {
                 isRetrying: model.isRetryingInterjectionTranscription
             ))
 
-            if let chapterTitle = model.playbackChapterHeaderTitle {
-                Button(action: model.openCurrentPlaybackItem) {
-                    Text(chapterTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(.white.opacity(0.82))
-                }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
-                .accessibilityHint("Opens item details and listening-session history")
-                .accessibilityIdentifier("playback.chapterTitle.button")
-            }
-
+            // The chapter title is not repeated here: the dock's chapter row, right above the bar, already shows it
+            // and opens the same item details (#1475).
         }
         .accessibilityIdentifier("playback.title")
     }
