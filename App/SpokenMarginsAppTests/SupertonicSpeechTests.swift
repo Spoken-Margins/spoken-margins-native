@@ -2643,6 +2643,68 @@ final class SupertonicSpeechTests: XCTestCase {
         model.onDeviceSpeechGenerationDelayTask?.cancel()
     }
 
+    /// #1681 (agent-verify): the tests above hand the client a window. This one leaves the client as the app builds
+    /// it, so the limit has to come from the app's own background state through `RenderAheadPolicy`. Chunks of 100 s
+    /// against the 300 s window: with the app away the chain rests after a few chunks, where on the phone it had
+    /// rendered hundreds (`cached=731`). Fails if the default stops reading the governor, or the policy stops limiting.
+    func testTheDefaultLimitsRenderAheadWhileTheAppIsAway() async throws {
+        let governor = OnDeviceVoiceGovernor.app
+        governor.setAppBackgrounded(true)
+        defer { governor.setAppBackgrounded(false) }
+
+        // Silence at 8 kHz keeps a 100 s chunk to about 3 MB on disk.
+        let template = FileManager.default.temporaryDirectory
+            .appending(path: "render-ahead-default-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: template) }
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1))
+        let frames = AVAudioFrameCount(8_000 * 100)
+        let silence = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        silence.frameLength = frames
+        do {
+            let file = try AVAudioFile(forWriting: template, settings: format.settings)
+            try file.write(from: silence)
+        }
+
+        let renderer = CountingAudioSupertonicRenderer(templateURL: template)
+        let log = KittenClientLog()
+        // No `renderAheadWindow`: the client's own default is what is under test.
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { _, _ in },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { true },
+            onGenerationProgress: { log.record($0) }
+        )
+        let text = (1...30).map { "Sentence \($0) carries enough words to make a chunk of its own for the planner here." }
+            .joined(separator: " ")
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "render-ahead-default")
+
+        // Wait for the chain to rest, then for the render count to hold still.
+        let deadline = ContinuousClock.now + .seconds(10)
+        var lastCount = -1
+        var steadySince = ContinuousClock.now
+        while ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+            let count = await renderer.renderCount
+            if count != lastCount {
+                lastCount = count
+                steadySince = ContinuousClock.now
+            } else if ContinuousClock.now - steadySince > .seconds(1) {
+                break
+            }
+        }
+        let renders = await renderer.renderCount
+        let last = log.lastProgress
+        try client.stop()
+
+        XCTAssertGreaterThan(last.totalChunks, 10, "an item of many chunks, so a limit is what stops it")
+        XCTAssertGreaterThanOrEqual(renders, 2, "at critical heat the window is 60 s: the playing chunk and one ahead")
+        XCTAssertLessThanOrEqual(renders, 6, "the playing chunk and about 300 s of listening ahead, not the whole item")
+        XCTAssertTrue(last.isRestingAhead, "the rest is reported, so the app doesn't call it a slow render")
+    }
+
     private func renderAhead(
         window: TimeInterval?, playsAudio: Bool
     ) async throws -> (
