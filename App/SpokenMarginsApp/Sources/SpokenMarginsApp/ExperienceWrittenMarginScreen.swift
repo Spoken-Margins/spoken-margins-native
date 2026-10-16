@@ -82,6 +82,7 @@ struct ExperienceWrittenMarginScreen: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("writtenMargin.screen")
+                .announcesScreenChange()
                 .navigationTitle("Write a Margin")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {

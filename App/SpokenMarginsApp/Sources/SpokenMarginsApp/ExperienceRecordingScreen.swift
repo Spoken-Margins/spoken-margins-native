@@ -4,6 +4,7 @@ import SwiftUI
 struct ExperienceRecordingView: View {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.feedbackDeliveryEffects) private var feedbackEffects
     @State private var isDiscardConfirmationPresented = false
     /// #1669: Write instead on a recording that holds something worth keeping asks first.
     @State private var isWriteInsteadConfirmationPresented = false
@@ -51,6 +52,9 @@ struct ExperienceRecordingView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { actionDock }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recording.screen")
+        .announcesScreenChange()
+        // The screen opens on "Preparing microphone"; a listener who can't see it needs to hear when the microphone is live.
+        .onChange(of: statusTitle) { _, title in feedbackEffects.announce(title) }
         .onAppear { saveTapGuard = RecordingSaveTapGuard(appearedAt: Date()) }
         .onDisappear(perform: model.listeningScreenAppeared) // the screen behind it is drawn now (#148)
         .alert("Discard this recording?", isPresented: $isDiscardConfirmationPresented) {

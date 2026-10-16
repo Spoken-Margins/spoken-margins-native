@@ -139,6 +139,7 @@ struct PlaybackScreen: View {
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("playback.screen")
+                .announcesScreenChange()
                 .onChange(of: model.marginMoment?.target.marginId) { _, target in
                     if target != nil { selectedPane = .now }
                 }
@@ -1085,9 +1086,11 @@ struct PlaybackScreen: View {
                 } else if model.canStopOnDeviceSpeechGeneration {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(AppColors.accent)
+                        .accessibilityHidden(true)
                 } else {
                     Image(systemName: "speaker.wave.2.fill")
                         .foregroundStyle(AppColors.accent)
+                        .accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text("On-device voice")
@@ -1557,6 +1560,7 @@ struct PlaybackScreen: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     Image(systemName: "info.circle")
+                        .accessibilityHidden(true)
                     Spacer()
                     Text("Conversation")
                         .font(.headline)

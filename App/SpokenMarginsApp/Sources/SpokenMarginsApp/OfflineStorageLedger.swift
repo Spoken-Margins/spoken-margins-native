@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import SessionKit
+import SessionKitSupertonic
 
 enum OfflineStorageLedgerError: Error, LocalizedError, Equatable {
     case insufficientSpace(requiredBytes: Int64, availableBytes: Int64)

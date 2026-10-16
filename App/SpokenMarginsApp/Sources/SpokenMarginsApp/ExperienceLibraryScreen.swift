@@ -100,6 +100,7 @@ struct ExperienceLibraryScreen: View {
                         .foregroundStyle(AppColors.ochre)
                         .frame(width: 40, height: 40)
                         .background(AppColors.ochre.opacity(0.12), in: Circle())
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 3) {
                         Text("Preparing audio")
                             .font(.headline)
@@ -111,6 +112,7 @@ struct ExperienceLibraryScreen: View {
                     Spacer(minLength: 8)
                     Image(systemName: "chevron.right")
                         .foregroundStyle(AppColors.secondaryText)
+                        .accessibilityHidden(true)
                 }
             }
         }
@@ -135,6 +137,7 @@ struct ExperienceLibraryScreen: View {
                     .foregroundStyle(AppColors.ochre)
                     .frame(width: 36, height: 36)
                     .background(AppColors.ochre.opacity(0.12), in: Circle())
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Start with a two-minute tour")
                         .font(.headline)
@@ -165,6 +168,7 @@ struct ExperienceLibraryScreen: View {
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityHidden(true)
                 TextField("Search title, source, or author", text: $model.libraryQuery.query)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
@@ -374,7 +378,8 @@ private struct ExperienceLibraryCompactRow: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(width: 38, height: 44)
                 .background(AppColors.softGreen.opacity(isCurrentItem ? 0.85 : 0.55))
-                .accessibilityLabel(mediaLabel)
+                // The row's own text already says the kind (`LibraryRowDetail`), so the icon is not a third stop per row.
+                .accessibilityHidden(true)
             Button(action: onOpen) {
                 VStack(alignment: .leading, spacing: 3) {
                     if isCurrentItem {
