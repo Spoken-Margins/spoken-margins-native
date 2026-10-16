@@ -2386,6 +2386,145 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.stop()
     }
 
+    /// #1680: every chunk Kitten rendered was saved and never read again, so after a cold launch on a hot phone the
+    /// player rendered the same chunks from scratch. With the bundled voice's saved audio there, nothing renders, and
+    /// the export says the play started from saved audio.
+    func testSavedBundledVoiceAudioPlaysInsteadOfRenderingAgain() async throws {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let bundled = RecordingBundledVoiceRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let decisions = ResumeDecisionLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: bundled,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { log.record($0) },
+            preparedChunkLookup: { _, _, _ in nil },
+            bundledVoiceChunkLookup: { _, _, _ in .init(audioURL: template, duration: 0.2) },
+            onFallback: { reason, _, _ in log.recordFallback(reason) },
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") },
+            onResumeDecision: { decisions.add($0) }
+        )
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "saved-kitten")
+
+        let deadline = ContinuousClock.now + .seconds(30)
+        while log.totalChunks == 0 || log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertGreaterThan(log.totalChunks, 1)
+        XCTAssertEqual(log.completedChunks, log.totalChunks)
+        let renders = await bundled.renderedTexts
+        XCTAssertEqual(renders, [], "saved Kitten audio plays; nothing is rendered again")
+        let supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0)
+        XCTAssertEqual(log.fallbacks, [])
+        XCTAssertTrue(decisions.values.contains { $0["path"] == "play_saved" && $0["engine"] == KittenNarrationRenderer.engine },
+                      "\(decisions.values)")
+        try client.stop()
+    }
+
+    /// #1680, owner's call (2026-10-15): on a hot phone, saved Supertonic audio plays as long as the voice doesn't
+    /// bounce. A saved run of five minutes from a paragraph seam takes over from the bundled voice, keeps it to the end
+    /// of the run, and hands back once the run ends: one change each way. Before, the bundled voice rendered it all.
+    func testALongSavedSupertonicRunTakesOverAtASeamAndHandsBackAtItsEnd() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 5)
+        XCTAssertEqual(Set(run.plan.map(\.text)).count, run.plan.count, "chunk texts are unique, so texts identify chunks")
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(run.indices), declaredSeconds: 70)
+        XCTAssertEqual(outcome.supertonicRenders, 0, "Supertonic may not render")
+        XCTAssertTrue(outcome.bundledTexts.allSatisfy { !run.texts.contains($0) }, "the saved run plays: \(outcome.bundledTexts)")
+        let after = run.plan.indices.filter { $0 > run.indices.upperBound }.map { run.plan[$0].text }
+        let before = run.plan.indices.filter { $0 > 0 && $0 < run.indices.lowerBound }.map { run.plan[$0].text }
+        XCTAssertFalse(after.isEmpty)
+        XCTAssertTrue(after.allSatisfy(outcome.bundledTexts.contains), "the bundled voice takes back the chunks after the run")
+        XCTAssertTrue(before.allSatisfy(outcome.bundledTexts.contains), "and kept the chunks before it")
+    }
+
+    /// #1680: a saved run under five minutes that doesn't reach the end would be a Supertonic island inside the
+    /// bundled voice, so the bundled voice keeps it.
+    func testAShortSavedSupertonicRunKeepsTheBundledVoice() async throws {
+        let text = Self.pressureArticle(paragraphs: 14)
+        let run = try Self.savedRun(in: text, startingAtOrAfter: 2, chunks: 2)
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(run.indices), declaredSeconds: 20)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertTrue(run.texts.allSatisfy(outcome.bundledTexts.contains), "the bundled voice renders the short run: \(outcome.bundledTexts)")
+    }
+
+    /// #1680 audit: a hot start splits the first chunk for a quick start. A fully prepared article still plays saved
+    /// Supertonic from there to the end, the whole first chunk included, as it did before (#849 audit).
+    func testAPreparedArticlePlaysSavedSupertonicFromASplitStartOnAHotPhone() async throws {
+        let text = Self.pressureArticle(paragraphs: 4)
+        let outcome = try await renderUnderPressure(text: text, savedSupertonic: Set(0..<200), declaredSeconds: 20)
+        XCTAssertEqual(outcome.supertonicRenders, 0)
+        XCTAssertEqual(outcome.bundledTexts, [], "saved Supertonic plays throughout")
+    }
+
+    /// An article of paragraphs for the pressure tests: the planner runs chunks across the breaks. Every sentence
+    /// names its paragraph, so no two chunks have the same text and a chunk's text says which chunk it is.
+    private static func pressureArticle(paragraphs: Int) -> String {
+        (1...paragraphs).map {
+            "Section \($0). The committee met on day \($0) to discuss proposal \($0), which had been circulating among members for several weeks. Most of the objections to proposal \($0) concerned cost, and a smaller group worried about its timeline."
+        }.joined(separator: "\n\n")
+    }
+
+    /// `chunks` article chunks from the first paragraph seam at or after chunk `start` (the planner's own plan and
+    /// seam rule), as the client sees them without a preface.
+    private static func savedRun(
+        in text: String, startingAtOrAfter start: Int, chunks count: Int
+    ) throws -> (indices: ClosedRange<Int>, texts: [String], plan: [NarrationChunkPlanner.SpokenChunk]) {
+        let projection = SpeechTextNormalizer.normalizeWithSourceOffsets(text)
+        let plan = NarrationChunkPlanner.spokenPlan(spokenText: projection.text, articleText: nil, articleSpokenStart: 0).chunks
+        let seam = try XCTUnwrap(plan.indices.first { index in
+            index >= start && index + count < plan.count - 1 && SavedVoiceRunRule.isParagraphSeam(
+                in: text, at: index,
+                sourceStart: { projection.sourceOffset(atSpokenCharacterOffset: plan[$0].startOffset) },
+                endsSentence: { plan[$0].boundary == .sentence || plan[$0].boundary == .hard })
+        }, "no seam with room for the run in \(plan.count) chunks")
+        let indices = seam...(seam + count - 1)
+        return (indices, indices.map { plan[$0].text }, plan)
+    }
+
+    /// Renders `text` to the end on a phone that refuses Supertonic, with saved Supertonic audio for the article chunks
+    /// at `savedSupertonic`, each declared `declaredSeconds` long.
+    private func renderUnderPressure(
+        text: String, savedSupertonic: Set<Int>, declaredSeconds: TimeInterval
+    ) async throws -> (bundledTexts: [String], supertonicRenders: Int) {
+        let template = try makeTestWAV(duration: 0.2)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let bundled = RecordingBundledVoiceRenderer(templateURL: template)
+        let log = KittenClientLog()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { player, rate in player.volume = 0; player.playImmediately(atRate: rate) },
+            observesPlayerLifecycle: false,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: bundled,
+            fallbackClient: RecordingFallbackAudioClient(),
+            onGenerationProgress: { log.record($0) },
+            preparedChunkLookup: { _, _, plan in
+                savedSupertonic.contains(plan.index) ? .init(audioURL: template, duration: declaredSeconds) : nil
+            },
+            onFallback: { reason, _, _ in log.recordFallback(reason) }
+        )
+        _ = try client.prepareSpeechText(text)
+        try client.play(targetId: "saved-run")
+        let deadline = ContinuousClock.now + .seconds(60)
+        while log.totalChunks == 0 || log.completedChunks < log.totalChunks, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(log.completedChunks, log.totalChunks, "the generation finished")
+        XCTAssertEqual(log.fallbacks, [])
+        try client.stop()
+        return (await bundled.renderedTexts, await supertonic.renderCount)
+    }
+
     func testSlowSpeculativeChunkDoesNotSwitchAudiblePreparedPlaybackToFallback() async throws {
         let template = try makeTestWAV(duration: 3)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -4439,6 +4578,35 @@ private actor GatedBundledVoiceRenderer: BundledVoiceRendering {
     func discardGeneratedAudio(at url: URL) async {
         if generatedURLs.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
     }
+}
+
+/// A bundled-voice stand-in that records the text of each render (#1680).
+private actor RecordingBundledVoiceRenderer: BundledVoiceRendering {
+    let templateURL: URL
+    private(set) var renderedTexts: [String] = []
+    private var generatedURLs: Set<URL> = []
+
+    init(templateURL: URL) { self.templateURL = templateURL }
+
+    func render(text: String) async throws -> SupertonicNarrationResult {
+        renderedTexts.append(text)
+        let url = FileManager.default.temporaryDirectory.appending(path: "bundled-recorded-\(UUID().uuidString).wav")
+        try FileManager.default.copyItem(at: templateURL, to: url)
+        generatedURLs.insert(url)
+        return SupertonicNarrationResult(audioURL: url, duration: 0.2, sampleRate: 44_100, renderDuration: 0.01,
+                                         sessionLoadCount: 1, engine: KittenNarrationRenderer.engine)
+    }
+
+    func discardGeneratedAudio(at url: URL) async {
+        if generatedURLs.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
+    }
+}
+
+private final class ResumeDecisionLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var entries: [[String: String]] = []
+    var values: [[String: String]] { lock.withLock { entries } }
+    func add(_ fields: [String: String]) { lock.withLock { entries.append(fields) } }
 }
 
 private final class PreparedLookupLog: @unchecked Sendable {
