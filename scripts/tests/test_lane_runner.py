@@ -44,6 +44,70 @@ class ClaudeAuditGateTests(unittest.TestCase):
         self.assertIsNone(lane.audit_blocker([clean], HEAD))
         self.assertEqual(lane.merge_blockers(scope, [clean], HEAD), [])
 
+    def test_pr1654_host_domain_persistence_requires_its_head_audit(self):
+        paths = [
+            'App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+RemoteProvider.swift',
+            'App/SpokenMarginsAppTests/SummaryFailureOwnershipWorkflowTests.swift',
+            'App/SpokenMarginsAppTests/SummarySuccessOwnershipWorkflowTests.swift',
+            'Packages/SessionKit/Sources/SessionKit/LocalSummaryRequestOrigin.swift',
+            'Packages/SessionKit/Sources/SessionKit/SessionEngine.swift',
+            'Packages/SessionKit/Tests/SessionKitTests/LocalSummaryCompletionTests.swift',
+        ]
+        spec = importlib.util.spec_from_file_location('audit_gate_scope', SCRIPTS / 'test-scope.py')
+        scope_policy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(scope_policy)
+        scope = scope_policy.classify(paths)
+        self.assertEqual(scope['tier'], 'T3')
+        engine = next(f for f in scope['files'] if f['path'].endswith('/SessionEngine.swift'))
+        self.assertEqual(engine['category'], 'sessionkit')  # audit risk must not change test tiers
+        self.assertEqual(lane.merge_blockers(scope, [], HEAD),
+                         ['it touches persistence and has no Codex or Claude audit comment yet'])
+        stale = comment('**Claude audit on `ccccccc`**\n\nNo blocking findings.')
+        self.assertTrue(lane.merge_blockers(scope, [stale], HEAD))
+        blocked = comment('**Claude audit on `aaaaaaa`**\n\n[P1] Wrong owner.')
+        self.assertTrue(lane.merge_blockers(scope, [blocked], HEAD))
+        clean = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
+        self.assertEqual(lane.merge_blockers(scope, [clean], HEAD), [])
+
+    def test_existing_persistence_path_policy_and_neighbor_exemptions(self):
+        cases = {
+            'Packages/SessionKit/Sources/SessionKit/SessionEngine+Retry.swift': True,
+            'Packages/SessionKit/Sources/SessionKit/LocalSummaryRequestOrigin.swift': False,
+            'Packages/SessionKit/Tests/SessionKitTests/SessionEngineTests.swift': False,
+            'scripts/tests/test_persistence.py': False,
+            'docs/SessionEngine.swift': False,
+            'research/SessionEngine.swift': False,
+            'Design/SessionEngine.swift': False,
+            'docs/persistence.md': False,
+        }
+        for path, required in cases.items():
+            with self.subTest(path=path):
+                scope = {'files': [{'path': path, 'category': 'sessionkit'}]}
+                self.assertEqual(bool(lane.merge_blockers(scope, [], HEAD)), required)
+
+    def test_runner_copied_out_of_the_tree_still_loads_and_applies_the_persistence_gate(self):
+        # lane.yml runs next's lane-runner.py from $RUNNER_TEMP (git show > file), so a helper module must be
+        # imported only after main() puts the workspace's scripts/ on sys.path (#1659).
+        driver = (
+            'import importlib.util, sys\n'
+            'spec = importlib.util.spec_from_file_location("lane_runner", sys.argv[1])\n'
+            'lane = importlib.util.module_from_spec(spec)\n'
+            'spec.loader.exec_module(lane)\n'
+            'sys.path.insert(0, sys.argv[2])\n'
+            'files = [{"path": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift", "category": "sessionkit"}]\n'
+            'print(lane.merge_blockers({"files": files}, [], "a" * 40))\n'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp) / '_work' / '_temp'
+            temp.mkdir(parents=True)
+            runner = temp / 'lane-runner.py'
+            runner.write_text((SCRIPTS / 'lane-runner.py').read_text())
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+            run = subprocess.run([sys.executable, '-c', driver, str(runner), str(SCRIPTS)],
+                                 cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr[-800:])
+            self.assertIn('no Codex or Claude audit comment yet', run.stdout)
+
     def test_newest_head_audit_wins_across_reviewers(self):
         claude = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
         codex = comment('**Codex audit (Astra) on `aaaaaaa`**\n\n[P1] Broken.')

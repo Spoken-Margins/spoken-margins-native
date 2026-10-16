@@ -811,7 +811,15 @@ def merge_blockers(scope: dict, comments: list[dict], head: str, inherited=None)
     inherited (inherited_check's answer) adds a hold per blocking audit on another PR's commits this PR brings in
     (#712): a clean audit of this head doesn't clear it, a resolution of that finding plus a clean audit after does."""
     reasons = []
-    risky = sorted({AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED})
+    # Imported here, like lane_slots: the workflow runs this file from $RUNNER_TEMP, where ROOT/scripts is
+    # not the workspace, so a top-level import fails before main() puts the tree on sys.path.
+    from lane_audit_policy import requires_persistence_audit
+    risky = {AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED}
+    # #1658: test-scope's sessionkit category does not describe persistence risk.
+    # Use the auditor's existing eligibility rules as well, without changing tiers.
+    if requires_persistence_audit([f.get('path', '') for f in scope['files']]):
+        risky.add('persistence')
+    risky = sorted(risky)
     if scope.get('lane_paths'):  # owner rule 2026-10-01: lane changes need the audit too (test-scope.py)
         risky.append('the lane')
     audit = audit_blocker(comments, head) if risky else None
