@@ -55,6 +55,7 @@ struct ExperienceItemDetailScreen: View {
             }
             .background(AppColors.bone)
             .accessibilityIdentifier("item.screen")
+            .announcesScreenChange()
             .navigationTitle("Item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -351,6 +352,7 @@ struct ExperienceItemDetailScreen: View {
                                     Spacer()
                                     Image(systemName: "play.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -385,6 +387,7 @@ struct ExperienceItemDetailScreen: View {
                                     Spacer()
                                     Image(systemName: "play.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -428,6 +431,7 @@ struct ExperienceItemDetailScreen: View {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "quote.bubble.fill")
                                         .foregroundStyle(AppColors.coral)
+                                        .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(row.preview)
                                             .font(.headline)
@@ -441,6 +445,7 @@ struct ExperienceItemDetailScreen: View {
                                     Spacer()
                                     Image(systemName: "chevron.right")
                                         .foregroundStyle(AppColors.secondaryText)
+                                        .accessibilityHidden(true)
                                 }
                                 .padding(.vertical, 12)
                             }
@@ -490,6 +495,8 @@ struct ExperienceItemDetailScreen: View {
                                     Image(systemName: "play.fill").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.bordered)
+                                .accessibilityLabel("Resume this session")
+                                .accessibilityIdentifier("session.resume.\(row.session.id)")
                                 Button { model.openExport(sessionId: row.session.id) } label: {
                                     Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
                                 }
@@ -718,6 +725,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
                                     Spacer()
                                     Image(systemName: "play.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
