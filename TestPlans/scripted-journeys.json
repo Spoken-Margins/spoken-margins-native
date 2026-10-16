@@ -8,7 +8,7 @@
     },
     {
       "test": "SpokenMarginsAppUITests/J1TextChaptersJourneyUITests",
-      "journey": "J1"
+      "journey": "J1 step 4"
     },
     {
       "test": "SpokenMarginsAppUITests/J2PodcastSurvivesRelaunchJourneyUITests",
