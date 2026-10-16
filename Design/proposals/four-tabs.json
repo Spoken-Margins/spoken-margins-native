@@ -10,9 +10,9 @@
   "Margin details offer Share this Margin (a one-Margin packet to the share sheet).",
   "Item details show the published date and the date added.",
   "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
-  "Settings is one tap from every tab (gear). The Library's options menu is removed; Help lives in Settings.",
+  "Settings is a tab. The Library's options menu is removed; Help lives in Settings.",
   "Clear reproducible audio is a button on Settings itself; Offline Storage keeps the detail.",
-  "Unfollow is a context-menu action with an Undo toast instead of a confirmation alert.",
+  "Unfollow lives on the Show screen with an Undo toast instead of a confirmation alert; no landing tab manages a feed.",
   "Settings sections: Voice, Storage, Notes folder, Import & export (collapsed to two rows), Help, About & legal (collapsed)."
  ],
  "groups": [
@@ -26,6 +26,13 @@
  ],
  "screens": [
   {
+   "id": "ExperienceLibraryScreen",
+   "change": "rename",
+   "title": "Library",
+   "group": "Library",
+   "note": "Same place, items only. Gains one in-place sort control: Added, Published, Publisher, Topic. Collections stay."
+  },
+  {
    "id": "ExperienceSourcesScreen",
    "change": "remove",
    "note": "The Following stream is replaced by the Shows tab."
@@ -35,7 +42,7 @@
    "change": "rename",
    "title": "Shows",
    "group": "Shows",
-   "note": "Becomes the Shows tab: followed shows sorted by newest episode, each row with 'N new', the newest episode's title and a play button. Quiet shows in a collapsed group at the bottom (two rows, then Show all). Toolbar + opens the Add sheet, which carries Browse and Import from another app. Context menu on a row: Quiet, Unfollow (Undo toast)."
+   "note": "Becomes the Shows tab: followed shows sorted by newest episode, each row with 'N new', the newest episode's title and a play button. Quiet shows in a collapsed group at the bottom (two rows, then Show all). Toolbar + opens the Add sheet, which carries Paste, Browse and Import from another app. The tab only lists and plays; Quiet and Unfollow live on the Show screen, so no landing tab manages a feed."
   },
   {
    "id": "ShowScreen",
@@ -547,15 +554,16 @@
    "id": "j03",
    "name": "Unfollow a show",
    "via": [],
-   "target": "ManageFeedsScreen",
-   "final_cost": 2,
-   "final": "Long press the show's row, Unfollow. An Undo toast replaces the confirmation.",
-   "note": "Shows tab, long press. Works for every followed show, not only ones with something new.",
+   "target": "ShowScreen",
+   "final_cost": 1,
+   "final": "Tap Unfollow. An Undo toast replaces the confirmation.",
+   "note": "Shows tab, the show row, Unfollow. Works the same for every followed show.",
    "taps": {
     "as_built": 5,
     "proposed": 3,
     "route": [
-     "Shows tab"
+     "Shows tab",
+     "Show row"
     ]
    }
   },

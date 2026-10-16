@@ -1,6 +1,6 @@
 # Same tabs, straighter paths (the control)
 
-**The idea.** Change nothing about where the three tabs are or what they are called, and fix only the paths: Margins newest first with a row that plays its moment and a Share this Margin button; dates on the Item screen; a gear on the Library instead of its options menu; Export all Margins as one button that hands a bundle to the share sheet; Clear reproducible audio on Settings itself; Unfollow as a context menu with Undo instead of a confirmation; Following folds a noisy show to one row and can set it Quiet; Manage feeds keeps its jobs but gets a Paste button and opens the file picker at once for an OPML import. This is not a new structure. It is the control: it shows how much of the tap-count gain comes from path fixes alone, so the three structural proposals have to earn their keep on guessability, screen count and the noisy show, not on taps.
+**The idea.** Change nothing about where the three tabs are or what they are called, and fix only the paths: Margins newest first with a row that plays its moment and a Share this Margin button; dates on the Item screen; a gear on the Library instead of its options menu; Export all Margins as one button that hands a bundle to the share sheet; Clear reproducible audio on Settings itself; Unfollow without its confirmation (an Undo toast instead); Following folds a noisy show to one row and can set it Quiet; Manage feeds keeps its jobs but gets a Paste button and opens the file picker at once for an OPML import. This is not a new structure. It is the control: it shows how much of the tap-count gain comes from path fixes alone, so the three structural proposals have to earn their keep on guessability, screen count and the noisy show, not on taps.
 
 ## Taps
 
@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | Import an OPML file | 6 | 5 | Following tab > "Follow a feed" / "N feeds · Manage" row > "Import from another app" (square.and.arrow.down) |
 | Follow a podcast from a link | 5 | 4 | Following tab > "Follow a feed" / "N feeds · Manage" row |
-| Unfollow a show | 5 | 3 | Following tab |
+| Unfollow a show | 5 | 4 | Following tab > "Follow a feed" / "N feeds · Manage" row |
 | Find the Margin you added most recently | 1 | 1 | Margins tab |
 | Hear a Margin's moment | 3 | 2 | Margins tab > Margin row (plays this moment) |
 | Share one Margin with a friend | 5 | 3 | Margins tab > chevron on a Margin row (details) > Share this Margin (square.and.arrow.up) |
@@ -23,14 +23,14 @@
 | See new episodes from a show you follow | 1 | 1 | Following tab |
 | Open a Margin packet a friend sent | 2 | 2 | open a .spokenmargins packet file (Files, Mail, AirDrop, Messages) |
 
-Still over the ceiling: importing an OPML file (5) and following a show from a link (4), both because Manage feeds is still two taps deep.
+Still over the ceiling: importing an OPML file (5), following a show from a link (4) and unfollowing one (4), all because Manage feeds is still two taps deep.
 
 ## Problems it solves
 
 1. Newest Margin: yes.
 2. Dates: on the Item screen; the Library's sort is a smaller change here (Added and Published only).
 3. Clusters: not really; the Library stays as it is, with collections.
-4. The noisy show: folded and Quiet in Following, but it still has a tab of its own to fill.
+4. The noisy show: folded in Following, Quiet from its Manage menu, but it still has a tab of its own to fill.
 5. Now Playing: untouched.
 6. Settings: tidied, but Manage feeds still sits under Following and still carries Browse and Import.
 

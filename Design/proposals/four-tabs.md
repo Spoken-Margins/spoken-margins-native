@@ -1,6 +1,6 @@
 # Four tabs: Library, Shows, Margins, Settings
 
-**The idea.** Give every home a name on the tab bar and make a show a place you go, not a feed that comes to you. **Shows** lists the shows you follow, sorted by newest episode, each row showing its unplayed count, the newest title and a play button; Quiet shows sink to a collapsed group at the bottom. The Following stream and Manage feeds both disappear, because the Shows tab is both at once: you see what is new there, and you follow, quiet and unfollow there. The **Library** holds items only, one list you can sort. **Settings** gets the fourth tab, which makes voice, storage and help cheap and puts the rare import jobs one named tap away. Margins are newest first and a row plays its moment. A noisy show never floods anything: it is one row with a bigger number.
+**The idea.** Give every home a name on the tab bar and make a show a place you go, not a feed that comes to you. **Shows** lists the shows you follow, sorted by newest episode, each row showing its unplayed count, the newest title and a play button; Quiet shows sink to a collapsed group at the bottom. The Following stream and Manage feeds both disappear, because the Shows tab lists what is new, its + opens the Add sheet to follow a show, and a show's own screen is where Quiet and Unfollow live. The tab itself manages nothing, which keeps the brief's rule about landing screens. The **Library** holds items only, one list you can sort. **Settings** gets the fourth tab, which makes voice, storage and help cheap and puts the rare import jobs one named tap away. Margins are newest first and a row plays its moment. A noisy show never floods anything: it is one row with a bigger number.
 
 ## Taps
 
@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | Import an OPML file | 6 | 4 | Add (plus) > Import from another app tile (the file picker opens at once) |
 | Follow a podcast from a link | 5 | 3 | Add (plus) |
-| Unfollow a show | 5 | 3 | Shows tab |
+| Unfollow a show | 5 | 3 | Shows tab > Show row |
 | Find the Margin you added most recently | 1 | 1 | Margins tab |
 | Hear a Margin's moment | 3 | 2 | Margins tab > Margin row (plays this moment) |
 | Share one Margin with a friend | 5 | 3 | Margins tab > chevron on a Margin row (details) > Share this Margin (square.and.arrow.up) |
@@ -32,7 +32,7 @@ Still over the ceiling: importing an OPML file (4), a once-per-listener job.
 3. Clusters: the Library's sort control; shows are their own cluster, on their own tab.
 4. The noisy show: one row on Shows, with a count; Quiet moves it to the collapsed group; its episodes enter the Library only when played.
 5. Now Playing: untouched.
-6. Settings: a tab, six sections, long groups collapsed. Feed management is next door on Shows, not inside Settings and not on the Library.
+6. Settings: a tab, six sections, long groups collapsed. Feed management is one tap away on each show's screen, not inside Settings and not on any tab.
 
 ## What it makes worse
 

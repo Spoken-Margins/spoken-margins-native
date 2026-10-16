@@ -12,7 +12,7 @@
   "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
   "Settings is one tap from every tab (gear). The Library's options menu is removed; Help lives in Settings.",
   "Clear reproducible audio is a button on Settings itself; Offline Storage keeps the detail.",
-  "Unfollow is a context-menu action with an Undo toast instead of a confirmation alert.",
+  "Unfollow loses its confirmation alert (Undo toast instead); it stays on Manage feeds.",
   "Settings sections: Voice, Storage, Notes folder, Import & export (collapsed to two rows), Help, About & legal (collapsed)."
  ],
  "groups": [
@@ -26,18 +26,25 @@
  ],
  "screens": [
   {
+   "id": "ExperienceLibraryScreen",
+   "change": "rename",
+   "title": "Library",
+   "group": "Library",
+   "note": "Same place. Gains one in-place sort control: Added, Published. Collections stay."
+  },
+  {
    "id": "ExperienceSourcesScreen",
    "change": "rename",
    "title": "Following",
    "group": "Following",
-   "note": "Unchanged name. New episodes fold to one row per show per day, expanding in place. A show row's context menu: Quiet this show, Unfollow (Undo toast)."
+   "note": "Unchanged name. New episodes fold to one row per show per day, expanding in place. Nothing on this tab manages a feed; that stays on Manage feeds."
   },
   {
    "id": "ManageFeedsScreen",
    "change": "rename",
    "title": "Manage feeds",
    "group": "Following",
-   "note": "Keeps Follow by link (with a Paste button), Browse and Import from another app. Loses the Read Later and Listening Edition links, which only Settings carries now."
+   "note": "Keeps Follow by link (with a Paste button), Browse, Import from another app, and each show's Manage menu, which gains Quiet and loses the Unfollow confirmation (Undo toast instead). Loses the Read Later and Listening Edition links, which only Settings carries now."
   },
   {
    "id": "OPMLImportScreen",
@@ -198,15 +205,16 @@
    "id": "j03",
    "name": "Unfollow a show",
    "via": [],
-   "target": "ExperienceSourcesScreen",
+   "target": "ManageFeedsScreen",
    "final_cost": 2,
-   "final": "Long press the show's row, Unfollow. An Undo toast replaces the confirmation.",
-   "note": "A show with nothing new: Following, Manage feeds, long press (4).",
+   "final": "Tap the show's Manage (…) menu, Unfollow. An Undo toast replaces the confirmation.",
+   "note": "Following, Manage feeds, the menu. Still over the ceiling.",
    "taps": {
     "as_built": 5,
-    "proposed": 3,
+    "proposed": 4,
     "route": [
-     "Following tab"
+     "Following tab",
+     "\"Follow a feed\" / \"N feeds · Manage\" row"
     ]
    }
   },

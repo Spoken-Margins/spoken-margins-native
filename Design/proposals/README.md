@@ -17,7 +17,7 @@ Taps per job, counted the way the brief counts them (a menu item is 2, the picke
 | --- | --- | --- | --- | --- | --- |
 | Import an OPML file | 6 | 5 | 4 | 5 | 4 |
 | Follow a podcast from a link | 5 | 4 | 3 | 3 | 3 |
-| Unfollow a show | 5 | 3 | 3 | 3 | 3 |
+| Unfollow a show | 5 | 4 | 3 | 3 | 3 |
 | Share one Margin with a friend | 5 | 3 | 3 | 3 | 3 |
 | Free up storage | 5 | 3 | 3 | 3 | 3 |
 | Export all Margins | 6 | 2 | 2 | 2 | 2 |
@@ -27,8 +27,8 @@ Taps per job, counted the way the brief counts them (a menu item is 2, the picke
 
 Three things to read off it:
 
-1. **Most of the gain is path fixes, not structure.** The control gets every everyday job to the ceiling or under it. The eight shared fixes are listed at the top of each JSON file; they belong in any proposal the owner picks.
-2. **The structural proposals differ on two jobs only**: following a show from a link (Manage feeds is the bottleneck) and importing an OPML list, which happens once.
+1. **Most of the gain is path fixes, not structure.** The control gets every everyday job to the ceiling or under it except the two that run through Manage feeds, following and unfollowing a show. The shared fixes are listed at the top of each JSON file; they belong in any proposal the owner picks. None of them puts feed management on a landing screen: Quiet and Unfollow live on the Show screen in the three structural proposals.
+2. **The structural proposals beat the control on exactly the Manage feeds jobs**, and differ from each other only on importing an OPML list, which happens once.
 3. **So the choice between Stream, Up next and Four tabs is not a tap-count choice.** It is about guessability, screen count and the noisy show, which is what the rest of this file is about.
 
 ## Could a newcomer guess where things live?
@@ -44,13 +44,13 @@ Six questions a new listener asks, and the answer in each proposal. "Named" mean
 | How do I change the voice? | learned: gear | learned: gear | named: Settings tab |
 | Where did that episode go? | New, then the Library once played | Up next, then the Library once played | its show, then the Library once played |
 
-Four tabs names five of six. Stream names two and asks the newcomer to learn that shows live inside the Library. Up next names two and hides shows under Settings, which is right for someone who thinks "subscriptions are a setting" and wrong for everyone else.
+Four tabs names four of six, and the two it does not name are the same two nobody names. Stream names two and asks the newcomer to learn that shows live inside the Library. Up next names two and hides shows under Settings, which is right for someone who thinks "subscriptions are a setting" and wrong for everyone else.
 
 ## The noisy show, in each
 
-- **Stream:** folded to one row per day; Quiet removes it from the stream. It still has a tab it can fill.
-- **Up next:** one card at most; Quiet removes the card. It cannot fill anything.
-- **Four tabs:** one row with a count; Quiet sinks it to a collapsed group. It cannot fill anything.
+- **Stream:** folded to one row per day; Quiet, set on the show's screen, removes it from the stream. It still has a tab it can fill.
+- **Up next:** one card at most; Quiet, set on the show's screen, removes the card. It cannot fill anything.
+- **Four tabs:** one row with a count; Quiet, set on the show's screen, sinks it to a collapsed group. It cannot fill anything.
 
 ## Screens
 
@@ -64,7 +64,7 @@ None of them is smaller than today. The Show screen is new in all three structur
 
 ## The pick
 
-**Four tabs**, for guessability: five of six newcomer questions are answered by a word on the tab bar, and the noisy show is contained by design rather than by folding. Its cost is a fourth tab and the loss of a single "what's new today" list. **What would show the pick is wrong:** the owner opens Shows and taps into three shows in a row to collect the day's episodes. Then he listens by day, and Stream is the right structure; Up next stays the fallback if he wants the app to choose for him.
+**Four tabs**, for guessability: four of six newcomer questions are answered by a word on the tab bar, against two for the others, and the noisy show is contained by design rather than by folding. Its cost is a fourth tab and the loss of a single "what's new today" list. **What would show the pick is wrong:** the owner opens Shows and taps into three shows in a row to collect the day's episodes. Then he listens by day, and Stream is the right structure; Up next stays the fallback if he wants the app to choose for him.
 
 ## Running the numbers
 

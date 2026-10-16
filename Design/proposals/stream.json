@@ -12,7 +12,7 @@
   "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
   "Settings is one tap from every tab (gear). The Library's options menu is removed; Help lives in Settings.",
   "Clear reproducible audio is a button on Settings itself; Offline Storage keeps the detail.",
-  "Unfollow is a context-menu action with an Undo toast instead of a confirmation alert.",
+  "Unfollow lives on the Show screen with an Undo toast instead of a confirmation alert; no landing tab manages a feed.",
   "Settings sections: Voice, Storage, Notes folder, Import & export (collapsed to two rows), Help, About & legal (collapsed)."
  ],
  "groups": [
@@ -31,7 +31,7 @@
    "change": "rename",
    "title": "New",
    "group": "New",
-   "note": "A chronological stream. New episodes are folded to one row per show per day ('The Daily · 3 new'), which expands in place. A show's row has a context menu: Quiet this show (stays followed, leaves the stream) and Unfollow (Undo toast). Items you added and shared Margins you received appear in the same stream."
+   "note": "A chronological stream. New episodes are folded to one row per show per day ('The Daily · 3 new'), which expands in place. Tapping the show's name opens the Show screen, where Quiet and Unfollow live; nothing on this tab manages a feed. Items you added and shared Margins you received appear in the same stream."
   },
   {
    "id": "ShowScreen",
@@ -121,7 +121,7 @@
    "anchor": null,
    "present_line": null,
    "condition": "Library sorted by Shows",
-   "notes": "The sort control is in place; Shows is one of its options (Added, Published, Publisher, Topic, Shows).",
+   "notes": "The sort control is in place; Shows is one of its options (Added, Published, Publisher, Topic, Shows). Choosing it costs 2 first, so routes through this arrow are not the cheap ones.",
    "proposed": true
   },
   {
@@ -361,16 +361,19 @@
   {
    "id": "j03",
    "name": "Unfollow a show",
-   "via": [],
-   "target": "ExperienceSourcesScreen",
-   "final_cost": 2,
-   "final": "Long press the show's row, Unfollow. An Undo toast replaces the confirmation.",
-   "note": "A show with nothing in New: Library, sort by Shows (2), long press the show (2): 4.",
+   "via": [
+    "ExperienceSourcesScreen"
+   ],
+   "target": "ShowScreen",
+   "final_cost": 1,
+   "final": "Tap Unfollow. An Undo toast replaces the confirmation.",
+   "note": "New, the show's name, Unfollow. A show with nothing in New: Library, sort by Shows (2), the show row, Unfollow (4).",
    "taps": {
     "as_built": 5,
     "proposed": 3,
     "route": [
-     "New tab"
+     "New tab",
+     "Show name on a folded row"
     ]
    }
   },

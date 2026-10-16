@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | Import an OPML file | 6 | 5 | gearshape, Settings (toolbar) > Shows you follow (row) > "Import from another app" (square.and.arrow.down) |
 | Follow a podcast from a link | 5 | 3 | Add (plus) |
-| Unfollow a show | 5 | 3 | Up next tab |
+| Unfollow a show | 5 | 3 | Up next tab > 'and N more' on a show's card |
 | Find the Margin you added most recently | 1 | 1 | Margins tab |
 | Hear a Margin's moment | 3 | 2 | Margins tab > Margin row (plays this moment) |
 | Share one Margin with a friend | 5 | 3 | Margins tab > chevron on a Margin row (details) > Share this Margin (square.and.arrow.up) |
@@ -27,7 +27,7 @@ Still over the ceiling: importing an OPML file (5), a once-per-listener job.
 
 ## Problems it solves
 
-1. Newest Margin: top of the Margins tab, and your latest Margin can also sit on Up next.
+1. Newest Margin: top of the Margins tab.
 2. Dates: the Item screen's header, and the Library's Added and Published sorts.
 3. Clusters: the Library's sort control, and Up next groups by show.
 4. The noisy show: one card, never more, and none when Quiet. Its episodes never enter the Library until played.
@@ -37,6 +37,7 @@ Still over the ceiling: importing an OPML file (5), a once-per-listener job.
 ## What it makes worse
 
 - Up next is a judgment call made by the app. The first time it hides something he wanted, trust drops, and the only way back is the Library or the show's screen.
+- Unfollowing a show with no card on Up next costs 4 (gear, Shows you follow, the show, Unfollow).
 - Seeing every new episode of one show costs 2 (Up next, "and N more"), and there is no place that lists all new episodes across shows.
 - Following a show from a link inside Settings costs 4; the Add sheet's Paste gives 3 only because it recognises feed links.
 - It is the closest of the four to the rejected Today and Home directions. The difference is that it is bounded and tap-first, not shelves and icons, but the owner may not see that difference.

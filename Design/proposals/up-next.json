@@ -12,7 +12,7 @@
   "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
   "Settings is one tap from every tab (gear). The Library's options menu is removed; Help lives in Settings.",
   "Clear reproducible audio is a button on Settings itself; Offline Storage keeps the detail.",
-  "Unfollow is a context-menu action with an Undo toast instead of a confirmation alert.",
+  "Unfollow lives on the Show screen with an Undo toast instead of a confirmation alert; no landing tab manages a feed.",
   "Settings sections: Voice, Storage, Notes folder, Import & export (collapsed to two rows), Help, About & legal (collapsed)."
  ],
  "groups": [
@@ -30,14 +30,14 @@
    "change": "rename",
    "title": "Up next",
    "group": "Up next",
-   "note": "A ranked shortlist, capped at about eight cards: Continue listening; one card per show with its newest unplayed episode ('and 2 more' opens the Show screen); items added but not started; a shared Margin to hear. A noisy show contributes one card. Quiet shows contribute none. A card's context menu: Quiet this show, Unfollow (Undo toast)."
+   "note": "A ranked shortlist, capped at about eight cards: Continue listening; one card per show with its newest unplayed episode ('and 2 more' opens the Show screen); items added but not started; a shared Margin to hear. A noisy show contributes one card. Quiet shows contribute none. Quiet and Unfollow live on the Show screen; nothing on this tab manages a feed."
   },
   {
    "id": "ManageFeedsScreen",
    "change": "rename",
    "title": "Shows you follow",
    "group": "Settings",
-   "note": "Moves under Settings. The list of followed shows sorted by newest episode, with Paste a link, Browse podcasts and writers, and Import from another app at the top. A show row opens the Show screen; its context menu has Quiet and Unfollow."
+   "note": "Moves under Settings. The list of followed shows sorted by newest episode, with Paste a link, Browse podcasts and writers, and Import from another app at the top. A show row opens the Show screen, where Quiet and Unfollow live."
   },
   {
    "id": "ShowScreen",
@@ -377,15 +377,16 @@
    "id": "j03",
    "name": "Unfollow a show",
    "via": [],
-   "target": "ExperienceSourcesScreen",
-   "final_cost": 2,
-   "final": "Long press the show's card, Unfollow. An Undo toast replaces the confirmation.",
-   "note": "A show with no card on Up next: gear, Shows you follow, long press (4).",
+   "target": "ShowScreen",
+   "final_cost": 1,
+   "final": "Tap Unfollow. An Undo toast replaces the confirmation.",
+   "note": "Up next, the show's name on its card, Unfollow. A show with no card on Up next: gear, Shows you follow, the show row, Unfollow (4).",
    "taps": {
     "as_built": 5,
     "proposed": 3,
     "route": [
-     "Up next tab"
+     "Up next tab",
+     "'and N more' on a show's card"
     ]
    }
   },

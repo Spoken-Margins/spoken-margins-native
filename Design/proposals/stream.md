@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | Import an OPML file | 6 | 4 | Add (plus) > Import from another app tile (the file picker opens at once) |
 | Follow a podcast from a link | 5 | 3 | Add (plus) |
-| Unfollow a show | 5 | 3 | New tab |
+| Unfollow a show | 5 | 3 | New tab > Show name on a folded row |
 | Find the Margin you added most recently | 1 | 1 | Margins tab |
 | Hear a Margin's moment | 3 | 2 | Margins tab > Margin row (plays this moment) |
 | Share one Margin with a friend | 5 | 3 | Margins tab > chevron on a Margin row (details) > Share this Margin (square.and.arrow.up) |
@@ -38,7 +38,7 @@ Still over the ceiling: importing an OPML file (4), a once-per-listener job.
 
 - "Following" stops being a word in the app. A newcomer looking for "my podcasts" has to find the Shows sort in the Library, or tap a show's name in New.
 - New mixes three kinds of thing (episodes, items you added, shared Margins). If the shared-Margin rows are rare they will read as noise.
-- Unfollowing a show that has nothing new costs 4 (Library, sort by Shows, long press).
+- Unfollowing a show that has nothing new costs 4 (Library, sort by Shows, the show, Unfollow).
 - The Add sheet gains two tiles, so it does more than add an item.
 
 **The one thing taken out:** the Library's options menu (Settings, Help, Preparing Audio). Settings is a gear, Help lives in Settings, and Preparing Audio keeps only its card.
@@ -62,4 +62,4 @@ Still over the ceiling: importing an OPML file (4), a once-per-listener job.
  [ New ]  [ Library ]  [ Margins ]   |   [ New ]  [ Library ]  [ Margins ]    |
 ```
 
-The ▸ rows are folded shows; tapping the row expands it in place, tapping the show's name opens the Show screen. The Library's ⇅ control is one in-place sort (Added, Published, Publisher, Topic, Shows). Blue and orange carry the play state; the ▶ glyph carries it too.
+The ▸ rows are folded shows; tapping the row expands it in place, tapping the show's name opens the Show screen. The Library's ⇅ control is one in-place sort (Added, Published, Publisher, Topic, Shows).
