@@ -11,6 +11,18 @@ A running list of design ideas the owner has seen and rejected, so no session of
 5. **2026-10-16, ten reference apps, screen by screen** (Overcast, Pocket Casts, Castro, Apple Podcasts, Snipd, Reader, Matter, Apple Books, Libby, Spotify). He found all of them unimpressive: none solves finding recent Margins, dates on items, clusters or high-volume sources. Reference board: https://claude.ai/artifact/5fUXBVM2dWfq6BCuQEE4sP.
 6. **2026-10-16, a screen-first redesign process** that started from Now Playing. He wants flows and jobs fixed first, screens after.
 
+## Rejected by the structure round before showing (2026-10-16)
+
+Ideas the structure proposals session considered and set aside, with the reason, so they are not re-proposed without a new argument. The owner has not seen these.
+
+1. **A two-tab app, Library and Margins, with "New" as a section at the top of the Library.** Puts two jobs on the landing screen (what's new, find a thing) and lets the noisy show onto the Library landing, which is problem 4 restated.
+2. **No tab bar: one list with Items / Shows / Margins scopes and a sort control.** The same information architecture as Four tabs with less guessable chrome, and the root screen does three jobs.
+3. **A "You" tab holding Margins, exports, storage and settings.** Hides Margins, the product's name, behind a personal-profile idea, and it is a junk drawer with a friendlier name.
+4. **Tabs by medium: Articles · Podcasts · Margins.** A Substack publication is both, so the first question a newcomer asks has no answer.
+5. **Merging Item details into Now Playing as a pane.** It would remove a screen, but Now Playing is the one redesign the owner accepted and the brief says to leave it until last.
+6. **Search-first: a search field as the main way to find anything.** It answers "find a thing again" but not "what to play next", and a newcomer cannot search for what they don't know is there.
+7. **Putting the voice picker on Now Playing's listening options.** Four taps there against three in Settings; a voice is a setting, not a listening control.
+
 ## Accepted, for contrast
 
 - **Now Playing redesign**: "significantly better". The controls are still too bulky.

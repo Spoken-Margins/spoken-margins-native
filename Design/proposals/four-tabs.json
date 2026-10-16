@@ -1,0 +1,792 @@
+{
+ "name": "four-tabs",
+ "title": "Four tabs: Library, Shows, Margins, Settings",
+ "base": "../flow-map/flow-map.json",
+ "base_commit": "32173207",
+ "start": "ExperienceLibraryScreen",
+ "summary": "Every home gets a name on the tab bar. Shows is a list of followed shows, sorted by newest episode, each row with its unplayed count and a play button for the newest; a show is a place you go, so a noisy one never floods anything, and Quiet shows sink to a collapsed group. The Library holds items only, one sortable list. Settings becomes a tab, which makes voice, storage, help and the import jobs cheap and gives feed management a visible neighbour. Following's stream and Manage feeds both go away.",
+ "shared_fixes": [
+  "Margins list newest first; a Margin row plays its moment and a chevron opens its details.",
+  "Margin details offer Share this Margin (a one-Margin packet to the share sheet).",
+  "Item details show the published date and the date added.",
+  "Export all Margins is one toolbar button on the Margins tab that hands a Markdown bundle to the share sheet; the folder export moves under Settings.",
+  "Settings is one tap from every tab (gear). The Library's options menu is removed; Help lives in Settings.",
+  "Clear reproducible audio is a button on Settings itself; Offline Storage keeps the detail.",
+  "Unfollow is a context-menu action with an Undo toast instead of a confirmation alert.",
+  "Settings sections: Voice, Storage, Notes folder, Import & export (collapsed to two rows), Help, About & legal (collapsed)."
+ ],
+ "groups": [
+  "Library",
+  "Shows",
+  "Margins",
+  "Now Playing",
+  "Settings",
+  "Sharing",
+  "Outside the app"
+ ],
+ "screens": [
+  {
+   "id": "ExperienceSourcesScreen",
+   "change": "remove",
+   "note": "The Following stream is replaced by the Shows tab."
+  },
+  {
+   "id": "ManageFeedsScreen",
+   "change": "rename",
+   "title": "Shows",
+   "group": "Shows",
+   "note": "Becomes the Shows tab: followed shows sorted by newest episode, each row with 'N new', the newest episode's title and a play button. Quiet shows in a collapsed group at the bottom (two rows, then Show all). Toolbar + opens the Add sheet, which carries Browse and Import from another app. Context menu on a row: Quiet, Unfollow (Undo toast)."
+  },
+  {
+   "id": "ShowScreen",
+   "change": "add",
+   "title": "Show",
+   "group": "Shows",
+   "kind": "screen",
+   "note": "One followed show: its episodes with dates, play buttons, Quiet toggle, Unfollow. Also the landing after Browse finds a show (Follow lives here)."
+  },
+  {
+   "id": "SettingsScreen",
+   "change": "move",
+   "group": "Settings",
+   "note": "Becomes the fourth tab. Sections: Voice, Storage (with Clear reproducible audio), Notes folder, Import & export (collapsed to two rows), Help, About & legal (collapsed)."
+  },
+  {
+   "id": "CatalogDrawerView",
+   "change": "move",
+   "group": "Library",
+   "note": "Opened from a Browse tile in the Add sheet."
+  },
+  {
+   "id": "OPMLImportScreen",
+   "change": "move",
+   "group": "Library",
+   "note": "Opened from an Import tile in the Add sheet. It presents the file picker at once."
+  },
+  {
+   "id": "ReadLaterScreen",
+   "change": "move",
+   "group": "Settings",
+   "note": "Only reached from Settings' Import & export group now."
+  },
+  {
+   "id": "ListeningEditionImportScreen",
+   "change": "move",
+   "group": "Settings",
+   "note": "Only reached from Settings' Import & export group now."
+  },
+  {
+   "id": "BatchExportScreen",
+   "change": "move",
+   "group": "Settings",
+   "title": "Export sessions to a folder",
+   "note": "Reached from Settings' Import & export group; everyday export is the Margins tab's Export all button."
+  }
+ ],
+ "edges": [
+  {
+   "id": "p006",
+   "from": "ExperienceAddSourceFlow",
+   "to": "CatalogDrawerView",
+   "control": "Browse podcasts and writers tile",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p007",
+   "from": "ExperienceAddSourceFlow",
+   "to": "OPMLImportScreen",
+   "control": "Import from another app tile (the file picker opens at once)",
+   "control_kind": "button",
+   "presentation": "push",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p008",
+   "from": "CatalogDrawerView",
+   "to": "ShowScreen",
+   "control": "Show result row",
+   "control_kind": "row",
+   "presentation": "push",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "Follow is on the Show screen.",
+   "proposed": true
+  },
+  {
+   "id": "p009",
+   "from": "ExperienceMarginsScreen",
+   "to": "PlaybackScreen",
+   "control": "Margin row (plays this moment)",
+   "control_kind": "row",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "Not the Shared filter",
+   "notes": "Replaces the row opening a detail sheet.",
+   "proposed": true
+  },
+  {
+   "id": "p010",
+   "from": "ExperienceMarginsScreen",
+   "to": "ExperienceMarginDetailView",
+   "control": "chevron on a Margin row (details)",
+   "control_kind": "button",
+   "presentation": "sheet",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "Not the Shared filter",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p011",
+   "from": "ExperienceMarginDetailView",
+   "to": "SHARE_SHEET",
+   "control": "Share this Margin (square.and.arrow.up)",
+   "control_kind": "button",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "A one-Margin .spokenmargins packet. Share as Markdown stays beside it.",
+   "proposed": true
+  },
+  {
+   "id": "p012",
+   "from": "ExperienceMarginsScreen",
+   "to": "SHARE_SHEET",
+   "control": "Export all Margins (toolbar)",
+   "control_kind": "toolbar",
+   "presentation": "system",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "One Markdown file per session, bundled. Replaces the Export Sessions toolbar button.",
+   "proposed": true
+  },
+  {
+   "id": "p013",
+   "from": "SettingsScreen",
+   "to": "BatchExportScreen",
+   "control": "Export sessions to a folder (Import & export group)",
+   "control_kind": "link",
+   "presentation": "push",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p030",
+   "from": "ExperienceLibraryScreen",
+   "to": "ManageFeedsScreen",
+   "control": "Shows tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p031",
+   "from": "ExperienceLibraryScreen",
+   "to": "ExperienceMarginsScreen",
+   "control": "Margins tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p032",
+   "from": "ExperienceLibraryScreen",
+   "to": "SettingsScreen",
+   "control": "Settings tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p033",
+   "from": "ManageFeedsScreen",
+   "to": "ExperienceLibraryScreen",
+   "control": "Library tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p034",
+   "from": "ManageFeedsScreen",
+   "to": "ExperienceMarginsScreen",
+   "control": "Margins tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p035",
+   "from": "ManageFeedsScreen",
+   "to": "SettingsScreen",
+   "control": "Settings tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p036",
+   "from": "ExperienceMarginsScreen",
+   "to": "ExperienceLibraryScreen",
+   "control": "Library tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p037",
+   "from": "ExperienceMarginsScreen",
+   "to": "ManageFeedsScreen",
+   "control": "Shows tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p038",
+   "from": "ExperienceMarginsScreen",
+   "to": "SettingsScreen",
+   "control": "Settings tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p039",
+   "from": "SettingsScreen",
+   "to": "ExperienceLibraryScreen",
+   "control": "Library tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p040",
+   "from": "SettingsScreen",
+   "to": "ManageFeedsScreen",
+   "control": "Shows tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p041",
+   "from": "SettingsScreen",
+   "to": "ExperienceMarginsScreen",
+   "control": "Margins tab",
+   "control_kind": "tab",
+   "presentation": "tab",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p050",
+   "from": "ManageFeedsScreen",
+   "to": "ShowScreen",
+   "control": "Show row",
+   "control_kind": "row",
+   "presentation": "push",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p051",
+   "from": "ManageFeedsScreen",
+   "to": "PlaybackScreen",
+   "control": "play on a show row (newest unplayed episode)",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p052",
+   "from": "ManageFeedsScreen",
+   "to": "ExperienceAddSourceFlow",
+   "control": "Add (plus)",
+   "control_kind": "toolbar",
+   "presentation": "sheet",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "The same Add sheet as the Library's.",
+   "proposed": true
+  },
+  {
+   "id": "p053",
+   "from": "ShowScreen",
+   "to": "ExperienceItemDetailScreen",
+   "control": "Episode row",
+   "control_kind": "row",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "Adds the episode to the Library.",
+   "proposed": true
+  },
+  {
+   "id": "p054",
+   "from": "ShowScreen",
+   "to": "PlaybackScreen",
+   "control": "play on an episode row",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p055",
+   "from": "ManageFeedsScreen",
+   "to": "PlaybackScreen",
+   "control": "Mini player (Open Now Playing)",
+   "control_kind": "button",
+   "presentation": "screen swap",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a listening session is active",
+   "notes": "",
+   "proposed": true
+  },
+  {
+   "id": "p056",
+   "from": "ManageFeedsScreen",
+   "to": "ExperienceRecordingView",
+   "control": "Mini player microphone (Record a Margin)",
+   "control_kind": "button",
+   "presentation": "fullscreen",
+   "file": null,
+   "line": null,
+   "anchor": null,
+   "present_line": null,
+   "condition": "a listening session is active",
+   "notes": "",
+   "proposed": true
+  }
+ ],
+ "removed_edges": [
+  "e002",
+  "e005",
+  "e007",
+  "e013",
+  "e014",
+  "e015",
+  "e016",
+  "e017",
+  "e080",
+  "e081",
+  "e082",
+  "e142",
+  "e143",
+  "e149",
+  "e150"
+ ],
+ "jobs": [
+  {
+   "id": "j01",
+   "name": "Import an OPML file",
+   "via": [
+    "ExperienceAddSourceFlow"
+   ],
+   "target": "OPMLImportScreen",
+   "final_cost": 2,
+   "final": "Pick the .opml file in the picker that opened, then tap Follow N.",
+   "note": "Library, Add, Import from another app.",
+   "taps": {
+    "as_built": 6,
+    "proposed": 4,
+    "route": [
+     "Add (plus)",
+     "Import from another app tile (the file picker opens at once)"
+    ]
+   }
+  },
+  {
+   "id": "j02",
+   "name": "Follow a podcast from a link",
+   "via": [],
+   "target": "ExperienceAddSourceFlow",
+   "final_cost": 2,
+   "final": "Tap Paste; the sheet recognises a feed link and offers Follow <show>; tap it.",
+   "note": "Paste already imports a copied article link; a feed link follows instead.",
+   "taps": {
+    "as_built": 5,
+    "proposed": 3,
+    "route": [
+     "Add (plus)"
+    ]
+   }
+  },
+  {
+   "id": "j03",
+   "name": "Unfollow a show",
+   "via": [],
+   "target": "ManageFeedsScreen",
+   "final_cost": 2,
+   "final": "Long press the show's row, Unfollow. An Undo toast replaces the confirmation.",
+   "note": "Shows tab, long press. Works for every followed show, not only ones with something new.",
+   "taps": {
+    "as_built": 5,
+    "proposed": 3,
+    "route": [
+     "Shows tab"
+    ]
+   }
+  },
+  {
+   "id": "j04",
+   "name": "Find the Margin you added most recently",
+   "via": [],
+   "target": "ExperienceMarginsScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "The list is newest first, so it is the top row.",
+   "taps": {
+    "as_built": 1,
+    "proposed": 1,
+    "route": [
+     "Margins tab"
+    ]
+   }
+  },
+  {
+   "id": "j05",
+   "name": "Hear a Margin's moment",
+   "via": [
+    "ExperienceMarginsScreen"
+   ],
+   "target": "PlaybackScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "Tap the row.",
+   "taps": {
+    "as_built": 3,
+    "proposed": 2,
+    "route": [
+     "Margins tab",
+     "Margin row (plays this moment)"
+    ]
+   }
+  },
+  {
+   "id": "j06",
+   "name": "Share one Margin with a friend",
+   "via": [
+    "ExperienceMarginsScreen",
+    "ExperienceMarginDetailView"
+   ],
+   "target": "SHARE_SHEET",
+   "final_cost": 0,
+   "final": "Choosing the friend in the share sheet is not counted.",
+   "note": "Margins, chevron on the row, Share this Margin.",
+   "taps": {
+    "as_built": 5,
+    "proposed": 3,
+    "route": [
+     "Margins tab",
+     "chevron on a Margin row (details)",
+     "Share this Margin (square.and.arrow.up)"
+    ]
+   }
+  },
+  {
+   "id": "j07",
+   "name": "See an item's details",
+   "via": [],
+   "target": "ExperienceItemDetailScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "The header shows published date and date added.",
+   "taps": {
+    "as_built": 1,
+    "proposed": 1,
+    "route": [
+     "Library row (title area)"
+    ]
+   }
+  },
+  {
+   "id": "j08",
+   "name": "Add an article from the clipboard",
+   "via": [],
+   "target": "ExperienceAddSourceFlow",
+   "final_cost": 1,
+   "final": "Tap Paste at the bottom of the Add sheet.",
+   "note": "Unchanged.",
+   "taps": {
+    "as_built": 2,
+    "proposed": 2,
+    "route": [
+     "Add (plus)"
+    ]
+   }
+  },
+  {
+   "id": "j09",
+   "name": "Write a Margin while listening",
+   "via": [],
+   "target": "ExperienceWrittenMarginScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "Unchanged.",
+   "via_edges": [
+    "e119"
+   ],
+   "taps": {
+    "as_built": 2,
+    "proposed": 2,
+    "route": [
+     "Mini player (Open Now Playing)",
+     "square.and.pencil 'Write a Margin'"
+    ]
+   }
+  },
+  {
+   "id": "j10",
+   "name": "Open the Timeline for what's playing",
+   "via": [
+    "PlaybackScreen"
+   ],
+   "target": "ExperienceTimelineRailScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "Unchanged.",
+   "taps": {
+    "as_built": 2,
+    "proposed": 2,
+    "route": [
+     "Mini player (Open Now Playing)",
+     "Timeline (pane switch)"
+    ]
+   }
+  },
+  {
+   "id": "j11",
+   "name": "Change the reading voice",
+   "via": [],
+   "target": "SettingsScreen",
+   "final_cost": 2,
+   "final": "In the Voice section, tap the picker and choose a voice.",
+   "note": "Settings tab, Voice picker, choose. 2 taps if the voices are an inline list.",
+   "taps": {
+    "as_built": 4,
+    "proposed": 3,
+    "route": [
+     "Settings tab"
+    ]
+   }
+  },
+  {
+   "id": "j12",
+   "name": "Free up storage",
+   "via": [],
+   "target": "SettingsScreen",
+   "final_cost": 2,
+   "final": "In the Storage section tap 'Clear <size> of reproducible audio', then confirm.",
+   "note": "Settings tab, Clear, confirm.",
+   "taps": {
+    "as_built": 5,
+    "proposed": 3,
+    "route": [
+     "Settings tab"
+    ]
+   }
+  },
+  {
+   "id": "j13",
+   "name": "Export all Margins",
+   "via": [],
+   "via_edges": [
+    "p012"
+   ],
+   "target": "SHARE_SHEET",
+   "final_cost": 0,
+   "final": "Choosing where to send the bundle is not counted.",
+   "note": "The folder workflow stays under Settings, Export sessions to a folder: gear, row, Choose Folder, pick, Export (5).",
+   "taps": {
+    "as_built": 6,
+    "proposed": 2,
+    "route": [
+     "Margins tab",
+     "Export all Margins (toolbar)"
+    ]
+   }
+  },
+  {
+   "id": "j14",
+   "name": "Get help",
+   "via": [],
+   "target": "HelpScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "Settings tab, Help.",
+   "taps": {
+    "as_built": 2,
+    "proposed": 2,
+    "route": [
+     "Settings tab",
+     "\"How Spoken Margins Works\" (questionmark.circle)"
+    ]
+   }
+  },
+  {
+   "id": "j15",
+   "name": "See new episodes from a show you follow",
+   "via": [],
+   "target": "ManageFeedsScreen",
+   "final_cost": 0,
+   "final": "",
+   "note": "The Shows tab, sorted by newest episode, shows each show's count and newest title; the Show screen lists them all (2).",
+   "taps": {
+    "as_built": 1,
+    "proposed": 1,
+    "route": [
+     "Shows tab"
+    ]
+   }
+  },
+  {
+   "id": "j16",
+   "name": "Open a Margin packet a friend sent",
+   "start": "OUTSIDE_APP",
+   "via": [],
+   "target": "Build23RecipientSharingExperience",
+   "final_cost": 1,
+   "final": "Tap Import.",
+   "note": "Unchanged.",
+   "taps": {
+    "as_built": 2,
+    "proposed": 2,
+    "route": [
+     "open a .spokenmargins packet file (Files, Mail, AirDrop, Messages)"
+    ]
+   }
+  }
+ ]
+}
