@@ -22,3 +22,7 @@ The map shows what the code does. It has not been checked against the running ap
 ## Viewer
 
 The interactive viewer (map, jobs, sandbox for proposed changes) is a claude.ai artifact built from this file. Proposals saved there are read back from the artifact's database.
+
+## Proposals
+
+Structure proposals built on this map live in [../proposals/](../proposals/README.md), each as a JSON file of edits in this schema plus a note. `Design/proposals/compute-taps.py` applies a proposal and recomputes every job.
