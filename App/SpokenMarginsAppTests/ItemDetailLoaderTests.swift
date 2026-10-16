@@ -185,6 +185,28 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    /// #1167: the Item screen's "Open Original Source" shows for an item added by link and not for one
+    /// imported from a file, a feed link that may hold a secret, or an item with no address.
+    func testOriginalSourceIsOfferedOnlyForAPublicWebAddress() throws {
+        try withFixture { model, store, _ in
+            let rows: [(id: String, reference: String?, type: String?, expected: String?)] = [
+                ("link", "https://example.com/essay", "url", "https://example.com/essay"),
+                ("file", "/var/mobile/Documents/essay.md", "file", nil),
+                ("manual", "manual-import", "manual", nil),
+                ("private", "https://feeds.supercast.com/podcasts/123/abc?token=abc", "url", nil),
+                ("none", nil, nil, nil)
+            ]
+            for row in rows {
+                var saved = item(row.id)
+                saved.externalReference = row.reference
+                saved.externalReferenceType = row.type
+                try store.saveItem(saved)
+                let detail = try model.loadItemDetail(id: row.id, store: store)
+                XCTAssertEqual(detail.originalSourceURL?.absoluteString, row.expected, row.id)
+            }
+        }
+    }
+
     private func withFixture(_ body: (Gate1AppModel, SQLiteSessionStore, URL) throws -> Void) throws {
         let preferences = VoicePreferencesSnapshot.capture()
         defer { preferences.restore() }

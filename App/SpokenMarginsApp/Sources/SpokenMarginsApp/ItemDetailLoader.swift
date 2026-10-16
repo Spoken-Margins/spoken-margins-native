@@ -101,6 +101,7 @@ struct ItemDetailLoader {
             externalReference: item.externalReference ?? "",
             publishedDateText: ItemMetadata.publishedDateText(item.publishedAt),
             descriptionText: item.descriptionText,
+            externalReferenceType: item.externalReferenceType ?? "",
             overview: map?.overview ?? "",
             navigation: canonicalSource?.navigation ?? [],
             chapters: map?.chapters ?? [],
