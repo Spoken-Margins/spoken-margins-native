@@ -2,6 +2,10 @@
 
 Written 2026-10-16 against the flow map at commit `32173207`. Each proposal is a set of edits to `../flow-map/flow-map.json`: screens added, renamed, moved or removed, arrows added (`"proposed": true`) or removed, and every job recomputed. No pixels, colours or type. Now Playing and the Timeline are untouched in all four.
 
+## Tap through them
+
+`concepts.html` is a page with five phone prototypes, today's app and the four proposals, that you can tap through: tabs switch, a show opens, the plus opens the Add sheet, a Margin row plays. It is published as an artifact for the owner; open the file in a browser to see the same thing.
+
 ## The four
 
 1. **[Stream](stream.md)**: New · Library · Margins. The first tab's axis changes from "what you follow" to "what arrived", with noisy shows folded to one row. Shows get a screen; Manage feeds dissolves into the Add sheet.

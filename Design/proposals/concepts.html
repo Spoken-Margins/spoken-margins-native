@@ -1,0 +1,452 @@
+<title>Spoken Margins Structure Concepts</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&display=swap">
+<style>
+/* Layout: a quiet page whose only loud thing is a row of five live phones. Left aligned, one column of text under 65ch. */
+:root {
+  --bg: #EEECE3; --fg: #1B2320; --muted: #5F6B65; --line: #D4D7CB; --accent: #144D36;
+  --blue: #2F6FC4; --amber: #B97A17;
+  /* the app's own colours, from AppColors in Gate1RootView.swift */
+  --bone: #F7F2E3; --panel: #FFFFFF; --ink: #171F1C; --ink2: #61706A; --rule: #D6DECF;
+  --soft: #E8F0E1; --green: #144D36; --ongreen: #FFFFFF; --coral: #B3453A; --ochre: #C2851F;
+  --font: "Atkinson Hyperlegible", "Helvetica Neue", Arial, sans-serif;
+  --ios: -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
+  --serif: ui-serif, "New York", "Iowan Old Style", Charter, Georgia, serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #161A17; --fg: #E9EEE8; --muted: #A5AFA8; --line: #2F3732; --accent: #7AD69E;
+  --blue: #7FB0F5; --amber: #E8B84E;
+  --bone: #141A17; --panel: #212923; --ink: #EBF2E8; --ink2: #A8B8AD; --rule: #47564C;
+  --soft: #2E4033; --green: #7AD69E; --ongreen: #121715; --coral: #FF917A; --ochre: #F0B852;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #161A17; --fg: #E9EEE8; --muted: #A5AFA8; --line: #2F3732; --accent: #7AD69E;
+  --blue: #7FB0F5; --amber: #E8B84E;
+  --bone: #141A17; --panel: #212923; --ink: #EBF2E8; --ink2: #A8B8AD; --rule: #47564C;
+  --soft: #2E4033; --green: #7AD69E; --ongreen: #121715; --coral: #FF917A; --ochre: #F0B852;
+  color-scheme: dark }
+
+* { box-sizing: border-box }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 17px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 28px 64px; }
+a { color: var(--accent) }
+h1, h2, h3 { text-wrap: balance; line-height: 1.15; margin: 0 }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -0.01em }
+h2 { font-size: 24px; font-weight: 700; margin-top: 56px }
+h3 { font-size: 19px; font-weight: 700 }
+p { margin: 0; max-width: 62ch }
+.wrap { max-width: 1680px; margin: 0 auto }
+.intro { display: grid; gap: 14px; max-width: 62ch; margin-bottom: 36px }
+.intro p.lead { font-size: 19px }
+.legend { display: flex; flex-wrap: wrap; gap: 10px 22px; color: var(--muted); font-size: 15px }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 7px; vertical-align: -1px; background: var(--accent) }
+.legend .b::before { background: var(--blue) } .legend .a::before { background: var(--amber) } .legend .n::before { background: var(--muted) }
+
+.phones { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 36px 28px; align-items: start }
+.concept { display: grid; gap: 12px; min-width: 0 }
+.concept header { display: grid; gap: 4px }
+.concept header .kicker { font-size: 14px; color: var(--muted) }
+.concept .try { font-size: 15px; color: var(--muted); max-width: 300px }
+.concept .try b { color: var(--fg); font-weight: 700 }
+.tally { display: flex; align-items: center; justify-content: space-between; width: 300px; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums }
+.tally b { color: var(--fg); font-size: 16px }
+.tally button { font: inherit; font-size: 13px; color: var(--accent); background: none; border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; cursor: pointer; min-height: 32px }
+.tally button:focus-visible, .phone button:focus-visible, .tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px }
+
+/* The phone */
+.phone { width: 300px; height: 640px; max-width: 100%; border-radius: 40px; background: var(--bone); color: var(--ink); font-family: var(--ios); font-size: 13px; line-height: 1.3;
+  box-shadow: 0 0 0 3px #2b2f2c, 0 0 0 5px #6b716d, 0 18px 40px rgba(0,0,0,.25); position: relative; overflow: hidden; display: flex; flex-direction: column; -webkit-user-select: none; user-select: none }
+.statusbar { height: 40px; flex: none; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 26px 2px; font-size: 12px; font-weight: 600 }
+.statusbar .pill { position: absolute; top: 10px; left: 50%; width: 86px; height: 22px; margin-left: -43px; border-radius: 11px; background: #111 }
+.navbar { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px 4px; flex: none; min-height: 50px }
+.navbar .title { font-size: 16px; font-weight: 600; flex: 1; text-align: center; padding: 0 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.navbar .slot { width: 40px; display: flex; gap: 6px }
+.navbar .slot.r { justify-content: flex-end } .navbar .slot.wide { width: auto; min-width: 40px }
+.cbtn { width: 38px; height: 38px; border-radius: 19px; border: 0; background: var(--panel); color: var(--green); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 1px 2px rgba(0,0,0,.08); padding: 0; font: inherit }
+.cbtn.text { width: auto; padding: 0 12px; font-size: 13px; font-weight: 600; gap: 5px }
+.cbtn.back { background: transparent; box-shadow: none }
+.screen { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 0 12px 150px; scrollbar-width: none }
+.screen::-webkit-scrollbar { display: none }
+.search { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--rule); border-radius: 14px; padding: 9px 12px; color: var(--ink2); margin: 2px 0 8px; font-size: 13px }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 8px }
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--panel); border: 1px solid var(--rule); border-radius: 999px; padding: 0 12px; height: 34px; font-size: 13px; font-weight: 600; color: var(--ink); cursor: pointer; font-family: inherit }
+.chip.on { background: var(--green); color: var(--ongreen); border-color: var(--green) }
+.sect { display: flex; align-items: baseline; justify-content: space-between; color: var(--ink2); font-size: 12px; margin: 12px 2px 4px }
+.sect b { color: var(--ink); font-size: 15px; font-weight: 700 }
+.row { display: flex; align-items: center; gap: 10px; padding: 9px 2px; border-bottom: 1px solid var(--rule); cursor: pointer; min-height: 56px; width: 100%; text-align: left; background: none; border-left: 0; border-right: 0; border-top: 0; color: inherit; font: inherit }
+.row.now { box-shadow: inset 3px 0 0 var(--green) }
+.row .ico { width: 36px; height: 42px; border-radius: 8px; background: var(--soft); color: var(--green); display: flex; align-items: center; justify-content: center; flex: none }
+.row .ico.art { width: 44px; height: 44px; border-radius: 9px; background: var(--green); color: var(--ongreen); font-weight: 700; font-size: 16px; font-family: var(--serif) }
+.row .ico.art.q { background: var(--panel); color: var(--ink2); border: 1px solid var(--rule) }
+.row .txt { flex: 1; min-width: 0; display: grid; gap: 2px }
+.row .t { font-size: 14px; font-weight: 600; line-height: 1.2; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical }
+.row .s { font-size: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.row .s .new { color: var(--blue); font-weight: 700 }
+.row .q { font-family: var(--serif); font-size: 13px; color: var(--ink2); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden }
+.row .play { width: 36px; height: 36px; border-radius: 18px; background: var(--soft); color: var(--green); display: flex; align-items: center; justify-content: center; flex: none; border: 0; cursor: pointer; padding: 0 }
+.row .chev { color: var(--ink2); flex: none; display: flex }
+.row .num { font-size: 12px; color: var(--ink2); font-variant-numeric: tabular-nums; flex: none }
+.row .count { font-size: 11px; font-weight: 700; color: var(--blue); border: 1.5px solid var(--blue); border-radius: 999px; padding: 1px 7px; flex: none }
+.row.fold .txt .t::before { content: "▸ "; color: var(--ink2) } .row.fold.open .txt .t::before { content: "▾ " }
+.sub { margin-left: 22px; border-left: 2px solid var(--rule) }
+.sub .row { padding-left: 10px; min-height: 48px }
+.diam { width: 11px; height: 11px; transform: rotate(45deg); flex: none; margin: 0 4px }
+.diam.own { background: var(--ochre) } .diam.shared { border: 2px solid var(--blue) }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 14px; padding: 10px 12px; margin: 6px 0; display: grid; gap: 6px }
+.card .kind { font-size: 11px; color: var(--ink2); text-transform: uppercase; letter-spacing: .06em }
+.card .line { display: flex; align-items: center; gap: 10px }
+.card .t { font-size: 14px; font-weight: 600; flex: 1; min-width: 0 }
+.card .s { font-size: 12px; color: var(--ink2) }
+.card .more { font-size: 12px; color: var(--green); font-weight: 600; background: none; border: 0; padding: 6px 0; text-align: left; cursor: pointer; font-family: inherit; min-height: 32px }
+.group { background: var(--panel); border-radius: 12px; margin: 6px 0 14px; overflow: hidden; border: 1px solid var(--rule) }
+.glabel { font-size: 12px; color: var(--ink2); margin: 10px 14px -2px; text-transform: uppercase; letter-spacing: .05em }
+.grow { display: flex; align-items: center; gap: 10px; padding: 0 12px; min-height: 44px; border-bottom: 1px solid var(--rule); width: 100%; background: none; border-left: 0; border-right: 0; border-top: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; font-size: 13px }
+.grow:last-child { border-bottom: 0 }
+.grow .l { flex: 1 } .grow .v { color: var(--ink2); font-size: 12px; max-width: 46%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.grow .v.act { color: var(--green); font-weight: 600 } .grow.link .l { color: var(--green); font-weight: 600 }
+.grow .sw { width: 34px; height: 20px; border-radius: 10px; background: var(--green); position: relative; flex: none }
+.grow .sw::after { content: ""; position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 8px; background: #fff }
+.grow .sw.off { background: var(--rule) } .grow .sw.off::after { right: auto; left: 2px }
+.note { font-size: 12px; color: var(--ink2); margin: 6px 2px 10px }
+.empty { text-align: center; color: var(--ink2); padding: 26px 10px; font-size: 13px }
+.field { display: flex; gap: 6px; margin: 4px 0 10px }
+.field .in { flex: 1; background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 9px 11px; color: var(--ink2); font-size: 13px }
+.field .go { background: var(--green); color: var(--ongreen); border: 0; border-radius: 10px; padding: 0 12px; font-weight: 600; font-family: inherit; font-size: 13px; min-height: 36px }
+.toast { position: absolute; left: 14px; right: 14px; top: 94px; background: var(--panel); border: 1px solid var(--rule); color: var(--ink); border-radius: 12px; padding: 10px 12px; font-size: 12px; box-shadow: 0 6px 18px rgba(0,0,0,.18); z-index: 6; display: flex; gap: 8px; align-items: center }
+.toast .u { margin-left: auto; color: var(--green); font-weight: 700; background: none; border: 0; font-family: inherit; font-size: 12px; cursor: pointer; min-height: 32px }
+
+/* mini player and tab bar */
+.dock { position: absolute; left: 0; right: 0; bottom: 0; display: grid; gap: 8px; padding: 0 12px 10px; pointer-events: none;
+  background: linear-gradient(to top, var(--bone) 70%, transparent) }
+.mini { pointer-events: auto; display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent); border-radius: 20px; padding: 6px 8px 6px 12px; box-shadow: 0 6px 18px rgba(0,0,0,.12); cursor: pointer }
+.mini .txt { flex: 1; min-width: 0 } .mini .t { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis } .mini .s { font-size: 11px; color: var(--ink2) }
+.mini .mic { color: var(--coral); display: flex; padding: 6px } .mini .pp { width: 40px; height: 40px; border-radius: 20px; background: var(--green); color: var(--ongreen); display: flex; align-items: center; justify-content: center; flex: none }
+.tabs { pointer-events: auto; display: flex; justify-content: space-around; background: var(--panel); border-radius: 30px; padding: 5px; box-shadow: 0 6px 18px rgba(0,0,0,.12); border: 1px solid var(--rule) }
+.tab { flex: 1; display: grid; justify-items: center; gap: 2px; padding: 6px 2px 5px; border-radius: 24px; font-size: 10px; font-weight: 600; color: var(--ink); background: none; border: 0; font-family: inherit; cursor: pointer; min-height: 48px }
+.tab.on { background: var(--soft); color: var(--green) }
+.tab svg { width: 22px; height: 22px }
+.phone.notabs .dock .tabs { display: none }
+
+/* sheet */
+.sheet { position: absolute; inset: 0; background: rgba(20,30,25,.35); z-index: 5; display: flex; align-items: flex-end }
+.sheet .pane { background: var(--bone); border-radius: 22px 22px 0 0; width: 100%; padding: 10px 14px 20px; max-height: 86%; overflow: auto }
+.sheet .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--rule); margin: 0 auto 10px }
+.sheet h4 { margin: 0 0 10px; font-size: 16px; display: flex; justify-content: space-between; align-items: center }
+.sheet h4 button { background: none; border: 0; color: var(--green); font-weight: 600; font-family: inherit; font-size: 13px; cursor: pointer; min-height: 36px }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.tile { background: var(--panel); border: 1px solid var(--rule); border-radius: 12px; padding: 12px 10px; display: grid; gap: 6px; color: var(--ink); font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; font-family: inherit; min-height: 64px }
+.tile svg { color: var(--green) }
+.tile.wide { grid-column: 1 / -1 }
+.paste { margin-top: 10px; width: 100%; background: var(--green); color: var(--ongreen); border: 0; border-radius: 12px; min-height: 44px; font-size: 14px; font-weight: 700; font-family: inherit; cursor: pointer }
+.sheet .hint { font-size: 12px; color: var(--ink2); margin-top: 8px; text-align: center }
+
+/* comparison */
+.compare { overflow-x: auto; margin-top: 18px }
+table { border-collapse: collapse; font-size: 15px; min-width: 640px }
+th, td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top }
+th { color: var(--muted); font-weight: 400 }
+td.n { font-variant-numeric: tabular-nums; text-align: right; padding-right: 22px; width: 84px }
+td.n.over { color: var(--amber); font-weight: 700 }
+td.n.hit { color: var(--blue); font-weight: 700 }
+.pick { margin-top: 40px; max-width: 62ch; display: grid; gap: 12px }
+.pick ol { padding-left: 22px; margin: 0; display: grid; gap: 8px }
+.foot { margin-top: 48px; color: var(--muted); font-size: 15px; max-width: 62ch }
+@media (prefers-reduced-motion: no-preference) { .screen { scroll-behavior: smooth } }
+@media (max-width: 420px) { .phones { gap: 32px } .phone { height: 600px } }
+</style>
+
+<div class="wrap">
+  <div class="intro">
+    <h1>Five ways through Spoken Margins</h1>
+    <p class="lead">Today's app and four structures, each one a phone you can tap. Tabs switch, a show opens, the plus opens the Add sheet, a Margin row plays. Now Playing is left out on purpose. The counter under each phone counts your taps from the Library.</p>
+    <p class="legend"><span>Playing or the app's accent</span><span class="a">Your own Margin</span><span class="b">Shared, or something new</span><span class="n">Nothing here is final: no colours, type or pixels were chosen for the app itself</span></p>
+  </div>
+
+  <div class="phones" id="phones"></div>
+
+  <h2>What each costs, in taps</h2>
+  <p>Counted the way the brief counts: a menu item is two, the file picker's own taps are in the job. Blue is at or under the two-tap target. Amber is over the three-tap ceiling.</p>
+  <div class="compare"><table id="taps"></table></div>
+
+  <div class="pick">
+    <h2>The pick: Four tabs</h2>
+    <p>The numbers barely separate the three structures. Most of the saving comes from path fixes they all share: Margins newest first, a row that plays its moment, Share this Margin, Export all as one button, Settings one tap away. What separates them is whether a newcomer can guess where things live.</p>
+    <ol>
+      <li><b>Four tabs</b> names four of six newcomer questions with a word on the tab bar. A show is a place you go, so the three-times-a-day show is one row with a count and can never flood anything.</li>
+      <li><b>Stream</b> is the right one if you listen by day rather than by show. Watch for this: if on Four tabs you open three shows in a row to collect the day's episodes, switch to Stream.</li>
+      <li><b>Up next</b> is your own idea, and it hands the app a judgment call. It wins only if your first tap after launch is Up next, not Library.</li>
+      <li><b>Same tabs</b> is the control. It gets everything but the two Manage feeds jobs under the ceiling and changes nothing a current listener would notice.</li>
+    </ol>
+  </div>
+  <p class="foot">Every phone follows the brief's fixed rules: two taps target, three ceiling; feed management never on a landing screen; blue and orange for status with a label beside the colour; targets of 44 points; nothing new where an existing tap could carry the job. The content on the phones is example content.</p>
+</div>
+
+<script>
+(function () {
+  // ---------- icons (line icons, currentColor) ----------
+  const I = {
+    books: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="4" height="16" rx="1"/><rect x="9" y="4" width="4" height="16" rx="1"/><path d="M15 5.5l4-1 4 15-4 1z"/></svg>',
+    radio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="2"/><path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.5 18.5a9 9 0 0 1 0-13M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
+    quote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8.5 9.5h2v2h-2zM13.5 9.5h2v2h-2z" fill="currentColor" stroke="none"/></svg>',
+    gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>',
+    plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+    dots: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="8" cy="12" r=".8" fill="currentColor"/><circle cx="12" cy="12" r=".8" fill="currentColor"/><circle cx="16" cy="12" r=".8" fill="currentColor"/></svg>',
+    play: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10-6.5z"/></svg>',
+    playo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M8 5.5v13l10-6.5z"/></svg>',
+    pause: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/></svg>',
+    mic: '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 17v3" stroke="currentColor" stroke-width="1.8"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M9 6l6 6-6 6"/></svg>',
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+    search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>',
+    sort: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" width="16" height="16"><path d="M8 4v16M8 4L5 7M8 4l3 3M16 20V4M16 20l-3-3M16 20l3-3"/></svg>',
+    share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M5 12v8h14v-8"/></svg>',
+    head: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="13" width="4" height="7" rx="1.5"/><rect x="17" y="13" width="4" height="7" rx="1.5"/></svg>',
+    doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/></svg>',
+    book: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 4h12a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/><path d="M5 18a2 2 0 0 1 2-2h12"/></svg>',
+    pen: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 20h4l10-10-4-4L4 16z"/><path d="M12 8l4 4"/></svg>',
+    link: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>',
+    folder: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M3 6h7l2 2h9v11H3z"/></svg>',
+    grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></svg>',
+    down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M5 20h14"/></svg>',
+    help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1-1 1.7"/><circle cx="12" cy="17" r=".6" fill="currentColor"/></svg>',
+    wave: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 12h2M8 8v8M12 5v14M16 8v8M20 12h-2"/></svg>',
+    people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3"/><circle cx="16.5" cy="9.5" r="2.5"/><path d="M3 19a6 6 0 0 1 12 0M14 19a4.5 4.5 0 0 1 7 -3"/></svg>',
+    star: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l2.7 5.6 6.1.8-4.5 4.3 1.1 6.1L12 17l-5.4 2.8 1.1-6.1L3.2 9.4l6.1-.8z"/></svg>',
+    minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>',
+    bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>',
+  };
+  const ic = (n, s) => I[n] ? I[n].replace('<svg', `<svg width="${s||20}" height="${s||20}"`) : '';
+
+  // ---------- example content ----------
+  const ITEMS = {
+    tides: { title: 'Tides', sub: 'ch. 3 of 9 · PDF · 45%', kind: 'doc', now: true },
+    whales: { title: 'How whales sleep', sub: 'about 12 min · Hakai Magazine · Article', kind: 'doc' },
+    daily16: { title: 'The Daily: Oct 16', sub: '17 min · The Daily · Podcast', kind: 'head' },
+    cities: { title: 'Why cities hum', sub: 'about 18 min · Nautilus · Article', kind: 'doc' },
+    salt: { title: 'A short history of salt', sub: '41 min · Audiobook · 12%', kind: 'book' },
+    hardfork: { title: 'Hard Fork: AI week', sub: '52 min · Hard Fork · Podcast', kind: 'head' },
+  };
+  const MARGINS = [
+    { time: 'Today 09:12', place: 'Tides · around 61%', text: 'the second tide is the one that matters for the marsh', own: true, spoken: true },
+    { time: 'Today 08:40', place: 'Tides · around 23%', text: 'salt marsh: check the figure against the Hakai piece', own: true, spoken: false },
+    { time: 'Yesterday', place: 'Hard Fork · 41:10', text: 'agents as interns, not oracles. Sam will disagree', own: true, spoken: true },
+    { time: 'Yesterday', place: 'Tides · around 18%', text: 'Sam: "this is the bit I meant on the phone"', own: false, spoken: true },
+    { time: 'Last week', place: 'A short history of salt · 02:12', text: 'Roman roads were salt roads first', own: true, spoken: true },
+  ];
+  const SHOWS = [
+    { id: 'daily', name: 'The Daily', count: 3, when: 'today', newest: 'The Daily: Oct 16', dur: '17m', letter: 'D' },
+    { id: 'hardfork', name: 'Hard Fork', count: 1, when: 'Tue', newest: 'Hard Fork: AI week', dur: '52m', letter: 'H' },
+    { id: 'nautilus', name: 'Nautilus', count: 0, when: 'last week', newest: 'Why cities hum', dur: '18m', letter: 'N' },
+    { id: 'hakai', name: 'Hakai Magazine', count: 0, when: 'Oct 2', newest: 'How whales sleep', dur: '12m', letter: 'Hk' },
+  ];
+  const QUIET = [ { name: '99% Invisible', letter: '99' }, { name: 'Lex Fridman', letter: 'L' } ];
+  const EPISODES = [
+    { d: 'Oct 16', t: 'The Daily: Oct 16', m: '17m' }, { d: 'Oct 15', t: 'The Daily: Oct 15', m: '22m' },
+    { d: 'Oct 14', t: 'The Daily: Oct 14', m: '19m' }, { d: 'Oct 13', t: 'The Daily: Oct 13', m: '21m' }, { d: 'Oct 12', t: 'The Daily: Oct 12', m: '24m' },
+  ];
+
+  // ---------- block renderers ----------
+  const act = o => ` data-act='${JSON.stringify(o).replace(/'/g, '&#39;')}'`;
+  const item = (k, opts) => { const it = ITEMS[k]; const o = opts || {}; return `<button class="row${it.now ? ' now' : ''}"${act({ go: 'item', title: it.title })}><span class="ico">${ic(it.kind, 18)}</span><span class="txt"><span class="t">${it.title}</span><span class="s">${o.sub || it.sub}${it.now ? ' · <b>Continue listening</b>' : ''}</span></span><span class="play"${act({ play: it.title })}>${ic(it.now ? 'play' : 'playo', 18)}</span></button>`; };
+  const fold = (s, open) => {
+    const rows = EPISODES.slice(0, s.count).map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="txt"><span class="t">${e.t}</span><span class="s">${e.m}</span></span><span class="play"${act({ play: e.t })}>${ic('playo', 18)}</span></button>`).join('');
+    return `<div class="row fold${open ? ' open' : ''}"${act({ fold: s.id })}><span class="ico art">${s.letter}</span><span class="txt"><span class="t">${s.name}</span><span class="s"><span class="new">${s.count} new</span> · ${s.when}</span></span><button class="cbtn text" style="height:32px"${act({ go: 'show', show: s.id, tap: 'name' })}>Show ${ic('chev', 14)}</button></div>${open ? `<div class="sub">${rows}</div>` : ''}`;
+  };
+  const showRow = (s, o) => `<button class="row"${act({ go: 'show', show: s.id })}><span class="ico art">${s.letter}</span><span class="txt"><span class="t">${s.name}</span><span class="s">${s.count ? `<span class="new">${s.count} new</span> · ` : ''}${s.newest} · ${s.when}</span></span>${o && o.play ? `<span class="play"${act({ play: s.newest })}>${ic('playo', 18)}</span>` : ''}<span class="chev">${ic('chev')}</span></button>`;
+  const quietRow = q => `<button class="row"${act({ go: 'show', show: 'daily' })}><span class="ico art q">${q.letter}</span><span class="txt"><span class="t">${q.name}</span><span class="s">Quiet · not shown until you open it</span></span><span class="chev">${ic('chev')}</span></button>`;
+  const margin = (m, o) => { const oo = o || {}; return `<button class="row"${act(oo.detail ? { go: 'margin', m: m.place } : { play: m.place.split(' · ')[0], moment: true })}><span class="diam ${m.own ? 'own' : 'shared'}"></span><span class="txt"><span class="s">${m.time} · ${m.place}${m.own ? '' : ' · <span class="new">Shared</span>'}</span><span class="q">${m.text}</span></span>${oo.detail ? '' : `<span class="chev"${act({ go: 'margin', m: m.place })}>${ic('chev')}</span>`}</button>`; };
+  const sect = (b, aside) => `<div class="sect"><b>${b}</b><span>${aside || ''}</span></div>`;
+  const group = (label, rows, collapsedAfter, key, st) => {
+    const open = st.open[key];
+    const shown = collapsedAfter && !open ? rows.slice(0, collapsedAfter) : rows;
+    const more = collapsedAfter && !open && rows.length > collapsedAfter ? `<button class="grow link"${act({ open: key })}><span class="l">Show all (${rows.length - collapsedAfter} more)</span></button>` : '';
+    return `${label ? `<div class="glabel">${label}</div>` : ''}<div class="group">${shown.map(r => `<button class="grow${r.link ? ' link' : ''}"${act(r.a || {})}>${r.i ? ic(r.i, 18) : ''}<span class="l">${r.l}</span>${r.sw ? `<span class="sw${r.off ? ' off' : ''}"></span>` : r.v ? `<span class="v${r.act ? ' act' : ''}">${r.v}</span>` : ''}${r.nav ? `<span class="chev">${ic('chev')}</span>` : ''}</button>`).join('')}${more}</div>`;
+  };
+  const search = ph => `<div class="search">${ic('search')}<span>${ph}</span></div>`;
+  const chips = arr => `<div class="chips">${arr.map(c => `<span class="chip${c.on ? ' on' : ''}">${c.i ? ic(c.i, 14) : ''}${c.l}</span>`).join('')}</div>`;
+
+  // ---------- shared screens ----------
+  const libraryBody = (st, sortLabel, sorts) => {
+    const sort = st.sort || sortLabel;
+    const byShows = sort === 'Shows';
+    let rows = '';
+    if (byShows) rows = sect('Shows you follow') + SHOWS.map(s => showRow(s)).join('') + sect('Quiet') + QUIET.map(quietRow).join('');
+    else if (sort === 'Published') rows = sect('This week') + item('daily16') + item('whales') + item('cities') + sect('Earlier') + item('tides') + item('salt');
+    else if (sort === 'Publisher') rows = sect('Hakai Magazine') + item('whales') + sect('Nautilus') + item('cities') + sect('The Daily') + item('daily16') + sect('Your files') + item('tides') + item('salt');
+    else if (sort === 'Topic') rows = sect('Oceans') + item('whales') + item('tides') + sect('Cities') + item('cities') + sect('History') + item('salt');
+    else rows = sect('Added today') + item('whales') + item('daily16') + sect('Added this week') + item('tides') + item('cities') + sect('Earlier') + item('salt');
+    const sortChips = (sorts || ['Added', 'Published', 'Publisher', 'Topic']).map(s => `<button class="chip${sort === s ? ' on' : ''}"${act({ sort: s })}>${sort === s ? ic('sort', 14) : ''}${s}</button>`).join('');
+    return search('Search title, source, or author') + `<div class="chips">${sortChips}</div>` + rows;
+  };
+  const marginsBody = (st, o) => sect('Your Margins, newest first', `${MARGINS.length} Margins`) + chips([{ l: 'Mine', on: true }, { l: 'Starred' }, { l: 'Shared' }]) + MARGINS.map(m => margin(m, o)).join('') + `<p class="note">Tap a Margin to hear its moment. The chevron opens it, with Share this Margin.</p>`;
+  const marginsBuilt = () => search('Search your notes or an item') + chips([{ l: 'All items', i: 'sort' }, { l: 'Mine', on: true }, { l: 'Starred' }, { l: 'Shared' }]) + sect('Tides', '3 Margins · Share') + margin(MARGINS[3], { detail: true }) + margin(MARGINS[1], { detail: true }) + margin(MARGINS[0], { detail: true }) + sect('Hard Fork', '1 Margin · Share') + margin(MARGINS[2], { detail: true }) + sect('A short history of salt', '1 Margin · Share') + margin(MARGINS[4], { detail: true }) + `<p class="note">Grouped by item, and each item's Margins read in source order. Today's newest Margin is the third row.</p>`;
+  const showBody = (st, o) => {
+    const oo = o || {};
+    return `<div class="card"><div class="line"><span class="ico art" style="width:44px;height:44px;border-radius:9px;background:var(--green);color:var(--ongreen);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-weight:700;font-size:16px">D</span><span class="txt" style="flex:1"><div class="t">The Daily</div><div class="s">Following since March · 3 new</div></span></div>${oo.manage !== false ? `<div class="line"><button class="chip${st.quiet ? ' on' : ''}"${act({ quiet: 1 })}>${st.quiet ? 'Quiet' : 'Quiet this show'}</button><button class="chip"${act({ unfollow: 1 })}>${ic('minus', 14)}Unfollow</button></div>` : ''}</div>` +
+      sect('Episodes') + EPISODES.map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="num">${e.d}</span><span class="txt"><span class="t">${e.t}</span><span class="s">${e.m}</span></span><span class="play"${act({ play: e.t })}>${ic('playo', 18)}</span></button>`).join('');
+  };
+  const settingsBody = (st, o) => {
+    const oo = o || {};
+    const imp = [
+      { l: 'Import Listening Edition', i: 'down', nav: 1, a: { toast: 'Opens the Listening Edition import.' } },
+      { l: 'Export sessions to a folder', i: 'folder', nav: 1, a: { toast: 'Pick a folder once; it is remembered.' } },
+      { l: 'Read Later services', i: 'link', nav: 1, a: { toast: 'Readwise, Instapaper and friends.' } },
+      { l: 'Import from another app (OPML)', i: 'down', nav: 1, a: { toast: 'The file picker opens at once.' } },
+    ];
+    if (oo.showsRow) imp.unshift({ l: 'Shows you follow', i: 'radio', v: '6 shows', nav: 1, a: { go: 'shows' } });
+    return group('Voice', [{ l: 'App voice', i: 'wave', v: 'Kitten · Ava', nav: 1, a: { toast: 'Choose a voice: 2 taps here, 1 if the voices are a list.' } }, { l: 'Speaking rate', v: '1.0×' }], 0, 'v', st)
+      + group('Storage', [{ l: 'Offline audio', i: 'folder', v: '1.2 GB', nav: 1, a: { toast: 'Offline Storage keeps the detail.' } }, { l: 'Clear 400 MB of reproducible audio', v: 'Clear', act: 1, a: { toast: 'Cleared 400 MB. The app can make it again.' } }], 0, 's', st)
+      + group('Notes folder', [{ l: 'iCloud Drive › Margins', i: 'folder', nav: 1, a: { toast: 'Where Markdown notes are written.' } }], 0, 'n', st)
+      + group('Import & export', imp, 2, 'ie', st)
+      + group('', [{ l: 'How Spoken Margins works', i: 'help', nav: 1, a: { toast: 'Help, one tap from here.' } }], 0, 'h', st)
+      + group('About & legal', [{ l: 'Privacy policy', nav: 1 }, { l: 'Terms of use', nav: 1 }, { l: 'On-device voice licence', nav: 1 }, { l: 'Open-source licences', nav: 1 }, { l: 'Share diagnostics', i: 'share' }, { l: 'Version', v: '0.1 (34)' }], 2, 'ab', st);
+  };
+  const settingsBuilt = (st) => group('Margin output', [{ l: 'Choose Notes Folder', i: 'folder' }], 0, 'a', st)
+    + group('Bring your own Listening Map', [{ l: 'Import Listening Edition', nav: 1 }, { l: 'Read Later Services', nav: 1 }], 0, 'b', st)
+    + group('Playback & voice', [{ l: 'Playback Controls', v: 'Labeled' }, { l: 'App Voice', v: 'Kitten' }, { l: 'iOS Voice', v: 'Ava' }, { l: 'Speaking Rate', v: '1.0×' }, { l: 'Try Spoken Content' }, { l: 'Try App Voice' }, { l: 'Text Navigation', v: 'Paragraph' }, { l: 'Native Audio Back', v: '15 s' }], 0, 'c', st)
+    + group('Offline storage', [{ l: 'Manage Offline Storage', i: 'folder', nav: 1 }, { l: 'Storage Budget', v: '2 GB' }, { l: 'Automatic Audio Preparation', sw: 1 }], 0, 'd', st)
+    + group('AI features', [{ l: 'Provider', v: 'OpenAI' }, { l: 'Data Sharing', nav: 1 }, { l: 'Processing', v: 'On device' }], 0, 'e', st)
+    + group('Recently deleted', [{ l: 'Empty Recently Deleted' }, { l: 'Restore' }], 0, 'f', st)
+    + group('Support & privacy', [{ l: 'How Spoken Margins Works', i: 'help', nav: 1 }, { l: 'Privacy Policy' }, { l: 'Support' }, { l: 'Help make listening maps', sw: 1, off: 1 }, { l: 'Terms of Use', nav: 1 }, { l: 'Legal · On-Device Voice', nav: 1 }, { l: 'Legal · Open-Source Licenses', nav: 1 }, { l: 'Share Diagnostics', i: 'share' }, { l: 'Version', v: '0.1 (33)' }], 0, 'g', st);
+  const itemBody = (st, title) => `<div class="card"><div class="kind">Item</div><div class="t" style="font-size:17px">${title}</div><div class="s">Published Oct 14, 2026 · Added today, 08:02</div><div class="s">Hakai Magazine · about 12 min · 2 Margins</div><div class="line"><button class="chip on"${act({ play: title })}>${ic('play', 14)}Start listening</button><button class="chip">${ic('share', 14)}Export</button></div></div>` + sect('Chapters') + ['Why they can’t stop swimming', 'Half a brain at a time', 'The humpback exception'].map((c, i) => `<button class="row"${act({ play: title })}><span class="num">${i + 1}</span><span class="txt"><span class="t">${c}</span></span><span class="play">${ic('playo', 18)}</span></button>`).join('');
+  const marginDetail = (st, place) => `<div class="card"><div class="kind">Margin</div><div class="s">${place}</div><div class="t" style="font-family:var(--serif);font-weight:400;font-size:16px;line-height:1.35">“the second tide is the one that matters for the marsh”</div><div class="s">Spoken, 14 s · Today 09:12</div><div class="line"><button class="chip on"${act({ play: 'Tides', moment: true })}>${ic('play', 14)}Play this moment</button><button class="chip"${act({ toast: 'A one-Margin packet goes to the share sheet. Choosing the friend is not counted.' })}>${ic('share', 14)}Share this Margin</button></div><div class="line"><button class="chip">${ic('doc', 14)}Open item</button><button class="chip">${ic('star', 14)}Star</button></div></div>`;
+  const addSheet = (st, o) => {
+    const oo = o || {};
+    const tiles = [
+      { l: 'Link or podcast episode', i: 'link' }, { l: 'Paste text', i: 'pen' }, { l: 'Document or book', i: 'doc' }, { l: 'Audiobook', i: 'head' },
+    ];
+    if (oo.follow) tiles.push({ l: 'Browse podcasts and writers', i: 'grid', a: { toast: 'Finds a show; Follow lives on its screen.' } }, { l: 'Import from another app', i: 'down', a: { toast: 'The file picker opens at once, then Follow N.' } });
+    return `<div class="sheet"${act({ close: 1 })}><div class="pane" onclick="event.stopPropagation()"><div class="grab"></div><h4>Add <button${act({ close: 1 })}>Cancel</button></h4><div class="tiles">${tiles.map(t => `<button class="tile${t.wide ? ' wide' : ''}"${act(t.a || { toast: 'Opens the ' + t.l.toLowerCase() + ' page.' })}>${ic(t.i, 22)}${t.l}</button>`).join('')}</div><button class="paste"${act({ toast: oo.follow ? 'A copied feed link offers “Follow The Daily”. An article link is added as an item.' : 'A copied article link is added to the Library.' })}>Paste</button><p class="hint">${oo.follow ? 'Paste knows a feed link from an article link.' : 'Paste adds a copied link to the Library.'}</p></div></div>`;
+  };
+  const manageFeedsBody = (st) => `<div class="field"><span class="in">Paste a feed link</span><button class="go">Follow</button></div>` + group('', [{ l: 'Browse podcasts and writers', i: 'grid', nav: 1 }, { l: 'Import from another app', i: 'down', nav: 1, a: { toast: 'The file picker opens at once.' } }], 0, 'mf', st) + sect('6 feeds') + SHOWS.concat(QUIET.map(q => ({ ...q, count: 0, newest: '', when: 'quiet', id: 'daily' }))).map(s => `<button class="row"${act({ toast: 'Manage (…) menu: Quiet, Unfollow. A menu item counts 2.' })}><span class="ico art${s.when === 'quiet' ? ' q' : ''}">${s.letter}</span><span class="txt"><span class="t">${s.name}</span><span class="s">${s.when === 'quiet' ? 'Quiet' : (s.count ? s.count + ' new' : 'nothing new')}</span></span><span class="chev">${ic('dots')}</span></button>`).join('');
+  const upNextBody = (st) => sect('Continue') + `<div class="card"><div class="line"><span class="t">Tides</span><span class="s">ch. 3 · 12:40 left</span><button class="play"${act({ play: 'Tides' })}>${ic('play', 18)}</button></div></div>`
+    + sect('From your shows') + SHOWS.filter(s => s.count).map(s => `<div class="card"><div class="line"><span class="ico art" style="width:36px;height:36px;border-radius:8px;background:var(--green);color:var(--ongreen);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-weight:700">${s.letter}</span><span class="t" style="display:grid;gap:2px"><span>${s.newest}</span><span class="s">${s.name} · ${s.dur}</span></span><button class="play"${act({ play: s.newest })}>${ic('playo', 18)}</button></div>${s.count > 1 ? `<button class="more"${act({ go: 'show', show: s.id })}>and ${s.count - 1} more from ${s.name} ${ic('chev', 12)}</button>` : ''}</div>`).join('')
+    + sect('Added, not started') + item('whales') + sect('Shared with you') + margin(MARGINS[3]) + `<p class="note">Up next stops here. The Library is the see-all.</p>`;
+  const streamBody = (st) => sect('Today') + fold(SHOWS[0], st.folds.daily) + item('cities', { sub: 'Added · Nautilus · 18 min' }) + margin(MARGINS[3]) + sect('Yesterday') + fold(SHOWS[1], st.folds.hardfork) + item('salt', { sub: 'Added · Audiobook · 41 min' }) + sect('Earlier this week') + item('whales', { sub: 'Added · Hakai Magazine · 12 min' }) + `<p class="note">A Quiet show never appears here. Set Quiet on the show's screen.</p>`;
+  const followingBuilt = (st, o) => `<button class="row"${act({ go: 'manage' })}><span class="ico">${ic('radio', 18)}</span><span class="txt"><span class="t">6 feeds · Manage</span></span><span class="chev">${ic('chev')}</span></button>` + chips([{ l: 'All', on: true }, { l: 'Feeds' }, { l: 'Quick Folder' }, { l: 'Subject', i: 'sort' }]) + sect('New', (o && o.fold ? '5' : '7') + ' · Clear') + (o && o.fold ? fold(SHOWS[0], st.folds.daily) : EPISODES.slice(0, 3).map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="ico art">D</span><span class="txt"><span class="t">${e.t}</span><span class="s">The Daily · ${e.m}</span></span><span class="chev">${ic('chev')}</span></button>`).join('')) + `<button class="row"${act({ go: 'item', title: 'Hard Fork: AI week' })}><span class="ico art">H</span><span class="txt"><span class="t">Hard Fork: AI week</span><span class="s">Hard Fork · 52m</span></span><span class="chev">${ic('chev')}</span></button>` + (o && o.fold ? '' : EPISODES.slice(3).map(e => `<button class="row"${act({ go: 'item', title: e.t })}><span class="ico art">D</span><span class="txt"><span class="t">${e.t}</span><span class="s">The Daily · ${e.m}</span></span><span class="chev">${ic('chev')}</span></button>`).join('')) + `<button class="row"${act({ go: 'item', title: 'Why cities hum' })}><span class="ico art">N</span><span class="txt"><span class="t">Why cities hum</span><span class="s">Nautilus · 18m</span></span><span class="chev">${ic('chev')}</span></button>` + `<p class="note">${o && o.fold ? 'A noisy show folds to one row. Nothing on this tab manages a feed.' : 'Swipe a row right to add it, or left to dismiss it. Press and hold for more.'}</p>`;
+  const showsTabBody = (st) => sect('Shows you follow', 'newest first') + SHOWS.map(s => showRow(s, { play: true })).join('') + group('Quiet', QUIET.map(q => ({ l: q.name, v: 'Quiet', nav: 1, a: { go: 'show', show: 'daily' } })), 1, 'quiet', st) + `<p class="note">The tab lists and plays. Quiet and Unfollow live on the show's screen.</p>`;
+
+  // ---------- the five concepts ----------
+  const gear = { i: 'gear', a: { go: 'settings' } }, plus = { i: 'plus', a: { sheet: 'add' } }, plusFollow = { i: 'plus', a: { sheet: 'addFollow' } };
+  const exportAll = { t: 'Export all', i: 'share', a: { toast: 'A Markdown bundle goes to the share sheet. 2 taps from the Library.' } };
+  const P = [
+    { id: 'built', kicker: 'As built, Build 33', name: 'Today', try: 'Try: <b>Margins</b>, then look for today\'s newest Margin. Try <b>Following</b>, then <b>6 feeds · Manage</b>.',
+      tabs: [{ id: 'library', l: 'Library', i: 'books' }, { id: 'following', l: 'Following', i: 'radio' }, { id: 'margins', l: 'Margins', i: 'quote' }],
+      screens: {
+        library: { title: 'Library', lead: { i: 'dots', a: { toast: 'Menu: Settings, Help, Preparing Audio. A menu item counts 2.' } }, trail: [plus], body: st => search('Search title, source, or author') + chips([{ l: 'Filter', i: 'dots' }, { l: 'Recently Added', i: 'sort' }]) + `<p class="note">Completed items hidden · Show completed</p>` + item('whales') + item('daily16') + item('tides') + item('cities') + item('salt') },
+        following: { title: 'Following', lead: gear, trail: [{ i: 'wave', a: { toast: 'Refresh sources.' } }], body: st => followingBuilt(st) },
+        margins: { title: 'Margins', lead: gear, trail: [{ i: 'share', a: { go: 'batch' } }], body: marginsBuilt },
+        settings: { title: 'Settings', back: 1, body: settingsBuilt },
+        manage: { title: 'Manage feeds', back: 1, body: manageFeedsBody },
+        batch: { title: 'Export sessions', back: 1, body: st => `<p class="note">Select All, Choose Folder, pick it in Files, then Export. 6 taps from the Library.</p>` + group('', [{ l: 'Select All', act: 1, v: '12' }, { l: 'Choose Folder', i: 'folder', nav: 1 }], 0, 'x', st) },
+        item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title).replace('<div class="s">Published Oct 14, 2026 · Added today, 08:02</div>', '') },
+        margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m).replace('Share this Margin', 'Share as Markdown') },
+        show: { title: 'The Daily', back: 1, body: st => `<p class="note">There is no show screen today. Episodes appear only in Following.</p>` },
+      }, sheets: { add: st => addSheet(st) } },
+    { id: 'stream', kicker: 'Proposal 1', name: 'Stream', try: 'Try: <b>New</b>, open the folded <b>The Daily</b>, then its <b>Show</b> button. Try the <b>+</b> on Library.',
+      tabs: [{ id: 'new', l: 'New', i: 'radio' }, { id: 'library', l: 'Library', i: 'books' }, { id: 'margins', l: 'Margins', i: 'quote' }],
+      screens: {
+        new: { title: 'New', lead: gear, trail: [], body: streamBody },
+        library: { title: 'Library', lead: gear, trail: [plusFollow], body: st => libraryBody(st, 'Added', ['Added', 'Published', 'Publisher', 'Topic', 'Shows']) },
+        margins: { title: 'Margins', lead: gear, trail: [exportAll], body: marginsBody },
+        settings: { title: 'Settings', back: 1, body: settingsBody },
+        show: { title: 'The Daily', back: 1, body: showBody },
+        item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
+        margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
+      }, sheets: { addFollow: st => addSheet(st, { follow: true }), add: st => addSheet(st) } },
+    { id: 'upnext', kicker: 'Proposal 2', name: 'Up next', try: 'Try: <b>Up next</b>, then <b>and 2 more</b>. Try the gear, then <b>Shows you follow</b>.',
+      tabs: [{ id: 'upnext', l: 'Up next', i: 'star' }, { id: 'library', l: 'Library', i: 'books' }, { id: 'margins', l: 'Margins', i: 'quote' }],
+      screens: {
+        upnext: { title: 'Up next', lead: gear, trail: [], body: upNextBody },
+        library: { title: 'Library', lead: gear, trail: [plusFollow], body: st => libraryBody(st, 'Added') },
+        margins: { title: 'Margins', lead: gear, trail: [exportAll], body: marginsBody },
+        settings: { title: 'Settings', back: 1, body: st => settingsBody(st, { showsRow: true }) },
+        shows: { title: 'Shows you follow', back: 1, body: st => `<div class="field"><span class="in">Paste a feed link</span><button class="go">Follow</button></div>` + group('', [{ l: 'Browse podcasts and writers', i: 'grid', nav: 1 }, { l: 'Import from another app', i: 'down', nav: 1, a: { toast: 'The file picker opens at once.' } }], 0, 'sf', st) + sect('6 shows', 'newest first') + SHOWS.map(s => showRow(s)).join('') + QUIET.map(quietRow).join('') },
+        show: { title: 'The Daily', back: 1, body: showBody },
+        item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
+        margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
+      }, sheets: { addFollow: st => addSheet(st, { follow: true }), add: st => addSheet(st) } },
+    { id: 'four', kicker: 'Proposal 3, the pick', name: 'Four tabs', try: 'Try: <b>Shows</b>, then <b>The Daily</b>. Try <b>Settings</b>, then <b>Show all</b>.',
+      tabs: [{ id: 'library', l: 'Library', i: 'books' }, { id: 'shows', l: 'Shows', i: 'radio' }, { id: 'margins', l: 'Margins', i: 'quote' }, { id: 'settings', l: 'Settings', i: 'gear' }],
+      screens: {
+        library: { title: 'Library', lead: null, trail: [plusFollow], body: st => libraryBody(st, 'Added') },
+        shows: { title: 'Shows', lead: null, trail: [plusFollow], body: showsTabBody },
+        margins: { title: 'Margins', lead: null, trail: [exportAll], body: marginsBody },
+        settings: { title: 'Settings', lead: null, trail: [], body: settingsBody },
+        show: { title: 'The Daily', back: 1, body: showBody },
+        item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
+        margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
+      }, sheets: { addFollow: st => addSheet(st, { follow: true }), add: st => addSheet(st) } },
+    { id: 'same', kicker: 'Proposal 4, the control', name: 'Same tabs', try: 'Try: <b>Margins</b> first. Then <b>Following</b>, then <b>6 feeds · Manage</b>: still two taps deep.',
+      tabs: [{ id: 'library', l: 'Library', i: 'books' }, { id: 'following', l: 'Following', i: 'radio' }, { id: 'margins', l: 'Margins', i: 'quote' }],
+      screens: {
+        library: { title: 'Library', lead: gear, trail: [plus], body: st => libraryBody(st, 'Added', ['Added', 'Published']) },
+        following: { title: 'Following', lead: gear, trail: [{ i: 'wave', a: { toast: 'Refresh sources.' } }], body: st => followingBuilt(st, { fold: true }) },
+        margins: { title: 'Margins', lead: gear, trail: [exportAll], body: marginsBody },
+        settings: { title: 'Settings', back: 1, body: settingsBody },
+        manage: { title: 'Manage feeds', back: 1, body: manageFeedsBody },
+        show: { title: 'The Daily', back: 1, body: st => showBody(st, { manage: false }) + `<p class="note">In the control, Quiet and Unfollow stay in Manage feeds.</p>` },
+        item: { title: 'Item details', back: 1, body: (st, a) => itemBody(st, a.title) },
+        margin: { title: 'Margin', back: 1, body: (st, a) => marginDetail(st, a.m) },
+      }, sheets: { add: st => addSheet(st) } },
+  ];
+
+  // ---------- phone runtime ----------
+  function mountPhone(p, host) {
+    const st = { tab: p.tabs[0].id, stack: [], sheet: null, toast: null, taps: 0, folds: {}, open: {}, sort: null, quiet: false, playing: { t: 'Tides', s: 'ch. 3 · 45%' } };
+    const el = document.createElement('section'); el.className = 'concept';
+    el.innerHTML = `<header><span class="kicker">${p.kicker}</span><h3>${p.name}</h3></header><div class="phone${p.tabs.length ? '' : ' notabs'}" role="group" aria-label="${p.name} prototype"></div><div class="tally"><span>Taps since Library: <b class="n">0</b></span><button type="button" class="reset">Back to Library</button></div><p class="try">${p.try}</p>`;
+    host.appendChild(el);
+    const phone = el.querySelector('.phone'), tally = el.querySelector('.tally .n');
+    const current = () => st.stack.length ? st.stack[st.stack.length - 1] : { id: st.tab };
+    function render() {
+      const cur = current(); const scr = p.screens[cur.id];
+      const lead = scr.back ? `<button class="cbtn back" aria-label="Back"${act({ back: 1 })}>${ic('back', 22)}</button>` : scr.lead ? `<button class="cbtn" aria-label="${scr.lead.i}"${act(scr.lead.a)}>${ic(scr.lead.i, 20)}</button>` : '';
+      const trail = (scr.trail || []).map(t => t.t ? `<button class="cbtn text"${act(t.a)}>${ic(t.i, 16)}${t.t}</button>` : `<button class="cbtn" aria-label="${t.i}"${act(t.a)}>${ic(t.i, 20)}</button>`).join('');
+      const tabs = p.tabs.map(t => `<button class="tab${st.tab === t.id && !st.stack.length ? ' on' : ''}"${act({ tab: t.id })}>${ic(t.i, 22)}<span>${t.l}</span></button>`).join('');
+      phone.innerHTML = `<div class="statusbar"><span>9:41</span><span class="pill"></span><span>●●●● ◔</span></div>
+        <div class="navbar"><span class="slot">${lead}</span><span class="title">${cur.title || scr.title}</span><span class="slot r wide">${trail}</span></div>
+        <div class="screen">${scr.body(st, cur)}</div>
+        ${st.toast ? `<div class="toast">${st.toast}<button class="u"${act({ untoast: 1 })}>OK</button></div>` : ''}
+        <div class="dock"><div class="mini"${act({ toast: 'Now Playing is unchanged in every proposal; it comes last.' })}><span class="txt"><div class="t">${st.playing.t}</div><div class="s">${st.playing.s}</div></span><span class="mic"${act({ toast: 'Record a Margin, from anywhere, as today.' })}>${ic('mic', 18)}</span><span class="pp">${ic('pause', 18)}</span></div><div class="tabs">${tabs}</div></div>
+        ${st.sheet ? p.sheets[st.sheet](st) : ''}`;
+      tally.textContent = st.taps;
+    }
+    phone.addEventListener('click', ev => {
+      const t = ev.target.closest('[data-act]'); if (!t || !phone.contains(t)) return;
+      ev.stopPropagation();
+      const a = JSON.parse(t.getAttribute('data-act'));
+      if (a.untoast) { st.toast = null; render(); return; }
+      st.taps += a.cost || 1; st.toast = null;
+      if (a.tab) { st.tab = a.tab; st.stack = []; st.sheet = null; if (a.tab === p.tabs[0].id && p.tabs[0].id === 'library') st.taps = 0; }
+      else if (a.back) { st.stack.pop(); }
+      else if (a.close) { st.sheet = null; }
+      else if (a.sheet) { st.sheet = a.sheet; }
+      else if (a.go) { st.stack.push({ id: a.go, title: a.title || a.m || (a.go === 'show' ? 'The Daily' : null), m: a.m }); st.sheet = null; }
+      else if (a.fold) { st.folds[a.fold] = !st.folds[a.fold]; }
+      else if (a.open) { st.open[a.open] = true; }
+      else if (a.sort) { st.sort = a.sort; }
+      else if (a.quiet) { st.quiet = !st.quiet; st.toast = st.quiet ? 'The Daily is Quiet. It stays followed and leaves the list.' : 'The Daily is back in the list.'; }
+      else if (a.unfollow) { st.toast = 'Unfollowed The Daily.'; st.stack.pop(); }
+      else if (a.play) { st.playing = { t: a.play, s: a.moment ? 'Playing this moment' : 'Starting' }; st.toast = (a.moment ? 'Plays the Margin\'s moment. ' : 'Playing. ') + 'Now Playing opens here in the app.'; st.sheet = null; }
+      else if (a.toast) { st.toast = a.toast; }
+      render();
+      if (a.go || a.tab) phone.querySelector('.screen').scrollTop = 0;
+    });
+    el.querySelector('.reset').addEventListener('click', () => { st.tab = p.tabs[0].id; st.stack = []; st.sheet = null; st.toast = null; st.taps = 0; st.folds = {}; st.open = {}; st.sort = null; render(); });
+    render();
+  }
+  P.forEach(p => mountPhone(p, document.getElementById('phones')));
+
+  // ---------- tap table ----------
+  const JOBS = [
+    ['Import an OPML file', 6, 5, 4, 5, 4], ['Follow a podcast from a link', 5, 4, 3, 3, 3], ['Unfollow a show', 5, 4, 3, 3, 3],
+    ['Share one Margin with a friend', 5, 3, 3, 3, 3], ['Free up storage', 5, 3, 3, 3, 3], ['Export all Margins', 6, 2, 2, 2, 2],
+    ['Change the reading voice', 4, 3, 3, 3, 3], ['Hear a Margin\'s moment', 3, 2, 2, 2, 2], ['Find your newest Margin', '1, but not on top', 1, 1, 1, 1],
+    ['Write a Margin while listening', 2, 2, 2, 2, 2], ['Open the Timeline', 2, 2, 2, 2, 2], ['Add an article from the clipboard', 2, 2, 2, 2, 2],
+    ['Get help', 2, 2, 2, 2, 2], ['See an item\'s details', '1, no dates', 1, 1, 1, 1], ['See new episodes from a show', 1, 1, 1, 1, 1], ['Open a packet a friend sent', 2, 2, 2, 2, 2],
+  ];
+  const cls = v => typeof v !== 'number' ? '' : v > 3 ? ' over' : v <= 2 ? ' hit' : '';
+  document.getElementById('taps').innerHTML = '<tr><th>Job</th><th>Today</th><th>Same tabs</th><th>Stream</th><th>Up next</th><th>Four tabs</th></tr>' + JOBS.map(r => `<tr><td>${r[0]}</td>${r.slice(1).map(v => `<td class="n${cls(v)}">${v}</td>`).join('')}</tr>`).join('');
+})();
+</script>
