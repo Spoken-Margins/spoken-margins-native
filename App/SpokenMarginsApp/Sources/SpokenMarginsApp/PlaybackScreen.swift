@@ -792,8 +792,11 @@ struct PlaybackScreen: View {
                     model.recordDeveloperDiagnostic("scrub.text.display", ["canonical": String(value), "displayed": String(textScrubState.displayedValue(canonicalValue: value, range: textScrubRange)), "editing": String(textScrubState.isEditing), "range": String(textScrubRange.upperBound)])
                 }
                 .disabled(model.snapshot.isRecording)
-                Text(textTimeEstimate?.remainingText ?? "100%")
-                    .frame(minWidth: 34, alignment: .leading)
+                // Compact and as wide as its text, so the slider keeps the rest of the row (#1442). The slider's
+                // VoiceOver value above already says the time left in words.
+                Text(textTimeEstimate?.compactRemainingText ?? "100%")
+                    .fixedSize(horizontal: true, vertical: false)
+                    .allowsHitTesting(false)
                     .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
@@ -812,7 +815,8 @@ struct PlaybackScreen: View {
                     .accessibilityLabel("Playback progress")
                     .accessibilityValue(barLabels.accessibilityValue)
                 Text(barLabels.trailing)
-                    .frame(minWidth: 34, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .allowsHitTesting(false)
                     .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())

@@ -35,6 +35,15 @@ public struct ListeningTimeEstimate: Equatable, Sendable {
         return "about \(Self.shortDuration(remainingSeconds)) left"
     }
 
+    /// The player's visible label, short so the slider keeps the width (#1442): "~2m left", "<1m left",
+    /// "~1h 5m left". VoiceOver keeps `remainingSpokenText`.
+    public var compactRemainingText: String {
+        guard remainingSeconds >= 60 else { return "<1m left" }
+        let (hours, minutes) = Self.hoursAndMinutes(remainingSeconds)
+        let time = hours == 0 ? "\(minutes)m" : (minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m")
+        return "~\(time) left"
+    }
+
     /// Short text for a Library row: "about 25 min", "about 1 h 5 min".
     public var totalText: String {
         guard totalSeconds >= 60 else { return "under 1 min" }
@@ -145,10 +154,10 @@ public struct PlaybackProgressBarLabels: Equatable, Sendable {
     public var trailing: String
     public var accessibilityValue: String
 
-    /// A text item still shows its time left, as the scrubber does (Codex audit on #832); without an
+    /// A text item still shows its time left, in the compact form the scrubber uses (Codex audit on #832, #1442); without an
     /// estimate (media, or no text) the bar keeps "100%" and a bare percentage.
     public init(percent: Int, estimate: ListeningTimeEstimate?) {
-        trailing = estimate?.remainingText ?? "100%"
+        trailing = estimate?.compactRemainingText ?? "100%"
         accessibilityValue = estimate?.scrubberAccessibilityValue(percent: percent) ?? "\(percent) percent"
     }
 }
