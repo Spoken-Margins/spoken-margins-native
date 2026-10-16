@@ -4369,7 +4369,7 @@ final class Gate1AppModel: ObservableObject {
             ledger: ledger,
             applicationSupportDirectory: support
         )
-        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName))
+        followedSourceCoordinator = FollowedSourceCoordinator(repository: store, artworkFile: support.appending(path: FollowingArtworkCache.fileName), signals: .app)
         guidedOnboardingCoordinator = GuidedOnboardingCoordinator(
             directory: support.appending(path: "GuidedOnboarding", directoryHint: .isDirectory),
             ledger: ledger
