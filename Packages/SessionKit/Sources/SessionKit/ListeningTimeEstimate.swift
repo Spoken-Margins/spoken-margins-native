@@ -152,12 +152,16 @@ extension ListeningTimeEstimate {
 /// for a text item whose starter audio is still being prepared, or media with no known length.
 public struct PlaybackProgressBarLabels: Equatable, Sendable {
     public var trailing: String
+    /// What VoiceOver says for the trailing label, in words ("about 12 minutes left"): the label is its own element,
+    /// so the compact visible text would otherwise be spoken as written (Claude audit on #1758).
+    public var trailingSpokenText: String
     public var accessibilityValue: String
 
     /// A text item still shows its time left, in the compact form the scrubber uses (Codex audit on #832, #1442); without an
     /// estimate (media, or no text) the bar keeps "100%" and a bare percentage.
     public init(percent: Int, estimate: ListeningTimeEstimate?) {
         trailing = estimate?.compactRemainingText ?? "100%"
+        trailingSpokenText = estimate?.remainingSpokenText ?? "100 percent"
         accessibilityValue = estimate?.scrubberAccessibilityValue(percent: percent) ?? "\(percent) percent"
     }
 }

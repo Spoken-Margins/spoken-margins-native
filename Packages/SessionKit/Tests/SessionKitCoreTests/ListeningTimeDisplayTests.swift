@@ -38,11 +38,13 @@ final class ListeningTimeDisplayTests: XCTestCase {
         let estimate = try XCTUnwrap(ListeningTimeEstimator.estimate(totalCharacters: 21_000, charactersHeard: 10_920, playbackSpeed: 1))
         let starter = PlaybackProgressBarLabels(percent: 52, estimate: estimate)
         XCTAssertEqual(starter.trailing, "~12m left")
+        XCTAssertEqual(starter.trailingSpokenText, "about 12 minutes left", "the label is its own VoiceOver element and speaks words, not \"~12m\"")
         XCTAssertEqual(starter.accessibilityValue, "52 percent, about 12 minutes left")
         let atDouble = PlaybackProgressBarLabels(percent: 52, estimate: ListeningTimeEstimator.estimate(totalCharacters: 21_000, charactersHeard: 10_920, playbackSpeed: 2))
         XCTAssertEqual(atDouble.trailing, "~6m left")
         let media = PlaybackProgressBarLabels(percent: 40, estimate: nil)
         XCTAssertEqual(media.trailing, "100%", "media with no known length keeps its percentage")
+        XCTAssertEqual(media.trailingSpokenText, "100 percent")
         XCTAssertEqual(media.accessibilityValue, "40 percent")
     }
 

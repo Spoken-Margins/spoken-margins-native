@@ -797,6 +797,8 @@ struct PlaybackScreen: View {
                 Text(textTimeEstimate?.compactRemainingText ?? "100%")
                     .fixedSize(horizontal: true, vertical: false)
                     .allowsHitTesting(false)
+                    // The label stays its own element (its identifier is queried, #305), so it speaks the words.
+                    .accessibilityLabel(textTimeEstimate?.remainingSpokenText ?? "100 percent")
                     .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
@@ -817,6 +819,7 @@ struct PlaybackScreen: View {
                 Text(barLabels.trailing)
                     .fixedSize(horizontal: true, vertical: false)
                     .allowsHitTesting(false)
+                    .accessibilityLabel(barLabels.trailingSpokenText)
                     .accessibilityIdentifier("playback.timeLeft.label")
             }
             .font(.caption.monospacedDigit())
