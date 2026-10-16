@@ -226,6 +226,8 @@ struct ExperienceMarginsScreen: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("\(row.interjection.replyTo == nil ? "My Margin" : "My reply to a shared Margin"). \(row.needsAttention ? row.attentionDescription.trimmingCharacters(in: CharacterSet(charactersIn: ".")) : row.placeDescription()). \(row.needsAttention && row.preview == row.attentionDescription ? "" : "\(row.preview). ")\(group.itemTitle).")
+                        // The star on the row is a picture; the listener hears it as the row's value.
+                        .accessibilityValue(row.interjection.isStarredForSharing == true ? "Starred for sharing" : "")
                         .accessibilityIdentifier("margins.row.\(row.id)")
                         .contextMenu {
                             Button("Play this moment", systemImage: "play.fill") { _ = model.playMarginMoment(row) }
