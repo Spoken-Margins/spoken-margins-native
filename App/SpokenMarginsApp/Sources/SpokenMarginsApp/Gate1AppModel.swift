@@ -2790,7 +2790,7 @@ final class Gate1AppModel: ObservableObject {
         ListeningReadyNotifications.pendingItemID = nil
         openItem(id: id)
     }
-    private func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
+    func activateListeningEditionAudio(itemId: String, timeline: TranscriptTimeline) {
         guard let edition = try? ListeningEditionStore.application().load(itemID: itemId), let store else { return }
         do {
             let (proposal, projection) = try edition.audioMap(timeline: timeline)
@@ -2803,46 +2803,6 @@ final class Gate1AppModel: ObservableObject {
     }
 
     // MARK: Portable listening editions and personal knowledge output
-    func importListeningEditionData(_ data: Data, replaceMap: Bool = false) {
-        do {
-            try performListeningEditionImport(data, replaceMap: replaceMap)
-        } catch { reportFailure(error, context: "Listening edition import failed") }
-    }
-
-    func importListeningEditionDataForShortcut(_ data: Data) throws {
-        try performListeningEditionImport(data, replaceMap: false)
-    }
-
-    private func performListeningEditionImport(_ data: Data, replaceMap: Bool) throws {
-        guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
-        let edition = try ListeningEdition.decode(data)
-        let editions = try ListeningEditionStore.application()
-        if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
-            throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
-        }
-        let store = try requireStore()
-        // Stable source identity preserves every existing session and Margin on retry.
-        if (try? store.loadItem(id: edition.itemID)) == nil {
-            try store.saveItem(Item(id: edition.itemID, title: edition.title, mediaType: "text", text: edition.text,
-                                   externalReference: edition.sourceURL, status: "ready", externalReferenceType: "url", createdAt: Date()))
-        }
-        if snapshot.itemId == edition.itemID, snapshot.status.isPlaybackActive {
-            throw EditionError.invalid("Pause playback before importing a map for the current item.")
-        }
-        try editions.save(edition)
-        if let engine { snapshot = try engine.attachListeningMap(edition.listeningMap()) }
-        else { try store.saveListeningMap(edition.listeningMap()) }
-        if let timeline = try store.loadTranscriptTimeline(itemId: edition.itemID)?.timeline {
-            activateListeningEditionAudio(itemId: edition.itemID, timeline: timeline)
-        }
-        activeItemId = edition.itemID
-        libraryItems = try loadLibraryRows(store: store)
-        refreshSelectedItem()
-        screen = .item
-        scheduleTextAudioPrewarmIfNeeded(itemId: edition.itemID)
-        reportConfirmation("Imported item and Listening Map. Audio prepares separately; playback has not started.")
-    }
-
     func importListeningEditionFile(_ url: URL) {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }

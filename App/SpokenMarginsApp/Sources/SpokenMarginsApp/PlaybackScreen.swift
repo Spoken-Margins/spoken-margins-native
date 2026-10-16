@@ -1795,7 +1795,7 @@ private struct PastedAssistantResponseView: View {
                     .font(.body)
                     .frame(height: 180)
                     .padding(8)
-                    .background(AppColors.inputBackground)
+                    .inputEditorBackground()
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(AppColors.border))
                     .focused($isFocused)

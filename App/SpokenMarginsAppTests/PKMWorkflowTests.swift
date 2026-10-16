@@ -129,6 +129,46 @@ final class PKMWorkflowTests: XCTestCase {
         XCTAssertEqual(try ListeningEditionStore.application().load(itemID: edition.itemID)?.scenes[0].summary, "Changed")
     }
 
+    func testBatchEditionImportSavesEveryFileInOneOperationAndStaysWhereTheListenerIs() throws {
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed(); model.declineCurrentTerms()
+        model.importTitle = "Existing"; model.importText = "Keep the ongoing session."
+        model.importTextItem(); model.pause()
+        let activeSession = model.snapshot.sessionId
+        let activeItem = model.activeItemId
+        let screen = model.screen
+        func make(_ title: String) -> ListeningEdition {
+            ListeningEdition(title: title, text: title + " " + UUID().uuidString, generator: "External model", overview: "Overview",
+                             scenes: [.init(title: "A", description: "Description", summary: "Summary", startBlock: 1, endBlock: 1)])
+        }
+        let first = make("Batch one"), second = make("Batch two")
+        var different = first
+        different.scenes[0].summary = "A different map for the same source"
+        defer { for e in [first, second] { try? FileManager.default.removeItem(at: ListeningEditionStore.application().file(e.itemID)) } }
+
+        let lines = model.importListeningEditions([
+            .init(id: 0, name: "one.json", data: try first.encoded()),
+            .init(id: 1, name: "broken.json", data: Data("not json".utf8)),
+            .init(id: 2, name: "two.json", data: try second.encoded()),
+            .init(id: 3, name: "one-again.json", data: try first.encoded()),
+            .init(id: 4, name: "one-different.json", data: try different.encoded()),
+        ])
+
+        XCTAssertEqual(lines.map(\.id), [0, 1, 2, 3, 4])
+        XCTAssertEqual([lines[0].outcome, lines[2].outcome, lines[3].outcome, lines[4].outcome],
+                       [.imported, .imported, .alreadyImported, .keptExistingMap])
+        guard case .failed = lines[1].outcome else { return XCTFail("the malformed file should have its own failed line") }
+        // Both valid editions are in the Library and saved, and the different map did not replace the first.
+        XCTAssertEqual(model.libraryItems.filter { $0.id == first.itemID }.count, 1)
+        XCTAssertEqual(model.libraryItems.filter { $0.id == second.itemID }.count, 1)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: first.itemID), first)
+        XCTAssertEqual(try ListeningEditionStore.application().load(itemID: second.itemID), second)
+        // A batch opens nothing and leaves the current session alone.
+        XCTAssertEqual(model.screen, screen)
+        XCTAssertEqual(model.activeItemId, activeItem)
+        XCTAssertEqual(model.snapshot.sessionId, activeSession)
+    }
+
     func testShortcutIntentImportsAndOpensEditionWithoutURLLaunch() async throws {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed(); model.declineCurrentTerms()

@@ -224,3 +224,12 @@ struct FailureMessageLabel: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 }
+
+extension View {
+    /// Puts the app's input colour behind a `TextEditor`. A `TextEditor` paints its own opaque scroll background,
+    /// black in the dark scheme, which covered a plain `.background(AppColors.inputBackground)` (#1563).
+    func inputEditorBackground() -> some View {
+        scrollContentBackground(.hidden)
+            .background(AppColors.inputBackground)
+    }
+}

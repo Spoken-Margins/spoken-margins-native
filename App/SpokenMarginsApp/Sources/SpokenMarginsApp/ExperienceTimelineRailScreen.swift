@@ -195,7 +195,7 @@ struct ExperienceTimelineRailScreen: View {
                 TextEditor(text: $model.pastedAssistantResponse)
                     .frame(height: min(responseEditorHeight, 280))
                     .padding(8)
-                    .background(AppColors.inputBackground)
+                    .inputEditorBackground()
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .overlay { RoundedRectangle(cornerRadius: 12).stroke(AppColors.border) }
                     .focused($responseEditorFocused)

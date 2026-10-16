@@ -76,7 +76,10 @@ final class Gate1FlowUITests: XCTestCase {
         let keyboardDismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         XCTAssertEqual(XCTWaiter().wait(for: [keyboardDismissed], timeout: 3), .completed)
         XCTAssertTrue(app.staticTexts["Portable test article"].waitForExistence(timeout: 5))
-        XCTAssertTrue(scrollToButton(containingLabel: "Import Item and Map").isHittable)
+        // The Import button is pinned to the bottom of the screen, so it is hittable without scrolling (#1472).
+        let importButton = app.buttons["listeningEdition.import"]
+        XCTAssertTrue(importButton.isHittable)
+        XCTAssertEqual(importButton.label, "Import 1 edition")
         captureScreen(named: "listening-edition-preview")
     }
 
