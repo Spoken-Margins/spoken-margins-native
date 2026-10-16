@@ -995,11 +995,14 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     /// #1672 audit: Add a Margin over a sounding Margin, then "Write instead" while the microphone question is up,
     /// leaves no hold behind. A later Add a Margin over the same Margin, which the listener left paused, must not
     /// play it on after Save.
-    func testWritingInsteadLeavesNoHoldThatPlaysAPausedMarginAfterALaterSave() async throws {
-        let gate = MicrophoneQuestionGate()
+    func testWritingInsteadLeavesNoHoldThatPlaysAPausedMarginAfterALaterSave() throws {
+        // The first tap waits on the microphone primer, so the question stays up with no async answer to time; the
+        // second finds the microphone granted. (This runs as a plain test: the waits below spin the main run loop,
+        // which an async test body would hold the main actor against.)
+        let microphone = MicrophoneStatusBox()
         let fixture = try SharedMarginHearingFixture(
             itemID: "real-source", makeWAV: makeTestWAV, recordingClient: NoopRecordingClient(),
-            microphonePermissionRequest: { await gate.request() }
+            microphonePermissionStatus: { microphone.status }
         )
         defer { fixture.cleanUp() }
         let model = fixture.model
@@ -1011,21 +1014,20 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         let player = try XCTUnwrap(model.marginVoicePlayer.currentPlayer)
         try waitUntil("the voice has played a little") { player.currentTime().seconds > 0.2 }
 
+        microphone.status = .undetermined
         model.beginInterjection()
-        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
-        XCTAssertNotNil(gate.continuation, "the microphone question is up")
+        XCTAssertTrue(model.isRequestingRecordingPermission, "the microphone question is up")
+        XCTAssertFalse(model.snapshot.isRecording)
         XCTAssertTrue(model.ownMarginVoiceIsPaused, "your sounding Margin is held while it waits")
         model.switchPendingVoiceCaptureToWrittenMargin()
         model.cancelWrittenMargin()
-        gate.finish(true)
-        for _ in 0..<20 { await Task.yield() }
+        XCTAssertNil(model.writtenMarginDraft)
         XCTAssertTrue(model.ownMarginVoiceIsPaused, "it stays where it stopped")
 
+        microphone.status = .granted
         model.beginInterjection()
-        for _ in 0..<100 where gate.continuation == nil { await Task.yield() }
-        gate.finish(true)
-        for _ in 0..<100 where !model.snapshot.isRecording { await Task.yield() }
-        XCTAssertTrue(model.snapshot.isRecording)
+        try waitUntil("the second Margin records") { model.snapshot.isRecording }
+        XCTAssertTrue(model.ownMarginVoiceIsPaused, "still paused while the second Margin records")
         model.finishInterjection()
 
         XCTAssertFalse(model.snapshot.isRecording)
@@ -1108,18 +1110,9 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
     }
 }
 
-/// Holds the microphone question open until the test answers it.
-@MainActor
-private final class MicrophoneQuestionGate {
-    var continuation: CheckedContinuation<Bool, Never>?
-    func request() async -> Bool {
-        await withCheckedContinuation { continuation = $0 }
-    }
-    func finish(_ granted: Bool) {
-        let pending = continuation
-        continuation = nil
-        pending?.resume(returning: granted)
-    }
+/// The microphone permission a test changes between taps.
+private final class MicrophoneStatusBox {
+    var status: PermissionPromptStatus = .granted
 }
 
 private final class InterruptionEventRecorder: @unchecked Sendable {
@@ -1151,7 +1144,7 @@ private struct SharedMarginHearingFixture {
         itemID: String,
         makeWAV: (TimeInterval) throws -> URL,
         recordingClient: RecordingClient? = nil,
-        microphonePermissionRequest: (() async -> Bool)? = nil,
+        microphonePermissionStatus: (() -> PermissionPromptStatus)? = nil,
         layerIsMuted: Bool = true
     ) throws {
         root = FileManager.default.temporaryDirectory.appending(path: "margin-heard-\(UUID().uuidString)")
@@ -1161,7 +1154,7 @@ private struct SharedMarginHearingFixture {
         files = [sourceURL, voiceURL]
         let db = root.appending(path: "library.sqlite")
         let routed = RoutedAudioPlaybackClient(speech: NoopAudioPlaybackClient(), media: AVPlayerStreamPlaybackClient())
-        model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, microphonePermissionRequest: microphonePermissionRequest, databaseURLOverride: db)
+        model = Gate1AppModel(audioPlaybackClient: routed, recordingClient: recordingClient, microphonePermissionStatus: microphonePermissionStatus, databaseURLOverride: db)
         model.resetAndSeed()
         store = try SQLiteSessionStore(path: db.path)
         if itemID == "real-source" {
