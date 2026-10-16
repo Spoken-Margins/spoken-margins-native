@@ -333,7 +333,7 @@ extension Gate1AppModel {
                     let wasRetry = retryingInterjectionTranscriptionIds.contains(Self.marginIdentity(interjection))
                     if wasRetry {
                         recordFailedRetry(of: interjection, failure: failure)
-                        TranscriptionFailureWording.notice(error: failure, isRetry: true).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
+                        presentTranscriptionFailure(TranscriptionFailureWording.notice(error: failure, isRetry: true), for: interjection)
                     } else {
                         run { engine in
                             snapshot = try engine.transcriptionFailed(interjectionId: interjection.id, sessionId: interjection.sessionId, error: failure)
@@ -341,7 +341,7 @@ extension Gate1AppModel {
                         refreshMarginRows()
                             diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "failed:\(failure)"
                             diagnostics["lastInterjectionTranscriptionFailure"] = "\(interjection.id):\(failure)"
-                            TranscriptionFailureWording.notice(error: failure, isRetry: false).present(warning: { reportWarning($0) }, failure: { reportFailure($0) })
+                            presentTranscriptionFailure(TranscriptionFailureWording.notice(error: failure, isRetry: false), for: interjection)
                         }
                     }
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))

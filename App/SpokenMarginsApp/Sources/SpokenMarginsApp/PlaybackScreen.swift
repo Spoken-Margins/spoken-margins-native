@@ -696,6 +696,10 @@ struct PlaybackScreen: View {
                     .accessibilityIdentifier("playback.showTitle")
             }
 
+            if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
+                PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
+            }
+
             PlaybackMarginTranscriptionStatusView(status: PlaybackMarginTranscriptionStatus(
                 selectedItemId: model.selectedItem.id,
                 playingItemId: model.snapshot.itemId,

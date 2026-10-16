@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 
 /// Feedback reporting and banner replacement, moved unchanged from the model (#982).
 extension Gate1AppModel {
@@ -18,10 +19,10 @@ extension Gate1AppModel {
 
     /// Presents degraded-but-successful behavior without styling it as either a
     /// normal confirmation or a failure.
-    func reportWarning(_ message: String) {
+    func reportWarning(_ message: String, origin: FeedbackOrigin? = nil) {
         statusMessage = message
         lastError = nil
-        presentFeedback(UserFeedbackEvent(kind: .warning, message: message))
+        presentFeedback(UserFeedbackEvent(kind: .warning, message: message, origin: origin))
         diagnostics["lastStatus"] = message
         diagnostics["recentFailure"] = "none"
     }
@@ -39,10 +40,10 @@ extension Gate1AppModel {
         reportFailure([context, message].compactMap { $0 }.joined(separator: ": "), itemId: itemId, retry: retry)
     }
 
-    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil) {
+    func reportFailure(_ message: String, itemId: String? = nil, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, origin: FeedbackOrigin? = nil) {
         statusMessage = "Error"
         lastError = message
-        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry))
+        presentFeedback(UserFeedbackEvent(kind: .error, message: feedbackMessage ?? message, retry: retry, origin: origin))
         itemFailures.record(message, itemId: itemId, visibleItemId: screen == .item ? selectedItem.id : screen == .playback ? snapshot.itemId ?? "" : "")
         diagnostics["recentFailure"] = message
     }
@@ -50,5 +51,19 @@ extension Gate1AppModel {
     func presentFeedback(_ event: UserFeedbackEvent) {
         guard feedbackEvent?.mayBeReplaced(by: event) ?? true else { return }
         feedbackEvent = event
+    }
+
+    /// The current event as a tag under the Now screen's title, or nil when it belongs in the top banner (#430).
+    var playbackFeedbackTag: (event: UserFeedbackEvent, tag: PlaybackFeedbackTag)? {
+        guard let event = feedbackEvent,
+              let tag = PlaybackFeedbackTag(
+                kind: event.kind,
+                origin: event.origin,
+                offersRetry: event.retry != nil,
+                playbackScreenVisible: screen == .playback,
+                playingItemId: snapshot.itemId,
+                playingSessionId: snapshot.sessionId
+              ) else { return nil }
+        return (event, tag)
     }
 }
