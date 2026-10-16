@@ -89,6 +89,8 @@ None of them is smaller than today. The Show screen is new in all three structur
 
 ## The pick
 
+**Chosen by the owner, 2026-10-16.** "Great work! Four tabs works." Four tabs is the objective for the navigation redesign; screens are drawn against [four-tabs.md](four-tabs.md). Stream, Up next and Same tabs stay here as reference and as the fallbacks named below.
+
 **Four tabs**, for guessability: four of six newcomer questions are answered by a word on the tab bar, against two for the others, the noisy show is contained by design rather than by folding, and a friend or a club is one more row on Following rather than a new place. Its cost is a fourth tab and the loss of a single "what's new today" list. **What would show the pick is wrong:** the owner opens Following and taps into three shows in a row to collect the day's episodes. Then he listens by day, and Stream is the right structure; Up next stays the fallback if he wants the app to choose for him.
 
 ## Running the numbers
