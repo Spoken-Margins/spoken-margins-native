@@ -98,6 +98,7 @@ struct ItemDetailLoader {
             status: item.status,
             text: item.text ?? "",
             externalReference: item.externalReference ?? "",
+            externalReferenceType: item.externalReferenceType ?? "",
             overview: map?.overview ?? "",
             navigation: canonicalSource?.navigation ?? [],
             chapters: map?.chapters ?? [],
