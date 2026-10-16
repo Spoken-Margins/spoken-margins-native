@@ -178,6 +178,7 @@ extension Gate1AppModel {
                 handOverHold: handOverBackgroundHold,
                 interruptionHold: makeInterruptionBackgroundHold(),
                 applicationIsActive: SupertonicSpeechPlaybackClient.isApplicationActive,
+                applicationIsInBackground: SupertonicSpeechPlaybackClient.isApplicationInBackground,
                 onBackgroundSeams: { [weak self] summary in Task { @MainActor [weak self] in self?.diagnostics["backgroundSeams"] = summary } }
             )
         }

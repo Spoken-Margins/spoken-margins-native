@@ -50,6 +50,7 @@ final class SupertonicClientHarness {
         stallRecoveryCooldown: Duration = .seconds(30),
         standInRenders: Set<Int> = [],
         applicationIsActive: (@Sendable () -> Bool)? = nil,
+        applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         notificationCenter: NotificationCenter = .default
     ) throws {
         root = FileManager.default.temporaryDirectory
@@ -76,7 +77,8 @@ final class SupertonicClientHarness {
             fallbackClient: systemVoice,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
             stallRecoveryCooldown: stallRecoveryCooldown,
-            applicationIsActive: applicationIsActive
+            applicationIsActive: applicationIsActive,
+            applicationIsInBackground: applicationIsInBackground
         )
     }
 

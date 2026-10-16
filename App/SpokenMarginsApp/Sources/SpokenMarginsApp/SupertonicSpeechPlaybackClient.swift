@@ -521,6 +521,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// chunk goes onto it before the playing one ends, so the seam needs no app code (#538). nil leaves every seam as
     /// it was: one player per chunk. Read on the main thread; anywhere else the app counts as in front.
     private let applicationIsActive: (@Sendable () -> Bool)?
+    /// True only when the app is in the background. Control Center, a call banner and the app switcher make the app
+    /// inactive while the listener is looking at it, and the voice must not change then (#849, #1673). Without
+    /// one, "not active" counts as away.
+    private let applicationIsInBackground: (@Sendable () -> Bool)?
     private let onBackgroundSeams: BackgroundSeamHandler?
     /// The listening live narration may render ahead now; nil for no limit (#1681).
     private let renderAheadWindow: @Sendable () -> TimeInterval?
@@ -652,6 +656,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         handOverHold: HandOverBackgroundHold? = nil,
         interruptionHold: InterruptionBackgroundHold? = nil,
         applicationIsActive: (@Sendable () -> Bool)? = nil,
+        applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         onBackgroundSeams: BackgroundSeamHandler? = nil,
         renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
             RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
@@ -710,6 +715,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.handOverHold = handOverHold
         self.interruptionHold = interruptionHold
         self.applicationIsActive = applicationIsActive
+        self.applicationIsInBackground = applicationIsInBackground
         self.onBackgroundSeams = onBackgroundSeams
         self.renderAheadWindow = renderAheadWindow
         super.init()
@@ -1454,6 +1460,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
             recordBackgroundSeam(outcome)
             backgroundGap = BackgroundChunkSeam.handsOverToSystemVoice(outcome)
+                && (applicationIsInBackground?() ?? true)
         }
         if let cached = snapshot.3 {
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
@@ -1471,8 +1478,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 sourceOffset: sourceOffset(forSpokenOffset: snapshot.0),
                 reason: Self.backgroundGapReason
             )
-            // The iOS voice is speaking (or could not start): no chunk is waiting for background time any more.
-            releaseHandOverBackgroundTimeIfHeld()
+            // With the iOS voice speaking, the stall monitor ends the background-time hold once it is moving.
+            if !isSystemVoiceActive {
+                // The iOS voice could not start, and the hand-over cancelled the render: go back to waiting for the
+                // chosen voice, as a seam always did, rather than leave nothing to play the chunk.
+                waitForChosenVoiceAfterFailedHandOver(targetId: targetId, spokenOffset: snapshot.0)
+            }
         } else {
             try? releaseBackgroundAudio()
             let rendering = lock.withLock { () -> Bool in
@@ -2216,6 +2227,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             if keepsChunk, cancelledRenderQueue { restartRenderQueueBehindKeptChunk() }
             try? releaseBackgroundAudio()
         }
+    }
+
+    /// A hand-over to the iOS voice that could not start cancelled the render it replaced. Waits for the chunk
+    /// again under the new generation, so the chosen voice plays it when it lands (#1673).
+    private func waitForChosenVoiceAfterFailedHandOver(targetId: String, spokenOffset: Int) {
+        let newGeneration = lock.withLock { () -> UUID in
+            generationDisabledReasons.removeValue(forKey: targetId)
+            resourceFallbackTargetIds.remove(targetId)
+            playbackFailure = nil
+            transportIntent = .playing
+            pendingAutoplayOffset = spokenOffset
+            return generation
+        }
+        guard let request = renderRequest(targetId: targetId, startOffset: spokenOffset, generation: newGeneration) else {
+            return
+        }
+        enqueueRender(request, shouldPlayWhenReady: false)
     }
 
     private struct HandOverStartFailed: Error {}
@@ -3523,6 +3551,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled)
             ])
         }
+    }
+
+    /// Whether the app is in the background, not merely inactive (Control Center, a call banner). Off the main thread
+    /// it answers "not in the background", which leaves a seam as it was (#1673).
+    static func isApplicationInBackground() -> Bool {
+        #if canImport(UIKit) && os(iOS)
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated { UIApplication.shared.applicationState == .background }
+        #else
+        return false
+        #endif
     }
 
     /// Whether the app is in front, for the queue's decision. Off the main thread it answers "in front", which

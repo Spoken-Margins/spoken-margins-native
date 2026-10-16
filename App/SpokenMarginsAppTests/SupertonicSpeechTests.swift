@@ -2002,6 +2002,50 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertNil(harness.client.debugBackgroundSeamSummary)
     }
 
+    // An inactive app (Control Center, a call banner, the app switcher) is still in front of the listener: the seam
+    // is counted, but the voice does not change (#849).
+    func testAnInactiveAppIsNotAwayEnoughToChangeTheVoice() async throws {
+        let harness = try SupertonicClientHarness(
+            heldRenders: [2], applicationIsActive: { false }, applicationIsInBackground: { false }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+
+        await harness.finishPlayingChunk()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+        XCTAssertTrue(harness.fallbackReasons.values.isEmpty)
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "next_not_rendered 1")
+
+        let before = harness.playerStarts
+        harness.releaseRender(2)
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B plays in the chosen voice as soon as it lands")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+    }
+
+    // The iOS voice can't start (a session that won't activate): the seam goes back to waiting for the chosen
+    // voice, so B still plays when it lands. It must never end with nothing left to play it (#1673 review).
+    func testAHandOverTheIOSVoiceCannotStartFallsBackToWaitingForTheChosenVoice() async throws {
+        let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        harness.systemVoice.playError = NSError(domain: "test", code: 1)
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+        let before = harness.playerStarts
+
+        await harness.finishPlayingChunk()
+
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B plays in the chosen voice once it is rendered")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertFalse(harness.client.isSystemVoiceActive)
+        XCTAssertTrue(harness.fallbackReasons.values.isEmpty, "the app isn't told of a change that didn't happen")
+    }
+
     // Leaving the app while a chunk plays: the next chunk is ready already, so it goes onto the player then.
     func testLeavingTheAppQueuesTheNextChunk() async throws {
         let presence = AppPresence()
