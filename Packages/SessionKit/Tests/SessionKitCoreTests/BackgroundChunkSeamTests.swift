@@ -66,4 +66,14 @@ final class BackgroundChunkSeamTests: XCTestCase {
         XCTAssertEqual(log.total, 5)
         XCTAssertEqual(log.summary, "queued_ahead 3, next_not_rendered 2")
     }
+
+    // #1673: only a seam with nothing rendered to play hands over to the iOS voice. Every other miss has its audio
+    // in hand (or a stand-in voice that needs the app anyway) and carries on through the app.
+    func testOnlyANextChunkThatIsNotRenderedHandsOverToTheIOSVoice() {
+        for outcome in BackgroundChunkSeam.Outcome.allCases {
+            XCTAssertEqual(
+                BackgroundChunkSeam.handsOverToSystemVoice(outcome), outcome == .nextNotRendered, outcome.rawValue
+            )
+        }
+    }
 }

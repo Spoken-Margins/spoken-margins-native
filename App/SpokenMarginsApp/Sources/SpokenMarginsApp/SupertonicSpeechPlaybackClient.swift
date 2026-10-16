@@ -1446,11 +1446,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         // A seam that came with the app away and was not a queued one: say why (#538).
+        var backgroundGap = false
         if let applicationIsActive, !applicationIsActive() {
             let isStandIn = lock.withLock { standInOffsets.contains(snapshot.0) }
-            recordBackgroundSeam(BackgroundChunkSeam.missedOutcome(
+            let outcome = BackgroundChunkSeam.missedOutcome(
                 nextChunkIsRendered: snapshot.3 != nil, nextChunkIsStandIn: isStandIn
-            ))
+            )
+            recordBackgroundSeam(outcome)
+            backgroundGap = BackgroundChunkSeam.handsOverToSystemVoice(outcome)
         }
         if let cached = snapshot.3 {
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
@@ -1460,6 +1463,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 sourceOffset: sourceOffset(forSpokenOffset: snapshot.0),
                 reason: reason
             )
+        } else if backgroundGap {
+            // Nothing is playing and the next chunk isn't rendered: a suspended app could not start it when it
+            // lands. The iOS voice reads on from here, and the chosen voice comes back at the next play (#1673).
+            activateSystemFallback(
+                targetId: targetId,
+                sourceOffset: sourceOffset(forSpokenOffset: snapshot.0),
+                reason: Self.backgroundGapReason
+            )
+            // The iOS voice is speaking (or could not start): no chunk is waiting for background time any more.
+            releaseHandOverBackgroundTimeIfHeld()
         } else {
             try? releaseBackgroundAudio()
             let rendering = lock.withLock { () -> Bool in
@@ -2077,6 +2090,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Why a stalled player hands over to the iOS voice (`SpeechEngineSelection`: `playerStalled`).
     private static let stalledPlayerReason = "supertonic_player_stalled"
+    /// Why a seam with the app away and the next chunk not rendered hands over to the iOS voice (`SpeechFallbackReason`:
+    /// `backgroundGap`, #1673).
+    private static let backgroundGapReason = "supertonic_background_gap"
 
     private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String) {
         // A stalled player's chunk is kept until the iOS voice is really speaking. If it can't start, the
@@ -2097,7 +2113,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 let renderControl = activeRenderControl
                 activeRenderControl = nil
                 generationDisabledReasons[targetId] = stopReason
-                if reason == "supertonic_resource_pressure" || reason == Self.stalledPlayerReason {
+                if reason == "supertonic_resource_pressure" || reason == Self.stalledPlayerReason
+                    || reason == Self.backgroundGapReason {
                     resourceFallbackTargetIds.insert(targetId)
                 } else {
                     resourceFallbackTargetIds.remove(targetId)
