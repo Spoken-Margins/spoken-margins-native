@@ -521,6 +521,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// chunk goes onto it before the playing one ends, so the seam needs no app code (#538). nil leaves every seam as
     /// it was: one player per chunk. Read on the main thread; anywhere else the app counts as in front.
     private let applicationIsActive: (@Sendable () -> Bool)?
+    /// True only when the app is in the background. Control Center, a call banner and the app switcher make the app
+    /// inactive while the listener is looking at it, and the voice must not change then (#849, #1673). Without
+    /// one, "not active" counts as away.
+    private let applicationIsInBackground: (@Sendable () -> Bool)?
     private let onBackgroundSeams: BackgroundSeamHandler?
     /// The listening live narration may render ahead now; nil for no limit (#1681).
     private let renderAheadWindow: @Sendable () -> TimeInterval?
@@ -652,6 +656,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         handOverHold: HandOverBackgroundHold? = nil,
         interruptionHold: InterruptionBackgroundHold? = nil,
         applicationIsActive: (@Sendable () -> Bool)? = nil,
+        applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         onBackgroundSeams: BackgroundSeamHandler? = nil,
         renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
             RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
@@ -710,6 +715,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.handOverHold = handOverHold
         self.interruptionHold = interruptionHold
         self.applicationIsActive = applicationIsActive
+        self.applicationIsInBackground = applicationIsInBackground
         self.onBackgroundSeams = onBackgroundSeams
         self.renderAheadWindow = renderAheadWindow
         super.init()
@@ -1446,11 +1452,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         // A seam that came with the app away and was not a queued one: say why (#538).
+        var backgroundGap = false
         if let applicationIsActive, !applicationIsActive() {
             let isStandIn = lock.withLock { standInOffsets.contains(snapshot.0) }
-            recordBackgroundSeam(BackgroundChunkSeam.missedOutcome(
+            let outcome = BackgroundChunkSeam.missedOutcome(
                 nextChunkIsRendered: snapshot.3 != nil, nextChunkIsStandIn: isStandIn
-            ))
+            )
+            recordBackgroundSeam(outcome)
+            backgroundGap = BackgroundChunkSeam.handsOverToSystemVoice(outcome)
+                && (applicationIsInBackground?() ?? true)
         }
         if let cached = snapshot.3 {
             playRenderedAudio(cached.url, duration: cached.duration, request: cached.request, delay: snapshot.4)
@@ -1459,6 +1469,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 targetId: targetId,
                 sourceOffset: sourceOffset(forSpokenOffset: snapshot.0),
                 reason: reason
+            )
+        } else if backgroundGap, startSystemVoiceAheadOfHandOver(
+            targetId: targetId, sourceOffset: sourceOffset(forSpokenOffset: snapshot.0)
+        ) {
+            // Nothing is playing and the next chunk isn't rendered: a suspended app could not start it when it
+            // lands. The iOS voice is reading on from here; the hand-over now takes the article over, and the chosen
+            // voice comes back at the next play (#1673). With the voice speaking, the stall monitor ends the
+            // background-time hold once it is moving.
+            activateSystemFallback(
+                targetId: targetId,
+                sourceOffset: sourceOffset(forSpokenOffset: snapshot.0),
+                reason: Self.backgroundGapReason,
+                voiceAlreadyStarted: true
             )
         } else {
             try? releaseBackgroundAudio()
@@ -2077,8 +2100,28 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Why a stalled player hands over to the iOS voice (`SpeechEngineSelection`: `playerStalled`).
     private static let stalledPlayerReason = "supertonic_player_stalled"
+    /// Why a seam with the app away and the next chunk not rendered hands over to the iOS voice (`SpeechFallbackReason`:
+    /// `backgroundGap`, #1673).
+    private static let backgroundGapReason = "supertonic_background_gap"
 
-    private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String) {
+    /// Starts the iOS voice at the next chunk's place before anything of the chosen voice is touched, for a seam with
+    /// the app in the background and the next chunk not rendered (#1673). If the voice can't start, nothing has
+    /// changed: the seam waits for its render as it always did, with its generation, queue and voice hold intact.
+    private func startSystemVoiceAheadOfHandOver(targetId: String, sourceOffset: Int) -> Bool {
+        do {
+            _ = try fallback.prepareSpeechText(lock.withLock { preparedSourceText })
+            try fallback.play(targetId: targetId, from: sourceOffset)
+            if case .failed = fallback.playbackStartStatus(targetId: targetId) { throw HandOverStartFailed() }
+            return true
+        } catch {
+            try? fallback.stop()
+            return false
+        }
+    }
+
+    /// `voiceAlreadyStarted`: the iOS voice is speaking from `sourceOffset` already (`startSystemVoiceAheadOfHandOver`);
+    /// this takes the article over without starting it again.
+    private func activateSystemFallback(targetId: String, sourceOffset: Int, reason: String, voiceAlreadyStarted: Bool = false) {
         // A stalled player's chunk is kept until the iOS voice is really speaking. If it can't start, the
         // pause for a tap replays that chunk (#302) instead of rendering it again.
         let keepsChunk = reason == Self.stalledPlayerReason
@@ -2090,14 +2133,15 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         ).rawValue
         var cancelledRenderQueue = false
         do {
-            _ = try fallback.prepareSpeechText(source)
+            if !voiceAlreadyStarted { _ = try fallback.prepareSpeechText(source) }
             removePlaybackEndObserver()
             let stopped = lock.withLock { () -> (urls: [URL], renderControl: RenderTaskControl?, kept: URL?) in
                 generation = UUID()
                 let renderControl = activeRenderControl
                 activeRenderControl = nil
                 generationDisabledReasons[targetId] = stopReason
-                if reason == "supertonic_resource_pressure" || reason == Self.stalledPlayerReason {
+                if reason == "supertonic_resource_pressure" || reason == Self.stalledPlayerReason
+                    || reason == Self.backgroundGapReason {
                     resourceFallbackTargetIds.insert(targetId)
                 } else {
                     resourceFallbackTargetIds.remove(targetId)
@@ -2150,7 +2194,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             stopped.renderControl?.cancel()
             cancelledRenderQueue = true
             for url in stopped.urls { discardAudio(url) }
-            try fallback.play(targetId: targetId, from: sourceOffset)
+            if !voiceAlreadyStarted { try fallback.play(targetId: targetId, from: sourceOffset) }
             let startStatus = fallback.playbackStartStatus(targetId: targetId)
             if keepsChunk, case .failed = startStatus { throw HandOverStartFailed() }
             let spokenOffset = spokenOffset(forSourceOffset: sourceOffset)
@@ -3506,6 +3550,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 "lowPowerMode": String(ProcessInfo.processInfo.isLowPowerModeEnabled)
             ])
         }
+    }
+
+    /// Whether the app is in the background, not merely inactive (Control Center, a call banner). Off the main thread
+    /// it answers "not in the background", which leaves a seam as it was (#1673).
+    static func isApplicationInBackground() -> Bool {
+        #if canImport(UIKit) && os(iOS)
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated { UIApplication.shared.applicationState == .background }
+        #else
+        return false
+        #endif
     }
 
     /// Whether the app is in front, for the queue's decision. Off the main thread it answers "in front", which

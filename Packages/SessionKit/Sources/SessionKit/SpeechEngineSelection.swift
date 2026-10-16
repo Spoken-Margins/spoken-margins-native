@@ -55,6 +55,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
     case playbackFailed = "playback_failed"
     /// The on-device player stopped making sound and starting it again didn't help (#540).
     case playerStalled = "player_stalled"
+    /// The app was in the background at a chunk seam and the next chunk wasn't rendered yet (#1673).
+    case backgroundGap = "background_gap"
     case listenerStoppedGeneration = "listener_stopped_generation"
 
     /// Maps the Supertonic client's failure codes. `resourceBlock` is the policy's answer at
@@ -64,15 +66,17 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
         case "supertonic_resource_pressure": self = resourceBlock ?? .deviceTooWarm
         case "supertonic_render_timeout": self = .renderTooSlow
         case "supertonic_player_stalled": self = .playerStalled
+        case "supertonic_background_gap": self = .backgroundGap
         default: self = .playbackFailed
         }
     }
 
     /// Heat and memory pressure pass; the chosen voice comes back by itself once they clear.
     /// A stalled player was a hiccup, not a condition: the chosen voice gets another try at the next play.
+    /// A background gap is the same: the voice was only behind while the app was away.
     /// A slow or failed render would likely fail again, so it waits for the listener's Retry.
     public var returnsAutomatically: Bool {
-        self == .deviceTooWarm || self == .memoryWarning || self == .playerStalled
+        self == .deviceTooWarm || self == .memoryWarning || self == .playerStalled || self == .backgroundGap
     }
 
     /// One line for the player when the app's own backup voice, not the iOS voice, reads in place of the chosen
@@ -83,7 +87,7 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
             "Using the app's backup voice while this iPhone is too warm. Your voice comes back the next time you press play after it cools."
         case .memoryWarning:
             "Using the app's backup voice after an iOS memory warning. Your voice comes back the next time you press play, after about a minute."
-        case .renderTooSlow, .playbackFailed, .playerStalled, .listenerStoppedGeneration:
+        case .renderTooSlow, .playbackFailed, .playerStalled, .backgroundGap, .listenerStoppedGeneration:
             "Using the app's backup voice for now. Your voice comes back the next time you press play."
         }
     }
@@ -101,6 +105,8 @@ public enum SpeechFallbackReason: String, Codable, Equatable, Sendable {
             "Using the iOS voice because the on-device voice hit a playback problem. Tap Retry to try it again."
         case .playerStalled:
             "Using the iOS voice because the on-device voice stopped playing. Your voice comes back the next time you press play."
+        case .backgroundGap:
+            "Using the iOS voice because the on-device voice wasn't ready for the next passage while the app was in the background. Your voice comes back the next time you press play."
         case .listenerStoppedGeneration:
             "Generation stopped · using the iOS system voice"
         }
@@ -142,7 +148,7 @@ public enum SpeechGenerationStopReason {
             return "The on-device voice stopped preparing because it couldn't keep up. Tap Retry to try again."
         case .deviceTooWarm, .memoryWarning:
             return "The on-device voice stopped preparing while this iPhone was too warm or low on memory. Tap Retry to try again."
-        case .playbackFailed, .playerStalled, .listenerStoppedGeneration:
+        case .playbackFailed, .playerStalled, .backgroundGap, .listenerStoppedGeneration:
             return "The on-device voice stopped preparing after a rendering problem. Tap Retry to try again."
         }
     }

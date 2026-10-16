@@ -61,6 +61,17 @@ public enum BackgroundChunkSeam {
         case renderedNotQueued = "rendered_not_queued"
     }
 
+    /// Whether a seam that came with the app away should hand narration to the iOS voice now (#1673).
+    ///
+    /// A chunk that isn't rendered when the previous one ends leaves nothing playing, and a backgrounded app with
+    /// nothing playing can be suspended before the render lands (the 2026-10-07 export: ten seconds of silence that
+    /// ended only when the owner came back). The iOS voice needs no render, so narration reads on from the same
+    /// place and the chosen voice comes back at the next play. Every other missed seam has its audio in hand and
+    /// carries on through the app.
+    public static func handsOverToSystemVoice(_ outcome: Outcome) -> Bool {
+        outcome == .nextNotRendered
+    }
+
     /// Why a seam that came with the app away was not a queued one.
     public static func missedOutcome(nextChunkIsRendered: Bool, nextChunkIsStandIn: Bool) -> Outcome {
         if nextChunkIsStandIn { return .standInVoice }

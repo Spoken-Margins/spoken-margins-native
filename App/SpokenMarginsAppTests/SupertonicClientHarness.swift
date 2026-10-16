@@ -36,6 +36,10 @@ final class SupertonicClientHarness {
     let text: String
     /// Where each chunk starts, in spoken characters.
     let chunkStarts: [Int]
+    /// The iOS voice the client hands over to; records where it was asked to read from.
+    let systemVoice = RecordingFallbackAudioClient()
+    /// The reasons the client gave when it told the app the voice changed.
+    let fallbackReasons = HarnessFallbackLog()
     private let players = HarnessPlayerLog()
     private let root: URL
 
@@ -46,6 +50,7 @@ final class SupertonicClientHarness {
         stallRecoveryCooldown: Duration = .seconds(30),
         standInRenders: Set<Int> = [],
         applicationIsActive: (@Sendable () -> Bool)? = nil,
+        applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         notificationCenter: NotificationCenter = .default
     ) throws {
         root = FileManager.default.temporaryDirectory
@@ -58,6 +63,7 @@ final class SupertonicClientHarness {
             template: template, duration: chunkSeconds, heldRenders: heldRenders, standIns: standInRenders
         )
         let players = players
+        let fallbackReasons = fallbackReasons
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionNotificationCenter: notificationCenter,
@@ -68,9 +74,11 @@ final class SupertonicClientHarness {
                 player.playImmediately(atRate: rate)
             },
             observesPlayerLifecycle: true,
-            fallbackClient: RecordingFallbackAudioClient(),
+            fallbackClient: systemVoice,
+            onFallback: { reason, _, _ in fallbackReasons.add(reason) },
             stallRecoveryCooldown: stallRecoveryCooldown,
-            applicationIsActive: applicationIsActive
+            applicationIsActive: applicationIsActive,
+            applicationIsInBackground: applicationIsInBackground
         )
     }
 
@@ -183,6 +191,13 @@ final class SupertonicClientHarness {
         try file.write(from: buffer)
         return url
     }
+}
+
+final class HarnessFallbackLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var reasons: [String] = []
+    var values: [String] { lock.withLock { reasons } }
+    func add(_ reason: String) { lock.withLock { reasons.append(reason) } }
 }
 
 /// Renders every chunk as a copy of one silent file. A held render (by render order, from 1) waits until
