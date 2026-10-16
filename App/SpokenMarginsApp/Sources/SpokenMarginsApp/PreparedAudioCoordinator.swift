@@ -472,7 +472,11 @@ actor PreparedAudioCoordinator {
 
     /// The committed audio for `plan`, only when it was saved for the same stretch of `sourceText`.
     /// Matching the index alone could hand back another stretch's audio if the plan shifted (#312).
-    func committedChunk(itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan, sourceText: String) throws -> PreparedChunkLookupResult? {
+    /// `engine` nil asks for the manifest's own engine's audio; another engine (the bundled Kitten voice) asks for
+    /// that engine's stand-in, which the player plays while that voice holds narration (#1680).
+    func committedChunk(
+        itemId: String, signature: TTSRenderSignature, plan: PreparedChunkPlan, sourceText: String, engine: String? = nil
+    ) throws -> PreparedChunkLookupResult? {
         let manifestId = "prepared-\(itemId)-\(signature.digest.prefix(16))"
         guard let manifest = try repository.loadPreparedAudioManifest(id: manifestId),
               manifest.signature == signature,
@@ -480,9 +484,10 @@ actor PreparedAudioCoordinator {
               Self.isMade(from: sourceText, manifest),
               let chunk = manifest.chunks.first(where: { $0.index == plan.index }),
               chunk.sourceRange == Self.sourceRange(of: plan, manifest: manifest, sourceText: sourceText),
-              // A stand-in (the iOS voice) isn't this manifest's audio: the player tries its engine
-              // again rather than play the stand-in forever as if it were Supertonic (#363 audit).
-              chunk.engine == nil else { return nil }
+              // A stand-in isn't this manifest's audio: asked for the manifest's own, the player tries its engine
+              // again rather than play the stand-in forever as if it were Supertonic (#363 audit). A stand-in is
+              // found only when its own engine is asked for (#1680).
+              chunk.engine == (engine == manifest.signature.engine ? nil : engine) else { return nil }
         let url = rootDirectory.appending(path: chunk.relativePath)
         guard fileManager.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url, options: [.mappedIfSafe])

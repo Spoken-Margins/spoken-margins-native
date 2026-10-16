@@ -84,21 +84,30 @@ final class NextChapterSummaryTests: XCTestCase {
 
     // MARK: the chapter row's button next to Skim (#1628)
 
-    func testChapterRowButtonIsHiddenOnlyWhenForwardSkimIsOffered() {
-        func shows(_ isAvailable: Bool, row: Bool, forward: Bool) -> Bool {
-            Rule.showsChapterRowButton(isAvailable: isAvailable, skimRowShown: row, canSkimForward: forward)
+    func testForwardSlotIsNeverEmptyWhenTheItemHasSkim() {
+        func forward(_ isAvailable: Bool, row: Bool, canForward: Bool) -> Rule.ChapterRowControl {
+            Rule.forwardControl(isAvailable: isAvailable, skimRowShown: row, canSkimForward: canForward)
         }
         // chapters + a Skim row with forward enabled: Skim is the one forward control
-        XCTAssertFalse(shows(true, row: true, forward: true))
-        // chapters only, a missing or unready map: no Skim row
-        XCTAssertTrue(shows(true, row: false, forward: false))
-        // the end of the map: the row stays for Skim Back, forward is off, so Next chapter stays
-        XCTAssertTrue(shows(true, row: true, forward: false))
-        // forward can't be pressed without the row (a stale flag must not hide the button)
-        XCTAssertTrue(shows(true, row: false, forward: true))
-        // no next chapter: nothing to show whatever Skim does
-        for row in [false, true] {
-            for forward in [false, true] { XCTAssertFalse(shows(false, row: row, forward: forward)) }
-        }
+        XCTAssertEqual(forward(true, row: true, canForward: true), .skim)
+        // the end of the map, a feed chapter still ahead: Next chapter takes the slot
+        XCTAssertEqual(forward(true, row: true, canForward: false), .nextChapter)
+        // the last chapter and no scene ahead: the slot stays, dimmed (#1666: no empty slot)
+        XCTAssertEqual(forward(false, row: true, canForward: false), .skimDisabled)
+        // the last chapter with a summary still ahead inside it
+        XCTAssertEqual(forward(false, row: true, canForward: true), .skim)
+        // chapters only, a missing or unready map, or an article: no Skim row, Next chapter as before
+        XCTAssertEqual(forward(true, row: false, canForward: false), .nextChapter)
+        XCTAssertEqual(forward(false, row: false, canForward: false), .hidden)
+        // forward can't be pressed without the row (a stale flag must not draw Skim)
+        XCTAssertEqual(forward(true, row: false, canForward: true), .nextChapter)
+        XCTAssertEqual(forward(false, row: false, canForward: true), .hidden)
+    }
+
+    func testBackwardSlotKeepsItsPlaceWhenTheItemHasSkim() {
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: true, canSkimBackward: true), .skim)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: true, canSkimBackward: false), .skimDisabled)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: false), .hidden)
+        XCTAssertEqual(Rule.backwardControl(skimRowShown: false, canSkimBackward: true), .hidden)
     }
 }
