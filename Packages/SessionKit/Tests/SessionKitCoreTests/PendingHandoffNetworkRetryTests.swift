@@ -109,6 +109,7 @@ final class PendingHandoffNetworkRetryTests: XCTestCase {
         let network = ManualConnectivity()
         var retries = 0
         let retry = makeRetry(waiting: 1, network: network) { retries += 1 }
+        defer { withExtendedLifetime(retry) {} }
         retry.update(waitingCount: 3, connectivity: network) { retries += 1 }
         retry.update(waitingCount: 1, connectivity: network) { retries += 1 }
         XCTAssertEqual(retries, 0)
@@ -122,6 +123,7 @@ final class PendingHandoffNetworkRetryTests: XCTestCase {
         var first = 0
         var second = 0
         let retry = makeRetry(waiting: 1, network: network) { first += 1 }
+        defer { withExtendedLifetime(retry) {} }
         retry.update(waitingCount: 1, connectivity: network) { second += 1 }
 
         network.report(.unavailable)
@@ -134,6 +136,7 @@ final class PendingHandoffNetworkRetryTests: XCTestCase {
         let network = ManualConnectivity()
         var retries = 0
         let retry = makeRetry(waiting: 1, network: network) { retries += 1 }
+        defer { withExtendedLifetime(retry) {} }
         network.report(.unavailable)
         retry.update(waitingCount: 0, connectivity: network) { retries += 1 }
 
@@ -146,6 +149,7 @@ final class PendingHandoffNetworkRetryTests: XCTestCase {
         network.report(.unavailable)
         var retries = 0
         let retry = makeRetry(waiting: 1, network: network) { retries += 1 }
+        defer { withExtendedLifetime(retry) {} }
 
         XCTAssertEqual(retries, 0)
         network.report(.wifi)
