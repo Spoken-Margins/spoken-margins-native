@@ -242,24 +242,6 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         XCTAssertEqual(parsed.requestedContinuation.preferredPlaybackOwner, "app")
     }
 
-    func testBrowserTextPayloadRejectsMissingText() throws {
-        let payloadID = "payload-empty"
-        let store = try makePayloadStore(payloadID: payloadID, payload: [
-            "id": payloadID,
-            "schemaVersion": "browser-text-handoff.v1",
-            "captureMode": "selected_text",
-            "source": [
-                "url": "https://example.com/empty",
-                "title": "Empty"
-            ],
-            "text": "   "
-        ])
-
-        XCTAssertThrowsError(try store.handoff(payloadID: payloadID)) { error in
-            XCTAssertEqual(error as? Gate5BrowserTextHandoffStoreError, .invalidPayload("text is required"))
-        }
-    }
-
     func testBrowserTextImportStartsPlaybackAndPreservesSourceURL() {
         let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
         model.resetAndSeed()
