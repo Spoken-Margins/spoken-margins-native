@@ -70,6 +70,11 @@ Replace this section when the focus changes; do not append to it.
     - The public repo starts under AGPLv3 plus a section 7 permission for App Store distribution, and only collaborators can open PRs.
     - This replaces the MPL-2.0-first plan in #1381 and #1383.
     - Relicensing later needs every copyright holder to agree, so no outside code is accepted without a contributor agreement that allows the switch.
+  - **No lawyer for the licence, the models or the LLC.** "I feel perfectly fine about the AGPL v3 with the app wording from Signal or Nextcloud. That is not something I need any lawyer for." Use Signal's or Nextcloud's App Store permission wording.
+    - Voice models move to downloads instead of shipping with the app, so their licences don't block going public.
+    - He forms the LLC himself through a website.
+    - The 2026-10-14 "licence stuff to figure out" gate on going public is settled.
+  - **A lawyer gates only share links, Listening Maps and a public App Store release.** "we can just not ship those features or not ship a public App Store app until we get lawyer feedback." Work on them continues. Only turning them on for the public, or a public App Store release, waits for the attorney meeting ([docs/legal/attorney-questions.md](docs/legal/attorney-questions.md)).
     - The work is tracked in the `Open Source` milestone; the self-hosted runner gaps are in #1719.
   - **Routine CI moves off the Mac; journeys, phone builds and signing stay on it.** "The journeys, phone builds, and signing can be on my Mac... and doesn't make me feel like I need to keep my Mac plugged in and online 24/7." The goal of going public is hosted CI, so the Mac no longer has to be awake, plugged in and online for routine tests. Mac work becomes on-demand.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
