@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitPersistence
 
 extension Gate1AppModel {

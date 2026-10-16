@@ -1,14 +1,16 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
-import SessionKit
-import SessionKitSupertonic
 
-enum OfflineStorageLedgerError: Error, LocalizedError, Equatable {
+public enum OfflineStorageLedgerError: Error, LocalizedError, Equatable {
     case insufficientSpace(requiredBytes: Int64, availableBytes: Int64)
     case missingReservation
     case reservationExceeded(reservedBytes: Int64, actualBytes: Int64)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .insufficientSpace(let required, let available):
             return "Offline storage needs \(required) bytes, but only \(available) bytes are safely available."
@@ -20,12 +22,19 @@ enum OfflineStorageLedgerError: Error, LocalizedError, Equatable {
     }
 }
 
-actor OfflineStorageLedger {
+/// The rendered-speech cache as the ledger sees it: something it can empty (#313). The cache manages its own
+/// size outside the ledger, so Clear Audio asks the open cache to empty itself.
+public protocol RenderedSpeechCacheClearing: AnyObject, Sendable {
+    /// Deletes every cached file and returns the bytes freed.
+    func removeAll() -> Int64
+}
+
+public actor OfflineStorageLedger {
     private let repository: any SessionRepository
     private let rootDirectory: URL
     private let fileManager: FileManager
     /// The last reconciliation's counts, for diagnostics (#259).
-    private(set) var lastReconciliation: OfflineLedgerReconciliation?
+    public private(set) var lastReconciliation: OfflineLedgerReconciliation?
     /// The render signature prepared chunks are current for; the rest are stale (#281).
     private var currentPreparedChunkDigest: String?
     /// Files a writer still has to read, as paths under the root, by the reservation it holds (#645):
@@ -34,7 +43,7 @@ actor OfflineStorageLedger {
     /// row adopted for the same file is spared too. Kept in memory only: a relaunch ends every writer.
     private var pinnedPaths: [String: Set<String>] = [:]
 
-    init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
+    public init(repository: any SessionRepository, rootDirectory: URL, fileManager: FileManager = .default) {
         self.repository = repository
         self.rootDirectory = rootDirectory.standardizedFileURL
         self.fileManager = fileManager
@@ -43,7 +52,7 @@ actor OfflineStorageLedger {
     /// `pinning` names files (paths under the root) the writer reads before it commits. They're
     /// never evicted to make room, for this reservation or any other, while it's held; if the room
     /// can't be found elsewhere the reservation is refused and the files stay (#645).
-    func reserve(
+    public func reserve(
         ownerId: String, byteCount: Int64, lifetime: TimeInterval = 60 * 60, pinning: Set<String> = []
     ) throws -> OfflineStorageReservation {
         let now = Date()
@@ -82,7 +91,7 @@ actor OfflineStorageLedger {
                 )
             }
         }
-        if let physicalAvailable = try? rootDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+        if let physicalAvailable = physicallyAvailableBytes(),
            physicalAvailable >= 0,
            requested > physicalAvailable {
             throw OfflineStorageLedgerError.insufficientSpace(
@@ -102,7 +111,7 @@ actor OfflineStorageLedger {
         return reservation
     }
 
-    func commit(reservationId: String, asset: OwnedOfflineAsset) throws {
+    public func commit(reservationId: String, asset: OwnedOfflineAsset) throws {
         guard let reservation = try repository.loadOfflineStorageReservations().first(where: { $0.id == reservationId }) else {
             throw OfflineStorageLedgerError.missingReservation
         }
@@ -128,23 +137,23 @@ actor OfflineStorageLedger {
         if let overflowReservationId { try repository.deleteOfflineStorageReservation(id: overflowReservationId) }
     }
 
-    func release(reservationId: String) throws {
+    public func release(reservationId: String) throws {
         try repository.deleteOfflineStorageReservation(id: reservationId)
         pinnedPaths[reservationId] = nil
     }
 
-    func protect(assetId: String, reason: OfflineProtectionReason, enabled: Bool) throws {
+    public func protect(assetId: String, reason: OfflineProtectionReason, enabled: Bool) throws {
         try repository.updateOwnedOfflineAsset(id: assetId) { asset in
             if enabled { asset.protections.insert(reason) } else { asset.protections.remove(reason) }
         }
     }
 
-    func categoryUsage() throws -> [OfflineAssetCategory: Int64] {
+    public func categoryUsage() throws -> [OfflineAssetCategory: Int64] {
         Dictionary(grouping: try repository.loadOwnedOfflineAssets(), by: \.category)
             .mapValues { $0.reduce(0) { $0 + $1.byteCount } }
     }
 
-    func presentationSnapshot(now: Date = Date()) throws -> OfflineStorageSnapshot {
+    public func presentationSnapshot(now: Date = Date()) throws -> OfflineStorageSnapshot {
         OfflineStorageSnapshot.make(
             budget: try repository.loadOfflineStorageBudget(),
             assets: try repository.loadOwnedOfflineAssets(),
@@ -153,7 +162,7 @@ actor OfflineStorageLedger {
         )
     }
 
-    func clearReproducibleAssets(in categories: Set<OfflineAssetCategory>) throws -> Int64 {
+    public func clearReproducibleAssets(in categories: Set<OfflineAssetCategory>) throws -> Int64 {
         let assets = try repository.loadOwnedOfflineAssets()
         var removed: Int64 = 0
         var references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
@@ -169,7 +178,7 @@ actor OfflineStorageLedger {
 
     /// A render can finish after an extraction upgrade. Save its ledger row only with a live manifest.
     @discardableResult
-    func commitPrepared(reservationId: String, asset: OwnedOfflineAsset, manifest: PreparedAudioManifest) throws -> Bool {
+    public func commitPrepared(reservationId: String, asset: OwnedOfflineAsset, manifest: PreparedAudioManifest) throws -> Bool {
         let saved = try PreparedAudioEnqueue.withCurrentManifest(manifest, repository: repository) { _, _ in
             try commit(reservationId: reservationId, asset: asset)
             return true
@@ -187,7 +196,7 @@ actor OfflineStorageLedger {
     ///
     /// A file any item still plays stays, with its row (#344). Unlike eviction, nothing is
     /// detached: another item's narration still matches its own text.
-    func removePreparedAudio(itemId: String) throws -> Int64 {
+    public func removePreparedAudio(itemId: String) throws -> Int64 {
         var removed: Int64 = 0
         let references = PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true))
         for asset in try repository.loadOwnedOfflineAssets()
@@ -202,7 +211,7 @@ actor OfflineStorageLedger {
     /// After an item moved to a new PDF extraction (#322): once its manifests are retired, its
     /// prepared files and rows go. An item that still has a manifest, or never had audio, keeps all.
     @discardableResult
-    func removeRetiredPreparedAudio(itemId: String) async -> Int64 {
+    public func removeRetiredPreparedAudio(itemId: String) async -> Int64 {
         guard let store = repository as? any SessionRepositoryTransaction else { return 0 }
         return (try? store.withSessionTransaction {
             guard try repository.loadPreparedAudioManifests(itemId: itemId).isEmpty else { return Int64(0) }
@@ -212,7 +221,7 @@ actor OfflineStorageLedger {
 
     /// Narration assembled for text its item no longer has (#344): the file goes unless an item
     /// plays it, and its reservation is released.
-    func discardStaleAssembly(_ url: URL?, reservationId: String) async {
+    public func discardStaleAssembly(_ url: URL?, reservationId: String) async {
         if let url, url.isFileURL { _ = try? discardUncommittedFile(url) }
         try? release(reservationId: reservationId)
     }
@@ -220,7 +229,7 @@ actor OfflineStorageLedger {
     /// Deletes a prepared file nothing was committed for, such as narration assembled
     /// for text its item no longer has, unless an item plays it (#344).
     @discardableResult
-    func discardUncommittedFile(_ url: URL) throws -> Bool {
+    public func discardUncommittedFile(_ url: URL) throws -> Bool {
         try removeFileNoItemPlays(url, references: PreparedNarrationFallback.FileReferences(items: try repository.listItems(includeDeleted: true)))
     }
 
@@ -244,24 +253,24 @@ actor OfflineStorageLedger {
 
     /// Settings > Storage > Clear Audio. The rendered speech cache is outside the ledger (#313), so it's
     /// cleared through the app's cache, under its lock, or by directory when this launch hasn't opened it.
-    func clearReproducibleAudio(renderedSpeechCache: RenderedSpeechDiskCache?) throws -> Int64 {
+    public func clearReproducibleAudio(renderedSpeechCache: (any RenderedSpeechCacheClearing)?) throws -> Int64 {
         let cleared = try clearReproducibleAssets(in: [.preparedAudio, .preparedChunk, .podcast, .guidedTour])
         let cacheDirectory = rootDirectory.appending(
             path: OfflineLedgerScope.renderedSpeechCacheDirectory, directoryHint: .isDirectory
         )
         let renderedBytes = renderedSpeechCache?.removeAll()
-            ?? RenderedSpeechDiskCache.removeAll(in: cacheDirectory, fileManager: fileManager)
+            ?? RenderedSpeechCacheFiles.removeAll(in: cacheDirectory, fileManager: fileManager)
         return cleared + renderedBytes
     }
 
-    func inventoryBytes() throws -> Int64 {
+    public func inventoryBytes() throws -> Int64 {
         try repository.loadOwnedOfflineAssets().reduce(0) { $0 + $1.byteCount }
     }
 
     /// Enforces a newly lowered or migrated budget immediately. Imported and
     /// recorded user assets remain non-evictable; the returned value is any
     /// residual overage that cannot be reclaimed safely.
-    func enforceBudget(now: Date = Date()) throws -> Int64 {
+    public func enforceBudget(now: Date = Date()) throws -> Int64 {
         try reconcileWithDisk()
         let budget = try repository.loadOfflineStorageBudget()
         let assets = try repository.loadOwnedOfflineAssets()
@@ -277,7 +286,7 @@ actor OfflineStorageLedger {
     /// Brings the rows in line with the disk (#259): rows for missing files are dropped, sizes come
     /// from disk, and rows naming one file become one. Never deletes a file.
     @discardableResult
-    func reconcileWithDisk() throws -> OfflineLedgerReconciliation {
+    public func reconcileWithDisk() throws -> OfflineLedgerReconciliation {
         let recorded = try repository.loadOwnedOfflineAssets()
         let plan = OfflineLedgerReconciliation.plan(assets: recorded) { relative in
             let url = rootDirectory.appending(path: relative)
@@ -306,7 +315,7 @@ actor OfflineStorageLedger {
         return plan
     }
 
-    func directFilesystemBytes() -> Int64 {
+    public func directFilesystemBytes() -> Int64 {
         guard let enumerator = fileManager.enumerator(
             at: rootDirectory,
             includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
@@ -321,7 +330,7 @@ actor OfflineStorageLedger {
         return total
     }
 
-    func trackedFilesystemBytes() throws -> Int64 {
+    public func trackedFilesystemBytes() throws -> Int64 {
         try repository.loadOwnedOfflineAssets().reduce(Int64(0)) { total, asset in
             let url = rootDirectory.appending(path: asset.relativePath)
             let size = (try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]))
@@ -332,7 +341,7 @@ actor OfflineStorageLedger {
 
     /// Enrols files older builds wrote without a row. The rendered speech cache isn't one of these
     /// directories: it manages its own size (#313, `OfflineLedgerScope`).
-    func adoptExistingAssets() throws {
+    public func adoptExistingAssets() throws {
         let directories: [(String, OfflineAssetCategory, Bool, Set<OfflineProtectionReason>)] = [
             ("PodcastAudio", .podcast, true, []),
             ("PreparedSupertonicAudio", .preparedAudio, true, []),
@@ -380,7 +389,7 @@ actor OfflineStorageLedger {
     /// the first to go when space is needed (#281); switching back makes them valid again. Never
     /// deletes a file. Returns how many rows changed.
     @discardableResult
-    func markSupersededPreparedChunks(currentSignatureDigest: String) throws -> Int {
+    public func markSupersededPreparedChunks(currentSignatureDigest: String) throws -> Int {
         currentPreparedChunkDigest = currentSignatureDigest
         let changed = OfflineStoragePlanner.preparedChunkStaleness(
             assets: try repository.loadOwnedOfflineAssets(),
@@ -463,6 +472,16 @@ actor OfflineStorageLedger {
         }
         references.forget(url)
         return true
+    }
+
+    /// What the volume can still hold for the listener's own files. Unknown off Apple platforms, where the
+    /// budget alone limits a reservation.
+    private func physicallyAvailableBytes() -> Int64? {
+        #if canImport(Darwin)
+        try? rootDirectory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
+        #else
+        nil
+        #endif
     }
 
     private func relativePath(_ url: URL) -> String {
