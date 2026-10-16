@@ -83,6 +83,11 @@ Replace this section when the focus changes; do not append to it.
   - **A lawyer gates only share links, Listening Maps and a public App Store release.** "we can just not ship those features or not ship a public App Store app until we get lawyer feedback." Work on them continues. Only turning them on for the public, or a public App Store release, waits for the attorney meeting ([docs/legal/attorney-questions.md](docs/legal/attorney-questions.md)).
     - The work is tracked in the `Open Source` milestone; the self-hosted runner gaps are in #1719.
   - **Routine CI moves off the Mac; journeys, phone builds and signing stay on it.** "The journeys, phone builds, and signing can be on my Mac... and doesn't make me feel like I need to keep my Mac plugged in and online 24/7." The goal of going public is hosted CI, so the Mac no longer has to be awake, plugged in and online for routine tests. Mac work becomes on-demand.
+  - **While Solid Ground is open, Later work stays off the simulator lane.** He picked "Yes, pause it" on the card "While Solid Ground is open, should Later work stay off the Mac test runner?"
+    - On 2026-10-16, 20 of 29 app-fix PRs were Later issues and used 85 of about 113 Mac lane jobs. Waits for a runner reached about 98 minutes, and release-blocker fixes queued behind them.
+    - Threads and dispatch may still take `Later` issues, but only ones whose change needs no `/lane T3` (host-testable: SessionKit, ops, scripts, docs, or an app change the lane's host tests and builds cover). A `Later` issue that needs simulator tests waits until Solid Ground ships.
+    - "Start more threads" advice on #337 means `Solid Ground` issues first, then host-testable `Later` issues.
+    - `Later` PRs already armed with a T3 request on 2026-10-16 finish as they are.
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
