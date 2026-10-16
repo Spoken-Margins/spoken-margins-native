@@ -3220,6 +3220,19 @@
    "final_cost": 1,
    "final": "Tap Import; the app then opens the item.",
    "note": "If the packet was already imported, the app opens the item directly instead of the sheet."
+  },
+  {
+   "id": "j17",
+   "name": "Share all of an item's Margins",
+   "via": [],
+   "target": "SHARE_SHEET",
+   "final_cost": 0,
+   "final": "Choosing the friend in the share sheet is not counted.",
+   "note": "Margins tab, Share beside the item's heading, Share N.",
+   "via_edges": [
+    "e147",
+    "e168"
+   ]
   }
  ]
 }
