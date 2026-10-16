@@ -186,7 +186,10 @@ struct PlaybackScreen: View {
                     .environmentObject(model)
             }
             .sheet(item: $sourceTextTarget) { target in
-                NativeTextPeekView(title: model.selectedItem.title, target: target)
+                NativeTextPeekView(
+                    title: model.selectedItem.title, target: target,
+                    text: model.selectedItem.text, chapters: model.selectedItem.chapters
+                )
             }
             .sheet(isPresented: $isPlaybackOptionsPresented, onDismiss: performPendingOptionsNavigation) {
                 NavigationStack {

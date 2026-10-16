@@ -30,6 +30,8 @@ Steps are written in terms of what the listener wants, not exact button labels, 
    - Pass: speech starts within a few seconds and the position advances.
 3. Pause, lock the phone, then resume from the Lock Screen (owner step).
    - Pass: it resumes from the same sentence.
+4. Read the article's text from More, step to another chapter and back without leaving the reader (#1579).
+   - Pass: the chapter title changes and returns, a way back to the playing chapter shows while away, and playback is unchanged.
 
 ## J2 — Podcast playback survives relaunch
 
