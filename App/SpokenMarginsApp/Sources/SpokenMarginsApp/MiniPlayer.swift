@@ -1,24 +1,72 @@
 import SwiftUI
 import SessionKit
 
-/// Puts the mini player under the content instead of over it (#1716). A `.safeAreaInset` outside a
-/// NavigationStack reaches only the stack's root, so pushed screens (Manage Feeds → Import, Settings
-/// pages) and their own bottom bars ran under the pill. Stacking gives every screen in the stack a
-/// frame that ends above the pill, so scroll content and bottom controls stay reachable.
-struct MiniPlayerDock<Content: View>: View {
+/// Floats the mini player over the content, so the screen shows through behind it, and tells every screen below how
+/// much room to keep free for it (#1716). The pill is an overlay, not an inset: a safe-area inset placed outside a
+/// NavigationStack reaches only the stack's root, so pushed screens (Manage Feeds → Import, the Settings pages) and
+/// their own bottom bars ran under the pill. Stacking the pill under the content (#1717) fixed that but left a solid
+/// chin. Here the clearance travels in the environment, which does reach pushed screens, and each screen applies it
+/// with `miniPlayerKeepOut()`.
+struct MiniPlayerDock<Content: View, Pill: View>: View {
+    /// Space between the pill and the safe area's bottom edge (the home indicator or the tab bar).
+    static var bottomPadding: CGFloat { 4 }
+    /// Space between the pill and the last row or pinned bar above it.
+    static var gap: CGFloat { 8 }
+
     let showsMiniPlayer: Bool
-    @ViewBuilder let content: Content
+    let pill: Pill
+    let content: Content
+    @State private var pillHeight: CGFloat = 0
+
+    /// `pill` is the mini player bar; tests pass a stand-in of known height.
+    init(showsMiniPlayer: Bool, @ViewBuilder pill: () -> Pill, @ViewBuilder content: () -> Content) {
+        self.showsMiniPlayer = showsMiniPlayer
+        self.pill = pill()
+        self.content = content()
+    }
 
     var body: some View {
-        VStack(spacing: 8) {
-            content
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            if showsMiniPlayer {
-                MiniPlayerBar()
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .environment(\.miniPlayerClearance, showsMiniPlayer && pillHeight > 0 ? pillHeight + Self.bottomPadding + Self.gap : 0)
+            .overlay(alignment: .bottom) {
+                if showsMiniPlayer {
+                    pill
+                        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { pillHeight = $0 }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, Self.bottomPadding)
+                }
             }
-        }
+    }
+}
+
+extension MiniPlayerDock where Pill == MiniPlayerBar {
+    init(showsMiniPlayer: Bool, @ViewBuilder content: () -> Content) {
+        self.init(showsMiniPlayer: showsMiniPlayer, pill: { MiniPlayerBar() }, content: content)
+    }
+}
+
+extension EnvironmentValues {
+    /// How far above the safe area's bottom edge a screen's content must end to clear the floating mini player;
+    /// zero when the pill isn't showing. Set by `MiniPlayerDock`, read by `miniPlayerKeepOut()`.
+    @Entry var miniPlayerClearance: CGFloat = 0
+}
+
+extension View {
+    /// Keeps this screen's last row and its pinned bottom bars above the floating mini player, while scroll content
+    /// still passes behind the pill. Apply it to the root of every NavigationStack and to every pushed destination
+    /// that can show under the pill, outside the screen's own `.safeAreaInset(edge: .bottom)` bars.
+    /// `scripts/tests/test_mini_player_keep_out.py` checks that none is missed.
+    func miniPlayerKeepOut() -> some View {
+        modifier(MiniPlayerKeepOut())
+    }
+}
+
+private struct MiniPlayerKeepOut: ViewModifier {
+    @Environment(\.miniPlayerClearance) private var clearance
+
+    func body(content: Content) -> some View {
+        content.safeAreaPadding(.bottom, clearance)
     }
 }
 

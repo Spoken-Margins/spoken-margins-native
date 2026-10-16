@@ -50,6 +50,7 @@ struct ExperienceLibraryScreen: View {
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbarContent }
+            .miniPlayerKeepOut()
         }
         .accessibilityIdentifier("library.screen")
         .sheet(isPresented: $isAudioPreparationQueuePresented) {

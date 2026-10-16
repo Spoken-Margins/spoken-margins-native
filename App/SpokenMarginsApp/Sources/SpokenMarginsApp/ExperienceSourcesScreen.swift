@@ -93,6 +93,7 @@ struct ExperienceSourcesScreen: View {
                 }
                 .navigationDestination(isPresented: $isManagingFeeds) {
                     ManageFeedsScreen(focusFeedURLOnAppear: focusFeedURLOnManage)
+                        .miniPlayerKeepOut()
                 }
                 .task { model.refreshQuickAddFeed(force: false) }
                 // The catalog tags followed shows with a kind and subjects (I2), and gives their artwork (#773).
@@ -107,6 +108,7 @@ struct ExperienceSourcesScreen: View {
                     artwork = await coordinator.followingArtwork(catalog: catalogDrawer.catalog)
                 }
             }
+            .miniPlayerKeepOut()
         }
     }
 
@@ -430,14 +432,15 @@ private struct ManageFeedsScreen: View {
                 if let makeOPMLImport = catalogDrawer.makeOPMLImport {
                     NavigationLink {
                         OPMLImportScreen(importer: makeOPMLImport())
+                            .miniPlayerKeepOut()
                     } label: {
                         Label("Import from another app", systemImage: "square.and.arrow.down")
                             .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     }
                     .accessibilityIdentifier("sources.importOPML")
                 }
-                NavigationLink("Read Later Services") { ReadLaterScreen() }
-                NavigationLink("Import Listening Edition") { ListeningEditionImportScreen() }
+                NavigationLink("Read Later Services") { ReadLaterScreen().miniPlayerKeepOut() }
+                NavigationLink("Import Listening Edition") { ListeningEditionImportScreen().miniPlayerKeepOut() }
             }
             sourceSetup
                 .experienceListBlock(horizontalSizeClass: horizontalSizeClass)

@@ -69,6 +69,7 @@ struct ExperienceMarginsScreen: View {
             .sheet(item: $selectedSharedMargin) { row in
                 SharedMarginDetailView(row: row).environmentObject(model)
             }
+            .miniPlayerKeepOut()
         }
     }
 

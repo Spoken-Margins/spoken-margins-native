@@ -24,6 +24,7 @@ struct SpokenMarginsTermsView: View {
 
                 NavigationLink("Read the complete OpenRAIL-M license") {
                     SupertonicLegalView()
+                        .miniPlayerKeepOut()
                 }
 
                 if model.hasAcceptedCurrentTerms {
