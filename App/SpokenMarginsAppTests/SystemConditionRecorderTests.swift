@@ -62,5 +62,6 @@ final class SystemConditionRecorderTests: XCTestCase {
         await fulfillment(of: [heated], timeout: 5)
         XCTAssertEqual(events.map(\.kind), ["app.thermal_state"])
         XCTAssertEqual(events.first?.fields["state"], "fair")
+        withExtendedLifetime(recorder) {}
     }
 }

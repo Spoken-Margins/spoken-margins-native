@@ -98,11 +98,11 @@ public struct PreviousRunExit: Sendable, Equatable {
                 }
             }
             for section in diagnosticSections {
-                let count = counts[section.key] ?? 0
-                fields[section.countField] = String(count)
-                if count > 0 { reasons.append(section.reason) }
+                let found = counts[section.key] ?? 0
+                fields[section.countField] = String(found)
+                if found > 0 { reasons.append(section.reason) }
             }
-            if let period = period(diagnostics) { fields["diagnosticsPeriod"] = period }
+            if let span = period(diagnostics) { fields["diagnosticsPeriod"] = span }
             keep.diagnosticsThrough = newest(diagnostics, over: seen.diagnosticsThrough)
         }
 
@@ -112,17 +112,17 @@ public struct PreviousRunExit: Sendable, Equatable {
         if !metrics.isEmpty {
             newReports += metrics.count
             for spec in exitCounts {
-                var total: Int?
+                var running: Int?
                 for report in metrics {
                     let exits = report.root["applicationExitMetrics"] as? [String: Any]
                     let section = exits?[spec.section] as? [String: Any]
-                    if let count = count(section?[spec.key]) { total = (total ?? 0) + count }
+                    if let value = count(section?[spec.key]) { running = (running ?? 0) + value }
                 }
-                guard let total else { continue }
+                guard let total = running else { continue }
                 fields[spec.field] = String(total)
                 if total > 0 { reasons.append(spec.reason) }
             }
-            if let period = period(metrics) { fields["exitsPeriod"] = period }
+            if let span = period(metrics) { fields["exitsPeriod"] = span }
             keep.metricsThrough = newest(metrics, over: seen.metricsThrough)
         }
 
