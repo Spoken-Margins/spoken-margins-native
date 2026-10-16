@@ -58,8 +58,10 @@ struct SpokenMarginsApp: App {
     @StateObject private var bridge: BridgeService
     @Environment(\.scenePhase) private var scenePhase
     private let memoryFootprint: MemoryFootprintRecorder
+    private let systemConditions: SystemConditionRecorder
     #if canImport(MetricKit)
     private let memoryExits: MemoryExitMetricsSubscriber
+    private let previousRunExit: PreviousRunExitRecorder
     #endif
 
     init() {
@@ -75,6 +77,22 @@ struct SpokenMarginsApp: App {
         let memoryExits = MemoryExitMetricsSubscriber()
         memoryExits.start { line in pinnedDiagnostics.set(MemoryExitMetricsSubscriber.diagnosticsKey, line) }
         self.memoryExits = memoryExits
+        #endif
+        // Why iOS ended the last run, and the heat and memory warnings of this one, in Diagnostics (#1682).
+        // Unit tests have no MetricKit history to read.
+        let systemConditions = SystemConditionRecorder { [weak model] kind, fields in
+            model?.recordDeveloperDiagnostic(kind, fields)
+        }
+        systemConditions.start()
+        self.systemConditions = systemConditions
+        #if canImport(MetricKit)
+        let previousRunExit = PreviousRunExitRecorder()
+        if !runningTests {
+            previousRunExit.start { [weak model] kind, fields in
+                model?.recordDeveloperDiagnostic(kind, fields)
+            }
+        }
+        self.previousRunExit = previousRunExit
         #endif
         #if !SPOKEN_MARGINS_LEGACY
         ListeningEditionShortcutBridge.model = model
