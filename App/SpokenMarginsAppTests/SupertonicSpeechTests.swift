@@ -2044,6 +2044,11 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
         XCTAssertFalse(harness.client.isSystemVoiceActive)
         XCTAssertTrue(harness.fallbackReasons.values.isEmpty, "the app isn't told of a change that didn't happen")
+
+        // The render queue behind B survived the failed hand-over, so the chunks after B still render ahead of the
+        // playing one. Without it every later seam would wait for its own render (#1673 audit).
+        await harness.waitForRenderStarts(4)
+        XCTAssertGreaterThanOrEqual(harness.renderer.startedCount, 4, "C renders while B plays")
     }
 
     // Leaving the app while a chunk plays: the next chunk is ready already, so it goes onto the player then.

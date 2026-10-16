@@ -2109,6 +2109,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         // A stalled player's chunk is kept until the iOS voice is really speaking. If it can't start, the
         // pause for a tap replays that chunk (#302) instead of rendering it again.
         let keepsChunk = reason == Self.stalledPlayerReason
+        // A background gap has no chunk to keep, but the chosen voice may get the article back if the iOS voice can't
+        // start, so the plan and the render queue stay for it (#1673 audit).
+        let keepsPlan = keepsChunk || reason == Self.backgroundGapReason
         let source = lock.withLock { preparedSourceText }
         // The stop names why the iOS voice took over, so the player's line needs nothing else (#314).
         let stopReason = SpeechFallbackReason(
@@ -2154,13 +2157,17 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 renderedCache.removeAll()
                 inFlightOffsets.removeAll()
                 pendingAutoplayOffset = nil
-                if keepsChunk {
+                if keepsPlan {
                     // The chosen voice may get the chunk back (a pause, a seek, a voice that never begins), so the
                     // article's plan stays on the new generation, with the render queue from the chunk after the
                     // kept one. Wiped, the chunks after it would each render in the silence after the one before (#540 audit).
+                    // A background gap kept no chunk: the queue restarts at the chunk that was not rendered.
                     let keptStart = currentStartOffset
                     generationPlan = Self.rebound(generationPlan, to: generation)
-                    generationRenderOrder = Self.rebound(generationRenderOrder.filter { $0.startOffset > keptStart }, to: generation)
+                    generationRenderOrder = Self.rebound(
+                        generationRenderOrder.filter { keepsChunk ? $0.startOffset > keptStart : $0.startOffset >= keptStart },
+                        to: generation
+                    )
                 } else {
                     generationPlan.removeAll()
                     generationRenderOrder.removeAll()
@@ -2232,13 +2239,19 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// A hand-over to the iOS voice that could not start cancelled the render it replaced. Waits for the chunk
     /// again under the new generation, so the chosen voice plays it when it lands (#1673).
     private func waitForChosenVoiceAfterFailedHandOver(targetId: String, spokenOffset: Int) {
-        let newGeneration = lock.withLock { () -> UUID in
+        let (newGeneration, queueKept) = lock.withLock { () -> (UUID, Bool) in
             generationDisabledReasons.removeValue(forKey: targetId)
             resourceFallbackTargetIds.remove(targetId)
             playbackFailure = nil
             transportIntent = .playing
             pendingAutoplayOffset = spokenOffset
-            return generation
+            return (generation, !generationRenderOrder.isEmpty)
+        }
+        // The hand-over kept the render queue from this chunk on: restart it, so the chunks behind this one render
+        // ahead as before and every later seam still has its audio (#1673 audit).
+        if queueKept {
+            restartRenderQueueBehindKeptChunk()
+            return
         }
         guard let request = renderRequest(targetId: targetId, startOffset: spokenOffset, generation: newGeneration) else {
             return
@@ -2250,6 +2263,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// The iOS voice is speaking: a stalled player's chunk can go, and the app is told the voice changed.
     private func finishSystemFallback(targetId: String, sourceOffset: Int, reason: String, stopReason: String, kept: URL?) {
+        if reason == Self.backgroundGapReason {
+            // The iOS voice has the article now: the plan kept for a return that did not happen goes, as in any fallback.
+            lock.withLock {
+                generationPlan.removeAll()
+                generationRenderOrder.removeAll()
+            }
+        }
         if reason == Self.stalledPlayerReason {
             lock.withLock {
                 Self.empty(player)
