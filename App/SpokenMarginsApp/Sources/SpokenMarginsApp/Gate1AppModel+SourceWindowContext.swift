@@ -322,8 +322,8 @@ extension Gate1AppModel {
                         refreshSelectedItem()
                         refreshMarginRows()
                         diagnostics[Self.marginDiagnosticKey("interjectionTranscription", interjection)] = "complete"
-                        reportSuccess("Transcribed Margin.")
                         withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
+                        reportSuccess("Transcribed Margin.")
                     }
                     retryingInterjectionTranscriptionIds.remove(Self.marginIdentity(interjection))
                     scheduleSourceWindowContextIfNeeded(for: interjection)
