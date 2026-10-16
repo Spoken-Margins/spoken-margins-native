@@ -36,6 +36,7 @@ struct ExperienceStorageScreen: View {
                 Text("Up to \(bytes(snapshot.clearableBytes)) can be recreated later. Imported audiobooks, recordings, Margins, and protected active playback will remain.")
             }
             .task { model.refreshOfflineStoragePresentation() }
+            .miniPlayerKeepOut()
         }
     }
 

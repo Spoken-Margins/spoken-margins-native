@@ -7,6 +7,7 @@ struct ItemDetailState {
     var status = ""
     var text = ""
     var externalReference = ""
+    var externalReferenceType = ""
     var overview = ""
     var navigation: [CanonicalNavigationNode] = []
     var chapters: [Chapter] = []
@@ -20,6 +21,10 @@ struct ItemDetailState {
     var listeningMapAvailabilityDescription: String {
         let scenes = "\(listeningMapScenes.count) scene\(listeningMapScenes.count == 1 ? "" : "s")"
         return listeningMapIsCommunity ? "This item has a community map with \(scenes)." : "This item has a private Listening Map with \(scenes)."
+    }
+    /// The page this item was added from, when it has a public one (#1167).
+    var originalSourceURL: URL? {
+        OriginalSourceLink.url(externalReference: externalReference, externalReferenceType: externalReferenceType)
     }
     var isNativeAudio = false
     var timelineSource = TimelineSourceContent(text: "")

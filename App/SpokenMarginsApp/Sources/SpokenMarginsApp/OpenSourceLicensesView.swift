@@ -51,6 +51,7 @@ struct OpenSourceLicensesView: View {
                 ForEach(Self.documents) { document in
                     NavigationLink {
                         OpenSourceLicenseDocumentView(document: document)
+                            .miniPlayerKeepOut()
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(document.title)

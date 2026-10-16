@@ -92,6 +92,7 @@ struct BatchExportScreen: View {
                 }
             }
             #endif
+            .miniPlayerKeepOut()
         }
     }
 

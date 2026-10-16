@@ -69,7 +69,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
     private let store: SQLiteSessionStore
     private let ledger: OfflineStorageLedger
     private let directory: URL
-    private let connectivity: ConnectivityMonitor
+    private let connectivity: any ConnectivityProviding
     private var connectivityObserver: UUID?
     private var isShutDown = false
     private let cacheLimit: PodcastCacheLimitGB
@@ -96,7 +96,7 @@ final class PodcastDownloadCoordinator: NSObject, ObservableObject, @unchecked S
         applicationSupportDirectory: URL,
         cacheLimit: PodcastCacheLimitGB,
         monitorsNetwork: Bool = true,
-        connectivity: ConnectivityMonitor? = nil,
+        connectivity: (any ConnectivityProviding)? = nil,
         usesBackgroundSession: Bool = true,
         contentLength: (@Sendable (URL, Bool) async throws -> Int64)? = nil,
         startDownload: ((URLRequest, String) -> Void)? = nil,

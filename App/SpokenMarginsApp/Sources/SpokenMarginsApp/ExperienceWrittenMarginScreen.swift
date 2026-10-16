@@ -110,6 +110,7 @@ struct ExperienceWrittenMarginScreen: View {
                 }
                 .accessibilityAction(.escape, requestCancel)
                 .onAppear { isEditing = true }
+                .miniPlayerKeepOut()
             }
         }
         .tint(AppColors.evergreen)
