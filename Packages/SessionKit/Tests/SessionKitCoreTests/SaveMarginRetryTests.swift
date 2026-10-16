@@ -248,6 +248,20 @@ final class SaveMarginRetryTests: XCTestCase {
         XCTAssertEqual(try margins(engine).map(\.audioPath), [recorder.recordings[0]])
     }
 
+    /// A note left by another session's failed Save does not stop a Cancel here.
+    func testCancelInAnotherSessionIsNotStoppedByAnEarlierSessionsStoredMargin() throws {
+        let other = Item(id: "item-other", title: "Other", mediaType: "text", text: "Other text here.", externalReference: nil, status: "ready")
+        try store.saveItem(other)
+        let transcriber = FlakyTranscriber()
+        let (engine, _) = try recordingEngine(transcriber: transcriber)
+        _ = try engine.beginInterjection()
+        XCTAssertThrowsError(try engine.finishInterjection(audioRef: nil))
+
+        _ = try engine.startSession(itemId: other.id)
+
+        XCTAssertNoThrow(try engine.cancelInterjection(), "the stored Margin belongs to the first session")
+    }
+
     /// #1713: a Save that closed the recording and failed before storing it keeps the recording for the next Save.
     func testWriteInsteadAfterASaveThatClosedTheRecordingButStoredNothingIsRefused() throws {
         let (engine, recorder) = try recordingEngine()

@@ -2102,7 +2102,7 @@ public final class SessionEngine {
             throw SessionKitError.invalidCommandForState("cancelInterjection")
         }
         // The Margin is in the Library already (#1121). A Cancel now would tell the listener it was not saved.
-        if storedMarginFinish != nil { throw SessionKitError.invalidCommandForState(Self.marginAlreadyStored) }
+        if let pending = storedMarginFinish, pending.interjection.sessionId == session.id { throw SessionKitError.invalidCommandForState(Self.marginAlreadyStored) }
         pendingInterjectionPause = nil // a Cancel that finds the tap's pause still pending resumes below like any other
         removeRecordingDraft() // first: a kill between the two leaves a file nobody recovers, so a Cancel stays cancelled
         try recorder.cancelRecording()
