@@ -1590,6 +1590,39 @@ class PlanGroupingTests(unittest.TestCase):
         self.assertIn('8. **Waiting 108**\n   - Check: open the merged thing.\n'
                       '   - Links: [issue #108](https://example/issue/108)\n', roomy)
 
+    def test_held_milestones_wait_outside_the_ten_minutes(self):
+        # fdda29c: a Later diagnostics fix led the plan and two Co-op Experience checks filled it, though co-op
+        # work starts only after Solid Ground ships (AGENTS.md Current focus, owner 2026-10-08).
+        later = self.issue(1682, 'Play an article until the phone is warm.', phone=True)
+        later['milestone'] = {'title': 'Later', 'state': 'OPEN'}
+        current = self.issue(1700, 'Open the Library and read the rows.')
+        current['milestone'] = {'title': 'Solid Ground', 'state': 'OPEN'}
+        mixed = self.issue(1701, 'Tap Play now on a Following entry.')
+        mixed['milestone'] = {'title': 'Co-op Experience', 'state': 'OPEN'}
+        new = {1710: self.pr(1710, 'Diagnostics: record why iOS ended the last run', [later]),
+               1711: self.pr(1711, 'Library wording', [current]),
+               1712: self.pr(1712, 'Play now from Following', [mixed, current])}
+        waiting = [self.waiting(473, 'Reply to a friend and see it threaded.', milestone='Co-op Experience',
+                                created='2026-09-01', prs=[1253]),
+                   self.waiting(478, 'Long-press a Following entry and use Play now.', milestone=None,
+                                created='2026-09-03', prs=[1316]),
+                   self.waiting(1600, 'Play the Solid Ground thing.', milestone='Solid Ground',
+                                created='2026-09-05', prs=[1601])]
+        plan = self.write(new, waiting=waiting, built_prs={1253, 1316, 1601})
+        ten_minutes = plan.split('## Try these')[1].split('## Also waiting')[0].split('## Waiting for')[0]
+        self.assertNotIn('Diagnostics: record why', ten_minutes)
+        self.assertIn('**Library wording**', ten_minutes)
+        self.assertIn('Also in this change: Play now from Following', ten_minutes)  # one issue is current
+        self.assertNotIn('Waiting 473', ten_minutes)
+        still = ten_minutes.split('## Still waiting on your check')[1]
+        self.assertLess(still.index('Waiting 1600'), still.index('Waiting 478'))  # current milestone first
+        held = plan.split('## Waiting for a later milestone (not in the ten minutes)')[1].split('## ')[0]
+        self.assertIn('- Diagnostics: record why iOS ended the last run (found on your phone) '
+                      '([#1710](https://example/pr/1710)): waits for Later', held)
+        also = plan.split('## Also waiting on your check (not in the ten minutes)')[1].split('## ')[0]
+        self.assertIn('- Waiting 473 ([#473](https://example/issue/473), [#1253](https://example/pr/1253)): '
+                      'waits for Co-op Experience', also)
+
     def test_with_nothing_new_to_check_the_waiting_fixes_lead(self):
         plan = self.write({366: self.pr(366, 'Take the rendered speech cache out of the offline storage ledger')},
                           waiting=[self.waiting(103, 'play the older phone bug.', prs=[503])], built_prs={503})
@@ -1759,6 +1792,15 @@ class PlanFaultTests(unittest.TestCase):
             ('Read the AI Handoff export of the next test plan.', True),
             ('Read the AI Handoff export of the next test plan once.', True),
             ('Look through the exported log.', True),
+            # fdda29c: the field came after the verb, in backticks, with diagnostics before it
+            ('reproduce #1679 on Build 32, export diagnostics, and look for `app.previous_exit` naming a CPU '
+             'or memory reason.', True),
+            ('Look for `playback.stall_count` in the export.', True),
+            ('Search diagnostics for the stall.', True),
+            # fdda29c: #391's check only pointed at another step
+            ('yes, the phone step above.', True),
+            ('See the steps below.', True),
+            ('Yes: Done when 4.', True),
             # neighbours the owner can run
             ('Settings > Version ends with `929b5ce`.', False),
             ('Open the Library at 2am and play the first item.', False),
@@ -1773,6 +1815,10 @@ class PlanFaultTests(unittest.TestCase):
             ('Read the AI Handoff export; you will see two Margins.', False),
             ('Double-click the Desktop icon.', False),
             ('Tap Share Diagnostics and send the file to Claude.', False),
+            ('Copy Privacy-Safe Diagnostics here, with a screenshot of Settings > Battery.', False),
+            ('Look for the Waiting label on the second row.', False),
+            ('Yes: play an article and hear the voice above the music.', False),
+            ('Scroll to the row above and tap it.', False),
             ('', False),
         ]
         for check, refused in rows:

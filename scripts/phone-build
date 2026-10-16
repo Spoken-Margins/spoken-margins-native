@@ -114,6 +114,12 @@ LISTENER_PATHS = ('App/', 'Packages/SessionKit/Sources/')
 NOT_LISTENER_PATHS = ('App/SpokenMarginsAppTests/', 'App/SpokenMarginsAppUITests/', 'App/TestFixtures/')
 NOT_LISTENER_TITLE = re.compile(r'to its own file|^(tests?|docs|lane|runner|verify-tests)\b|^test ', re.I)
 FIRST_ON_PHONE = {'found-on-phone', 'regression'}
+# The milestone being shipped, and the ones whose work waits for it (AGENTS.md Current focus, owner 2026-10-08
+# and 2026-10-14): co-op work starts after Solid Ground ships, and Later and the beta wait. The fdda29c plan
+# put a Later diagnostics fix and two Co-op Experience checks in the ten minutes. A change whose issues all
+# sit in a held milestone is listed with what it waits for. Update both when the focus changes.
+CURRENT_MILESTONE = 'Solid Ground'
+HELD_MILESTONES = frozenset({'Co-op Experience', 'Later', 'Public beta'})
 NOT_LISTENER_LABELS = {'stream:A1'}  # the test lane: its SessionKit edits are compile guards, not behaviour
 # Acceptance belongs to the change, not necessarily its issue. The owner confirmed #1482's Build 30
 # restoration on 2026-10-14 (#1475, 15:55Z); #1475 stays open for the different #1551 redesign check.
@@ -180,8 +186,15 @@ LANE_PROCEDURE = re.compile(
     re.I)
 # Reading a diagnostics field is the agent's job, not his (#1476: #586); so is judging an export or a log, unless
 # the check at least says what the result should be (#1439: "read the AI Handoff export of the next test plan").
-DIAGNOSTICS_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
-                                 r'\bdiagnostics?\b', re.I)
+# Either order, or a field named in backticks (fdda29c's plan: "export diagnostics, and look for
+# `app.previous_exit` naming a CPU or memory reason" reached the ten minutes).
+DIAGNOSTICS_READING = re.compile(
+    r'\b(?:read|inspect|review|examine|search|look (?:at|in|through|for))\b[^.\n]{0,60}\bdiagnostics?\b'
+    r'|\bdiagnostics?\b[^.\n]{0,60}\b(?:read|inspect|review|examine|search|look (?:at|in|through|for))\b'
+    r'|\b(?:look (?:at|for)|search for|find)\s+`[a-z_]+(?:\.[a-z_]+)+`', re.I)
+# A check that only points elsewhere isn't one: #391's "Owner check: yes, the phone step above." reached the
+# fdda29c plan as the whole check, with no step to take.
+POINTER_ONLY = re.compile(r'^\W*(?:yes|see)\b[^.\n]{0,40}\b(?:above|below|earlier|done when(?: \d+)?)\b\W*$', re.I)
 EXPORT_READING = re.compile(r'\b(?:read|inspect|review|examine|look (?:at|in|through))\b[^.\n]{0,60}'
                             r'\b(?:AI Handoff|export(?:ed|s)?|logs?|console)\b', re.I)
 EXPECTED_RESULT = re.compile(
@@ -430,8 +443,8 @@ def reverted_prs(sha: str) -> set[int]:
 
 COMMENTS = 'comments(last:30){nodes{body}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
-closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} %s}}''' % COMMENTS
-ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} ' + COMMENTS  # state: passed_on_phone (#1100)
+closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} milestone{title state} %s}}''' % COMMENTS
+ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} milestone{title state} ' + COMMENTS  # state: passed_on_phone (#1100)
 
 
 def graphql(fields_by_alias: dict[str, str]) -> dict:
@@ -503,7 +516,7 @@ def fetch_items(numbers: list[int]) -> dict[int, dict]:
 WAITING_QUERY = '''query($cursor: String) { repository(owner: "%s", name: "%s") {
 issues(states: OPEN, labels: ["%s"], first: 25, after: $cursor, orderBy: {field: CREATED_AT, direction: ASC}) {
 pageInfo { hasNextPage endCursor }
-nodes { %s createdAt milestone { title state }
+nodes { %s createdAt
 timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 25) { nodes { ... on CrossReferencedEvent {
 source { ... on PullRequest { number title url body merged } } } } } } } } }'''
 
@@ -539,6 +552,12 @@ def build_prs(sha: str) -> set[int]:
     return {int(n) for n in re.findall(r'(?m)^Merge pull request #(\d+)\b', subjects)} - reverted_prs(sha)
 
 
+def held_for(issues: list[dict]) -> str | None:
+    """The milestone a change waits for when it has issues and every one sits in a held milestone, else None."""
+    titles = [(issue.get('milestone') or {}).get('title') for issue in issues]
+    return titles[0] if titles and all(title in HELD_MILESTONES for title in titles) else None
+
+
 def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in_build: set[int] = frozenset(),
                   reverted: set[int] = frozenset()) -> list[dict]:
     """The issues still waiting on the owner's check whose fix is in this build, in plan order: the current
@@ -558,9 +577,11 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
     """
     def build_number(issue):
         milestone = issue.get('milestone') or {}
+        if milestone.get('title') == CURRENT_MILESTONE:
+            return 0
         found = re.fullmatch(r'Build (\d+)', milestone.get('title') or '')
         return int(found.group(1)) if found and milestone.get('state', 'OPEN') == 'OPEN' else None
-    current = min(filter(None, map(build_number, issues)), default=None)
+    current = min((n for n in map(build_number, issues) if n is not None), default=None)
     fixes = []
     for issue in issues:
         comments = [(comment or {}).get('body') or '' for comment in (issue.get('comments') or {}).get('nodes') or []]
@@ -583,8 +604,8 @@ def waiting_fixes(issues: list[dict], built: set[int], shown: set[int], named_in
         none = says_no_check(alone)
         check = None if none else owner_check(alone)
         fixes.append({'issue': issue, 'prs': list(prs.values()), 'check': check, 'none': none,
-                      'refused': [] if check or none else refused_in(alone)})
-    fixes.sort(key=lambda fix: (0 if current and build_number(fix['issue']) == current else 1,
+                      'refused': [] if check or none else refused_in(alone), 'held': held_for([issue])})
+    fixes.sort(key=lambda fix: (0 if current is not None and build_number(fix['issue']) == current else 1,
                                 0 if FIRST_ON_PHONE & labels(fix['issue']) else 1,
                                 fix['issue'].get('createdAt') or ''))
     return fixes
@@ -762,7 +783,10 @@ def unusable_check(check: str) -> str | None:
 
     A lane or agent procedure (a script, a simulator, a commit to run at, a log file), or a reading of
     diagnostics, an export or a log, which an agent judges unless the check says what the result should be.
+    Or a pointer to steps written somewhere else.
     """
+    if POINTER_ONLY.match(check):
+        return 'it points to steps written elsewhere ("the step above"); write the steps in the check itself'
     if LANE_PROCEDURE.search(check):
         return 'it names a script, simulator, commit to run at or log file, which the lane and the Test Desk run'
     if DIAGNOSTICS_READING.search(check):
@@ -1157,6 +1181,10 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
             + '; '.join(dict.fromkeys(refused)))
     # A check that needs another change still open waits for it (#847: step 2 needed #547).
     checkable = [entry for entry in entries if check_of[id(entry)]]
+    # A change for a milestone that hasn't started waits for it, not in the ten minutes.
+    held = {id(entry): held_for([issue for pr in entry for issue in pr['issues']]) for entry in checkable}
+    later = [entry for entry in checkable if held[id(entry)]]
+    checkable = [entry for entry in checkable if not held[id(entry)]]
     # Fixes from earlier builds still waiting on his check go after these (#927: the 887c560 plan had
     # none while ten Build 30 fixes on the phone waited on him).
     pending = fetch_waiting()
@@ -1201,8 +1229,9 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
     budget = checkable[:room]
     rest = checkable[room:]
     # They share the ten minutes, new changes first; the rest are listed with their links.
-    still = [fix for fix in fixes if not fix['needs'] and not fix['lacks']][:max(0, room - len(budget))]
+    still = [fix for fix in fixes if not (fix['needs'] or fix['lacks'] or fix.get('held'))][:max(0, room - len(budget))]
     also_waiting = [fix for fix in fixes if fix not in still]
+    also_waiting.sort(key=lambda fix: bool(fix.get('held')))  # what could be checked now first
     if not ordered:
         lines += ['Nothing new since that build: this is the same code, rebuilt.', '']
     left_out = f' {len(passed)} changes whose issues are already closed are left out.' if passed else ''
@@ -1215,7 +1244,7 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
                   'still wait on yours.', '']
     elif not (screens or budget):
         lines += ['Nothing is ready to check on the phone yet; the changes you might notice are listed below.'
-                  if waiting and not unchecked else
+                  if (waiting or later) and not unchecked else
                   'No phone checks were written for this build; the changes you might notice are listed below.'
                   if unchecked else 'Nothing a listener would notice changed. Use the app as usual for ten minutes.', '']
     for index, screen in enumerate(screens, 1):
@@ -1260,7 +1289,8 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         for fix in also_waiting[:ALSO_WAITING]:
             needs = ', '.join(f'[#{item["number"]}]({item["url"]})' for item in fix['needs'])
             lines.append(f'- {fix["issue"]["title"]}{fix_tag(fix)} ({", ".join(fix_links(fix, label=False))})'
-                         + (f': needs {needs} on your phone first' if needs else
+                         + (f': waits for {fix["held"]}' if fix.get('held') else
+                            f': needs {needs} on your phone first' if needs else
                             f': needs a test {fix["lacks"]}, not supplied yet' if fix.get('lacks') else ''))
         if len(also_waiting) > ALSO_WAITING:
             query = 'is%3Aissue+is%3Aopen+label%3A%22' + MERGED_ON_NEXT.replace(':', '%3A').replace(' ', '+') + '%22'
@@ -1283,6 +1313,11 @@ def write_plan(folder: Path, sha: str, checks: str, commit_in_app: bool = True) 
         return [bullet for entry in group for bullet in bullets(entry)]
     if rest:
         lines += ['## Also changed (not in the ten minutes)', ''] + titles(rest) + ['']
+    if later:
+        lines += ['## Waiting for a later milestone (not in the ten minutes)', '',
+                  f'These belong to work that starts after {CURRENT_MILESTONE} ships.', '']
+        lines += [f'{bullet}: waits for {held[id(entry)]}' for entry in later for bullet in bullets(entry)]
+        lines.append('')
     if waiting:
         lines += ['## Waiting on another change or a test file (not in the ten minutes)', '',
                   'Their checks need something that is not on your phone yet.', '']
