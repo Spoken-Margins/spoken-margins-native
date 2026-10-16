@@ -21,6 +21,7 @@ extension Gate1AppModel {
     /// Safe to call at any time: with a session in the snapshot, or nothing playing, it only records.
     @discardableResult
     func reconcileNarrationOwnership(trigger: String) -> NarrationOwnership.Repair {
+        if !trigger.isEmpty { return .none } // THROWAWAY: the repair is off, to show the new tests fail without #1664.
         let narration = narrationDiagnostics()
         let engineHasSession = engine?.currentSession != nil
         var live: SessionSnapshot?
