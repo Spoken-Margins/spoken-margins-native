@@ -430,6 +430,16 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// next one, so the player's own current item is not the answer (#538).
     private var activeItem: AVPlayerItem?
     private var queuedChunk: QueuedChunk?
+    /// The render chain's next chunk, held back while enough audio waits ahead (#1681). Queued again once playback
+    /// has used half the window, the limit lifts, or playback waits for a chunk.
+    private var restingRender: RenderRequest?
+    /// The last progress reported, so a resting chain that starts again can report it without the rest (#1681).
+    private var reportedProgress = RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0)
+    /// Each rendered chunk's audio length, by start, so the audio ahead counts chunks already played once and played
+    /// again after a skip back (#1681). Read only where `generationResults` holds the chunk.
+    private var renderedDurations: [Int: TimeInterval] = [:]
+    /// How often a resting chain started again before playback had to wait for a chunk (#1681).
+    private var renderAheadRestarts = 0
     private var queuedEndObserver: NSObjectProtocol?
     private var queuedStatusObservation: NSKeyValueObservation?
     private var backgroundSeams = BackgroundSeamLog()
@@ -512,6 +522,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// it was: one player per chunk. Read on the main thread; anywhere else the app counts as in front.
     private let applicationIsActive: (@Sendable () -> Bool)?
     private let onBackgroundSeams: BackgroundSeamHandler?
+    /// The listening live narration may render ahead now; nil for no limit (#1681).
+    private let renderAheadWindow: @Sendable () -> TimeInterval?
     private var lifecycleObservers: [NSObjectProtocol] = []
     /// Background time over the moment between one chunk ending and the next playing (#540).
     private let handOverHold: HandOverBackgroundHold?
@@ -564,6 +576,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     var debugQueuedChunkStart: Int? { lock.withLock { queuedChunk?.cached.request.startOffset } }
     /// The count of seams that came with the app away, as the export shows it (#538).
     var debugBackgroundSeamSummary: String? { lock.withLock { backgroundSeams.summary } }
+    /// How often a resting render chain started again with playback not waiting for a chunk (#1681).
+    var debugRenderAheadRestarts: Int { lock.withLock { renderAheadRestarts } }
     #endif
     private let articleText: ArticleTextLookup?
     /// Where the article starts after a spoken preface, in spoken and source characters. Prepared
@@ -638,7 +652,11 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         handOverHold: HandOverBackgroundHold? = nil,
         interruptionHold: InterruptionBackgroundHold? = nil,
         applicationIsActive: (@Sendable () -> Bool)? = nil,
-        onBackgroundSeams: BackgroundSeamHandler? = nil
+        onBackgroundSeams: BackgroundSeamHandler? = nil,
+        renderAheadWindow: @escaping @Sendable () -> TimeInterval? = {
+            RenderAheadPolicy.window(appBackgrounded: OnDeviceVoiceGovernor.app.isAppBackgrounded,
+                                     conditions: OnDeviceVoiceGovernor.app.conditions())
+        }
     ) {
         self.renderer = renderer
         self.voice = voice
@@ -693,6 +711,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         self.interruptionHold = interruptionHold
         self.applicationIsActive = applicationIsActive
         self.onBackgroundSeams = onBackgroundSeams
+        self.renderAheadWindow = renderAheadWindow
         super.init()
         installAudioSessionObservers()
         installLifecycleObservers()
@@ -1235,6 +1254,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            renderedDurations.removeAll()
             standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
             initialPlaybackOffset = nil
@@ -1307,6 +1327,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            renderedDurations.removeAll()
             standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
             failedRenderReasons.removeAll()
@@ -1353,6 +1374,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     }
 
     private func playbackItemFinished(_ item: AVPlayerItem) {
+        // Playback used some of the audio ahead: a resting render chain may start again (#1681).
+        defer { resumeRenderAheadIfWanted() }
         // The queue already moved on to the chunk behind this one, with no app code: catch the bookkeeping up. When
         // the item that ended is the chunk that was queued (the app was away through the whole of the one before),
         // its own end is handled below (#538).
@@ -1493,6 +1516,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             generationPlan.removeAll()
             generationRenderOrder.removeAll()
             generationResults.removeAll()
+            renderedDurations.removeAll()
             standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
             failedRenderReasons.removeAll()
@@ -1932,6 +1956,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 audioURL: result.audioURL
             )
             renderedCache[request.startOffset] = cached
+            renderedDurations[request.startOffset] = result.duration
 
             var autoplay: CachedAudio?
             let waitsAtBoundary = pendingAutoplayOffset == request.startOffset
@@ -1989,11 +2014,13 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             )
         }
         guard lock.withLock({ generation == request.generation }) else { return }
+        let next = action.next.flatMap { rendersAhead($0) ? $0 : nil }
         reportGenerationProgress(
             completedChunks: action.completedChunks,
-            totalChunks: action.totalChunks
+            totalChunks: action.totalChunks,
+            restingAhead: action.next != nil && next == nil
         )
-        if let next = action.next {
+        if let next {
             enqueueRender(next, shouldPlayWhenReady: false)
         }
         if action.complete {
@@ -2111,6 +2138,7 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                     generationRenderOrder.removeAll()
                 }
                 generationResults.removeAll()
+                renderedDurations.removeAll()
                 standInOffsets.removeAll()
             bundledVoiceOffsets.removeAll()
                 failedRenderReasons.removeAll()
@@ -2956,11 +2984,14 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         onGenerationStateChange?(state, stopReason)
     }
 
-    private func reportGenerationProgress(completedChunks: Int, totalChunks: Int) {
-        onGenerationProgress?(RenderedSpeechGenerationProgress(
+    private func reportGenerationProgress(completedChunks: Int, totalChunks: Int, restingAhead: Bool = false) {
+        let progress = RenderedSpeechGenerationProgress(
             completedChunks: completedChunks,
-            totalChunks: totalChunks
-        ))
+            totalChunks: totalChunks,
+            isRestingAhead: restingAhead
+        )
+        lock.withLock { reportedProgress = progress }
+        onGenerationProgress?(progress)
     }
 
     private func startPlayer(_ nextPlayer: AVPlayer, item: AVPlayerItem, request: RenderRequest) {
@@ -3259,6 +3290,85 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.queueNextChunkIfWanted() })
         #endif
+    }
+
+    /// #1681: whether the render chain queues `next` now. Live narration rendered the whole rest of the item ahead,
+    /// hot or in the background; now, unless the phone is cool, in front and has power to spare, the chain rests with
+    /// `next` held once `RenderAheadPolicy`'s window of listening waits ahead. Playback waiting for a chunk always
+    /// renders.
+    private func rendersAhead(_ next: RenderRequest) -> Bool {
+        let window = renderAheadWindow()
+        return lock.withLock {
+            guard generation == next.generation else { return true }
+            if pendingAutoplayOffset != nil
+                || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: false) {
+                // Another chain (a seek's, a gap's) may run beside the resting one: only this chunk wakes it.
+                if restingRender?.startOffset == next.startOffset { restingRender = nil }
+                return true
+            }
+            restingRender = next
+            return false
+        }
+    }
+
+    /// Queues the resting chain's chunk again once playback has used half the window, the limit has lifted, or
+    /// playback waits for a chunk (#1681).
+    private func resumeRenderAheadIfWanted() {
+        guard lock.withLock({ restingRender != nil }) else { return }
+        let window = renderAheadWindow()
+        let woke = lock.withLock { () -> (next: RenderRequest?, progress: RenderedSpeechGenerationProgress)? in
+            guard let resting = restingRender else { return nil }
+            guard resting.generation == generation else {
+                restingRender = nil
+                return nil
+            }
+            let waiting = pendingAutoplayOffset != nil
+            guard waiting
+                || RenderAheadPolicy.rendersNext(listeningAhead: listeningAhead(), window: window, resting: true) else {
+                return nil
+            }
+            restingRender = nil
+            if !waiting { renderAheadRestarts += 1 }
+            let progress = reportedProgress
+            // Another chain may have rendered it meanwhile: carry on from the first chunk still missing.
+            guard let index = generationRenderOrder.firstIndex(where: { $0.startOffset == resting.startOffset }) else {
+                return (resting, progress)
+            }
+            return (generationRenderOrder[index...].first {
+                generationResults[$0.startOffset] == nil && !inFlightOffsets.contains($0.startOffset)
+            }, progress)
+        }
+        guard let woke else { return }
+        // Progress is due again: the app's slow-render watch starts from here, not from when the chain rested. A
+        // report another chain made meanwhile is newer, so it stands.
+        let awake = lock.withLock { () -> RenderedSpeechGenerationProgress? in
+            guard reportedProgress == woke.progress, reportedProgress.isRestingAhead else { return nil }
+            reportedProgress.isRestingAhead = false
+            return reportedProgress
+        }
+        if let awake { onGenerationProgress?(awake) }
+        if let next = woke.next { enqueueRender(next, shouldPlayWhenReady: false) }
+    }
+
+    /// The listening rendered and waiting past the playing chunk, at the listener's speed: the rendered chunks one
+    /// after another from the playing chunk's end (from the playhead before playback starts), those waiting in the
+    /// cache and those played once already, which a skip back plays again. Call with `lock` held.
+    private func listeningAhead() -> TimeInterval {
+        var offset = currentStartOffset + max(0, currentChunkLength)
+        var seconds: TimeInterval = 0
+        while true {
+            if let chunk = renderedCache[offset], chunk.request.sourceLength > 0 {
+                seconds += chunk.duration
+                offset += chunk.request.sourceLength
+            } else if let saved = generationResults[offset], saved.sourceLength > 0,
+                      let duration = renderedDurations[offset] {
+                seconds += duration
+                offset += saved.sourceLength
+            } else {
+                break
+            }
+        }
+        return RenderAheadPolicy.listening(audioSeconds: seconds, playbackRate: Double(playbackRate))
     }
 
     /// While the app is away, puts the next rendered chunk on the player behind the playing one, so the seam between

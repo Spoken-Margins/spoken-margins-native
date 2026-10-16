@@ -22,6 +22,17 @@ final class RenderedSpeechGenerationTests: XCTestCase {
         XCTAssertEqual(RenderedSpeechGenerationProgress(completedChunks: -3, totalChunks: 4).percent, 0)
     }
 
+    /// #1681 audit: a chain resting on purpose read as a stalled render, "Still preparing" and a delay in diagnostics.
+    func testOnlyARenderThatOwesProgressIsWatchedForDelay() {
+        XCTAssertTrue(RenderedSpeechGenerationProgress(completedChunks: 3, totalChunks: 10).watchesForDelay)
+        XCTAssertFalse(RenderedSpeechGenerationProgress(completedChunks: 3, totalChunks: 10, isRestingAhead: true).watchesForDelay)
+        XCTAssertFalse(RenderedSpeechGenerationProgress(completedChunks: 10, totalChunks: 10).watchesForDelay)
+        XCTAssertFalse(RenderedSpeechGenerationProgress(completedChunks: 0, totalChunks: 0).watchesForDelay)
+        XCTAssertNotEqual(RenderedSpeechGenerationProgress(completedChunks: 3, totalChunks: 10, isRestingAhead: true),
+                          RenderedSpeechGenerationProgress(completedChunks: 3, totalChunks: 10),
+                          "waking from a rest is new progress, so the app's watch starts again")
+    }
+
     func testListenerSentencesForEachState() {
         func line(_ state: RenderedSpeechGenerationState, _ done: Int, _ total: Int, delayed: Bool = false) -> String {
             state.listenerDescription(
