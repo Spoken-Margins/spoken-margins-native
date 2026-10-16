@@ -1,44 +1,49 @@
 # Questions for one attorney meeting (DRAFT)
 
-> **DRAFT. Not legal advice.** Written by an agent from the code on `next` and public sources, for Cole to take to a small-business attorney before share links or the App Store go public (#173, #455). Nothing here has been reviewed by a lawyer.
+> **DRAFT. Not legal advice.** Written by an agent from the code on `next` and public sources, for Cole to take to a small-business attorney before share links, Listening Maps or a public App Store release go public (#173). Nothing here has been reviewed by a lawyer.
 
-Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md](terms-draft.md). Each question has one line of context.
+Read with [privacy-policy-draft.md](privacy-policy-draft.md) and [terms-draft.md](terms-draft.md).
 
-## 1. Business structure
+The list was cut from 20 questions to 6 on 2026-10-16. A question stays only if the answer turns on legal judgment we can't get from the statute, Apple's rules or a fee table. The rest are decisions, recorded below as defaults the owner can veto by number, or engineering work, filed as issues.
 
-1. **Should I form an LLC before the public release, and in which state?** Share links will put other people's words on a server I run, so claims would reach me personally unless an entity sits in between; formation and annual fees depend on the state.
-2. **Does an LLC actually protect a solo developer who writes the code and runs the server himself?** I'd be the only member, the only operator and the one who takes things down, so I want to know what would still reach me personally.
-3. **What should the App Store show as the seller, and when do I switch?** An individual developer account lists my legal name; an organization account lists the LLC, needs a D-U-N-S number, and moving an existing app between accounts is a transfer I'd rather do before launch than after.
+## Questions for counsel
 
-## 2. Copyright and the DMCA
+In priority order. The first two are where the real exposure is.
 
-4. **Do I need a DMCA designated agent, and who should it be?** The U.S. Copyright Office charges $6 per designation, amendment or resubmission, and a designation lasts three years unless renewed by amending or resubmitting it, at the same $6 ([DMCA Directory FAQ](https://www.copyright.gov/dmca-directory/faq.html), checked 2026-09-30; rule at 37 C.F.R. § 201.38).
-5. **Whose address goes in the public directory?** The Copyright Office generally requires a street address for the service provider (a P.O. box only with its approval), while the agent's own address may be a P.O. box, so a registered-agent service or the LLC's address may be the only way to keep my home address out of a public listing (same FAQ).
-6. **Does a server that holds a shared packet for 30 days qualify for the § 512(c) safe harbor?** The server stores what a listener chose to upload, shows its Margin text on a public page, and deletes it after 30 days or on a takedown (#486); I want to know it counts as storage "at the direction of a user".
-7. **What repeat-infringer policy is reasonable with no accounts?** § 512(i) requires one, but the app has no sign-in; the only handle the server has is a random per-install key that a reinstall replaces (`research/B4/DESIGN.md` §2 on `ws/b4-bridge`).
-8. **Our public share page shows a short excerpt of the podcast or article next to the listener's comment. What limits should we keep?** At most 500 characters before and after each Margin (`BoundedAnchorContext.maximumCharactersPerSide`, `Packages/SessionKit/Sources/SessionKit/InterjectionCleanup.swift:20`), shown with the title, the show and a link to the source; never the source's audio (#486, Cole's decision on #14, 2026-09-30).
+1. **Listening maps.** A phone transcribes a public podcast episode on the device and uploads the transcript. Our server passes it to an AI service and publishes a map: chapter titles, one-sentence descriptions and timestamps, like a table of contents with redundant anchors in place of page numbers. Is that transient copy, and publishing the map, likely fair use? What would make a summary a derivative work instead of an index?
+   - Planned changes (#1730): the transcript is never written to disk; anchors become hashes and timestamps, not quoted sentences; descriptions are capped at about 25 words and rejected if they copy 8 or more words in a row.
+   - Full transcripts are never shared (default D14).
+2. **Share links: the source excerpt next to a comment.** A shared Margin is the listener's own commentary on a moment in a source. The share page shows that comment with up to 500 characters of the source before and after it, as a marked quotation, with the title, the show and a link to the source. The source's audio is never included. Is a short excerpt that only gives a comment its context fair use, and is 500 characters a side a reasonable cap?
+3. **The § 512(c) safe harbor when we can't read what we host.** Share-link content is encrypted on the phone, and the key travels only in the link, so the server stores data it cannot read. It deletes each item after 30 days, or when a notice names the link. Does this count as storage "at the direction of a user"? Does not being able to read the content change our knowledge or "red flag" position, for copyright and for the duty to report child sexual abuse material once someone sends us a link?
+4. **Repeat infringers with no accounts.** § 512(i) expects a repeat-infringer policy. Our plan (#1728): two takedowns in 90 days against the same install set an Apple DeviceCheck flag on that device, which blocks it from sharing links even after a reinstall. We never store a device identifier. Is that a reasonable policy?
+5. **Defamation and harassment in shared comments.** Calling something commentary protects it from a copyright claim, not a defamation claim. With Section 230, a "Report this link" button and deletion on report, is there anything else we owe the person a comment is about?
+6. **Does a single-member LLC protect me if I personally handle takedowns?** I'll be the only member, the only operator and the person who acts on notices. What would still reach me personally, and what habits keep the LLC's protection intact?
 
-8a. **Phones upload transcripts of public podcast episodes they made on the device. Our server sends each one to an AI service to make a listening map (scene titles and short summaries), deletes the transcript within 24 hours, and shares only the map. Anything to watch?** Transcripts are never shared (#551, #552; deletion in `research/B4/server/internal/maps/store.go:13-16`); Cole would also like to know whether sharing full transcripts would ever be allowed.
+## Decided without counsel
 
-## 3. Other liability for hosted content
+Defaults taken on 2026-10-16. Veto any by number.
 
-9. **What else, beyond copyright, am I exposed to for text people share through my server?** A shared Margin could be defamatory or harassing; I'd like to know what Section 230 covers, what it doesn't, and whether a "Report this link" button plus prompt takedown is enough.
-10. **Is 30-day retention with deletion on report the right default?** Shorter lowers risk, longer is more useful to recipients, and I want to know whether any law requires me to keep a copy after a takedown.
+- **D1. LLC in the state Cole lives in.** Forming in Delaware or Wyoming adds a second registered agent and a foreign-registration fee, and gives a one-person business run from home nothing it needs. (Inference from general guidance; question 6 can confirm.)
+- **D2. Organization developer account under the LLC before the public release.** The D-U-N-S number is free. Moving the app between accounts is easier before launch than after.
+- **D3. Register a DMCA designated agent before share links go public.** $6, renewed every three years ([DMCA Directory FAQ](https://www.copyright.gov/dmca-directory/faq.html); 37 C.F.R. § 201.38). The agent is the LLC, at a registered-agent or virtual-mailbox address, so Cole's home address stays out of the public directory.
+- **D4. 30-day retention, deleted on a valid report.** After a takedown we keep only the report record (link id, reason, date), unless law enforcement asks us to preserve something or question 3's answer says the law requires it.
+- **D5. Sharing terms are accepted at the first share**, as a separate agreement, so the main Terms version doesn't change and nobody else is interrupted. Accepting at the point of use is the usual pattern.
+- **D6. The Open RAIL-M voice keeps its tap-to-accept at download**, recording the terms version and date. No custom App Store EULA. Only listeners who download that voice use it, so only they need to agree.
+- **D7. Synthesized-voice audio in a shared item is labeled machine-generated** (#1731).
+- **D8. Privacy laws.** The CCPA's revenue and volume thresholds are far above ours. For the GDPR, we store nothing linked to a person. The first public App Store release starts on the U.S. storefront and widens after a privacy check; TestFlight testers abroad are fine because nothing about them is stored.
+- **D9. App Store privacy label:** declare the App Attest key as Device ID, not linked to the user, used for fraud prevention. That is the conservative reading of Apple's definitions.
+- **D10. The listener's own OpenAI key.** The privacy policy says the app sends that text straight to OpenAI under the listener's account, and our server never sees it.
+- **D11. Age rating:** answer Apple's questionnaire as written for an app whose shared links anyone can open, and take at least 13+. The app isn't directed at children and has no age gate.
+- **D12. A protection service such as Cloudflare is named in the published privacy policy in advance**, so it can be switched on during an attack without a policy change first.
+- **D13. The starter podcast list is rebuilt from each show's own feed**, with no Apple chart data or Apple-hosted artwork (#1732). This was Cole's pick on #632.
+- **D14. Full transcripts are never shared.** Not with other listeners and not in maps.
 
-## 4. Terms and consent
+## Engineering mitigations filed
 
-11. **Can new sharing terms be accepted at the first share, rather than by everyone at once?** Bumping the Terms version (`SpokenMarginsTerms.currentVersion`, `App/SpokenMarginsApp/Sources/SpokenMarginsApp/SpokenMarginsTerms.swift:4`) makes every listener accept again before the on-device voice works (`docs/legal/spoken-margins-terms.md`), so a separate sharing agreement shown at first share would disturb fewer people.
-12. **Is the tap-to-accept flow enforceable for the voice model's use restrictions?** The Open RAIL-M licence requires its restrictions to appear in an enforceable agreement, and the app records only a version and date on the device. Only listeners who pick the James or Lily voice accept those Terms; everyone else downloads under Apple's Standard EULA. Should App Store Connect use a custom EULA (Apple's terms plus ours) so every download agrees to the restrictions (`docs/launch/app-store-submission.md` §6, Q3; #449)?
-13. **Do shared packets need a "machine-generated" disclosure?** The Open RAIL-M licence asks for one when distributing machine-generated content, and a packet can carry a cleaned or synthesized voice as well as the listener's own recording.
+- #1728: block repeat abusers by device with DeviceCheck, storing no device ID.
+- #1729: Report and Hide this sender in the app, for App Store guideline 1.2.
+- #1730: listening maps with anchors that quote nothing, transcripts that never touch disk, and summaries checked for copying.
+- #1731: label synthesized-voice audio as machine-generated.
+- #1732: rebuild the starter podcast list from publisher feeds.
 
-## 5. Privacy
-
-14. **Do privacy laws such as the CCPA or GDPR apply to a free, invite-only beta with no accounts?** The server keeps no IP addresses and the app collects nothing linked to a person, but testers may be outside the U.S.
-15. **Is the per-install App Attest key "Device ID" data for the App Store label?** The server keeps its public half, a counter and day-precision dates for up to 90 days, only to stop abuse (`research/B4/DESIGN.md` §2 and §7).
-16. **Is a user-supplied OpenAI key enough to keep me out of the data path?** When enabled, the app sends source text and Margin transcripts to OpenAI with the listener's own key, and none of it touches my server (`App/SpokenMarginsApp/Sources/SpokenMarginsApp/OpenAIResponsesClient.swift`).
-17. **What age rating and children's-privacy position should I take?** The app has no age gate, and share links are public pages anyone can open.
-18. **If an attack forces me to put a protection service such as Cloudflare in front of the server, what must change first?** Today the server keeps no visitor logs, and its rate limiter holds only scrambled IP addresses in memory for an hour (`research/B4/DESIGN.md` §5). Such a service would see every visitor's IP address. Can I turn it on during an attack and update the policy and App Store label afterwards, or must the policy name it in advance?
-
-## 6. Data bundled in the app
-
-19. **May the app ship a starter list of podcasts built from Apple's Top Charts, with Apple-hosted artwork? If not, is a hand-picked list rebuilt from each show's own feed safe?** 192 of the 200 starter shows come from Apple's Top Charts feeds, and their artwork loads from Apple's image server. Apple's site terms forbid copying or distributing its content "for publication or distribution or for any commercial enterprise" without written consent, and its artwork terms require a link to Apple's store, which the app doesn't show. The options are keep it, serve it only from my server, or rebuild it from the publishers' own feeds; my pick is the rebuild (`docs/launch/app-store-submission.md` §6, "The starter podcast catalog"; #632).
+The open-source licence is settled (owner, 2026-10-16) and isn't on this list.
