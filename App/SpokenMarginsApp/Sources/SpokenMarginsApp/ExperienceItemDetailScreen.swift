@@ -21,6 +21,9 @@ struct ExperienceItemDetailScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 22) {
                     hero
+                    if let description = model.selectedItem.descriptionText {
+                        ItemDescriptionPreview(text: description).id(model.selectedItem.id)
+                    }
                     secondaryActions
                     downloadRecovery
                     ItemLastFailureCard(itemId: model.selectedItem.id)
@@ -137,6 +140,12 @@ struct ExperienceItemDetailScreen: View {
                 .font(.title.weight(.bold))
                 .foregroundStyle(AppColors.text)
                 .fixedSize(horizontal: false, vertical: true)
+            if let published = model.selectedItem.publishedDateText {
+                Text(published)
+                    .font(.subheadline)
+                    .foregroundStyle(AppColors.secondaryText)
+                    .accessibilityIdentifier("item.publishedDate")
+            }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) { metadataPills }
                 VStack(alignment: .leading, spacing: 7) { metadataPills }
@@ -756,6 +765,31 @@ private struct ReadwiseItemLink: View {
                 Label("Open in Readwise", systemImage: "arrow.up.right.square")
             }
             .accessibilityIdentifier("item.readwise.link")
+        }
+    }
+}
+
+/// The publisher's description under the title: its first three lines, with More to read the rest in place (#1322).
+/// The text is whole to VoiceOver either way; only the sighted preview is cut.
+private struct ItemDescriptionPreview: View {
+    let text: String
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(AppColors.secondaryText)
+                .lineLimit(expanded ? nil : 3)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("item.description.text")
+            if ItemMetadata.needsExpansion(text) {
+                Button(expanded ? "Less" : "More") { expanded.toggle() }
+                    .font(.subheadline.weight(.semibold))
+                    .frame(minHeight: 44, alignment: .leading)
+                    .accessibilityHint(expanded ? "Shows fewer lines of the description." : "Shows the whole description.")
+                    .accessibilityIdentifier("item.description.more")
+            }
         }
     }
 }

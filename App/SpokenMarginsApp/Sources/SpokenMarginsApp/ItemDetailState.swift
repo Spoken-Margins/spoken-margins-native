@@ -7,6 +7,9 @@ struct ItemDetailState {
     var status = ""
     var text = ""
     var externalReference = ""
+    /// The feed's publication date as a readable date, and the opening of its description (#1322). Nil when unknown.
+    var publishedDateText: String?
+    var descriptionText: String?
     var overview = ""
     var navigation: [CanonicalNavigationNode] = []
     var chapters: [Chapter] = []
