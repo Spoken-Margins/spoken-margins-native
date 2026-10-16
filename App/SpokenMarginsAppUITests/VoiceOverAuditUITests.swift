@@ -132,7 +132,12 @@ final class VoiceOverAuditUITests: XCTestCase {
         XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Did not return to Now Playing")
         pausePlayback()
 
+        // The playback pane lists this item's Margins; sharing starts from the Margins tab it links to.
         app.buttons["playback.margins.button"].tap()
+        let allMargins = app.buttons["playback.margins.collection.button"]
+        XCTAssertTrue(allMargins.waitForExistence(timeout: 5), "The link to all Margins is missing")
+        assertSpokenName(of: allMargins)
+        allMargins.tap()
         let share = app.buttons["margins.shareItem.\(podcastItemId)"]
         XCTAssertTrue(share.waitForExistence(timeout: 5), "The item's share control is missing")
         assertSpokenName(of: share)
@@ -171,7 +176,10 @@ final class VoiceOverAuditUITests: XCTestCase {
     private func pausePlayback() {
         let playPause = app.buttons["playback.play.button"]
         XCTAssertTrue(playPause.waitForExistence(timeout: 5), "The play control is missing")
-        if playPause.label == "Pause" { playPause.tap() }
+        // A starting item shows "Play" until it is playing, so wait for it before pausing.
+        let started = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Pause"), object: playPause)
+        XCTAssertEqual(XCTWaiter().wait(for: [started], timeout: 15), .completed, "Playback did not start")
+        playPause.tap()
         let paused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Play"), object: playPause)
         XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 8), .completed, "Playback did not pause")
     }
