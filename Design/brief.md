@@ -1,10 +1,10 @@
 # Design brief: navigation and structure
 
-Written 2026-10-16 for a fresh design session. You propose **structure**: which screens exist, what sits on each, and how a listener moves between them. Screens get drawn later, by another session, after the owner picks one of your proposals.
+Written 2026-10-16. You propose **structure**: which screens exist, what sits on each, and how a listener moves between them. Screens are drawn later, after the owner picks a proposal.
 
 ## The jobs, and what they cost today
 
-Spoken Margins is an iPhone app for listening to articles, PDFs and podcasts, and for leaving spoken or written Margins on them. The app has three tabs: Library, Following and Margins. Tap counts come from `Design/flow-map/flow-map.json`, counted from the Library tab. A menu item counts as two taps.
+Spoken Margins plays articles, PDFs and podcasts, and lets a listener leave spoken or written Margins on them. It has three tabs: Library, Following and Margins. Tap counts come from `Design/flow-map/flow-map.json`, starting on Library; a menu item counts as two.
 
 Over the three-tap ceiling:
 
@@ -25,14 +25,12 @@ Two jobs are cheap to reach but fail anyway:
 
 ## The owner's problems, in his words
 
-The owner is the app's main user. These come from his notes of 2026-10-16.
-
 1. He can't find Margins he added recently.
 2. He can't see when items were added or published.
 3. He wants to see his items by cluster.
 4. A source with "three items a day that he plays once a week" fills up Following and the Library. Don't stop people adding it. Make it easy to reach when wanted and invisible when not.
 5. He likes Now Playing, but the controls are "far too bulky". Now and Timeline will show images, links, tables, figures and embeds, so space matters.
-6. Settings is a junk drawer. Feed management lives under Following → Manage instead of Settings. App configuration belongs in Settings, and long lists collapse: show two deleted items, then expand. He calls this easy, and expects you to get it right.
+6. Settings is a junk drawer. Feed management lives under Following → Manage instead of Settings. App configuration belongs in Settings, and long lists collapse: show two deleted items, then expand. He calls this easy.
 
 ## An open question: the library
 
@@ -52,18 +50,17 @@ Don't treat the library as "the main problem". He corrected that framing. His ow
 
 `Design/tried.md` keeps the full list. In short:
 
-1. Three whole-app directions in September: Four Rooms, The Deck and Notebook. He found them "very cluttered, no clear direction for a user".
-2. A second round: Player, Today and Notebook. "None clicked."
-3. Five Home-screen explorations with horizontal shelves and glanceable icons. "They all look quite poor."
-4. A confirm-by-ear flow for placing a shared Margin by hand. It was too many buttons for a rare case.
-5. Ten reference apps: Overcast, Pocket Casts, Castro, Apple Podcasts, Snipd, Reader, Matter, Apple Books, Libby and Spotify. He found all of them unimpressive, because none solves the hard problems above.
+1. Two rounds of whole-app directions in September (Four Rooms, The Deck, Notebook; then Player, Today, Notebook): "very cluttered, no clear direction for a user", then "none clicked".
+2. Five Home screens with shelves and glanceable icons: "they all look quite poor".
+3. Placing a shared Margin by ear with extra buttons: too much for a rare case.
+4. Ten reference apps, Overcast to Libby: all unimpressive, because none solves the problems above.
 
 What failed each time was redrawing screens without fixing the paths through them. Now Playing is the one redesign he accepted, so leave it until last.
 
 ## What to hand back
 
-1. Two or three proposals at most. Each one is a set of edits to the flow map: screens added, removed or merged, and arrows added or removed.
-2. For each proposal, the new tap count of every job above, and which of his six problems it solves.
+1. Two or three proposals, each a set of flow-map edits: screens added, removed or merged, and arrows changed.
+2. For each, every job's new tap count and which of his six problems it solves.
 3. One sentence on what you would watch for to show the proposal is wrong.
 4. No pixels, colours or type. Fewer screens beats more, so before you hand a proposal over, take one thing out.
 
