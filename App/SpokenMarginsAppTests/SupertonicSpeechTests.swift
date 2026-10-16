@@ -2312,6 +2312,23 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertFalse(harness.stallEvents.values.contains("supertonic.stall_paused"), "not left paused for a tap")
     }
 
+    // The listener pauses within the second the refusal gets to clear: nothing is recovered.
+    func testARefusedStartIsLeftAloneWhenTheListenerPausesFirst() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try harness.client.pause()
+        try await Task.sleep(for: .milliseconds(1_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no re-seat of a player the listener paused")
+        XCTAssertEqual(harness.stallEvents.values, [])
+    }
+
     // In front of the listener, who can tap, the watchdog's own timing stands.
     func testARefusedStartWithTheAppInFrontIsLeftToTheWatchdog() async throws {
         let harness = try SupertonicClientHarness(

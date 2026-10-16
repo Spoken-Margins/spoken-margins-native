@@ -2539,10 +2539,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
     /// listener with the phone locked heard nothing for 10 s or more (#1763). A refusal that is still standing a
     /// moment later is a stall now: the first one re-seats the player, and one that comes within the cooldown, from
     /// the re-seated player, goes the way a re-seat that did not help always has, to the iOS voice. Not in front
-    /// of the listener, who can tap, and not while the system itself has the session (the interruption pauses us).
+    /// of the listener, who can tap, and not once the system's interruption has paused us. The app's state is read
+    /// after the grace, so a refusal that came as the phone was locking (still inactive) is caught.
     @MainActor
     private func recoverFromRefusedStart(of refused: AVPlayer) async {
-        guard applicationIsInBackground?() == true else { return }
         try? await Task.sleep(for: Self.refusedStartGrace)
         guard applicationIsInBackground?() == true, refused.rate == 0,
               lock.withLock({ !fallbackIsActive && handOverAwaitingStart == nil }),
