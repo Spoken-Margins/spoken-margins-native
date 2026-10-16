@@ -91,7 +91,7 @@ struct MiniPlayerBar: View {
                         .frame(width: 44, height: 44)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Record an interjection")
+                .accessibilityLabel("Record a Margin")
                 .accessibilityIdentifier("miniPlayer.interject.button")
 
                 Button {

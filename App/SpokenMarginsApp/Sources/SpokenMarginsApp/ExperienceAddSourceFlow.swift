@@ -170,6 +170,7 @@ struct ExperienceAddSourceFlow: View {
                                 .foregroundStyle(AppColors.evergreen)
                                 .frame(width: 46, height: 46)
                                 .background(AppColors.softGreen, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+                                .accessibilityHidden(true)
                             Text(route.title)
                                 .font(.headline)
                                 .foregroundStyle(AppColors.text)
@@ -215,6 +216,7 @@ struct ExperienceAddSourceFlow: View {
             .accessibilityIdentifier("addSource.route.back")
             Image(systemName: selectedRoute.systemImage)
                 .foregroundStyle(AppColors.evergreen)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedRoute.title).font(.headline)
             }
