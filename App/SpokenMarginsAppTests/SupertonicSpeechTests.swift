@@ -2051,6 +2051,46 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(harness.renderer.startedCount, 4, "C renders while B plays")
     }
 
+    // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
+    // voice is rendering, and the chunk it was still rendering must be rendered again and played, not held until the
+    // listener's next play (#1673 audit).
+    func testAFailedBackgroundHandOverStillRendersTheNextChunkWithTheBundledVoice() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        defer { openGate.finish() }
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 2, gate: gate)
+        let fallback = RecordingFallbackAudioClient()
+        fallback.playError = NSError(domain: "test", code: 1)
+        let starts = HarnessStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                starts.add()
+            },
+            observesPlayerLifecycle: true,
+            onDeviceRenderingAllowed: { false },
+            pressureRenderer: bundled,
+            fallbackClient: fallback,
+            applicationIsActive: { false }
+        )
+        defer { try? client.stop() }
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "gap-kitten")
+        for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 1, "the first chunk plays")
+
+        // The first chunk ends after a second; the second is still rendering (gated), the hand-over fails, and the
+        // second chunk is rendered again, ungated.
+        for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
+        XCTAssertFalse(client.isSystemVoiceActive)
+    }
+
     // Leaving the app while a chunk plays: the next chunk is ready already, so it goes onto the player then.
     func testLeavingTheAppQueuesTheNextChunk() async throws {
         let presence = AppPresence()
@@ -4791,6 +4831,13 @@ private actor GatedBundledVoiceRenderer: BundledVoiceRendering {
     func discardGeneratedAudio(at url: URL) async {
         if generatedURLs.remove(url) != nil { try? FileManager.default.removeItem(at: url) }
     }
+}
+
+private final class HarnessStartCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var starts = 0
+    var count: Int { lock.withLock { starts } }
+    func add() { lock.withLock { starts += 1 } }
 }
 
 /// A bundled-voice stand-in that records the text of each render (#1680).

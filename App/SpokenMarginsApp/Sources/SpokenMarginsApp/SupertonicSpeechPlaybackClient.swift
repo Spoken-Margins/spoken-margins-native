@@ -2236,22 +2236,20 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         }
     }
 
-    /// A hand-over to the iOS voice that could not start cancelled the render it replaced. Waits for the chunk
-    /// again under the new generation, so the chosen voice plays it when it lands (#1673).
+    /// A hand-over to the iOS voice that could not start cancelled the render it replaced. Renders the chunk again
+    /// under the new generation, so the chosen voice (or the bundled one, when the phone is hot or in Low Power Mode)
+    /// plays it when it lands (#1673). The render queue the hand-over kept carries on from there: when this chunk
+    /// lands, the chunk after it is next in the order, so rendering ahead comes back without a restart. The render
+    /// goes straight to `enqueueRender`, not through the held-queue restart, which would hold it for a phone that
+    /// may not render with Supertonic and leave nothing to play until the listener's next play.
     private func waitForChosenVoiceAfterFailedHandOver(targetId: String, spokenOffset: Int) {
-        let (newGeneration, queueKept) = lock.withLock { () -> (UUID, Bool) in
+        let newGeneration = lock.withLock { () -> UUID in
             generationDisabledReasons.removeValue(forKey: targetId)
             resourceFallbackTargetIds.remove(targetId)
             playbackFailure = nil
             transportIntent = .playing
             pendingAutoplayOffset = spokenOffset
-            return (generation, !generationRenderOrder.isEmpty)
-        }
-        // The hand-over kept the render queue from this chunk on: restart it, so the chunks behind this one render
-        // ahead as before and every later seam still has its audio (#1673 audit).
-        if queueKept {
-            restartRenderQueueBehindKeptChunk()
-            return
+            return generation
         }
         guard let request = renderRequest(targetId: targetId, startOffset: spokenOffset, generation: newGeneration) else {
             return
