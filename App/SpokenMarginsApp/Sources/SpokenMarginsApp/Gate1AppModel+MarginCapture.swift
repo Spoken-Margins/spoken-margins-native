@@ -324,18 +324,48 @@ extension Gate1AppModel {
             lastError = nil
             marginCapture.clearPermissionDenied()
             snapshot = engine.snapshot
-            marginCapture.openDraft(WrittenMarginDraft(
-                capture: capture,
-                text: "",
-                itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
-                targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
-                progressPercent: capture.roughPercent,
-                reply: reply
-            ))
+            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, reply: reply))
             marginCapture.clearPresentationContext()
         } catch {
             streamingSpeechQueue.resumeAfterInterjection()
             reportFailure(error, context: "Written Margin could not start")
+        }
+    }
+
+    /// The draft the written Margin screen opens with, for a capture the engine has locked to its place.
+    private func makeWrittenMarginDraft(for capture: WrittenInterjectionCapture, store: SQLiteSessionStore, reply: MarginReplyDraft?) -> WrittenMarginDraft {
+        WrittenMarginDraft(
+            capture: capture,
+            text: "",
+            itemTitle: (try? store.loadItem(id: capture.itemId).title) ?? "Current item",
+            targetDescription: capture.targetType == .item ? "Source" : (capture.targetType == .assistantTurn ? "Assistant response" : "Interjection summary"),
+            progressPercent: capture.roughPercent,
+            reply: reply
+        )
+    }
+
+    /// #1669: Write instead, while a Margin is recording. What was recorded is dropped (the listener confirmed that
+    /// first when there was something worth keeping) and the written Margin opens at the place the recording was
+    /// locked to, answering the same shared Margin. A voice the recording held stays where it is, and the source stays
+    /// paused under it, as when the listener switches before the recording starts.
+    func switchRecordingToWrittenMargin() {
+        guard snapshot.isRecording, !isFinishingInterjection, let engine else { return }
+        let reply = marginCapture.pendingReply
+        let held = heldMarginVoice
+        recordFinalCaptureDiagnostics("switched_to_written")
+        do {
+            let store = try requireStore()
+            let capture = try engine.switchRecordingToWrittenInterjection(resumesSource: held == nil)
+            snapshot = engine.snapshot // the screen leaves the recording, and the capture watch ends with it
+            lastError = nil
+            marginCapture.clearPermissionDenied()
+            marginCapture.openDraft(makeWrittenMarginDraft(for: capture, store: store, reply: reply))
+            marginCapture.clearPresentationContext()
+            marginVoiceHeldForRecording = nil // no recording is coming, so a Margin of any kind stays as it is (#1672)
+            if held?.kind == .shared { stopImportedCommentaryPlayback(resumeSource: false) }
+            if !capture.wasPlaying { streamingSpeechQueue.resumeAfterInterjection() } // a finished source has no Save to resume it
+        } catch {
+            reportFailure(error, context: "Couldn't switch to writing")
         }
     }
 
