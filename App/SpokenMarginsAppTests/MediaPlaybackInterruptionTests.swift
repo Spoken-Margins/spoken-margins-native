@@ -1055,7 +1055,7 @@ final class MediaPlaybackInterruptionTests: XCTestCase {
         model.finishInterjection()
 
         XCTAssertFalse(model.snapshot.isRecording)
-        XCTAssertEqual(model.snapshot.status, .playing, "Save puts the source back")
+        try waitUntil("Save puts the source back") { model.snapshot.status == .playing }
     }
 
     /// #1672 audit: a hold marker left by an earlier recording (a Margin cut short by lost headphones keeps it) says the

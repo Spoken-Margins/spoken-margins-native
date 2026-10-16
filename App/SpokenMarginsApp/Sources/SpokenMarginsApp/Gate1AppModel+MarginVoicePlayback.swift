@@ -318,7 +318,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     /// for, a recording or a failure never gets here, so none of them resumes anything.
     func marginVoiceOwnPlaybackEnded() {
         let playedID = playingInterjectionAudioId, playedSessionID = playingInterjectionAudioSessionID
-        let recordedOver = marginVoicePlayer.ownRecordedOverMarginIdentity
+        let recordedOver = marginVoicePlayer.ownRecordedOverMarginIdentities
         let returnsSource = sharedMarginReturn.returnsSourceWhenVoiceEnds(resumeSource: true)
         stopInterjectionAudioPlayback()
         guard returnsSource, snapshot.status == .paused else { return }
@@ -329,7 +329,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
     }
 
     /// A podcast has no later Margins to wait for unless the listener recorded some. An article just resumes.
-    private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String, skipping recordedOver: String?) {
+    private func continueWithLaterMargins(afterOwnMarginID id: String, sessionID: String, skipping recordedOver: Set<String>) {
         guard let store, let itemID = snapshot.itemId, let position = snapshot.currentMediaTimeMs,
               let played = (try? store.loadInterjections(sessionId: sessionID))?.first(where: { $0.id == id }),
               played.itemId == itemID,
@@ -338,7 +338,7 @@ extension Gate1AppModel: MarginVoicePlayerHost {
         let playedIdentity = Self.marginIdentity(played)
         // The Margin just recorded over this one (#1672) sits at its place; the listener just made it, so it doesn't play next.
         let anchors = spoken.map { MarginMomentAnchor(marginId: Self.marginIdentity($0), mediaTimeMs: $0.anchor.mediaTimeMs ?? 0) }
-            .filter { $0.marginId != recordedOver }
+            .filter { !recordedOver.contains($0.marginId) }
         guard anchors.contains(where: { $0.marginId != playedIdentity && $0.mediaTimeMs > position }) else { return }
         var voiceURLs: [String: URL] = [:]
         for margin in spoken {

@@ -49,6 +49,12 @@ extension Gate1AppModel {
         (snapshot.isRecording || isRequestingRecordingPermission) && heldMarginVoice != nil
     }
 
+    /// A Margin was saved over your held own Margin: it doesn't play next when that Margin ends.
+    func noteMarginRecordedOverHeldOwnMargin(_ id: String?) {
+        guard let id else { return }
+        marginVoicePlayer.ownRecordedOverMarginIdentities.insert("\(snapshot.sessionId ?? "")::\(id)")
+    }
+
     /// The recording is over (saved, cancelled, or never started): the voice it held plays on from where it stopped.
     /// One the listener had paused themselves stays paused, for Play.
     func resumeHeldMarginVoice(_ held: HeldMarginVoice?) {

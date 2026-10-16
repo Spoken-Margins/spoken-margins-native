@@ -266,7 +266,7 @@ extension Gate1AppModel {
         run { engine in
             defer { recordSpokenMarginSavedBeforeFailure(engine.lastScheduledTranscriptionInterjectionId) }
             snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: held == nil)
-            if held?.kind == .own { marginVoicePlayer.ownRecordedOverMarginIdentity = engine.lastScheduledTranscriptionInterjectionId.map { "\(snapshot.sessionId ?? "")::\($0)" } }
+            if held?.kind == .own { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
             refreshSelectedItem()
             recordSavedInterjectionForOnboarding()
             transcribeAndRecordSavedSpokenMargin()

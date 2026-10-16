@@ -51,7 +51,9 @@ extension Gate1AppModel {
             return
         case .saveCutShort:
             run { engine in
+                let heldOwn = heldMarginVoice?.kind == .own
                 snapshot = try engine.finishInterjection(audioRef: nil, resumesSource: false)
+                if heldOwn { noteMarginRecordedOverHeldOwnMargin(engine.lastScheduledTranscriptionInterjectionId) }
                 refreshSelectedItem()
                 recordSavedInterjectionForOnboarding()
                 let interjection = latestInterjectionNeedingTranscription()
