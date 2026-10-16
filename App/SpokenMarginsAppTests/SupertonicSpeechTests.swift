@@ -2037,9 +2037,15 @@ final class SupertonicSpeechTests: XCTestCase {
         try await harness.start(waitingForRenders: 1)
         await harness.waitForRenderStarts(2)
         let before = harness.playerStarts
+        let stopsBefore = harness.systemVoice.stopCount
 
         await harness.finishPlayingChunk()
+        for _ in 0..<150 where harness.systemVoice.stopCount == stopsBefore { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(harness.systemVoice.stopCount, stopsBefore, "the seam tried the iOS voice")
+        XCTAssertEqual(harness.playerStarts, before, "B is still rendering: the seam waits for it")
 
+        // B was never cancelled: it plays when it lands.
+        harness.releaseRender(2)
         let next = await harness.waitForPlayerStarts(before + 1)
         XCTAssertTrue(next, "B plays in the chosen voice once it is rendered")
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
@@ -2048,13 +2054,13 @@ final class SupertonicSpeechTests: XCTestCase {
 
         // The render queue behind B survived the failed hand-over, so the chunks after B still render ahead of the
         // playing one. Without it every later seam would wait for its own render (#1673 audit).
-        await harness.waitForRenderStarts(4)
-        XCTAssertGreaterThanOrEqual(harness.renderer.startedCount, 4, "C renders while B plays")
+        await harness.waitForRenderStarts(3)
+        XCTAssertGreaterThanOrEqual(harness.renderer.startedCount, 3, "C renders while B plays")
     }
 
     // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
-    // voice is rendering, and the chunk it was still rendering must be rendered again and played, not held until the
-    // listener's next play (#1673 audit).
+    // voice is rendering, and the chunk it was still rendering plays when it lands, not held until the listener's next
+    // play (#1673 audit).
     func testAFailedBackgroundHandOverStillRendersTheNextChunkWithTheBundledVoice() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -2085,16 +2091,20 @@ final class SupertonicSpeechTests: XCTestCase {
         for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(starts.count, 1, "the first chunk plays")
 
-        // The first chunk ends after a second; the second is still rendering (gated), the hand-over fails, and the
-        // second chunk is rendered again, ungated.
+        // The first chunk ends after a second; the second is still rendering (gated) and the hand-over fails, so the
+        // seam waits for that render, which plays when it lands.
+        for _ in 0..<250 where fallback.stopCount == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(fallback.stopCount, 0, "the seam tried the iOS voice")
+        XCTAssertEqual(starts.count, 1, "the second chunk is still rendering")
+        openGate.finish()
         for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
         XCTAssertFalse(client.isSystemVoiceActive)
     }
 
     // The bundled voice holds the article's generation (the phone was hot), and the phone has cooled by the time a
-    // background seam finds the next chunk unrendered and the hand-over fails. The chunk is rendered again by the same
-    // voice: no mid-paragraph change to Supertonic that nobody asked for (#849, #1673 audit).
+    // background seam finds the next chunk unrendered and the hand-over fails. The chunk still plays from the bundled
+    // voice's render: no mid-paragraph change to Supertonic that nobody asked for (#849, #1673 audit).
     func testAFailedBackgroundHandOverKeepsTheBundledVoiceThatHeldTheGeneration() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
@@ -2133,6 +2143,9 @@ final class SupertonicSpeechTests: XCTestCase {
 
         allowed.value = true                                   // the phone cooled; the bundled voice keeps the article
 
+        for _ in 0..<250 where fallback.stopCount == 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThan(fallback.stopCount, 0, "the seam tried the iOS voice")
+        openGate.finish()
         for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
         let supertonicRenders = await supertonic.renderCount
