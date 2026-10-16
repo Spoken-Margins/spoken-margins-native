@@ -2,6 +2,7 @@
 import BackgroundTasks
 import XCTest
 import SessionKit
+import SessionKitFeeds
 @testable import SpokenMarginsApp
 
 /// The background feed refresh (#170): the system task runs the same stale-only refresh as the
@@ -20,7 +21,7 @@ final class FollowedSourceBackgroundRefreshTests: XCTestCase {
     private func coordinator(_ repository: InMemorySessionRepository) -> FollowedSourceCoordinator {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [BackgroundFeedURLProtocol.self]
-        return FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration))
+        return FollowedSourceCoordinator(repository: repository, session: URLSession(configuration: configuration), signals: .app)
     }
 
     private func controller(submitted: SubmittedRequests) -> FollowedSourceBackgroundRefreshController {
