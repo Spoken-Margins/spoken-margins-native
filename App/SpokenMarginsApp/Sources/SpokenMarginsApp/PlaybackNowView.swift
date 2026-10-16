@@ -20,7 +20,24 @@ struct PlaybackNowView: View {
             playhead: Double(model.snapshot.currentMediaTimeMs ?? 0) / 1_000, margins: candidates
         ) : []
 
+        // The scene under the playhead on the listener's own clock (#1629). Only while the source is playing:
+        // a generated response has its own clock, and another item's map must never show here.
+        let sceneSummary = isSourceClock
+            ? SceneSummarySelector.summary(at: model.snapshot.currentMediaTimeMs ?? 0, in: model.selectedItem.listeningMapSummarySpans)
+            : nil
+
         VStack(alignment: .leading, spacing: 8) {
+            if let sceneSummary {
+                Text("In this scene")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(AppColors.watchSecondary)
+                    .accessibilityAddTraits(.isHeader)
+                Text(sceneSummary)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("playback.now.sceneSummary")
+                    .padding(.bottom, 12)
+            }
             Text("Nearby Margins")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(AppColors.watchSecondary)

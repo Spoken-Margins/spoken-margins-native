@@ -659,6 +659,10 @@ final class Gate1AppModelWorkflowTests: XCTestCase {
         XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.title), ["Opening argument", "Evidence"])
         XCTAssertEqual(model.selectedItem.listeningMapScenes.map(\.startMs), [0, 300_000])
         XCTAssertEqual(model.selectedItem.listeningMapScenes.first?.description, "The guest frames the central question.")
+        // Podcast Now (#1629): the stored map reaches the view as spans; the unknown-eligibility scene shows nothing.
+        let spans = model.selectedItem.listeningMapSummarySpans
+        XCTAssertEqual(SceneSummarySelector.summary(at: 299_999, in: spans), "The guest frames the central question.")
+        XCTAssertNil(SceneSummarySelector.summary(at: 300_000, in: spans))
         XCTAssertFalse(model.canGenerateListeningMap)
         XCTAssertTrue(model.listeningMapGenerationAvailabilityDescription.contains("2 scenes"))
     }
