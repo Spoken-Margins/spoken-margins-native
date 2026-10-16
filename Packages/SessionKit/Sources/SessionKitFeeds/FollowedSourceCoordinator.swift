@@ -1,9 +1,15 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 import SessionKit
-import SessionKitFeeds
 
-enum FollowedSourceError: Error, LocalizedError {
+public enum FollowedSourceError: Error, LocalizedError {
     case invalidURL
     case insecureURL
     case responseTooLarge
@@ -11,7 +17,7 @@ enum FollowedSourceError: Error, LocalizedError {
     case invalidResponse
     case noFeedCandidates
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .invalidURL: "Enter a valid feed URL."
         case .insecureURL: "Followed sources must use HTTPS."
@@ -23,7 +29,7 @@ enum FollowedSourceError: Error, LocalizedError {
     }
 
     /// For diagnostics (#244): the case, not just the type name.
-    var diagnosticCode: String {
+    public var diagnosticCode: String {
         switch self {
         case .invalidURL: "invalid_url"
         case .insecureURL: "insecure_url"
@@ -35,13 +41,13 @@ enum FollowedSourceError: Error, LocalizedError {
     }
 }
 
-actor FollowedSourceCoordinator {
+public actor FollowedSourceCoordinator {
     private static let maximumFeedBytes = FeedParserLimits.defaultMaximumBytes
-    static let maximumRetainedSuggestionsPerFeed = 25
+    public static let maximumRetainedSuggestionsPerFeed = 25
     private let repository: any SessionRepository
     private let session: URLSession
     private let parser = FeedParser()
-    private(set) var contactedHosts: Set<String> = []
+    public private(set) var contactedHosts: Set<String> = []
     /// What each discovery step saw on the last `discover`, for diagnostics (#244). Hosts and
     /// error codes only, never a full link.
     private(set) var lastDiscoveryTrace: [String] = []
@@ -51,8 +57,8 @@ actor FollowedSourceCoordinator {
     /// Each followed show's artwork, in a side file beside the database (#773).
     private var artwork: FollowingArtworkStore
 
-    init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
-         signals: ListeningSignalRecorder? = .app) {
+    public init(repository: any SessionRepository, session: URLSession? = nil, artworkFile: URL? = nil,
+                signals: ListeningSignalRecorder?) {
         self.repository = repository
         self.artwork = FollowingArtworkStore(file: artworkFile)
         self.signals = signals
@@ -68,7 +74,7 @@ actor FollowedSourceCoordinator {
         }
     }
 
-    func follow(urlString: String) async throws -> FeedSubscription {
+    public func follow(urlString: String) async throws -> FeedSubscription {
         let candidates = try await discover(urlString: urlString)
         guard let candidate = candidates.first else { throw FollowedSourceError.noFeedCandidates }
         return try await follow(candidate: candidate)
@@ -76,7 +82,7 @@ actor FollowedSourceCoordinator {
 
     /// Follows a feed link once. A feed that is already followed keeps its subscription exactly
     /// as it is (mute state and inbox entries), so the drawer and OPML import can't duplicate it.
-    func followFeed(urlString: String) async throws -> FeedSubscription {
+    public func followFeed(urlString: String) async throws -> FeedSubscription {
         guard let candidate = try await discover(urlString: urlString).first else { throw FollowedSourceError.noFeedCandidates }
         if let existing = try repository.loadFeedSubscriptions().first(where: { $0.source.id == candidate.source.id }) {
             return existing
@@ -84,7 +90,7 @@ actor FollowedSourceCoordinator {
         return try await follow(candidate: candidate)
     }
 
-    func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
+    public func discover(urlString: String, requiringItemMembership: Bool = false) async throws -> [SourceCandidateEvidence] {
         let link = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         lastDiscoveryTrace = []
         guard let url = URL(string: link) else { throw FollowedSourceError.invalidURL }
@@ -113,12 +119,12 @@ actor FollowedSourceCoordinator {
 
     /// One line for diagnostics after a failed Follow (#244): the error case, the host, and what
     /// each discovery step saw.
-    func failureDiagnostic(for error: Error) -> String {
+    public func failureDiagnostic(for error: Error) -> String {
         let steps = lastDiscoveryTrace.isEmpty ? "none" : lastDiscoveryTrace.joined(separator: " | ")
         return "\(Self.diagnosticCode(for: error)) host=\(lastDiscoveryHost) steps=\(steps)"
     }
 
-    static func diagnosticCode(for error: Error) -> String {
+    public static func diagnosticCode(for error: Error) -> String {
         if let followError = error as? FollowedSourceError { return followError.diagnosticCode }
         if let parserError = error as? FeedParserError { return "feed_\(parserError)" }
         let nsError = error as NSError
@@ -172,7 +178,7 @@ actor FollowedSourceCoordinator {
         return url.string
     }
 
-    func follow(candidate: SourceCandidateEvidence) async throws -> FeedSubscription {
+    public func follow(candidate: SourceCandidateEvidence) async throws -> FeedSubscription {
         guard let url = URL(string: candidate.source.canonicalURL) else { throw FollowedSourceError.invalidURL }
         let parsed = try await fetch(url: url, subscription: nil)
         let host = url.host?.lowercased() ?? candidate.source.host
@@ -223,7 +229,7 @@ actor FollowedSourceCoordinator {
     /// Returns the entries that feeds set to "Add every new item" want added to the Library (#466).
     /// They stay unseen here; the caller imports them, which marks them imported.
     @discardableResult
-    func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
+    public func refreshStale(now: Date = Date(), minimumAge: TimeInterval = 6 * 60 * 60, force: Bool = false) async -> [FeedEntry] {
         var toAdd: [FeedEntry] = []
         for subscription in (try? repository.loadFeedSubscriptions()) ?? [] {
             // A background refresh that iOS cuts short stops here, not by failing every feed left (#170).
@@ -234,7 +240,7 @@ actor FollowedSourceCoordinator {
         return toAdd
     }
 
-    func entries() throws -> [FeedEntry] {
+    public func entries() throws -> [FeedEntry] {
         let muted = Set(try repository.loadFeedSubscriptions().filter { $0.state == .muted }.map(\.id))
         return try repository.loadFeedEntries(subscriptionId: nil)
             .filter { !muted.contains($0.subscriptionId) && $0.state != .dismissed && $0.state != .imported }
@@ -244,7 +250,7 @@ actor FollowedSourceCoordinator {
             }
     }
 
-    func setEntryState(id: String, state: FeedEntryState) throws {
+    public func setEntryState(id: String, state: FeedEntryState) throws {
         guard var entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }) else { return }
         entry.state = state
         try repository.saveFeedEntry(entry)
@@ -252,7 +258,7 @@ actor FollowedSourceCoordinator {
 
     /// Dismisses `id` and returns the state it had, for Undo (#477). Nil when there is no such entry
     /// or it was already dismissed, so there is nothing to undo.
-    func dismissEntry(id: String) throws -> FeedEntryState? {
+    public func dismissEntry(id: String) throws -> FeedEntryState? {
         guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
               entry.state != .dismissed else { return nil }
         try setEntryState(id: id, state: .dismissed)
@@ -261,7 +267,7 @@ actor FollowedSourceCoordinator {
 
     /// Puts an entry dismissed by `dismissEntry` back in the state it had (#477). It does nothing if
     /// the entry has moved on since, for instance imported from another screen.
-    func undoDismissEntry(id: String, restoring previous: FeedEntryState) throws {
+    public func undoDismissEntry(id: String, restoring previous: FeedEntryState) throws {
         guard let entry = try repository.loadFeedEntries(subscriptionId: nil).first(where: { $0.id == id }),
               entry.state == .dismissed else { return }
         try setEntryState(id: id, state: previous)
@@ -269,7 +275,7 @@ actor FollowedSourceCoordinator {
 
     /// Dismisses every entry in `ids` that is not dismissed already, for "Clear" on the New list
     /// (#1589). Returns the state each had, for one Undo. Imported entries stay imported.
-    func dismissEntries(ids: [String]) throws -> [String: FeedEntryState] {
+    public func dismissEntries(ids: [String]) throws -> [String: FeedEntryState] {
         let wanted = Set(ids)
         var previous: [String: FeedEntryState] = [:]
         for var entry in try repository.loadFeedEntries(subscriptionId: nil)
@@ -283,7 +289,7 @@ actor FollowedSourceCoordinator {
 
     /// Puts entries cleared by `dismissEntries` back in the state each had. One that has moved on
     /// since, for instance imported from another screen, is left alone.
-    func undoDismissEntries(restoring previous: [String: FeedEntryState]) throws {
+    public func undoDismissEntries(restoring previous: [String: FeedEntryState]) throws {
         for var entry in try repository.loadFeedEntries(subscriptionId: nil)
         where entry.state == .dismissed {
             guard let state = previous[entry.id] else { continue }
@@ -294,7 +300,7 @@ actor FollowedSourceCoordinator {
 
     /// An ambiguous enclosure remains a podcast if corroboration fails. Public page metadata
     /// identifies narration without extracting or replacing subscriber feed text.
-    func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {
+    public func publisherAudioEntry(for entry: FeedEntry) async -> FeedEntry {
         guard entry.publisherNarrationConfirmed != true, entry.publisherPlatform == "substack",
               (entry.bodyWordCount ?? 0) >= PublisherAudioDetector.minimumBodyWords,
               let url = Self.validHTTPSURL(entry.canonicalURL),
@@ -308,20 +314,20 @@ actor FollowedSourceCoordinator {
 
     /// How Following adds `entry` (#641). For an entry that could be an episode, this looks up its
     /// audio, refetching the feed for an older entry saved without its enclosure.
-    func importRoute(for entry: FeedEntry, subscriptionKind: SourceIdentityKind) async throws -> FollowedEntryImportRoute {
+    public func importRoute(for entry: FeedEntry, subscriptionKind: SourceIdentityKind) async throws -> FollowedEntryImportRoute {
         guard FollowedEntryImportRoute.needsAudioLookup(for: entry, subscriptionKind: subscriptionKind) else { return .article }
         let known = try await audio(for: entry)
         return FollowedEntryImportRoute.route(for: entry, subscriptionKind: subscriptionKind, audio: known)
     }
 
-    func playableAudioURL(for entry: FeedEntry) async throws -> String? {
+    public func playableAudioURL(for entry: FeedEntry) async throws -> String? {
         guard case .found(let audioURL) = try await audio(for: entry) else { return nil }
         return Self.validHTTPSURL(audioURL)?.absoluteString
     }
 
     /// The entry's audio: its stored https enclosure, or the one the feed lists for it now (saved
     /// on the entry). The feed listing the entry with no audio at all marks a text-only post.
-    func audio(for entry: FeedEntry) async throws -> FollowedEntryAudio {
+    public func audio(for entry: FeedEntry) async throws -> FollowedEntryAudio {
         if let audioURL = Self.validHTTPSURL(entry.audioURL) {
             return .found(audioURL.absoluteString)
         }
@@ -347,19 +353,19 @@ actor FollowedSourceCoordinator {
         return .found(audioURL.absoluteString)
     }
 
-    func setNewItemPolicy(subscriptionId: String, policy: FeedNewItemPolicy) throws {
+    public func setNewItemPolicy(subscriptionId: String, policy: FeedNewItemPolicy) throws {
         guard var subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == subscriptionId }) else { return }
         subscription.newItemPolicy = policy
         try repository.saveFeedSubscription(subscription)
     }
 
-    func setMuted(subscriptionId: String, muted: Bool) throws {
+    public func setMuted(subscriptionId: String, muted: Bool) throws {
         guard var subscription = try repository.loadFeedSubscriptions().first(where: { $0.id == subscriptionId }) else { return }
         subscription.state = muted ? .muted : .active
         try repository.saveFeedSubscription(subscription)
     }
 
-    func unfollow(subscriptionId: String) throws {
+    public func unfollow(subscriptionId: String) throws {
         for entry in try repository.loadFeedEntries(subscriptionId: subscriptionId) where entry.state != .imported {
             try repository.deleteFeedEntry(id: entry.id)
         }
@@ -369,7 +375,7 @@ actor FollowedSourceCoordinator {
 
     /// Following rows' artwork (#773): drops shows no longer followed and records the catalog's
     /// artwork for followed shows it lists.
-    func followingArtwork(catalog: SourceCatalog? = nil) -> FollowingArtworkCache {
+    public func followingArtwork(catalog: SourceCatalog? = nil) -> FollowingArtworkCache {
         if let subscriptions = try? repository.loadFeedSubscriptions() {
             artwork.reconcile(with: subscriptions, catalog: catalog)
         }
