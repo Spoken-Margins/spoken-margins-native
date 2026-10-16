@@ -85,6 +85,29 @@ class ClaudeAuditGateTests(unittest.TestCase):
                 scope = {'files': [{'path': path, 'category': 'sessionkit'}]}
                 self.assertEqual(bool(lane.merge_blockers(scope, [], HEAD)), required)
 
+    def test_runner_copied_out_of_the_tree_still_loads_and_applies_the_persistence_gate(self):
+        # lane.yml runs next's lane-runner.py from $RUNNER_TEMP (git show > file), so a helper module must be
+        # imported only after main() puts the workspace's scripts/ on sys.path (#1659).
+        driver = (
+            'import importlib.util, sys\n'
+            'spec = importlib.util.spec_from_file_location("lane_runner", sys.argv[1])\n'
+            'lane = importlib.util.module_from_spec(spec)\n'
+            'spec.loader.exec_module(lane)\n'
+            'sys.path.insert(0, sys.argv[2])\n'
+            'files = [{"path": "Packages/SessionKit/Sources/SessionKit/SessionEngine.swift", "category": "sessionkit"}]\n'
+            'print(lane.merge_blockers({"files": files}, [], "a" * 40))\n'
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp) / '_work' / '_temp'
+            temp.mkdir(parents=True)
+            runner = temp / 'lane-runner.py'
+            runner.write_text((SCRIPTS / 'lane-runner.py').read_text())
+            env = {k: v for k, v in os.environ.items() if k != 'PYTHONPATH'}
+            run = subprocess.run([sys.executable, '-c', driver, str(runner), str(SCRIPTS)],
+                                 cwd=tmp, env=env, capture_output=True, text=True)
+            self.assertEqual(run.returncode, 0, run.stderr[-800:])
+            self.assertIn('no Codex or Claude audit comment yet', run.stdout)
+
     def test_newest_head_audit_wins_across_reviewers(self):
         claude = comment('**Claude audit on `aaaaaaa`**\n\nNo blocking findings.')
         codex = comment('**Codex audit (Astra) on `aaaaaaa`**\n\n[P1] Broken.')

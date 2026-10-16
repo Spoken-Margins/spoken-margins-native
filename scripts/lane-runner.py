@@ -130,7 +130,6 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from lane_audit_policy import requires_persistence_audit
 
 QUEUED, RUNNING, DONE = 'lane:queued', 'lane:running', 'lane:done'
 AUTOMERGE = 'automerge'
@@ -812,6 +811,9 @@ def merge_blockers(scope: dict, comments: list[dict], head: str, inherited=None)
     inherited (inherited_check's answer) adds a hold per blocking audit on another PR's commits this PR brings in
     (#712): a clean audit of this head doesn't clear it, a resolution of that finding plus a clean audit after does."""
     reasons = []
+    # Imported here, like lane_slots: the workflow runs this file from $RUNNER_TEMP, where ROOT/scripts is
+    # not the workspace, so a top-level import fails before main() puts the tree on sys.path.
+    from lane_audit_policy import requires_persistence_audit
     risky = {AUDITED[f['category']] for f in scope['files'] if f['category'] in AUDITED}
     # #1658: test-scope's sessionkit category does not describe persistence risk.
     # Use the auditor's existing eligibility rules as well, without changing tiers.
