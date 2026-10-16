@@ -3318,7 +3318,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 // the app, which still has its audio in the cache.
                 let queueMovesOn = BackgroundChunkSeam.queueMovesOnAtEnd(
                     queuedChunkIsOnThePlayer: queued.player.items().contains(queued.item),
-                    playerAdvancesAtItemEnd: queued.player.actionAtItemEnd == .advance
+                    playerAdvancesAtItemEnd: queued.player.actionAtItemEnd == .advance,
+                    playerIsPlaying: queued.player.rate != 0
                 )
                 if !queueMovesOn {
                     queued.player.remove(queued.item)
@@ -3352,8 +3353,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 voiceChangeCueDecider = NarrationVoiceChangeCue()
             }
             _ = voiceChangeCueDecider.leadIn(forStandIn: false)
-            // Back to a player that stays on its item at the end, until another chunk is queued behind this one.
-            queued.player.actionAtItemEnd = .pause
+            // Back to a player that stays on its item at the end, until another chunk is queued behind this one. Not
+            // while the player still names the chunk before: it may be about to move on, and `.pause` would stop it.
+            if current === queued.item { queued.player.actionAtItemEnd = .pause }
             // The queued chunk's end observer and failure watch take over from the finished chunk's.
             replacedObservers = (playbackEndObserver, playerItemStatusObservation)
             playbackEndObserver = queuedEndObserver

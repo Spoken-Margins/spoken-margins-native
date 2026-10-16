@@ -2251,11 +2251,11 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "rendered_not_queued 1")
     }
 
-    // #1762: the real queue, with nothing driving it. Each chunk is a second of its own tone; the app is away
+    // #1762: the real queue, with nothing driving it. Each chunk is two seconds of its own tone; the app is away
     // through four of them. Every seam must be the queue's own: no new player, one `queued_ahead` per seam.
     func testTheRealQueuePlaysThroughSeveralSeamsWithTheAppAwayAndNoNewPlayer() async throws {
         let harness = try SupertonicClientHarness(
-            chunkSeconds: 1, distinctTones: true, applicationIsActive: { false }
+            chunkSeconds: 2, distinctTones: true, applicationIsActive: { false }
         )
         defer { harness.tearDown() }
         let chunk = harness.chunkStarts
@@ -2263,7 +2263,7 @@ final class SupertonicSpeechTests: XCTestCase {
         try await harness.start(waitingForRenders: 3)
         let starts = harness.playerStarts
 
-        let reached = await harness.waitForPlayingChunk(chunk[3], seconds: 12)
+        let reached = await harness.waitForPlayingChunk(chunk[3], seconds: 15)
 
         XCTAssertTrue(reached, "the real queue played on to the fourth chunk by itself")
         XCTAssertEqual(harness.playerStarts, starts, "no seam started a new player")

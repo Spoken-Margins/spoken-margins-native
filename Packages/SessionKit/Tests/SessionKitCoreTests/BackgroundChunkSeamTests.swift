@@ -78,11 +78,16 @@ final class BackgroundChunkSeamTests: XCTestCase {
     }
 
     // #1762: the end of a chunk heard while the player still names it as current, with the next chunk queued behind
-    // it on a player that advances, is a queue moving on. Only the other three cases go through the app.
-    func testAQueuedChunkOnAnAdvancingPlayerIsTheOneThatPlaysNext() {
-        XCTAssertTrue(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: true, playerAdvancesAtItemEnd: true))
-        XCTAssertFalse(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: false, playerAdvancesAtItemEnd: true))
-        XCTAssertFalse(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: true, playerAdvancesAtItemEnd: false))
-        XCTAssertFalse(BackgroundChunkSeam.queueMovesOnAtEnd(queuedChunkIsOnThePlayer: false, playerAdvancesAtItemEnd: false))
+    // it on a player that advances and is playing, is a queue moving on. Flipping any one fact goes through the app.
+    func testAQueuedChunkOnAnAdvancingPlayingPlayerIsTheOneThatPlaysNext() {
+        func moves(onPlayer: Bool = true, advances: Bool = true, playing: Bool = true) -> Bool {
+            BackgroundChunkSeam.queueMovesOnAtEnd(
+                queuedChunkIsOnThePlayer: onPlayer, playerAdvancesAtItemEnd: advances, playerIsPlaying: playing
+            )
+        }
+        XCTAssertTrue(moves())
+        XCTAssertFalse(moves(onPlayer: false), "B left the queue")
+        XCTAssertFalse(moves(advances: false), "the player stops at an item's end")
+        XCTAssertFalse(moves(playing: false), "the player rests at A's end and won't play an inserted B")
     }
 }
