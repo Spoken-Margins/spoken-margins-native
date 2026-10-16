@@ -12,6 +12,8 @@ struct ItemDetailState {
     var chapters: [Chapter] = []
     var mediaChapters: [MediaTimelineChapter] = []
     var listeningMapScenes: [MediaTimelineChapter] = []
+    /// The same scenes with their end times and summaries, for the podcast Now view (#1629).
+    var listeningMapSummarySpans: [SceneSummarySpan] = []
     var mediaDurationMs: Int?
     /// The scenes came from the server's community map (#553), not this phone or the publisher.
     var listeningMapIsCommunity: Bool { listeningMapScenes.first.map { CommunityMapConverter.isCommunitySceneId($0.id) } ?? false }
