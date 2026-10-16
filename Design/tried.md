@@ -28,6 +28,7 @@ Ideas the structure proposals session considered and set aside, with the reason,
 ## Accepted, for contrast
 
 - **Now Playing redesign**: "significantly better". The controls are still too bulky.
+- **Four tabs structure** (2026-10-16, after the revision in `Design/proposals/`): "Great work! Four tabs works." It is the objective for the navigation redesign.
 
 ## Earlier studies, not verdicts
 
