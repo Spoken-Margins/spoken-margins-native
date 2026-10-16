@@ -210,7 +210,7 @@ final class Gate1AppModel: ObservableObject {
     @Published var selectedBatchExportSessionIds: Set<String> = []
     @Published var batchExportFolderName = SavedFolderSetting.sessionExport.name() ?? "No folder selected"
     @Published var batchExportResult: BatchSessionExportResult?
-    @Published var isWritingBatchExport = false
+    @Published var batchExportShare: SessionShareFiles?
     @Published var retryingInterjectionTranscriptionIds: Set<String> = []
     var libraryPresentationRevision = 0
     var navigationRefreshTask: Task<Void, Never>?

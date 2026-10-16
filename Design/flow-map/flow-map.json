@@ -2820,16 +2820,16 @@
   {
    "id": "e166",
    "from": "BatchExportScreen",
-   "to": "FILES",
-   "control": "Choose Folder / Change Folder (folder.badge.plus)",
+   "to": "SHARE_SHEET",
+   "control": "Export N Sessions (square.and.arrow.up)",
    "control_kind": "button",
    "presentation": "system",
    "file": "BatchExportScreen.swift",
-   "line": 220,
-   "anchor": "isFolderImporterPresented = true",
-   "present_line": 83,
+   "line": 219,
+   "anchor": "Button(action: model.prepareSelectedSessionsForSharing)",
+   "present_line": 84,
    "condition": "At least one session selected",
-   "notes": ".fileImporter for [.folder]."
+   "notes": "One .md file per session in a temporary folder; the sheet reports whether anything was shared (#1528)."
   },
   {
    "id": "e167",

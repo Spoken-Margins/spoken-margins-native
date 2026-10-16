@@ -101,7 +101,7 @@ struct HelpScreen: View {
                 }
                 Section("Share and Export") {
                     Text("Choose the listening session, format, and included material. Share Session opens the iOS share sheet; Copy puts the generated Markdown or JSON on the clipboard.")
-                    Text("From Margins, tap Export Sessions to select multiple listening sessions and save one Markdown file per session. Spoken Margins remembers the export folder you choose.")
+                    Text("From Margins, tap Export Sessions to select multiple listening sessions and share one Markdown file per session. The share sheet lets you choose AirDrop, Save to Files or another app each time.")
                 }
             }
             .navigationTitle("Help")
