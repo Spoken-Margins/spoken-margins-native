@@ -160,6 +160,7 @@ final class NarrationOwnershipRepairTests: XCTestCase {
             XCTAssertTrue(client.isSystemVoiceActive, "the iOS voice has taken over")
             let handedOver = fallback.playedOffsets
             XCTAssertEqual(handedOver.count, 1)
+            fallback.offset = 12 // The iOS voice reads on while the app has no session.
 
             model.handleAppBecameActive()
 
@@ -170,8 +171,8 @@ final class NarrationOwnershipRepairTests: XCTestCase {
             XCTAssertEqual(model.engine?.currentSession?.id, session)
             XCTAssertTrue(model.snapshot.status.isPlaybackActive)
             XCTAssertEqual(fallback.playedOffsets, handedOver, "Repair shows the session; it must not restart the narration")
-            XCTAssertGreaterThanOrEqual(try XCTUnwrap(model.snapshot.currentTextStart), positionBefore,
-                                        "The listening position carries on; it does not go back")
+            XCTAssertGreaterThan(try XCTUnwrap(model.snapshot.currentTextStart), positionBefore,
+                                 "The repaired session sits where the iOS voice is now, not back where Supertonic stopped")
 
             model.openPlayback() // The mini-player button.
             XCTAssertEqual(model.screen, .playback)
@@ -201,6 +202,7 @@ final class NarrationOwnershipRepairTests: XCTestCase {
             XCTAssertTrue(client.isSystemVoiceActive)
             let handedOver = fallback.playedOffsets
             let positionBefore = model.snapshot.currentTextStart ?? 0
+            fallback.offset = 12 // The iOS voice reads on while the app has no session.
             model.screen = .home
             loseTheSnapshot(model)
 
@@ -211,7 +213,8 @@ final class NarrationOwnershipRepairTests: XCTestCase {
             XCTAssertEqual(model.snapshot.sessionId, session)
             XCTAssertEqual(model.activeItemId, playingItem)
             XCTAssertEqual(fallback.playedOffsets, handedOver, "The tap must not restart the narration")
-            XCTAssertGreaterThanOrEqual(try XCTUnwrap(model.snapshot.currentTextStart), positionBefore)
+            XCTAssertGreaterThan(try XCTUnwrap(model.snapshot.currentTextStart), positionBefore,
+                                 "The recovered session sits where the iOS voice is now")
             XCTAssertEqual(client.narrationDiagnostics()["clientIntent"], "playing")
         }
     }
@@ -261,7 +264,6 @@ final class NarrationOwnershipRepairTests: XCTestCase {
         let renderer = ScriptedSupertonicRenderer(
             template: try silentChunk(in: root), duration: 30, heldRenders: [])
         let fallback = RecordingFallbackAudioClient()
-        fallback.advancesPerRead = 4 // The iOS voice's place moves on each time it is read, as a speaking voice's does.
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
