@@ -74,6 +74,11 @@ Replace this section when the focus changes; do not append to it.
     - Voice models move to downloads instead of shipping with the app, so their licences don't block going public.
     - He forms the LLC himself through a website.
     - The 2026-10-14 "licence stuff to figure out" gate on going public is settled.
+  - **Kitten stays bundled; the other voice models move to downloads.** "if we can bundle kitten legally... then I think we should keep it bundled because it's a significantly better than most of the voices that users are going to have on their iPhone."
+    - Kitten's inputs (the model, the misaki lexicon and the g2p_en weights) are Apache-2.0, and the CMU dictionary is BSD-style. There is no GPL code or data in it (`App/SpokenMarginsApp/Resources/Kitten/NOTICES.txt`), so it can ship in the app and in the public repo.
+    - It takes about 62 MB.
+    - Supertonic and any later neural voices are downloaded (#1391, #1392).
+    - With nothing downloaded, Kitten is the fallback voice, ahead of the installed iOS voices.
   - **A lawyer gates only share links, Listening Maps and a public App Store release.** "we can just not ship those features or not ship a public App Store app until we get lawyer feedback." Work on them continues. Only turning them on for the public, or a public App Store release, waits for the attorney meeting ([docs/legal/attorney-questions.md](docs/legal/attorney-questions.md)).
     - The work is tracked in the `Open Source` milestone; the self-hosted runner gaps are in #1719.
   - **Routine CI moves off the Mac; journeys, phone builds and signing stay on it.** "The journeys, phone builds, and signing can be on my Mac... and doesn't make me feel like I need to keep my Mac plugged in and online 24/7." The goal of going public is hosted CI, so the Mac no longer has to be awake, plugged in and online for routine tests. Mac work becomes on-demand.
