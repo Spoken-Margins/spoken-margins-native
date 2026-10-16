@@ -11,7 +11,7 @@ act on what it prints, then reply:
   scripts/sm_sweep.py --json           the same facts for scripts
   scripts/sm_sweep.py --status-json F  use a saved `scripts/sm_status.py --json` output (F or - for stdin)
 
-It looks for six things:
+It looks for seven things:
   1. free Claude slots against the Dial (#589): its Threads box less the Claude threads active from their claim
      and stop notes (ops/dial/dial_gate.py's own reading), with the ready issues to start; Codex workers are
      counted against Codex's box and never against Claude's
@@ -22,6 +22,8 @@ It looks for six things:
   5. open PRs with a `/lane T4` request unanswered for over an hour, or the Mac tick's `Test Desk: GO`, with no
      Test Desk seen working for an hour
   6. `needs-mac` PRs with no finisher comment or commit for an hour after the hand-off
+  7. open issues with no milestone, however old (2026-10-16: the daily triage looked only at issues filed since its
+     last run, so 136 piled up unseen); the daily routine milestones and labels every one
 
 --apply releases a stale claim by removing `in-progress`, adding `ready` (unless the issue is `blocked`,
 `needs-owner` or `deferred`) and commenting why. It re-reads the issue's comments just before writing and does
@@ -260,6 +262,10 @@ def collect(api, now, snapshot=None):
         found = api.pages(f'issues?state=open&labels={urllib.parse.quote(label)}')
         return [issue_row(i) for i in found if 'pull_request' not in i]
     ready, in_progress = listing('ready'), listing('in-progress')
+    try:    # every open issue with no milestone, however old: the daily triage once looked only at new ones
+        untriaged = [issue_row(i) for i in api.pages('issues?state=open&milestone=none') if 'pull_request' not in i]
+    except sm_status.GitHubError:
+        untriaged = None
 
     active = [t for t in dial_gate.of_provider(threads) if t['state'] == 'active']
     codex_active = [t for t in dial_gate.of_provider(threads, 'codex') if t['state'] == 'active']
@@ -274,7 +280,7 @@ def collect(api, now, snapshot=None):
         claims.append(dict(issue, state=state, why=why, last_seen=last))
 
     return {'now': now, 'snapshot': snapshot, 'dial': dial, 'dial_now': dial_now(status_comments), 'usage': usage,
-            'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims,
+            'tick': latest_tick(tick_comments), 'ready': ready, 'in_progress': claims, 'untriaged': untriaged,
             'claude_active': [t['title'] for t in active], 'codex_active': [t['title'] for t in codex_active],
             'desk_seen': desk_seen, 'comments_complete': comments_complete}
 
@@ -340,6 +346,14 @@ def decide(facts, window=STALE_AFTER):
             ': no `where:mac` issue is in progress. ' + ('A Claude slot is free for a Mac thread.' if slot['claude_free']
                                                          else f'No Claude slot is free ({slot["held"] or "all busy"}).'),
             issues=[i['number'] for i in mac_ready[:6]])
+
+    untriaged = facts.get('untriaged') or []
+    if untriaged:
+        oldest = min(untriaged, key=lambda row: row['created_at'])
+        act('untriaged', LOOK, f'{len(untriaged)} open issue(s) have no milestone (oldest #{oldest["number"]}, filed '
+            f'{oldest["created_at"][:10]}): the daily triage must milestone and label every one, not only the issues '
+            'filed since its last run (AGENTS.md, Current focus: Solid Ground, Co-op Experience, Later).',
+            issues=[row['number'] for row in untriaged[:10]])
 
     for claim in claims:
         if claim['state'] == 'stale':

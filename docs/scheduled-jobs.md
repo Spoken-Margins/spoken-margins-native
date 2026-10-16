@@ -24,7 +24,7 @@ Times are UTC unless a zone is named. "Pause" is the way to stop that one job wi
 |---|---|---|---|---|---|
 | Dial relay | None. Fired by the Dial gate and by lane-open pings through the routine's fire endpoint | The fire payload | A project-chat post only on a state change (Off, Holding, a new thread count); otherwise the payload goes to the coordinator | Routine; project instructions say how it behaves | Disable the routine, or set the Dial to Off on #589 |
 | Hourly dispatch | `20 */3 * * *` (every 3 hours; last fired 18:20, next 21:20) | Latest Mac tick on #337, lane reports, audits, `automerge` PRs | Labels, comments, thread starts | Routine, with the project instructions' HOURLY DISPATCH list | Disable the routine |
-| Spoken Margins daily routine | `CRON_TZ=America/New_York 30 21 * * *`; last fired 01:36, so it ran about 6 minutes after 21:30 Eastern | New issues, the project board | Labels, the Area field, new `ready` issues, thread starts | Routine, with FILING NEW ISSUES in the project instructions | Disable the routine |
+| Spoken Margins daily routine | `CRON_TZ=America/New_York 30 21 * * *`; last fired 01:36, so it ran about 6 minutes after 21:30 Eastern | Issues filed since its last run, and the project board. The owner-side prompt change to "every open issue with no milestone" is pending (#337, 2026-10-16) | Labels, the Area field, new `ready` issues, thread starts | Routine, with FILING NEW ISSUES in the project instructions | Disable the routine |
 | Six disabled routines | None. Four one-shot reminders from 2026-09-30 and two `limit_wake` retries from 2026-10-10 | | | | Already off. Safe to delete. |
 
 ### Claude work on the Mac (not checked: lives outside this repo)
