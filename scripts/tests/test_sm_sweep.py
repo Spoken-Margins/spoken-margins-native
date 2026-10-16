@@ -89,7 +89,7 @@ def pr(number, issue_number=None, armed=True, red=False, t4=None, mac=None):
 
 
 def world(comments=(), ready=(), in_progress=(), events=None, refs=None, tick=TICK_BODY, tick_at=None, dial=DIAL_BODY,
-          status_comment=None, comments_error=None):
+          status_comment=None, comments_error=None, untriaged=()):
     """A router for one sweep: the Dial issue, the Mac tick, repo comments, the two label lists, claim evidence."""
     router = Router()
     router.on(r'^issues/589$', {'body': dial})
@@ -100,6 +100,7 @@ def world(comments=(), ready=(), in_progress=(), events=None, refs=None, tick=TI
     router.on(r'^events', [])
     router.on(r'^pulls\?state=open', [])
     router.on(r'^git/ref/heads/next', {'object': {'sha': 'a' * 40}})
+    router.on(r'^issues\?state=open&milestone=none', list(untriaged))
     router.on(r'^issues\?state=open&labels=ready', list(ready))
     router.on(r'^issues\?state=open&labels=in-progress', list(in_progress))
     router.on(r'^issues/(\d+)/events', lambda path: (events or {}).get(int(re.search(r'issues/(\d+)', path).group(1)), []))
@@ -615,3 +616,21 @@ class Output(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class Untriaged(unittest.TestCase):
+    def test_issues_with_no_milestone_are_listed_however_old(self):
+        old = issue(1256, created='2026-10-10T00:00:00Z')
+        actions, _ = sweep.decide(facts_of(world(untriaged=[issue(1500, created='2026-10-14T00:00:00Z'), old])))
+        found = [a for a in actions if a['rule'] == 'untriaged']
+        self.assertEqual(len(found), 1)
+        self.assertIn('2 open issue(s) have no milestone (oldest #1256, filed 2026-10-10)', found[0]['detail'])
+
+    def test_nothing_untriaged_says_nothing(self):
+        actions, _ = sweep.decide(facts_of(world()))
+        self.assertNotIn('untriaged', rules(actions))
+
+    def test_an_unreadable_listing_is_not_reported_as_a_backlog(self):
+        router = world().on(r'^issues\?state=open&milestone=none', sm_status.GitHubError('boom'))
+        actions, _ = sweep.decide(facts_of(router))
+        self.assertNotIn('untriaged', rules(actions))

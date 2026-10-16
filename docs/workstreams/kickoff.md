@@ -57,7 +57,7 @@ Retired on 2026-09-29. A long-lived triage desk re-read a large context on every
 | Job | Who does it now |
 | --- | --- |
 | Hand out work: one thread per `ready` issue, in the order the project's instructions give | The owner's Claude Code project |
-| Triage new and `critic:*` issues daily: `ready`, `needs-owner`, `deferred`, or closed as a duplicate | The project, in its daily routine (21:30 Eastern) |
+| Triage every open issue with no milestone, and new `critic:*` issues, daily: a milestone by the rule in AGENTS.md "Current focus", then `ready`, `needs-owner`, `deferred`, or closed as a duplicate. The query is `is:issue is:open no:milestone`, not "filed since the last run": a run that skips an issue once would never see it again (2026-10-16: 136 piled up, #1256 among them). `scripts/sm_sweep.py` prints an `UNTRIAGED` line whenever any remain | The project, in its daily routine (21:30 Eastern) |
 | Decisions, defaults the streams took, and phone candidates, for the owner | The project conversation |
 | Pace, runner queue, disk, memory, the main checkout, and the daily scorecard | The `SM Mac tick` scheduled task, every two hours, posting on #337. It doesn't merge. |
 | Merge finished work | The lane runner merges `automerge` PRs it passes. After a T3 PASS on a PR held for T3, it re-runs the automerge checks on a fresh merge commit and merges on PASS (#421). It never merges an audio, persistence, packet or lane diff without a clean Codex audit of its head commit; lane changes no longer wait for the owner (2026-10-01). |
