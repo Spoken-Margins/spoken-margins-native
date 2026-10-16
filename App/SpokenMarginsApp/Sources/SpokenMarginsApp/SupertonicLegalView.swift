@@ -31,24 +31,28 @@ struct SupertonicLegalView: View {
                         title: "Supertone MIT License",
                         resourceName: "SUPERTONIC_CODE_MIT"
                     )
+                        .miniPlayerKeepOut()
                 }
                 NavigationLink("ONNX Runtime · MIT") {
                     BundledLicenseDocumentView(
                         title: "ONNX Runtime MIT License",
                         resourceName: "ONNXRUNTIME_MIT"
                     )
+                        .miniPlayerKeepOut()
                 }
                 NavigationLink("ONNX Runtime · Third-Party Notices") {
                     BundledLicenseDocumentView(
                         title: "ONNX Runtime Notices",
                         resourceName: "ONNXRUNTIME_THIRD_PARTY_NOTICES"
                     )
+                        .miniPlayerKeepOut()
                 }
                 NavigationLink("sherpa-onnx · Apache 2.0") {
                     BundledLicenseDocumentView(
                         title: "sherpa-onnx License",
                         resourceName: "SHERPA_ONNX_APACHE-2.0"
                     )
+                        .miniPlayerKeepOut()
                 }
             }
         }

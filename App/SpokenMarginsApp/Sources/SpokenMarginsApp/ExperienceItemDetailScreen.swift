@@ -36,6 +36,7 @@ struct ExperienceItemDetailScreen: View {
                     if let edition = model.selectedListeningEdition { ListeningEditionScenes(edition: edition) }
                     if !model.selectedItem.listeningMapScenes.isEmpty { listeningMap }
                     recentMargins
+                    itemLinks
                     advanced
                 }
                 .padding(.horizontal, horizontalSizeClass == .regular ? 30 : 18)
@@ -54,6 +55,7 @@ struct ExperienceItemDetailScreen: View {
             }
             .background(AppColors.bone)
             .accessibilityIdentifier("item.screen")
+            .announcesScreenChange()
             .navigationTitle("Item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -127,6 +129,7 @@ struct ExperienceItemDetailScreen: View {
             } message: {
                 Text("Your existing listening position and Margins remain in their current session.")
             }
+            .miniPlayerKeepOut()
         }
     }
 
@@ -350,6 +353,7 @@ struct ExperienceItemDetailScreen: View {
                                     Spacer()
                                     Image(systemName: "play.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -384,6 +388,7 @@ struct ExperienceItemDetailScreen: View {
                                     Spacer()
                                     Image(systemName: "play.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -427,6 +432,7 @@ struct ExperienceItemDetailScreen: View {
                                 HStack(alignment: .top, spacing: 12) {
                                     Image(systemName: "quote.bubble.fill")
                                         .foregroundStyle(AppColors.coral)
+                                        .accessibilityHidden(true)
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(row.preview)
                                             .font(.headline)
@@ -440,6 +446,7 @@ struct ExperienceItemDetailScreen: View {
                                     Spacer()
                                     Image(systemName: "chevron.right")
                                         .foregroundStyle(AppColors.secondaryText)
+                                        .accessibilityHidden(true)
                                 }
                                 .padding(.vertical, 12)
                             }
@@ -447,9 +454,18 @@ struct ExperienceItemDetailScreen: View {
                         }
                     }
                 }
-                ReadwiseItemLink(sync: model.readwiseHighlightSync, itemId: model.selectedItem.id)
             }
         }
+    }
+
+    /// "Open Original Source" and "Open in Readwise" side by side above Advanced, one under the other
+    /// when they don't fit (narrow phones, large text).
+    private var itemLinks: some View {
+        ItemLinksRow(
+            sync: model.readwiseHighlightSync,
+            itemId: model.selectedItem.id,
+            originalSource: model.selectedItem.originalSourceURL
+        )
     }
 
     private var sessions: some View {
@@ -480,6 +496,8 @@ struct ExperienceItemDetailScreen: View {
                                     Image(systemName: "play.fill").frame(width: 44, height: 44)
                                 }
                                 .buttonStyle(.bordered)
+                                .accessibilityLabel("Resume this session")
+                                .accessibilityIdentifier("session.resume.\(row.session.id)")
                                 Button { model.openExport(sessionId: row.session.id) } label: {
                                     Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44)
                                 }
@@ -708,6 +726,7 @@ private struct ExperienceListeningMapSection: View, Equatable {
                                     Spacer()
                                     Image(systemName: "play.fill")
                                         .foregroundStyle(AppColors.evergreen)
+                                        .accessibilityHidden(true)
                                 }
                                 .frame(minHeight: 52)
                             }
@@ -737,15 +756,41 @@ private struct ExperienceListeningMapSection: View, Equatable {
 
 }
 
-/// "Open in Readwise" once this item's Margins have been sent there (#623).
-private struct ReadwiseItemLink: View {
+/// The links off the Item screen: the original page (#1167), and Readwise once this item's Margins
+/// have been sent there (#623). Nothing here fetches anything; the system browser opens the address.
+private struct ItemLinksRow: View {
     @ObservedObject var sync: ReadwiseHighlightSync
     let itemId: String
+    let originalSource: URL?
 
     var body: some View {
-        if let url = sync.links[itemId] {
-            Link(destination: url) {
+        let readwise = sync.links[itemId]
+        if originalSource != nil || readwise != nil {
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 24) { links(readwise: readwise) }
+                VStack(alignment: .leading, spacing: 0) { links(readwise: readwise) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private func links(readwise: URL?) -> some View {
+        if let originalSource {
+            Link(destination: originalSource) {
+                // The height is inside the label so the whole 44 pt row takes the tap, not only the text.
+                Label("Open Original Source", systemImage: "safari")
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier("item.originalSource.link")
+        }
+        if let readwise {
+            Link(destination: readwise) {
+                // The height is inside the label so the whole 44 pt row takes the tap, not only the text.
                 Label("Open in Readwise", systemImage: "arrow.up.right.square")
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .accessibilityIdentifier("item.readwise.link")
         }

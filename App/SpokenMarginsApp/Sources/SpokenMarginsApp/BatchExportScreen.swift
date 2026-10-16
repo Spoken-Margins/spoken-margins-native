@@ -94,6 +94,7 @@ struct BatchExportScreen: View {
                     model.reportBatchExportFolderFailure(error)
                 }
             }
+            .miniPlayerKeepOut()
         }
     }
 
@@ -149,7 +150,7 @@ struct BatchExportScreen: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("\(selected ? "Deselect" : "Select") \(row.itemTitle), \(row.interjectionCount) interjections, \(row.session.completionPercent) percent complete")
+                    .accessibilityLabel("\(selected ? "Deselect" : "Select") \(row.itemTitle), \(row.interjectionCount) \(row.interjectionCount == 1 ? "Margin" : "Margins"), \(row.session.completionPercent) percent complete")
                     .accessibilityIdentifier("batchExport.session.\(row.id)")
                 }
             }

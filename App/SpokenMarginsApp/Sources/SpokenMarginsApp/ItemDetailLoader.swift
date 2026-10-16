@@ -26,7 +26,8 @@ struct ItemDetailLoader {
         let proposal = SharedListeningMapPlacement.proposal(
             for: projection, committed: try store.loadPortableListeningMapProposals(itemId: id),
             layers: try store.loadImportedCommentaryLayers(itemId: id))
-        let listeningMapScenes = SceneStarts(scenes: proposal?.scenes ?? [], projection: projection).chapters
+        let sceneStarts = SceneStarts(scenes: proposal?.scenes ?? [], projection: projection)
+        let listeningMapScenes = sceneStarts.chapters
         let sessions = try store.loadSessions(itemId: id)
         // A snapshot session is valid only for its own item. Without this
         // ownership check, an asynchronous selection bug can display one
@@ -98,11 +99,13 @@ struct ItemDetailLoader {
             status: item.status,
             text: item.text ?? "",
             externalReference: item.externalReference ?? "",
+            externalReferenceType: item.externalReferenceType ?? "",
             overview: map?.overview ?? "",
             navigation: canonicalSource?.navigation ?? [],
             chapters: map?.chapters ?? [],
             mediaChapters: mediaChapters,
             listeningMapScenes: listeningMapScenes,
+            listeningMapSummarySpans: sceneStarts.summarySpans,
             mediaDurationMs: item.media?.durationMs ?? mediaTimeline?.durationMs,
             isNativeAudio: isNativeAudio,
             documentStructure: item.documentStructure,
