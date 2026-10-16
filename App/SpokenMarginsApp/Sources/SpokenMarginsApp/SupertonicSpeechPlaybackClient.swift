@@ -2529,6 +2529,33 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         playRenderedAudio(url, duration: duration, request: request)
     }
 
+    /// The system's reason when a player's start is turned down (`AVPlayerRateDidChangeReasonSetRateFailed`).
+    private static let refusedStartReason = "SetRateFailed"
+    /// How long a refused start gets to clear by itself before the player is recovered (#1763).
+    private static let refusedStartGrace: Duration = .seconds(1)
+
+    /// A new player the system would not start with the app in the background: it sits at time 0 with rate 0, and
+    /// the watchdog needed `stallThreshold` of silence to notice, then as long again before handing over, so the
+    /// listener with the phone locked heard nothing for 10 s or more (#1763). A refusal that is still standing a
+    /// moment later is a stall now: the first one re-seats the player, and one that comes within the cooldown, from
+    /// the re-seated player, goes the way a re-seat that did not help always has, to the iOS voice. Not in front
+    /// of the listener, who can tap, and not while the system itself has the session (the interruption pauses us).
+    @MainActor
+    private func recoverFromRefusedStart(of refused: AVPlayer) async {
+        guard applicationIsInBackground?() == true else { return }
+        try? await Task.sleep(for: Self.refusedStartGrace)
+        guard applicationIsInBackground?() == true, refused.rate == 0,
+              lock.withLock({ !fallbackIsActive && handOverAwaitingStart == nil }),
+              isStillPlaying(WatchedPlayback(player: ObjectIdentifier(refused))) else { return }
+        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: refused)) { first, _ in first }
+            .merging(stallContextFields(player: refused)) { first, _ in first }
+        fields["cause"] = "set_rate_failed"
+        guard claimStallRecovery() else { return pauseStalledPlayback(fields) }
+        fields["recovery"] = "reseat_player"
+        onStall?("supertonic.stall", fields)
+        reseatStalledPlayer()
+    }
+
     /// The re-seat didn't bring the sound back. Reading on in the iOS voice from the listener's place needs no
     /// tap, so it works with the phone locked in a pocket, where "paused, tap to play" is silence with nothing on
     /// screen to tap (#540). The chosen voice gets another try at the next play. Returns false, leaving the pause
@@ -3109,6 +3136,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 .replacingOccurrences(of: "AVPlayerRateDidChangeReason", with: "")
             let rate = changed.rate
             self.rateChangeLock.withLock { self.lastRateChange = (reason, rate, ContinuousClock.now) }
+            if reason == Self.refusedStartReason, rate == 0 {
+                Task { @MainActor [weak self, weak changed] in
+                    guard let changed else { return }
+                    await self?.recoverFromRefusedStart(of: changed)
+                }
+            }
         }
         playbackEndObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,

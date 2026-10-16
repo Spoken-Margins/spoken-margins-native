@@ -42,6 +42,8 @@ final class SupertonicClientHarness {
     let systemVoice = RecordingFallbackAudioClient()
     /// The reasons the client gave when it told the app the voice changed.
     let fallbackReasons = HarnessFallbackLog()
+    /// The stall events the client logged, in order (`supertonic.stall`, `supertonic.stall_handover`, ...).
+    let stallEvents = HarnessFallbackLog()
     private let players = HarnessPlayerLog()
     private let root: URL
 
@@ -68,6 +70,7 @@ final class SupertonicClientHarness {
         )
         let players = players
         let fallbackReasons = fallbackReasons
+        let stallEvents = stallEvents
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionNotificationCenter: notificationCenter,
@@ -80,6 +83,7 @@ final class SupertonicClientHarness {
             observesPlayerLifecycle: true,
             fallbackClient: systemVoice,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
+            onStall: { kind, _ in stallEvents.add(kind) },
             stallRecoveryCooldown: stallRecoveryCooldown,
             applicationIsActive: applicationIsActive,
             applicationIsInBackground: applicationIsInBackground
@@ -137,6 +141,20 @@ final class SupertonicClientHarness {
         await Task.detached {
             NotificationCenter.default.post(name: .AVPlayerItemDidPlayToEndTime, object: box.item)
         }.value
+    }
+
+    /// The system turns down the newest player's start, as it did for a new player started with the app away
+    /// (#1763): the player is at rate 0 and says why.
+    func refuseTheNewestPlayersStart() {
+        guard let player = players.newest else {
+            XCTFail("no player has started")
+            return
+        }
+        player.pause()
+        NotificationCenter.default.post(
+            name: AVPlayer.rateDidChangeNotification, object: player,
+            userInfo: [AVPlayer.rateDidChangeReasonKey: AVPlayer.RateDidChangeReason.setRateFailed.rawValue]
+        )
     }
 
     /// The newest player, when the client plays on a queue.
