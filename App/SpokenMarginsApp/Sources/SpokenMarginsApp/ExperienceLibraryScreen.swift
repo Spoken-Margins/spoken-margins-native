@@ -596,7 +596,6 @@ struct LibraryRowPlayLabel: View {
                 .foregroundStyle(AppColors.evergreen)
                 .frame(width: 40, height: 40)
                 .background(AppColors.softGreen, in: Circle())
-                .minimumTapTarget()
             if isPreparing {
                 ProgressView()
                     .controlSize(.mini)
@@ -605,5 +604,6 @@ struct LibraryRowPlayLabel: View {
                     .background(AppColors.panel, in: Circle())
             }
         }
+        .minimumTapTarget()
     }
 }
