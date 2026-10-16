@@ -208,6 +208,7 @@ struct ListeningEditionImportScreen: View {
     @State private var picked: [ListeningEditionBatch.Entry] = []
     @State private var nextEntryID = 0
     @State private var results: [ListeningEditionBatch.Line] = []
+    @State private var loadingForReview = false
     @FocusState private var editingJSON: Bool
     private static let pastedEntryID = -1
 
@@ -248,7 +249,11 @@ struct ListeningEditionImportScreen: View {
                 TextEditor(text: $json).frame(minHeight: 140, maxHeight: 240)
                     .accessibilityLabel("Listening edition JSON")
                     .focused($editingJSON)
-                    .onChange(of: json) { _, _ in edition = nil; replaceMap = false }
+                    .onChange(of: json) { _, _ in
+                        // Loading a file for review sets the editor text and its preview together.
+                        if loadingForReview { loadingForReview = false; return }
+                        edition = nil; replaceMap = false
+                    }
                 Button("Preview") {
                     editingJSON = false
                     do { edition = try ListeningEdition.decode(Data(json.utf8)); message = "" }
@@ -325,8 +330,10 @@ struct ListeningEditionImportScreen: View {
     /// Moves one chosen file into the editor with its preview, where the replace toggle lives.
     private func review(_ loaded: ListeningEdition, id: Int) {
         guard let data = try? loaded.encoded(), let text = String(data: data, encoding: .utf8) else { return }
+        if json != text { loadingForReview = true }
         json = text
         edition = loaded
+        replaceMap = false
         picked.removeAll { $0.id == id }
         message = ""
     }

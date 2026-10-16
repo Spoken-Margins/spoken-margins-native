@@ -2871,7 +2871,7 @@ final class Gate1AppModel: ObservableObject {
         guard !snapshot.isRecording else { throw EditionError.invalid("Finish recording before importing a listening edition.") }
         let editions = try ListeningEditionStore.application()
         if let previous = try editions.load(itemID: edition.itemID), previous != edition, !replaceMap {
-            throw EditionError.invalid("This source already has a different Listening Map. Use Import Listening Edition in Settings to preview and explicitly replace it.")
+            throw EditionError.invalid("This source already has a different Listening Map. To replace it, preview this edition (Review on its own, or paste it) in Import Listening Edition and turn on Replace.")
         }
         let store = try requireStore()
         // Stable source identity preserves every existing session and Margin on retry.
