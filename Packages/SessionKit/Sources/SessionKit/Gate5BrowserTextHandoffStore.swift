@@ -1,12 +1,11 @@
 import Foundation
-import SessionKit
 
-enum Gate5BrowserTextHandoffStoreError: Error, Equatable, LocalizedError {
+public enum Gate5BrowserTextHandoffStoreError: Error, Equatable, LocalizedError {
     case appGroupUnavailable(String)
     case missingPayload(String)
     case invalidPayload(String)
 
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
         case .appGroupUnavailable(let identifier):
             return "Browser text App Group is unavailable: \(identifier)"
@@ -18,31 +17,22 @@ enum Gate5BrowserTextHandoffStoreError: Error, Equatable, LocalizedError {
     }
 }
 
-struct Gate5BrowserTextHandoffStore {
-    #if SPOKEN_MARGINS_LEGACY
-    static let appGroupIdentifier = "group.com.spokenmargins.native.legacy"
-    #else
-    static let appGroupIdentifier = "group.com.spokenmargins.native"
-    #endif
+/// The browser-text payloads the Safari extension and Shortcuts leave in the App Group for the app to import,
+/// and the ones that failed to import and wait to be retried. The folder is passed in, so the app group lookup
+/// (and its legacy-build identifier) stays in the app.
+public struct Gate5BrowserTextHandoffStore {
     private static let payloadDirectoryName = "BrowserTextHandoffs"
     private static let failedPayloadDirectoryName = "FailedBrowserTextHandoffs"
 
     private let baseDirectory: URL
     private let fileManager: FileManager
 
-    init(baseDirectory: URL, fileManager: FileManager = .default) {
+    public init(baseDirectory: URL, fileManager: FileManager = .default) {
         self.baseDirectory = baseDirectory
         self.fileManager = fileManager
     }
 
-    static func appGroup(fileManager: FileManager = .default) throws -> Gate5BrowserTextHandoffStore {
-        guard let containerURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
-            throw Gate5BrowserTextHandoffStoreError.appGroupUnavailable(appGroupIdentifier)
-        }
-        return Gate5BrowserTextHandoffStore(baseDirectory: containerURL, fileManager: fileManager)
-    }
-
-    func save(_ handoff: BrowserTextHandoff, payloadID: String) throws {
+    public func save(_ handoff: BrowserTextHandoff, payloadID: String) throws {
         let id = payloadID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !id.isEmpty else {
             throw Gate5BrowserTextHandoffStoreError.invalidPayload("payloadId is empty")
@@ -55,7 +45,7 @@ struct Gate5BrowserTextHandoffStore {
             .write(to: payloadURL(payloadID: id), options: [.atomic])
     }
 
-    func handoff(payloadID: String) throws -> BrowserTextHandoff {
+    public func handoff(payloadID: String) throws -> BrowserTextHandoff {
         let payloadID = payloadID.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !payloadID.isEmpty else {
             throw Gate5BrowserTextHandoffStoreError.invalidPayload("payloadId is empty")
@@ -68,7 +58,7 @@ struct Gate5BrowserTextHandoffStore {
         return try payload.handoff(expectedID: payloadID)
     }
 
-    func pendingPayloadIDs() throws -> [String] {
+    public func pendingPayloadIDs() throws -> [String] {
         let directory = baseDirectory.appendingPathComponent(Self.payloadDirectoryName, isDirectory: true)
         guard fileManager.fileExists(atPath: directory.path) else { return [] }
         let urls = try fileManager.contentsOfDirectory(
@@ -86,13 +76,13 @@ struct Gate5BrowserTextHandoffStore {
             .map { $0.deletingPathExtension().lastPathComponent }
     }
 
-    func deletePayload(payloadID: String) throws {
+    public func deletePayload(payloadID: String) throws {
         let url = payloadURL(payloadID: payloadID)
         guard fileManager.fileExists(atPath: url.path) else { return }
         try fileManager.removeItem(at: url)
     }
 
-    func quarantine(payloadID: String, reason: String) throws {
+    public func quarantine(payloadID: String, reason: String) throws {
         let failed = FailedBrowserTextHandoff(
             id: payloadID,
             handoff: try handoff(payloadID: payloadID),
@@ -108,7 +98,7 @@ struct Gate5BrowserTextHandoffStore {
         try deletePayload(payloadID: payloadID)
     }
 
-    func failedHandoffs() throws -> [FailedBrowserTextHandoff] {
+    public func failedHandoffs() throws -> [FailedBrowserTextHandoff] {
         let directory = baseDirectory.appendingPathComponent(Self.failedPayloadDirectoryName, isDirectory: true)
         guard fileManager.fileExists(atPath: directory.path) else { return [] }
         return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])
@@ -119,7 +109,7 @@ struct Gate5BrowserTextHandoffStore {
             .sorted { $0.failedAt < $1.failedAt }
     }
 
-    func retryFailed(payloadID: String) throws {
+    public func retryFailed(payloadID: String) throws {
         let url = failedPayloadURL(payloadID: payloadID)
         guard fileManager.fileExists(atPath: url.path) else {
             throw Gate5BrowserTextHandoffStoreError.missingPayload(payloadID)
@@ -134,7 +124,7 @@ struct Gate5BrowserTextHandoffStore {
         try deleteFailed(payloadID: payloadID)
     }
 
-    func deleteFailed(payloadID: String) throws {
+    public func deleteFailed(payloadID: String) throws {
         try? fileManager.removeItem(at: failedPayloadURL(payloadID: payloadID))
     }
 
@@ -153,11 +143,18 @@ struct Gate5BrowserTextHandoffStore {
     }
 }
 
-struct FailedBrowserTextHandoff: Codable, Equatable, Identifiable {
-    var id: String
-    var handoff: BrowserTextHandoff
-    var reason: String
-    var failedAt: Date
+public struct FailedBrowserTextHandoff: Codable, Equatable, Identifiable {
+    public var id: String
+    public var handoff: BrowserTextHandoff
+    public var reason: String
+    public var failedAt: Date
+
+    public init(id: String, handoff: BrowserTextHandoff, reason: String, failedAt: Date) {
+        self.id = id
+        self.handoff = handoff
+        self.reason = reason
+        self.failedAt = failedAt
+    }
 }
 
 private struct BrowserTextPayload: Codable {
