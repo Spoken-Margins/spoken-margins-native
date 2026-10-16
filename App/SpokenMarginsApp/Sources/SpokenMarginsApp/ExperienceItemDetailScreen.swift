@@ -127,6 +127,7 @@ struct ExperienceItemDetailScreen: View {
             } message: {
                 Text("Your existing listening position and Margins remain in their current session.")
             }
+            .miniPlayerKeepOut()
         }
     }
 

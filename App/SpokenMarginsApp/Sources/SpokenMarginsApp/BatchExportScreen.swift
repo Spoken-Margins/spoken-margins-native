@@ -94,6 +94,7 @@ struct BatchExportScreen: View {
                     model.reportBatchExportFolderFailure(error)
                 }
             }
+            .miniPlayerKeepOut()
         }
     }
 

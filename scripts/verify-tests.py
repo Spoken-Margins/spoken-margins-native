@@ -359,7 +359,8 @@ CODEX_SANDBOX_SKIPS = {'runner-tests': 'Codex sandbox: `ps` cannot run here, so 
 # scripts/tests test the lane itself, and the Codex audit reads lane-runner.py: any change under scripts/ or
 # .github/ runs every runner test. So does the root .gitignore, which the lane runner's warm-build tests copy.
 RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
-# Some tests also read the repository outside scripts/: the filled-button scans read App/; the inventory and
+# Some tests also read the repository outside scripts/: the filled-button and mini player keep-out scans read
+# App/; the inventory and
 # contract checks read project.yml, Package.swift, TestPlans/, Contracts/ and validation/; the hot-file test
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
@@ -375,7 +376,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
-                       'test_sessionkit_pass')
+                       'test_sessionkit_pass', 'test_mini_player_keep_out')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release

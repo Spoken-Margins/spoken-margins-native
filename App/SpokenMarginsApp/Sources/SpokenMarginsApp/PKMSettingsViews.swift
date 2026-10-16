@@ -51,6 +51,7 @@ struct MarginOutputDestinationsSection: View {
             ForEach(coordinator.rows) { row in
                 NavigationLink {
                     MarginOutputDestinationScreen(coordinator: coordinator, id: row.id)
+                        .miniPlayerKeepOut()
                 } label: {
                     MarginOutputDestinationRow(row: row)
                 }
