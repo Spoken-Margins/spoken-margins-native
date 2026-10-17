@@ -1,9 +1,17 @@
 import Foundation
 
-struct AppColorRGB: Equatable, Sendable {
-    let red: Double
-    let green: Double
-    let blue: Double
+/// The app's semantic colours as plain numbers, and the contrast audit over them. Foundation only, so the
+/// WCAG check runs on the host (moved from the app target, #318).
+public struct AppColorRGB: Equatable, Sendable {
+    public let red: Double
+    public let green: Double
+    public let blue: Double
+
+    public init(red: Double, green: Double, blue: Double) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+    }
 
     fileprivate var relativeLuminance: Double {
         func linear(_ component: Double) -> Double {
@@ -15,82 +23,94 @@ struct AppColorRGB: Equatable, Sendable {
     }
 }
 
-struct AppDynamicRGB: Equatable, Sendable {
-    let light: AppColorRGB
-    let dark: AppColorRGB
+public struct AppDynamicRGB: Equatable, Sendable {
+    public let light: AppColorRGB
+    public let dark: AppColorRGB
+
+    public init(light: AppColorRGB, dark: AppColorRGB) {
+        self.light = light
+        self.dark = dark
+    }
 }
 
-enum AppSemanticColorRGB {
+public enum AppSemanticColorRGB {
     private static func fixed(_ red: Double, _ green: Double, _ blue: Double) -> AppDynamicRGB {
         let color = AppColorRGB(red: red, green: green, blue: blue)
         return AppDynamicRGB(light: color, dark: color)
     }
 
-    static let listeningBackground = fixed(0.09, 0.224, 0.184)
-    static let captureBackground = fixed(1, 0.941, 0.745)
-    static let listeningAccent = fixed(0.859, 0.929, 0.553)
-    static let listeningSecondary = fixed(0.69, 0.75, 0.70)
-    static let captureText = fixed(0.08, 0.10, 0.08)
-    static let white = fixed(1, 1, 1)
-    static let bone = AppDynamicRGB(
+    public static let listeningBackground = fixed(0.09, 0.224, 0.184)
+    public static let captureBackground = fixed(1, 0.941, 0.745)
+    public static let listeningAccent = fixed(0.859, 0.929, 0.553)
+    public static let listeningSecondary = fixed(0.69, 0.75, 0.70)
+    public static let captureText = fixed(0.08, 0.10, 0.08)
+    public static let white = fixed(1, 1, 1)
+    public static let bone = AppDynamicRGB(
         light: .init(red: 0.97, green: 0.95, blue: 0.89),
         dark: .init(red: 0.08, green: 0.10, blue: 0.09)
     )
-    static let background = AppDynamicRGB(
+    public static let background = AppDynamicRGB(
         light: .init(red: 0.96, green: 0.97, blue: 0.94),
         dark: .init(red: 0.07, green: 0.09, blue: 0.08)
     )
-    static let panel = AppDynamicRGB(
+    public static let panel = AppDynamicRGB(
         light: .init(red: 1, green: 1, blue: 1),
         dark: .init(red: 0.13, green: 0.16, blue: 0.14)
     )
-    static let text = AppDynamicRGB(
+    public static let text = AppDynamicRGB(
         light: .init(red: 0.09, green: 0.13, blue: 0.11),
         dark: .init(red: 0.92, green: 0.95, blue: 0.91)
     )
-    static let secondaryText = AppDynamicRGB(
+    public static let secondaryText = AppDynamicRGB(
         light: .init(red: 0.38, green: 0.44, blue: 0.41),
         dark: .init(red: 0.66, green: 0.72, blue: 0.68)
     )
-    static let primaryAction = AppDynamicRGB(
+    public static let primaryAction = AppDynamicRGB(
         light: .init(red: 0.08, green: 0.32, blue: 0.22),
         dark: .init(red: 0.12, green: 0.36, blue: 0.23)
     )
-    static let plum = AppDynamicRGB(
+    public static let plum = AppDynamicRGB(
         light: .init(red: 0.39, green: 0.24, blue: 0.48),
         dark: .init(red: 0.78, green: 0.62, blue: 0.88)
     )
-    static let evergreen = AppDynamicRGB(
+    public static let evergreen = AppDynamicRGB(
         light: .init(red: 0.08, green: 0.30, blue: 0.21),
         dark: .init(red: 0.48, green: 0.84, blue: 0.62)
     )
-    static let onEvergreen = AppDynamicRGB(
+    public static let onEvergreen = AppDynamicRGB(
         light: .init(red: 1, green: 1, blue: 1),
         dark: .init(red: 0.07, green: 0.09, blue: 0.08)
     )
-    static let softGreen = AppDynamicRGB(
+    public static let softGreen = AppDynamicRGB(
         light: .init(red: 0.91, green: 0.94, blue: 0.88),
         dark: .init(red: 0.18, green: 0.25, blue: 0.20)
     )
-    static let dangerText = AppDynamicRGB(
+    public static let dangerText = AppDynamicRGB(
         light: .init(red: 0.55, green: 0.13, blue: 0.11),
         dark: .init(red: 1, green: 0.55, blue: 0.48)
     )
-    static let dangerBackground = AppDynamicRGB(
+    public static let dangerBackground = AppDynamicRGB(
         light: .init(red: 0.96, green: 0.88, blue: 0.86),
         dark: .init(red: 0.34, green: 0.15, blue: 0.13)
     )
 }
 
-enum AppColorContrastAudit {
-    struct Pair: Equatable, Sendable {
-        let name: String
-        let foreground: AppDynamicRGB
-        let background: AppDynamicRGB
-        let minimumRatio: Double
+public enum AppColorContrastAudit {
+    public struct Pair: Equatable, Sendable {
+        public let name: String
+        public let foreground: AppDynamicRGB
+        public let background: AppDynamicRGB
+        public let minimumRatio: Double
+
+        public init(name: String, foreground: AppDynamicRGB, background: AppDynamicRGB, minimumRatio: Double) {
+            self.name = name
+            self.foreground = foreground
+            self.background = background
+            self.minimumRatio = minimumRatio
+        }
     }
 
-    static let textBackgroundPairs: [Pair] = [
+    public static let textBackgroundPairs: [Pair] = [
         .init(name: "reading body on bone", foreground: AppSemanticColorRGB.text, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
         .init(name: "reading secondary on bone", foreground: AppSemanticColorRGB.secondaryText, background: AppSemanticColorRGB.bone, minimumRatio: 4.5),
         .init(name: "listening body", foreground: AppSemanticColorRGB.white, background: AppSemanticColorRGB.listeningBackground, minimumRatio: 4.5),
@@ -110,14 +130,18 @@ enum AppColorContrastAudit {
         .init(name: "danger label", foreground: AppSemanticColorRGB.dangerText, background: AppSemanticColorRGB.dangerBackground, minimumRatio: 4.5)
     ]
 
-    static func contrastRatio(foreground: AppColorRGB, background: AppColorRGB) -> Double {
+    public static func contrastRatio(foreground: AppColorRGB, background: AppColorRGB) -> Double {
         let lighter = max(foreground.relativeLuminance, background.relativeLuminance)
         let darker = min(foreground.relativeLuminance, background.relativeLuminance)
         return (lighter + 0.05) / (darker + 0.05)
     }
 
-    static func failures() -> [String] {
-        textBackgroundPairs.flatMap { pair in
+    public static func failures() -> [String] {
+        failures(for: textBackgroundPairs)
+    }
+
+    public static func failures(for pairs: [Pair]) -> [String] {
+        pairs.flatMap { pair in
             [
                 ("light", contrastRatio(foreground: pair.foreground.light, background: pair.background.light)),
                 ("dark", contrastRatio(foreground: pair.foreground.dark, background: pair.background.dark))
