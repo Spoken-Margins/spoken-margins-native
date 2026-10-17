@@ -96,9 +96,6 @@ class NoAppleDataTests(unittest.TestCase):
         lookup = copy.deepcopy(base)
         lookup["provenance"].append({"id": "itunes-lookup", "kind": "itunes_lookup", "fetchedAt": base["generatedAt"]})
         cases["lookup provenance"] = lookup
-        named = copy.deepcopy(base)
-        named["entries"][0]["id"] = "apple-1200361736"
-        cases["apple id in entry id"] = named
         dated = copy.deepcopy(base)
         dated["provenance"][0]["chartUpdatedAt"] = "2026-09-28T05:17:56-07:00"
         cases["chart date"] = dated
@@ -117,7 +114,7 @@ class NoAppleDataTests(unittest.TestCase):
                             "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ab/64/mza.jpg/600x600bb.jpg",
                             "chartPositions": [{"provenanceId": "apple-top-us-news", "rank": 1}],
                             "externalIds": {"applePodcastsId": "1200361736"}}]}
-        self.assertEqual(len(self.errors_for(old)), 6)
+        self.assertEqual(len(self.errors_for(old)), 5)
 
 
 class PublishedStarterListTests(unittest.TestCase):

@@ -78,11 +78,11 @@
    "subjectId": "news",
    "title": "Start with News",
    "entryIds": [
-    "the-daily",
-    "up-first-from-npr",
-    "today-explained",
-    "the-journal",
-    "global-news-podcast"
+    "apple-1200361736",
+    "apple-1222114325",
+    "apple-1346207297",
+    "apple-1469394914",
+    "apple-135067274"
    ],
    "curatedBy": "hand-picked"
   },
@@ -90,11 +90,11 @@
    "subjectId": "society-culture",
    "title": "Start with Society & Culture",
    "entryIds": [
-    "this-american-life",
-    "the-ezra-klein-show",
-    "stuff-you-should-know",
-    "freakonomics-radio",
-    "search-engine"
+    "apple-201671138",
+    "apple-1548604447",
+    "apple-278981407",
+    "apple-354668519",
+    "apple-1614253637"
    ],
    "curatedBy": "hand-picked"
   },
@@ -102,11 +102,11 @@
    "subjectId": "comedy",
    "title": "Start with Comedy",
    "entryIds": [
-    "wait-wait-don-t-tell-me",
-    "good-hang-with-amy-poehler",
+    "apple-121493804",
+    "apple-1795483480",
     "no-such-thing-as-a-fish",
-    "the-tim-dillon-show",
-    "the-toast"
+    "apple-1135137367",
+    "apple-1368081567"
    ],
    "curatedBy": "hand-picked"
   },
@@ -114,11 +114,11 @@
    "subjectId": "true-crime",
    "title": "Start with True Crime",
    "entryIds": [
-    "crime-junkie",
+    "apple-1322200189",
     "serial",
-    "criminal",
-    "in-the-dark",
-    "dateline-nbc"
+    "apple-809264944",
+    "apple-1148175292",
+    "apple-1464919521"
    ],
    "curatedBy": "hand-picked"
   },
@@ -128,9 +128,9 @@
    "entryIds": [
     "planet-money",
     "econtalk",
-    "3-takeaways",
-    "the-diary-of-a-ceo-with-steven-bartlett",
-    "young-and-profiting-yap-with-hala-taha-entrepreneurship-and"
+    "apple-1526080983",
+    "apple-1291423644",
+    "apple-1368888880"
    ],
    "curatedBy": "hand-picked"
   },
@@ -138,11 +138,11 @@
    "subjectId": "science",
    "title": "Start with Science",
    "entryIds": [
-    "radiolab",
-    "hidden-brain",
-    "science-friday",
-    "science-vs",
-    "short-wave"
+    "apple-152249110",
+    "apple-1028908750",
+    "apple-73329284",
+    "apple-1051557000",
+    "apple-1482575855"
    ],
    "curatedBy": "hand-picked"
   },
@@ -150,11 +150,11 @@
    "subjectId": "history",
    "title": "Start with History",
    "entryIds": [
-    "the-rest-is-history",
-    "dan-carlin-s-hardcore-history",
-    "the-ancients",
-    "throughline",
-    "dan-snow-s-history-hit"
+    "apple-1537788786",
+    "apple-173001861",
+    "apple-1520403988",
+    "apple-1451109634",
+    "apple-1042631089"
    ],
    "curatedBy": "hand-picked"
   },
@@ -162,10 +162,10 @@
    "subjectId": "health-fitness",
    "title": "Start with Health & Fitness",
    "entryIds": [
-    "huberman-lab",
-    "on-purpose-with-jay-shetty",
-    "nothing-much-happens-bedtime-stories-to-help-you-sleep",
-    "get-sleepy-stories-for-sleep"
+    "apple-1545953110",
+    "apple-1450994021",
+    "apple-1378040733",
+    "apple-1487513861"
    ],
    "curatedBy": "hand-picked"
   },
@@ -173,10 +173,10 @@
    "subjectId": "technology",
    "title": "Start with Technology",
    "entryIds": [
-    "hard-fork",
-    "lex-fridman-podcast",
-    "dwarkesh-podcast",
-    "all-in-with-chamath-jason-sacks-friedberg",
+    "apple-1528594034",
+    "apple-1434243584",
+    "apple-1516093381",
+    "apple-1502871393",
     "darknet-diaries"
    ],
    "curatedBy": "hand-picked"
@@ -185,11 +185,11 @@
    "subjectId": "sports",
    "title": "Start with Sports",
    "entryIds": [
-    "pablo-torre-finds-out",
-    "the-dan-le-batard-show",
-    "the-meateater-podcast",
-    "the-zach-lowe-show",
-    "the-herd-with-colin-cowherd"
+    "apple-1685093486",
+    "apple-934820588",
+    "apple-960902903",
+    "apple-1805478723",
+    "apple-1042368254"
    ],
    "curatedBy": "hand-picked"
   },
@@ -198,9 +198,9 @@
    "title": "Start with Education",
    "entryIds": [
     "philosophize-this",
-    "the-mel-robbins-podcast",
-    "imo-with-michelle-obama-and-craig-robinson",
-    "the-jamie-kern-lima-show"
+    "apple-1646101002",
+    "apple-1532956108",
+    "apple-1728723635"
    ],
    "curatedBy": "hand-picked"
   },
@@ -208,11 +208,11 @@
    "subjectId": "arts",
    "title": "Start with Arts",
    "entryIds": [
-    "fresh-air",
-    "the-moth",
-    "99-invisible",
+    "apple-214089682",
+    "apple-275699983",
+    "apple-394775318",
     "song-exploder",
-    "snap-judgment"
+    "apple-283657561"
    ],
    "curatedBy": "hand-picked"
   },
@@ -234,7 +234,7 @@
  ],
  "entries": [
   {
-   "id": "the-daily",
+   "id": "apple-1200361736",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Daily",
@@ -253,7 +253,7 @@
    "summary": "This is what the news should sound like. The biggest stories of our time, told by the best journalists in the world. Hosted by Michael Barbaro, Rachel Abrams and Natalie Kitroeff. Twenty minutes a day, six days a week, ready by 6 a.m. Subscribe today at nytimes.com/podcasts or on Apple Podcasts…"
   },
   {
-   "id": "this-american-life",
+   "id": "apple-201671138",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "This American Life",
@@ -272,7 +272,7 @@
    "summary": "Each week we choose a theme. Then anything can happen. This American Life is true stories that unfold like little movies for radio. Personal stories with funny moments, big feelings, and surprising plot twists. Newsy stories that try to capture what it’s like to be alive right now. It’s the most…"
   },
   {
-   "id": "wait-wait-don-t-tell-me",
+   "id": "apple-121493804",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Wait Wait... Don't Tell Me!",
@@ -292,7 +292,7 @@
    "summary": "NPR's weekly news quiz hosted by Peter Sagal. Have a laugh and test your knowledge with today's funniest comedians and a celebrity guest. Support public media by joining NPR+ at plus.npr.org. You’ll get perks for over 25 NPR podcasts, and Wait Wait's perks include bonus episodes, the chance to be a…"
   },
   {
-   "id": "crime-junkie",
+   "id": "apple-1322200189",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Crime Junkie",
@@ -331,7 +331,7 @@
    "summary": "Wanna see a trick? Give us any topic and we can tie it back to the economy. At Planet Money, we explore the forces that shape our lives and bring you along for the ride. Don't just understand the economy – understand the world. Support public media by joining NPR+ at plus.npr.org. You’ll get perks…"
   },
   {
-   "id": "radiolab",
+   "id": "apple-152249110",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Radiolab",
@@ -351,7 +351,7 @@
    "summary": "Radiolab is on a curiosity bender. We ask deep questions and use investigative journalism to get the answers. A given episode might whirl you through science, legal history, and into the home of someone halfway across the world. The show is known for innovative sound design, smashing information…"
   },
   {
-   "id": "the-rest-is-history",
+   "id": "apple-1537788786",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Rest Is History",
@@ -370,7 +370,7 @@
    "summary": "Take a deep dive into History’s biggest moments with Tom Holland & Dominic Sandbrook. Explore the stories of History’s most brutal rulers, deadly battles, and world-changing events. From the rise and fall of the Roman Empire, the Nazi conquest of Europe, and Hitler’s evil master plan for world…"
   },
   {
-   "id": "huberman-lab",
+   "id": "apple-1545953110",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Huberman Lab",
@@ -390,7 +390,7 @@
    "summary": "The Huberman Lab podcast is hosted by Andrew Huberman, Ph.D., a neuroscientist and tenured professor in the department of neurobiology, and by courtesy, psychiatry and behavioral sciences at Stanford School of Medicine. The podcast discusses neuroscience and science-based tools, including how our…"
   },
   {
-   "id": "hard-fork",
+   "id": "apple-1528594034",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Hard Fork",
@@ -410,7 +410,7 @@
    "summary": "“Hard Fork” is a show about the future that’s already here. Each week, New York Times journalists explore and make sense of the latest in the rapidly changing world of tech. Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can also subscribe via your…"
   },
   {
-   "id": "pablo-torre-finds-out",
+   "id": "apple-1685093486",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Pablo Torre Finds Out",
@@ -449,7 +449,7 @@
    "summary": "Beginner friendly if listened to in order! For anyone interested in an educational podcast about philosophy where you don't need to be a graduate-level philosopher to understand it. In chronological order, the thinkers and ideas that forged the world we live in are broken down and explained."
   },
   {
-   "id": "fresh-air",
+   "id": "apple-214089682",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Fresh Air",
@@ -470,7 +470,7 @@
    "summary": "Fresh Air from WHYY, the Peabody Award-winning weekday magazine of contemporary arts and issues, is one of public radio's most popular programs. Hosted by Terry Gross and Tonya Mosley, the show features intimate conversations with today's biggest luminaries. Support public media by joining NPR+ at…"
   },
   {
-   "id": "up-first-from-npr",
+   "id": "apple-1222114325",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Up First from NPR",
@@ -489,7 +489,7 @@
    "summary": "NPR's Up First is the news you need to start your day. The three biggest stories of the day, with reporting and analysis from NPR News — in 10 minutes. Available weekdays at 6:30 a.m. ET, with hosts Leila Fadel, Steve Inskeep, Michel Martin and A Martinez. Also available on Saturdays at 9 a.m. ET…"
   },
   {
-   "id": "the-ezra-klein-show",
+   "id": "apple-1548604447",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Ezra Klein Show",
@@ -509,7 +509,7 @@
    "summary": "Ezra Klein invites you into a conversation on something that matters. How do we address climate change if the political system fails to act? Has the logic of markets infiltrated too many aspects of our lives? What is the future of the Republican Party? What do psychedelics teach us about…"
   },
   {
-   "id": "good-hang-with-amy-poehler",
+   "id": "apple-1795483480",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Good Hang with Amy Poehler",
@@ -568,7 +568,7 @@
    "summary": "EconTalk: Conversations for the Curious is an award-winning weekly podcast hosted by Russ Roberts of Shalem College in Jerusalem and Stanford's Hoover Institution. The eclectic guest list includes authors, doctors, psychologists, historians, philosophers, economists, and more. Learn how the health…"
   },
   {
-   "id": "hidden-brain",
+   "id": "apple-1028908750",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Hidden Brain",
@@ -588,7 +588,7 @@
    "summary": "Why do I feel stuck? How can I become more creative? What can I do to improve my relationships? If you’ve ever asked yourself these questions, you’re not alone. On Hidden Brain, we help you understand your own mind — and the minds of the people around you. (We're routinely rated the #1 science…"
   },
   {
-   "id": "dan-carlin-s-hardcore-history",
+   "id": "apple-173001861",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Dan Carlin's Hardcore History",
@@ -607,7 +607,7 @@
    "summary": "In \"Hardcore History\" journalist and broadcaster Dan Carlin takes his \"Martian\", unorthodox way of thinking and applies it to the past. Was Alexander the Great as bad a person as Adolf Hitler? What would Apaches with modern weapons be like? Will our modern civilization ever fall like civilizations…"
   },
   {
-   "id": "on-purpose-with-jay-shetty",
+   "id": "apple-1450994021",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "On Purpose with Jay Shetty",
@@ -626,7 +626,7 @@
    "summary": "Jay Shetty hosts some of culture’s most influential voices in wellness and personal growth, helping you feel healthier, happier and more healed."
   },
   {
-   "id": "lex-fridman-podcast",
+   "id": "apple-1434243584",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Lex Fridman Podcast",
@@ -646,7 +646,7 @@
    "summary": "Conversations that explore technology, history, philosophy, physics, mathematics, biology, chemistry, engineering, AI, robotics, programming, music, film, art, sports, psychology, neuroscience, geopolitics, business, economics, religion, astronomy, and the human condition with people from all walks…"
   },
   {
-   "id": "the-dan-le-batard-show",
+   "id": "apple-934820588",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Dan Le Batard Show",
@@ -665,7 +665,7 @@
    "summary": "Live from the Elser Hotel in Downtown Miami, Dan Le Batard and company share their unique perspectives on all things sports, pop culture, and more. This is the place for original content from Le Batard's daily 3-hour live show, including the daily “Local Hour,” generally focusing on the South…"
   },
   {
-   "id": "the-mel-robbins-podcast",
+   "id": "apple-1646101002",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Mel Robbins Podcast",
@@ -685,7 +685,7 @@
    "summary": "You can change your life and Mel Robbins will show you how. The Mel Robbins Podcast is the #1 podcast on the globe for a reason: Mel’s simple, research-backed advice has changed millions of people’s lives, and in every episode, she’s giving you all her hard-fought secrets, science-backed tools, and…"
   },
   {
-   "id": "the-moth",
+   "id": "apple-275699983",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Moth",
@@ -705,7 +705,7 @@
    "summary": "On Tuesdays and Fridays The Moth’s podcast feed presents episodes of the Peabody-Award Winning Moth Radio Hour and original episodes of The Moth Podcast. Since its launch in 1997, The Moth has presented thousands of true stories, told live and without notes, to standing-room-only crowds worldwide.…"
   },
   {
-   "id": "today-explained",
+   "id": "apple-1346207297",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Today, Explained",
@@ -724,7 +724,7 @@
    "summary": "Today, Explained is Vox's daily news explainer podcast. Hosts Sean Rameswaram and Noel King will guide you through the most important stories of the day. Part of the Vox Media Podcast Network."
   },
   {
-   "id": "stuff-you-should-know",
+   "id": "apple-278981407",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Stuff You Should Know",
@@ -764,7 +764,7 @@
    "summary": "The official channel for the show about everything: four dorks discuss the most amazing facts they’ve learned over the last seven days. The multi award-winning, globe-travelling, 600-million-download phenomenon. Hosted by Dan Schreiber, James Harkin, Andrew Hunter Murray and Anna Ptaszynski."
   },
   {
-   "id": "criminal",
+   "id": "apple-809264944",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Criminal",
@@ -784,7 +784,7 @@
    "summary": "Criminal is the first of its kind. A show about people who’ve done wrong, been wronged, or gotten caught somewhere in the middle. Hosted by Phoebe Judge. Named a Best Podcast of 2023 by the New York Times. Part of the Vox Media Podcast Network."
   },
   {
-   "id": "3-takeaways",
+   "id": "apple-1526080983",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "3 Takeaways™",
@@ -804,7 +804,7 @@
    "summary": "3 Takeaways™ features insights from the world’s best thinkers, business leaders, writers, politicians, scientists and other newsmakers. Each episode ends with 3 key takeaways to help you understand the world in new ways that can benefit your life and career. Hosted by Lynn Thoman. A global top 1%…"
   },
   {
-   "id": "science-friday",
+   "id": "apple-73329284",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Science Friday",
@@ -823,7 +823,7 @@
    "summary": "Covering the outer reaches of space to the tiniest microbes in our bodies, Science Friday is the source for entertaining and educational stories about science, technology, and other cool stuff."
   },
   {
-   "id": "the-ancients",
+   "id": "apple-1520403988",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Ancients",
@@ -842,7 +842,7 @@
    "summary": "A podcast for all ancient history fans! The Ancients is dedicated to discussing our distant past. Featuring interviews with historians and archaeologists, each episode covers a specific theme from antiquity. From Neolithic Britain to the Fall of Rome. Hosted by Tristan Hughes. New episodes every…"
   },
   {
-   "id": "nothing-much-happens-bedtime-stories-to-help-you-sleep",
+   "id": "apple-1378040733",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Nothing much happens: bedtime stories to help you sleep",
@@ -862,7 +862,7 @@
    "summary": "Can’t sleep? You’re not alone—and there’s help. Nothing Much Happens is a bedtime story podcast beloved by millions. Yoga and meditation teacher Kathryn Nicolai tells soothing, cozy stories where—just as the title says—nothing much happens. That’s the magic. Instead of spiraling thoughts or anxious…"
   },
   {
-   "id": "dwarkesh-podcast",
+   "id": "apple-1516093381",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Dwarkesh Podcast",
@@ -881,7 +881,7 @@
    "summary": "Deeply researched interviews"
   },
   {
-   "id": "the-meateater-podcast",
+   "id": "apple-960902903",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The MeatEater Podcast",
@@ -900,7 +900,7 @@
    "summary": "Building on the belief that a deeper understanding of the natural world enriches all of our lives, host Steven Rinella brings an in-depth and relevant look at all outdoor topics including hunting, fishing, nature, conservation, and wild foods. Filled with humor, irreverence, and things that will…"
   },
   {
-   "id": "imo-with-michelle-obama-and-craig-robinson",
+   "id": "apple-1532956108",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "IMO with Michelle Obama and Craig Robinson",
@@ -920,7 +920,7 @@
    "summary": "Michelle Obama and her big brother Craig Robinson bring their unique experiences and candid perspectives to a range of listeners’ personal dilemmas, from the everyday to the existential. Each week, they’re joined by special guests to tackle audience questions with practical advice, relatable…"
   },
   {
-   "id": "99-invisible",
+   "id": "apple-394775318",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "99% Invisible",
@@ -940,7 +940,7 @@
    "summary": "Design is everywhere in our lives, perhaps most importantly in the places where we've just stopped noticing. 99% Invisible is a weekly exploration of the process and power of design and architecture. From award winning producer Roman Mars. Learn more at 99percentinvisible.org."
   },
   {
-   "id": "the-journal",
+   "id": "apple-1469394914",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Journal.",
@@ -960,7 +960,7 @@
    "summary": "The most important stories about money, business and power. Hosted by Ryan Knutson and Jessica Mendoza. The Journal is a co-production of Spotify and The Wall Street Journal."
   },
   {
-   "id": "freakonomics-radio",
+   "id": "apple-354668519",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Freakonomics Radio",
@@ -980,7 +980,7 @@
    "summary": "Freakonomics co-author Stephen J. Dubner uncovers the hidden side of everything. Why is it safer to fly in an airplane than drive a car? How do we decide whom to marry? Why is the media so full of bad news? Also: things you never knew you wanted to know about wolves, bananas, pollution, search…"
   },
   {
-   "id": "the-tim-dillon-show",
+   "id": "apple-1135137367",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Tim Dillon Show",
@@ -999,7 +999,7 @@
    "summary": "Tim Dillon is a comedian and tour guide. He’s very excited to give you a tour of the end of the world. Each week from a porch in Los Angeles he shares apocalyptic visions with his friends and berates a local diner."
   },
   {
-   "id": "in-the-dark",
+   "id": "apple-1148175292",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "In The Dark",
@@ -1018,7 +1018,7 @@
    "summary": "In the Dark, hosted by Madeleine Baran, is an award-winning investigative-journalism podcast that started in 2016. Its first season looked at the mysterious abduction of Jacob Wetterling in rural Minnesota and the lack of accountability that sheriffs face when they fail to solve cases. Season 2…"
   },
   {
-   "id": "the-diary-of-a-ceo-with-steven-bartlett",
+   "id": "apple-1291423644",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Diary Of A CEO with Steven Bartlett",
@@ -1037,7 +1037,7 @@
    "summary": "Welcome to The Diary Of A CEO where you'll find raw, human conversations with the world’s most fascinating experts, storytellers, thinkers and business leaders. Hosted by Steven Bartlett (entrepreneur, investor, author, and founder of Steven.com and Flight Fund) this channel was created with a…"
   },
   {
-   "id": "science-vs",
+   "id": "apple-1051557000",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Science Vs",
@@ -1056,7 +1056,7 @@
    "summary": "There are a lot of fads, blogs and strong opinions, but then there’s SCIENCE. Science Vs is the show from Spotify Studios that finds out what’s fact, what’s not, and what’s somewhere in between. We do the hard work of sifting through all the science so you don't have to and cover everything from 5G…"
   },
   {
-   "id": "throughline",
+   "id": "apple-1451109634",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Throughline",
@@ -1076,7 +1076,7 @@
    "summary": "Throughline is a time machine. Each episode, we travel beyond the headlines to answer the question, \"How did we get here?\" We use sound and stories to bring history to life and put you into the middle of it. From ancient civilizations to forgotten figures, we take you directly to the moments that…"
   },
   {
-   "id": "get-sleepy-stories-for-sleep",
+   "id": "apple-1487513861",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Get Sleepy: stories for sleep",
@@ -1096,7 +1096,7 @@
    "summary": "Get Sleepy is the #1 sleep podcast for relaxing bedtime stories to help you fall asleep. Our soothing sleep stories give busy minds somewhere peaceful to go, helping you unwind and drift into a good night’s sleep. Get Sleepy is a production of Slumber Studios. Listen ad-free on our premium feed or…"
   },
   {
-   "id": "all-in-with-chamath-jason-sacks-friedberg",
+   "id": "apple-1502871393",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "All-In with Chamath, Jason, Sacks & Friedberg",
@@ -1116,7 +1116,7 @@
    "summary": "Industry veterans, degenerate gamblers & besties Chamath Palihapitiya, Jason Calacanis, David Sacks & David Friedberg cover all things economic, tech, political, social & poker."
   },
   {
-   "id": "the-zach-lowe-show",
+   "id": "apple-1805478723",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Zach Lowe Show",
@@ -1135,7 +1135,7 @@
    "summary": "Same Zach. New home. The Zach Lowe Show keeps you in the know around the Association with a variety of NBA conversations and game breakdowns. Plus guests, including his friends covering the league and some of the biggest names shaping it. Episodes weekly on Tuesdays and Thursdays."
   },
   {
-   "id": "the-jamie-kern-lima-show",
+   "id": "apple-1728723635",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Jamie Kern Lima Show",
@@ -1174,7 +1174,7 @@
    "summary": "Song Exploder is a podcast where musicians take apart their songs, and piece by piece, tell the story of how they were made. Each episode features an artist discussing a song of theirs, breaking down the sounds and ideas that went into the writing and recording. Hosted and produced by Hrishikesh…"
   },
   {
-   "id": "global-news-podcast",
+   "id": "apple-135067274",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Global News Podcast",
@@ -1193,7 +1193,7 @@
    "summary": "The Global News Podcast brings you the breaking news you need to hear, as it happens. Listen for the latest headlines and current affairs from around the world. Politics, economics, climate, business, technology, health – we cover it all with expert analysis and insight. Get the news that matters…"
   },
   {
-   "id": "search-engine",
+   "id": "apple-1614253637",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Search Engine",
@@ -1213,7 +1213,7 @@
    "summary": "We try to make sense of the world, one question at a time. No question too big, no question too small.Hosted by PJ Vogt, edited by Sruthi Pinnamaneni. Named one of the best podcasts of all time by Time Magazine"
   },
   {
-   "id": "the-toast",
+   "id": "apple-1368081567",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Toast",
@@ -1232,7 +1232,7 @@
    "summary": "Take a bite out of The Toast, weekdays with Jackie & Claudia Oshry."
   },
   {
-   "id": "dateline-nbc",
+   "id": "apple-1464919521",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Dateline NBC",
@@ -1251,7 +1251,7 @@
    "summary": "Current and classic episodes, featuring compelling true-crime mysteries, powerful documentaries and in-depth investigations. Follow now to get the latest episodes of Dateline NBC completely free, or subscribe to Dateline Premium for ad-free listening and exclusive bonus content: DatelinePremium.com"
   },
   {
-   "id": "young-and-profiting-yap-with-hala-taha-entrepreneurship-and",
+   "id": "apple-1368888880",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast",
@@ -1270,7 +1270,7 @@
    "summary": "YAP is the must-listen podcast for driven entrepreneurs and high achievers who are hardcore about business, personal growth, and achieving their potential. Hosted by Hala Taha, self-made entrepreneur and CEO of YAP Media, this #1 entrepreneurship podcast features mini-masterclasses with business…"
   },
   {
-   "id": "short-wave",
+   "id": "apple-1482575855",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Short Wave",
@@ -1289,7 +1289,7 @@
    "summary": "New discoveries, everyday mysteries, and the science behind the headlines — in just under 15 minutes. It's science for everyone, using a lot of creativity and a little humor. Join hosts Emily Kwong and Regina Barber for science on a different wavelength. Support public media by joining NPR+ at…"
   },
   {
-   "id": "dan-snow-s-history-hit",
+   "id": "apple-1042631089",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Dan Snow's History Hit",
@@ -1308,7 +1308,7 @@
    "summary": "Historian Dan Snow journeys across the globe to tell the stories of history's defining moments. From the Colosseum in Rome to the Great Wall of China, the battlefields of Waterloo to the Tomb of Tutankhamun, join Dan as he explores the how and why of the greatest monuments, battles, heroes…"
   },
   {
-   "id": "passion-struck-with-john-r-miles",
+   "id": "apple-1553279283",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Passion Struck with John R. Miles",
@@ -1348,7 +1348,7 @@
    "summary": "Explore true stories of the dark side of the Internet with host Jack Rhysider as he takes you on a journey through the chilling world of hacking, data breaches, and cyber crime. ¿Hablas español? Escucha en español aquí ➔ https://darknetdiaries.com/es/"
   },
   {
-   "id": "the-herd-with-colin-cowherd",
+   "id": "apple-1042368254",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Herd with Colin Cowherd",
@@ -1387,7 +1387,7 @@
    "summary": "Very Bad Wizards is a podcast featuring a philosopher (Tamler Sommers) and a psychologist (David Pizarro), who share a love for ethics, pop culture, and cognitive science, and who have a marked inability to distinguish sacred from profane. Each podcast includes discussions of moral philosophy…"
   },
   {
-   "id": "snap-judgment",
+   "id": "apple-283657561",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Snap Judgment",
@@ -1407,7 +1407,7 @@
    "summary": "Snap Judgment mixes real stories with beats to produce cinematic, dramatic audio. Snap’s raw, musical brand of storytelling dares listeners to see the world through the eyes of another. It's storytelling... with a BEAT."
   },
   {
-   "id": "pod-save-america",
+   "id": "apple-1192761536",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Pod Save America",
@@ -1426,7 +1426,7 @@
    "summary": "Pod Save America is a no-b******t conversation about politics hosted by former Obama aides Jon Favreau, Jon Lovett, Dan Pfeiffer, and Tommy Vietor. It cuts through the noise to break down the week’s news and helps people figure out what matters and how they can help. They’re regularly joined by…"
   },
   {
-   "id": "the-interview",
+   "id": "apple-1624946521",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Interview",
@@ -1446,7 +1446,7 @@
    "summary": "Conversations with the world’s most fascinating people. Each week, hosts David Marchese and Lulu Garcia-Navarro talk to compelling, influential figures in culture, politics, business, sports and beyond — illuminating who they are, why they do what they do and how they impact the rest of us. New…"
   },
   {
-   "id": "smartless",
+   "id": "apple-1521578868",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "SmartLess",
@@ -1465,7 +1465,7 @@
    "summary": "\"SmartLess\" with Jason Bateman, Sean Hayes, & Will Arnett is a podcast that connects and unites people from all walks of life to learn about shared experiences through thoughtful dialogue and organic hilarity. A nice surprise: in each episode of SmartLess, one of the hosts reveals his mystery guest…"
   },
   {
-   "id": "20-20",
+   "id": "apple-987967575",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "20/20",
@@ -1484,7 +1484,7 @@
    "summary": "Unforgettable true crime mysteries, exclusive newsmaker interviews, hard-hitting investigative reports and in-depth coverage of high profile stories. Now listen throughout the week with the official 20/20 After Show, the True Crime Vault, and our spotlight of true crime originals. Subscribe to…"
   },
   {
-   "id": "the-learning-leader-show-with-ryan-hawk",
+   "id": "apple-985396258",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Learning Leader Show With Ryan Hawk",
@@ -1504,7 +1504,7 @@
    "summary": "Leaders are learners. The best leaders never stop working to make themselves better. The Learning Leader Show Is series of conversations with the world's most thoughtful leaders. Entrepreneurs, CEO's, World-Class Athletes, Coaches, Best-Selling Authors, and much more."
   },
   {
-   "id": "startalk-with-neil-degrasse-tyson",
+   "id": "apple-325404506",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "StarTalk with Neil deGrasse Tyson",
@@ -1522,7 +1522,7 @@
    "summary": "Science, pop culture, and comedy collide on StarTalk Radio! Neil deGrasse Tyson, astrophysicist and Director of New York's Hayden Planetarium, and his comic co-hosts, guest celebrities, and scientific experts explore astronomy, physics, and everything else there is to know about life in the…"
   },
   {
-   "id": "american-history-tellers",
+   "id": "apple-1313596069",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "American History Tellers",
@@ -1541,7 +1541,7 @@
    "summary": "The Cold War, Prohibition, the Gold Rush, the Space Race. Every part of your life - the words you speak, the ideas you share - can be traced to our history, but how well do you really know the stories that made America? We'll take you to the events, the times and the people that shaped our nation.…"
   },
   {
-   "id": "extend-podcast-with-darshan-shah-md",
+   "id": "apple-1773578243",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Extend Podcast with Darshan Shah, MD",
@@ -1579,7 +1579,7 @@
    "summary": "Three nerds discussing tech, Apple, programming, and loosely related matters."
   },
   {
-   "id": "fantasy-footballers-fantasy-football-podcast",
+   "id": "apple-917453719",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Fantasy Footballers - Fantasy Football Podcast",
@@ -1618,7 +1618,7 @@
    "summary": "Adventures in language with Helen Zaltzman. TheAllusionist.org"
   },
   {
-   "id": "letters-from-an-american",
+   "id": "apple-1730358737",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Letters from an American",
@@ -1657,7 +1657,7 @@
    "summary": "CGP Grey and Brady Haran talk about YouTube, life, work, whatever."
   },
   {
-   "id": "conan-o-brien-needs-a-friend",
+   "id": "apple-1438054347",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Conan O’Brien Needs A Friend",
@@ -1676,7 +1676,7 @@
    "summary": "After 25 years at the Late Night desk, Conan realized that the only people at his holiday party are the men and women who work for him. Over the years and despite thousands of interviews, Conan has never made a real and lasting friendship with any of his celebrity guests. So, he started a podcast…"
   },
   {
-   "id": "48-hours",
+   "id": "apple-965818306",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "48 Hours",
@@ -1695,7 +1695,7 @@
    "summary": "“48 Hours” uncovers the narrative behind crime and justice cases that have left a lasting mark on society. Award-winning CBS News correspondents thoughtfully examine the complexities of each crime by transporting you to the heart of the investigation through key evidence and gripping interviews…"
   },
   {
-   "id": "acquired",
+   "id": "apple-1050462261",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Acquired",
@@ -1735,7 +1735,7 @@
    "summary": "Ever wanted to know how music affects your brain, what quantum mechanics really is, or how black holes work? Do you wonder why you get emotional each time you see a certain movie, or how on earth video games are designed? Then you've come to the right place. Each week, Sean Carroll will host…"
   },
   {
-   "id": "history-that-doesn-t-suck",
+   "id": "apple-1291579828",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "History That Doesn't Suck",
@@ -1754,7 +1754,7 @@
    "summary": "HTDS is a bi-weekly podcast, delivering a legit, seriously researched, hard-hitting survey of American history through entertaining stories. To keep up with History That Doesn’t Suck news, check us out htdspodcast.com or follow on Facebook and Instagram: @historythatdoesntsuck. Become a premium…"
   },
   {
-   "id": "decoded-unlock-the-secrets-of-human-behavior-emotion-and-mot",
+   "id": "apple-1795759900",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation",
@@ -1793,7 +1793,7 @@
    "summary": "Cortex is a show that explores how creative people think about their work — and how they get it done. Each episode dives into the workflows they follow, the apps and devices they depend on, and the habits that keep projects moving. Hosted by CGP Grey and Myke Hurley."
   },
   {
-   "id": "fantasy-football-today",
+   "id": "apple-261735167",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Fantasy Football Today",
@@ -1831,7 +1831,7 @@
    "summary": "Articles of Interest is a show about what we wear. Produced and Hosted by Avery Trufelman"
   },
   {
-   "id": "npr-news-now",
+   "id": "apple-121493675",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "NPR News Now",
@@ -1850,7 +1850,7 @@
    "summary": "The latest news in five minutes. Updated hourly. Support public media by joining NPR+ at plus.npr.org. You’ll get perks for over 25 NPR podcasts, including sponsor-free listening for NPR News Now, UP First, and more."
   },
   {
-   "id": "the-oprah-podcast",
+   "id": "apple-1782960381",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Oprah Podcast",
@@ -1869,7 +1869,7 @@
    "summary": "“The Oprah Podcast” is a weekly video podcast series featuring talk show host, producer and philanthropist Oprah Winfrey as she hosts conversations around what matters most to people, available to view for free on her YouTube Channel, accessible globally for an international audience. Global media…"
   },
   {
-   "id": "armchair-expert-with-dax-shepard",
+   "id": "apple-1345682353",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Armchair Expert with Dax Shepard",
@@ -1888,7 +1888,7 @@
    "summary": "Hi, I’m Dax Shepard, and I love talking to people. I am endlessly fascinated by the messiness of being human, and I find people who are vulnerable and honest about their struggles and shortcomings to be incredibly sexy. I invite you to join me as I explore other people’s stories. We will celebrate…"
   },
   {
-   "id": "snapped-women-who-murder",
+   "id": "apple-1145089790",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Snapped: Women Who Murder",
@@ -1907,7 +1907,7 @@
    "summary": "For the first time ever, full Snapped episodes are now a podcast. Subscribe to this true crime podcast for the direct audio from the original Snapped episodes that have aired on Oxygen over the last 29 seasons (and counting)! Now you can enjoy Snapped episodes in your headphones, in your car, or at…"
   },
   {
-   "id": "something-you-should-know",
+   "id": "apple-1150124880",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Something You Should Know",
@@ -1927,7 +1927,7 @@
    "summary": "Sometimes all it takes is one little fact or one little piece of wisdom to change your life forever. That's the purpose and the hope of \"Something You Should Know.\" In each episode, host Mike Carruthers interviews top experts in their field to bring you fascinating information and advice to help…"
   },
   {
-   "id": "lore",
+   "id": "apple-978052928",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Lore",
@@ -1947,7 +1947,7 @@
    "summary": "The award-winning podcast (also a TV show & book series) about dark historical tales. Each episode explores the mysterious creatures, tragic events, and unusual places that fill the pages of history. Because sometimes the truth is more frightening than fiction."
   },
   {
-   "id": "maintenance-phase",
+   "id": "apple-1535408667",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Maintenance Phase",
@@ -1967,7 +1967,7 @@
    "summary": "Debunking the junk science behind health fads, wellness scams and nonsensical nutrition advice."
   },
   {
-   "id": "the-ai-daily-brief-artificial-intelligence-news-and-analysis",
+   "id": "apple-1680633614",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The AI Daily Brief: Artificial Intelligence News and Analysis",
@@ -1988,7 +1988,7 @@
    "summary": "A daily news analysis show on all things artificial intelligence. NLW looks at AI from multiple angles, from the explosion of creativity brought on by new tools like Midjourney and ChatGPT to the potential disruptions to work and industries as we know them to the great philosophical, ethical and…"
   },
   {
-   "id": "cover-3-college-football",
+   "id": "apple-1257913963",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Cover 3 College Football",
@@ -2027,7 +2027,7 @@
    "summary": "The stories behind the world's most recognizable and interesting sounds. Whether you're a professional audio engineer with decades of experience, a fourth grader who loves sound and music, or anyone in between, Twenty Thousand Hertz will help unlock your sonic world… from the sound design secrets…"
   },
   {
-   "id": "pivot",
+   "id": "apple-1073226719",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Pivot",
@@ -2067,7 +2067,7 @@
    "summary": "Maybe you’ve laid awake and imagined how it could have been, how it might yet be, but the moment to act was never right. Well, the moment is here and the podcast making it happen is Heavyweight. Join Jonathan Goldstein for road trips, thorny reunions, and difficult conversations as he backpedals…"
   },
   {
-   "id": "the-joe-rogan-experience",
+   "id": "apple-360084272",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Joe Rogan Experience",
@@ -2085,7 +2085,7 @@
    "summary": "The official podcast of comedian Joe Rogan."
   },
   {
-   "id": "mrballen-podcast-strange-dark-mysterious-stories",
+   "id": "apple-1608813794",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "MrBallen Podcast: Strange, Dark & Mysterious Stories",
@@ -2104,7 +2104,7 @@
    "summary": "MrBallen Podcast: Strange, Dark and Mysterious Stories is a true crime and mystery podcast that presents strange, dark and mysterious content delivered in story format. The program is hosted by John Allen a.k.a. MrBallen. Subscribe to SiriusXM Podcasts+ to listen to new episodes 7-days early and…"
   },
   {
-   "id": "ologies-with-alie-ward",
+   "id": "apple-1278815517",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Ologies with Alie Ward",
@@ -2142,7 +2142,7 @@
    "summary": "A history podcast looking at the collapse of a different civilization each episode. What did they have in common? Why did they fall? And what did it feel like to watch it happen?"
   },
   {
-   "id": "ted-radio-hour",
+   "id": "apple-523121474",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "TED Radio Hour",
@@ -2163,7 +2163,7 @@
    "summary": "Exploring the biggest questions of our time with the help of the world's greatest thinkers. Host Manoush Zomorodi inspires us to learn more about the world, our communities, and most importantly, ourselves. Support public media by joining NPR+ at plus.npr.org. You’ll get perks for over 25 NPR…"
   },
   {
-   "id": "double-coverage-podcast",
+   "id": "apple-1837044678",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "DOUBLE COVERAGE PODCAST",
@@ -2182,7 +2182,7 @@
    "summary": "Double Coverage Podcast"
   },
   {
-   "id": "the-book-review",
+   "id": "apple-120315179",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Book Review",
@@ -2201,7 +2201,7 @@
    "summary": "The world's top authors and critics join host Gilbert Cruz and editors at The New York Times Book Review to talk about the week's top books, what we're reading and what's going on in the literary world. Subscribe today at nytimes.com/podcasts or on Apple Podcasts, Spotify and Amazon Music. You can…"
   },
   {
-   "id": "bulwark-takes",
+   "id": "apple-1794450472",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Bulwark Takes",
@@ -2220,7 +2220,7 @@
    "summary": "The news cycle doesn’t slow down, and neither does The Bulwark. Bulwark Takes brings you bite-sized takes on the news of the day from the entire Bulwark team, including Tim Miller, Sarah Longwell, and Bill Kristol, and more."
   },
   {
-   "id": "behind-the-bastards",
+   "id": "apple-1373812661",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Behind the Bastards",
@@ -2240,7 +2240,7 @@
    "summary": "There’s a reason the History Channel has produced hundreds of documentaries about Hitler but only a few about Dwight D. Eisenhower. Bad guys (and gals) are eternally fascinating. Behind the Bastards dives in past the Cliffs Notes of the worst humans in history and exposes the bizarre realities of…"
   },
   {
-   "id": "the-weekly-show-with-jon-stewart",
+   "id": "apple-1583132133",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Weekly Show with Jon Stewart",
@@ -2260,7 +2260,7 @@
    "summary": "On Mondays, Jon Stewart hosts The Daily Show, but on Wednesdays, he's back in your ears with The Weekly Show -- a podcast featuring in-depth conversations with a range of special guests. From experts and advocates, to stakeholders and thought leaders, we discuss the challenges, changes, and ideas…"
   },
   {
-   "id": "rotten-mango",
+   "id": "apple-1517954480",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Rotten Mango",
@@ -2279,7 +2279,7 @@
    "summary": "Rotten but still a little sweet! Rotten Mango is a true crime + all things spooky podcast. We love doing deep dives into the darkest crimes and we tend to not leave out any details - which can get a little rotten at times. If you want deep dives in the psychology of killers, no holding back…"
   },
   {
-   "id": "big-ideas-lab",
+   "id": "apple-1766302914",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Big Ideas Lab",
@@ -2318,7 +2318,7 @@
    "summary": "Season 12 premiered October 20, 2024 – a nonfictional account of The Martian Revolution of 2247. Mike Duncan is taking everything he's learned from 12 seasons of historical revolutions - the repeating arcs, characters, ideas, events, and patterns which all revolutions seem to follow - and created a…"
   },
   {
-   "id": "plaintext-with-rich",
+   "id": "apple-1864969176",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Plaintext with Rich",
@@ -2338,7 +2338,7 @@
    "summary": "Cybersecurity is an everyone problem. So why does it always sound like it’s only for IT people? Each week, Rich takes one topic, from phishing to ransomware to how your phone actually tracks you, and explains it in plain language in under ten minutes or less. No buzzwords. No condescension. Just…"
   },
   {
-   "id": "pardon-my-take",
+   "id": "apple-1089022756",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Pardon My Take",
@@ -2357,7 +2357,7 @@
    "summary": "On \"Pardon My Take,\" Big Cat & PFT Commenter deliver the loudest and most correct sports takes in the history of the spoken word. Daily topics, guests, and an inability to tell what the hosts might be doing will make this your new favorite sports talk show. This is a podcast that will without a…"
   },
   {
-   "id": "stories-of-art",
+   "id": "apple-1877705944",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Stories of Art",
@@ -2377,7 +2377,7 @@
    "summary": "Stories of Art brings together art historian Dr. James Fox and art critic Alastair Sooke to uncover the most inspiring and compelling stories from the history of art. From the lives of the world’s greatest artists to the turning points that changed art, to the hidden histories of great…"
   },
   {
-   "id": "modern-wisdom",
+   "id": "apple-1347973549",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Modern Wisdom",
@@ -2397,7 +2397,7 @@
    "summary": "Life is hard. This podcast will help. Lessons from the greatest thinkers on the planet with Chris Williamson. Including guests like David Goggins, Dr Jordan Peterson, Naval Ravikant, Sam Harris, Jocko Willink, Dr Andrew Huberman, Dr Julie Smith, Steven Bartlett, Ryan Holiday, Robert Greene, Matthew…"
   },
   {
-   "id": "the-woman-in-the-woods",
+   "id": "apple-6809864042",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Woman in the Woods",
@@ -2435,7 +2435,7 @@
    "summary": "Everywhere around us are echoes of the past. Those echoes define the boundaries of states and countries, how we pray and how we fight. They determine what money we spend and how we earn it at work, what language we speak and how we raise our children. From Wondery, host Patrick Wyman, PhD (“Fall Of…"
   },
   {
-   "id": "the-bill-simmons-podcast",
+   "id": "apple-1043699613",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Bill Simmons Podcast",
@@ -2473,7 +2473,7 @@
    "summary": "Twice-monthly community updates for the small desert town of Night Vale, where every conspiracy theory is true. Turn on your radio and hide. Never listened before? It's an ongoing radio show. Start with the current episode, and you'll catch on in no time. Or, go right to Episode 1 if you wanna…"
   },
   {
-   "id": "morbid",
+   "id": "apple-1379959217",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Morbid",
@@ -2513,7 +2513,7 @@
    "summary": "A world-class seminar, every week. In Our Time explores the ideas, people and discoveries that have shaped our world, spanning history, philosophy, religion, science, literature, art and culture. On Thursdays, hear brand-new episodes hosted by Misha Glenny and leading academics. On Mondays…"
   },
   {
-   "id": "new-heights-with-jason-travis-kelce",
+   "id": "apple-1643745036",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "New Heights with Jason & Travis Kelce",
@@ -2532,7 +2532,7 @@
    "summary": "Football’s funniest family duo — Jason Kelce of the Philadelphia Eagles and Travis Kelce of the Kansas City Chiefs — team up to provide next-level access to life in the league as it unfolds. The two brothers and Super Bowl champions drop weekly insights about the weekly slate of games and share…"
   },
   {
-   "id": "the-magnus-archives",
+   "id": "apple-1095138637",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Magnus Archives",
@@ -2551,7 +2551,7 @@
    "summary": "“Make your statement, face your fear.” The Magnus Archives is an award winning weekly horror fiction audiodrama podcast examining what lurks in the archives of the Magnus Institute, an organisation dedicated to researching the esoteric and the weird. Join Jonathan Sims as he explores the archive…"
   },
   {
-   "id": "world-war-ii-with-tom-hanks",
+   "id": "apple-1896760409",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "World War II with Tom Hanks",
@@ -2570,7 +2570,7 @@
    "summary": "For eighty years, the Second World War has remained the most devastating and defining conflict in human history. World War II with Tom Hanks reexamines the war through the lens of a new century. Told over twenty hours and guided by Tom Hanks, whose lifelong passion for this history has shaped some…"
   },
   {
-   "id": "no-laying-up-golf-podcast",
+   "id": "apple-880837011",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "No Laying Up - Golf Podcast",
@@ -2589,7 +2589,7 @@
    "summary": "The No Laying Up Podcast is a fresh, funny and informative conversation on all things golf. Founded in 2014, No Laying Up and its flagship podcast seeks to entertain and inform a community of avid golfers around the world. What started as a group text among college friends has now grown into one of…"
   },
   {
-   "id": "the-chef-s-cut",
+   "id": "apple-1820686169",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "The Chef's Cut",
@@ -2608,7 +2608,7 @@
    "summary": "The Chef’s Cut focuses on the stories and techniques behind the food you love the most! Each week, Top Chef alums Adrienne Cheatham and Joe Flamm give you behind the scenes kitchen access and share food tips that will make you look like a culinary hero, all while hanging out with their celebrity…"
   },
   {
-   "id": "american-scandal",
+   "id": "apple-1435516849",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "American Scandal",
@@ -2628,7 +2628,7 @@
    "summary": "Every scandal begins with a lie. But the truth will come out. And then comes the fallout and the outrage. Scandals have shaped America since its founding. From business and politics to sports and society, we look on aghast as corruption, deceit and ambition bring down heroes and celebrities…"
   },
   {
-   "id": "happy-hour-with-ina-garten",
+   "id": "apple-6805930852",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Happy Hour with Ina Garten",
@@ -2646,7 +2646,7 @@
    "summary": "Beloved hostess Ina Garten welcomes listeners into her New York City apartment for Happy Hour with Ina Garten. Every Wednesday, she sits down with people she’d like to meet from the worlds of culture, food, art, sports, and entertainment for the kinds of conversations you would love to overhear at…"
   },
   {
-   "id": "jeselnik-book-club",
+   "id": "apple-6813196901",
    "kind": "podcast_feed",
    "contentKind": "podcast",
    "title": "Jeselnik Book Club",

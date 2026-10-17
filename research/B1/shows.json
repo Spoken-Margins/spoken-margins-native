@@ -56,7 +56,7 @@
  "shows": [
   {
    "name": "The Daily",
-   "id": "the-daily",
+   "id": "apple-1200361736",
    "feed": "https://feeds.simplecast.com/Sl5CSM3S",
    "subjects": [
     "news"
@@ -65,7 +65,7 @@
   },
   {
    "name": "Up First from NPR",
-   "id": "up-first-from-npr",
+   "id": "apple-1222114325",
    "feed": "https://feeds.npr.org/510318/podcast.xml",
    "subjects": [
     "news"
@@ -74,7 +74,7 @@
   },
   {
    "name": "Today, Explained",
-   "id": "today-explained",
+   "id": "apple-1346207297",
    "feed": "https://feeds.megaphone.fm/VMP5705694065",
    "subjects": [
     "news"
@@ -83,7 +83,7 @@
   },
   {
    "name": "The Journal.",
-   "id": "the-journal",
+   "id": "apple-1469394914",
    "feed": "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal",
    "subjects": [
     "news",
@@ -93,7 +93,7 @@
   },
   {
    "name": "Global News Podcast",
-   "id": "global-news-podcast",
+   "id": "apple-135067274",
    "feed": "https://podcasts.files.bbci.co.uk/p02nq0gn.rss",
    "subjects": [
     "news"
@@ -102,7 +102,7 @@
   },
   {
    "name": "Pod Save America",
-   "id": "pod-save-america",
+   "id": "apple-1192761536",
    "feed": "https://audioboom.com/channels/5166624.rss",
    "subjects": [
     "news"
@@ -110,7 +110,7 @@
   },
   {
    "name": "Letters from an American",
-   "id": "letters-from-an-american",
+   "id": "apple-1730358737",
    "feed": "https://api.substack.com/feed/podcast/20533.rss",
    "subjects": [
     "news"
@@ -118,7 +118,7 @@
   },
   {
    "name": "NPR News Now",
-   "id": "npr-news-now",
+   "id": "apple-121493675",
    "feed": "https://feeds.npr.org/500005/podcast.xml",
    "subjects": [
     "news"
@@ -126,7 +126,7 @@
   },
   {
    "name": "Pivot",
-   "id": "pivot",
+   "id": "apple-1073226719",
    "feed": "https://feeds.megaphone.fm/pivot",
    "subjects": [
     "news",
@@ -136,7 +136,7 @@
   },
   {
    "name": "Bulwark Takes",
-   "id": "bulwark-takes",
+   "id": "apple-1794450472",
    "feed": "https://audioboom.com/channels/5149464.rss",
    "subjects": [
     "news"
@@ -144,7 +144,7 @@
   },
   {
    "name": "This American Life",
-   "id": "this-american-life",
+   "id": "apple-201671138",
    "feed": "https://www.thisamericanlife.org/podcast/rss.xml",
    "subjects": [
     "society-culture"
@@ -153,7 +153,7 @@
   },
   {
    "name": "The Ezra Klein Show",
-   "id": "the-ezra-klein-show",
+   "id": "apple-1548604447",
    "feed": "https://feeds.simplecast.com/kEKXbjuJ",
    "subjects": [
     "society-culture",
@@ -163,7 +163,7 @@
   },
   {
    "name": "Stuff You Should Know",
-   "id": "stuff-you-should-know",
+   "id": "apple-278981407",
    "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss",
    "subjects": [
     "society-culture",
@@ -173,7 +173,7 @@
   },
   {
    "name": "Freakonomics Radio",
-   "id": "freakonomics-radio",
+   "id": "apple-354668519",
    "feed": "https://feeds.simplecast.com/Y8lFbOT4",
    "subjects": [
     "society-culture",
@@ -183,7 +183,7 @@
   },
   {
    "name": "Search Engine",
-   "id": "search-engine",
+   "id": "apple-1614253637",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine",
    "subjects": [
     "society-culture",
@@ -193,7 +193,7 @@
   },
   {
    "name": "The Interview",
-   "id": "the-interview",
+   "id": "apple-1624946521",
    "feed": "https://feeds.simplecast.com/HpGMoS4g",
    "subjects": [
     "society-culture",
@@ -211,7 +211,7 @@
   },
   {
    "name": "The Oprah Podcast",
-   "id": "the-oprah-podcast",
+   "id": "apple-1782960381",
    "feed": "https://rss.art19.com/the-oprah-podcast",
    "subjects": [
     "society-culture"
@@ -227,7 +227,7 @@
   },
   {
    "name": "Behind the Bastards",
-   "id": "behind-the-bastards",
+   "id": "apple-1373812661",
    "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss",
    "subjects": [
     "society-culture",
@@ -236,7 +236,7 @@
   },
   {
    "name": "Modern Wisdom",
-   "id": "modern-wisdom",
+   "id": "apple-1347973549",
    "feed": "https://feeds.megaphone.fm/SIXMSB5088139739",
    "subjects": [
     "society-culture",
@@ -245,7 +245,7 @@
   },
   {
    "name": "Wait Wait... Don't Tell Me!",
-   "id": "wait-wait-don-t-tell-me",
+   "id": "apple-121493804",
    "feed": "https://feeds.npr.org/344098539/podcast.xml",
    "subjects": [
     "comedy",
@@ -255,7 +255,7 @@
   },
   {
    "name": "Good Hang with Amy Poehler",
-   "id": "good-hang-with-amy-poehler",
+   "id": "apple-1795483480",
    "feed": "https://feeds.megaphone.fm/good-hang-with-amy-poehler",
    "subjects": [
     "comedy"
@@ -274,7 +274,7 @@
   },
   {
    "name": "The Tim Dillon Show",
-   "id": "the-tim-dillon-show",
+   "id": "apple-1135137367",
    "feed": "https://audioboom.com/channels/5093219.rss",
    "subjects": [
     "comedy"
@@ -283,7 +283,7 @@
   },
   {
    "name": "The Toast",
-   "id": "the-toast",
+   "id": "apple-1368081567",
    "feed": "https://feeds.megaphone.fm/DEARMEDIALLC7892434789",
    "subjects": [
     "comedy"
@@ -292,7 +292,7 @@
   },
   {
    "name": "SmartLess",
-   "id": "smartless",
+   "id": "apple-1521578868",
    "feed": "https://feeds.simplecast.com/hNaFxXpO",
    "subjects": [
     "comedy"
@@ -300,7 +300,7 @@
   },
   {
    "name": "Conan O’Brien Needs A Friend",
-   "id": "conan-o-brien-needs-a-friend",
+   "id": "apple-1438054347",
    "feed": "https://feeds.simplecast.com/dHoohVNH",
    "subjects": [
     "comedy"
@@ -308,7 +308,7 @@
   },
   {
    "name": "Armchair Expert with Dax Shepard",
-   "id": "armchair-expert-with-dax-shepard",
+   "id": "apple-1345682353",
    "feed": "https://rss.art19.com/armchair-expert",
    "subjects": [
     "comedy"
@@ -316,7 +316,7 @@
   },
   {
    "name": "The Joe Rogan Experience",
-   "id": "the-joe-rogan-experience",
+   "id": "apple-360084272",
    "feed": "https://feeds.megaphone.fm/GLT1412515089",
    "subjects": [
     "comedy"
@@ -324,7 +324,7 @@
   },
   {
    "name": "The Weekly Show with Jon Stewart",
-   "id": "the-weekly-show-with-jon-stewart",
+   "id": "apple-1583132133",
    "feed": "https://feeds.megaphone.fm/BVLLC2163264914",
    "subjects": [
     "comedy",
@@ -333,7 +333,7 @@
   },
   {
    "name": "Crime Junkie",
-   "id": "crime-junkie",
+   "id": "apple-1322200189",
    "feed": "https://feeds.simplecast.com/qm_9xx0g",
    "subjects": [
     "true-crime"
@@ -352,7 +352,7 @@
   },
   {
    "name": "Criminal",
-   "id": "criminal",
+   "id": "apple-809264944",
    "feed": "https://feeds.megaphone.fm/VMP7924981569",
    "subjects": [
     "true-crime",
@@ -362,7 +362,7 @@
   },
   {
    "name": "In The Dark",
-   "id": "in-the-dark",
+   "id": "apple-1148175292",
    "feed": "https://feeds.megaphone.fm/CNE3915766304",
    "subjects": [
     "true-crime"
@@ -371,7 +371,7 @@
   },
   {
    "name": "Dateline NBC",
-   "id": "dateline-nbc",
+   "id": "apple-1464919521",
    "feed": "https://podcastfeeds.nbcnews.com/HL4TzgYC",
    "subjects": [
     "true-crime"
@@ -380,7 +380,7 @@
   },
   {
    "name": "20/20",
-   "id": "20-20",
+   "id": "apple-987967575",
    "feed": "https://feeds.megaphone.fm/ESP3456903052",
    "subjects": [
     "true-crime"
@@ -388,7 +388,7 @@
   },
   {
    "name": "48 Hours",
-   "id": "48-hours",
+   "id": "apple-965818306",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb",
    "subjects": [
     "true-crime"
@@ -396,7 +396,7 @@
   },
   {
    "name": "Snapped: Women Who Murder",
-   "id": "snapped-women-who-murder",
+   "id": "apple-1145089790",
    "feed": "https://rss.art19.com/snapped-women-who-murder",
    "subjects": [
     "true-crime"
@@ -404,7 +404,7 @@
   },
   {
    "name": "MrBallen Podcast: Strange, Dark & Mysterious Stories",
-   "id": "mrballen-podcast-strange-dark-mysterious-stories",
+   "id": "apple-1608813794",
    "feed": "https://feeds.simplecast.com/dloY8UYJ",
    "subjects": [
     "true-crime"
@@ -412,7 +412,7 @@
   },
   {
    "name": "Rotten Mango",
-   "id": "rotten-mango",
+   "id": "apple-1517954480",
    "feed": "https://feeds.simplecast.com/6Qp23t6h",
    "subjects": [
     "true-crime"
@@ -420,7 +420,7 @@
   },
   {
    "name": "The Woman in the Woods",
-   "id": "the-woman-in-the-woods",
+   "id": "apple-6809864042",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/91ac7984b8d3ba72de60858d5e6155bd",
    "subjects": [
     "true-crime"
@@ -428,7 +428,7 @@
   },
   {
    "name": "Morbid",
-   "id": "morbid",
+   "id": "apple-1379959217",
    "feed": "https://feeds.simplecast.com/ohmVlJZQ",
    "subjects": [
     "true-crime"
@@ -456,7 +456,7 @@
   },
   {
    "name": "3 Takeaways™",
-   "id": "3-takeaways",
+   "id": "apple-1526080983",
    "feed": "https://rss.buzzsprout.com/1236866.rss",
    "subjects": [
     "business",
@@ -466,7 +466,7 @@
   },
   {
    "name": "The Diary Of A CEO with Steven Bartlett",
-   "id": "the-diary-of-a-ceo-with-steven-bartlett",
+   "id": "apple-1291423644",
    "feed": "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn",
    "subjects": [
     "business"
@@ -475,7 +475,7 @@
   },
   {
    "name": "Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast",
-   "id": "young-and-profiting-yap-with-hala-taha-entrepreneurship-and",
+   "id": "apple-1368888880",
    "feed": "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap",
    "subjects": [
     "business"
@@ -484,7 +484,7 @@
   },
   {
    "name": "The Learning Leader Show With Ryan Hawk",
-   "id": "the-learning-leader-show-with-ryan-hawk",
+   "id": "apple-985396258",
    "feed": "https://rss.libsyn.com/shows/65162/destinations/259291.xml",
    "subjects": [
     "business",
@@ -493,7 +493,7 @@
   },
   {
    "name": "Acquired",
-   "id": "acquired",
+   "id": "apple-1050462261",
    "feed": "https://feeds.transistor.fm/acquired",
    "subjects": [
     "business",
@@ -502,7 +502,7 @@
   },
   {
    "name": "Radiolab",
-   "id": "radiolab",
+   "id": "apple-152249110",
    "feed": "https://feeds.simplecast.com/EmVW7VGp",
    "subjects": [
     "science",
@@ -512,7 +512,7 @@
   },
   {
    "name": "Hidden Brain",
-   "id": "hidden-brain",
+   "id": "apple-1028908750",
    "feed": "https://feeds.simplecast.com/kwWc0lhf",
    "subjects": [
     "science",
@@ -522,7 +522,7 @@
   },
   {
    "name": "Science Friday",
-   "id": "science-friday",
+   "id": "apple-73329284",
    "feed": "https://feeds.simplecast.com/h18ZIZD_",
    "subjects": [
     "science"
@@ -531,7 +531,7 @@
   },
   {
    "name": "Science Vs",
-   "id": "science-vs",
+   "id": "apple-1051557000",
    "feed": "https://feeds.megaphone.fm/sciencevs",
    "subjects": [
     "science"
@@ -540,7 +540,7 @@
   },
   {
    "name": "Short Wave",
-   "id": "short-wave",
+   "id": "apple-1482575855",
    "feed": "https://feeds.npr.org/510351/podcast.xml",
    "subjects": [
     "science"
@@ -549,7 +549,7 @@
   },
   {
    "name": "StarTalk with Neil deGrasse Tyson",
-   "id": "startalk-with-neil-degrasse-tyson",
+   "id": "apple-325404506",
    "feed": "https://feeds.simplecast.com/4T39_jAj",
    "subjects": [
     "science"
@@ -566,7 +566,7 @@
   },
   {
    "name": "Something You Should Know",
-   "id": "something-you-should-know",
+   "id": "apple-1150124880",
    "feed": "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037",
    "subjects": [
     "science",
@@ -575,7 +575,7 @@
   },
   {
    "name": "Ologies with Alie Ward",
-   "id": "ologies-with-alie-ward",
+   "id": "apple-1278815517",
    "feed": "https://feeds.simplecast.com/FO6kxYGj",
    "subjects": [
     "science"
@@ -584,7 +584,7 @@
   },
   {
    "name": "Big Ideas Lab",
-   "id": "big-ideas-lab",
+   "id": "apple-1766302914",
    "feed": "https://feeds.simplecast.com/WfThhbae",
    "subjects": [
     "science",
@@ -593,7 +593,7 @@
   },
   {
    "name": "The Rest Is History",
-   "id": "the-rest-is-history",
+   "id": "apple-1537788786",
    "feed": "https://feeds.megaphone.fm/GLT4787413333",
    "subjects": [
     "history"
@@ -602,7 +602,7 @@
   },
   {
    "name": "Dan Carlin's Hardcore History",
-   "id": "dan-carlin-s-hardcore-history",
+   "id": "apple-173001861",
    "feed": "https://feeds.feedburner.com/dancarlin/history?format=xml",
    "subjects": [
     "history"
@@ -611,7 +611,7 @@
   },
   {
    "name": "The Ancients",
-   "id": "the-ancients",
+   "id": "apple-1520403988",
    "feed": "https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353",
    "subjects": [
     "history"
@@ -620,7 +620,7 @@
   },
   {
    "name": "Throughline",
-   "id": "throughline",
+   "id": "apple-1451109634",
    "feed": "https://feeds.npr.org/510333/podcast.xml",
    "subjects": [
     "history",
@@ -630,7 +630,7 @@
   },
   {
    "name": "Dan Snow's History Hit",
-   "id": "dan-snow-s-history-hit",
+   "id": "apple-1042631089",
    "feed": "https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5",
    "subjects": [
     "history"
@@ -639,7 +639,7 @@
   },
   {
    "name": "American History Tellers",
-   "id": "american-history-tellers",
+   "id": "apple-1313596069",
    "feed": "https://rss.art19.com/american-history-tellers",
    "subjects": [
     "history"
@@ -647,7 +647,7 @@
   },
   {
    "name": "History That Doesn't Suck",
-   "id": "history-that-doesn-t-suck",
+   "id": "apple-1291579828",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254",
    "subjects": [
     "history"
@@ -655,7 +655,7 @@
   },
   {
    "name": "Lore",
-   "id": "lore",
+   "id": "apple-978052928",
    "feed": "https://rss.libsyn.com/shows/65267/destinations/259905.xml",
    "subjects": [
     "history",
@@ -698,7 +698,7 @@
   },
   {
    "name": "World War II with Tom Hanks",
-   "id": "world-war-ii-with-tom-hanks",
+   "id": "apple-1896760409",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/cc2b59fa44d0151fa8987e1b01e424bc",
    "subjects": [
     "history"
@@ -706,7 +706,7 @@
   },
   {
    "name": "American Scandal",
-   "id": "american-scandal",
+   "id": "apple-1435516849",
    "feed": "https://rss.art19.com/american-scandal",
    "subjects": [
     "history",
@@ -715,7 +715,7 @@
   },
   {
    "name": "Huberman Lab",
-   "id": "huberman-lab",
+   "id": "apple-1545953110",
    "feed": "https://feeds.megaphone.fm/hubermanlab",
    "subjects": [
     "health-fitness",
@@ -725,7 +725,7 @@
   },
   {
    "name": "On Purpose with Jay Shetty",
-   "id": "on-purpose-with-jay-shetty",
+   "id": "apple-1450994021",
    "feed": "https://feeds.megaphone.fm/on-purpose",
    "subjects": [
     "health-fitness",
@@ -735,7 +735,7 @@
   },
   {
    "name": "Nothing much happens: bedtime stories to help you sleep",
-   "id": "nothing-much-happens-bedtime-stories-to-help-you-sleep",
+   "id": "apple-1378040733",
    "feed": "https://feeds.megaphone.fm/SSM2868305742",
    "subjects": [
     "health-fitness",
@@ -745,7 +745,7 @@
   },
   {
    "name": "Get Sleepy: stories for sleep",
-   "id": "get-sleepy-stories-for-sleep",
+   "id": "apple-1487513861",
    "feed": "https://feeds.megaphone.fm/SGP8517078272",
    "subjects": [
     "health-fitness",
@@ -755,7 +755,7 @@
   },
   {
    "name": "Passion Struck with John R. Miles",
-   "id": "passion-struck-with-john-r-miles",
+   "id": "apple-1553279283",
    "feed": "https://feeds.simplecast.com/XYHE1JPs",
    "subjects": [
     "health-fitness",
@@ -764,7 +764,7 @@
   },
   {
    "name": "Extend Podcast with Darshan Shah, MD",
-   "id": "extend-podcast-with-darshan-shah-md",
+   "id": "apple-1773578243",
    "feed": "https://rss.libsyn.com/shows/551312/destinations/4758622.xml",
    "subjects": [
     "health-fitness"
@@ -772,7 +772,7 @@
   },
   {
    "name": "Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation",
-   "id": "decoded-unlock-the-secrets-of-human-behavior-emotion-and-mot",
+   "id": "apple-1795759900",
    "feed": "https://feeds.megaphone.fm/ARML6214944307",
    "subjects": [
     "health-fitness"
@@ -780,7 +780,7 @@
   },
   {
    "name": "Maintenance Phase",
-   "id": "maintenance-phase",
+   "id": "apple-1535408667",
    "feed": "https://rss.buzzsprout.com/1411126.rss",
    "subjects": [
     "health-fitness",
@@ -789,7 +789,7 @@
   },
   {
    "name": "Hard Fork",
-   "id": "hard-fork",
+   "id": "apple-1528594034",
    "feed": "https://feeds.simplecast.com/6HKOhNgS",
    "subjects": [
     "technology",
@@ -799,7 +799,7 @@
   },
   {
    "name": "Lex Fridman Podcast",
-   "id": "lex-fridman-podcast",
+   "id": "apple-1434243584",
    "feed": "https://lexfridman.com/feed/podcast/",
    "subjects": [
     "technology",
@@ -809,7 +809,7 @@
   },
   {
    "name": "Dwarkesh Podcast",
-   "id": "dwarkesh-podcast",
+   "id": "apple-1516093381",
    "feed": "https://www.dwarkesh.com/feed",
    "subjects": [
     "technology"
@@ -818,7 +818,7 @@
   },
   {
    "name": "All-In with Chamath, Jason, Sacks & Friedberg",
-   "id": "all-in-with-chamath-jason-sacks-friedberg",
+   "id": "apple-1502871393",
    "feed": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml",
    "subjects": [
     "technology",
@@ -855,7 +855,7 @@
   },
   {
    "name": "The AI Daily Brief: Artificial Intelligence News and Analysis",
-   "id": "the-ai-daily-brief-artificial-intelligence-news-and-analysis",
+   "id": "apple-1680633614",
    "feed": "https://anchor.fm/s/f7cac464/podcast/rss",
    "subjects": [
     "technology",
@@ -865,7 +865,7 @@
   },
   {
    "name": "TED Radio Hour",
-   "id": "ted-radio-hour",
+   "id": "apple-523121474",
    "feed": "https://feeds.npr.org/510298/podcast.xml",
    "subjects": [
     "technology",
@@ -875,7 +875,7 @@
   },
   {
    "name": "Plaintext with Rich",
-   "id": "plaintext-with-rich",
+   "id": "apple-1864969176",
    "feed": "https://rss.buzzsprout.com/2566974.rss",
    "subjects": [
     "technology",
@@ -884,7 +884,7 @@
   },
   {
    "name": "Pablo Torre Finds Out",
-   "id": "pablo-torre-finds-out",
+   "id": "apple-1685093486",
    "feed": "https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f",
    "subjects": [
     "sports"
@@ -893,7 +893,7 @@
   },
   {
    "name": "The Dan Le Batard Show",
-   "id": "the-dan-le-batard-show",
+   "id": "apple-934820588",
    "feed": "https://feeds.megaphone.fm/ESP2298543312",
    "subjects": [
     "sports"
@@ -902,7 +902,7 @@
   },
   {
    "name": "The MeatEater Podcast",
-   "id": "the-meateater-podcast",
+   "id": "apple-960902903",
    "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss",
    "subjects": [
     "sports"
@@ -911,7 +911,7 @@
   },
   {
    "name": "The Zach Lowe Show",
-   "id": "the-zach-lowe-show",
+   "id": "apple-1805478723",
    "feed": "https://feeds.megaphone.fm/zach-lowe",
    "subjects": [
     "sports"
@@ -920,7 +920,7 @@
   },
   {
    "name": "The Herd with Colin Cowherd",
-   "id": "the-herd-with-colin-cowherd",
+   "id": "apple-1042368254",
    "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss",
    "subjects": [
     "sports"
@@ -929,7 +929,7 @@
   },
   {
    "name": "Fantasy Footballers - Fantasy Football Podcast",
-   "id": "fantasy-footballers-fantasy-football-podcast",
+   "id": "apple-917453719",
    "feed": "https://feeds.simplecast.com/sw7PGWfw",
    "subjects": [
     "sports"
@@ -937,7 +937,7 @@
   },
   {
    "name": "Fantasy Football Today",
-   "id": "fantasy-football-today",
+   "id": "apple-261735167",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85",
    "subjects": [
     "sports"
@@ -945,7 +945,7 @@
   },
   {
    "name": "Cover 3 College Football",
-   "id": "cover-3-college-football",
+   "id": "apple-1257913963",
    "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/4d511b61eff9f56a1fca4042ba77c21c",
    "subjects": [
     "sports"
@@ -953,7 +953,7 @@
   },
   {
    "name": "DOUBLE COVERAGE PODCAST",
-   "id": "double-coverage-podcast",
+   "id": "apple-1837044678",
    "feed": "https://feeds.megaphone.fm/YMH1796246858",
    "subjects": [
     "sports"
@@ -961,7 +961,7 @@
   },
   {
    "name": "Pardon My Take",
-   "id": "pardon-my-take",
+   "id": "apple-1089022756",
    "feed": "https://mcsorleys.barstoolsports.com/feed/pardon-my-take",
    "subjects": [
     "sports"
@@ -969,7 +969,7 @@
   },
   {
    "name": "The Bill Simmons Podcast",
-   "id": "the-bill-simmons-podcast",
+   "id": "apple-1043699613",
    "feed": "https://feeds.megaphone.fm/the-bill-simmons-podcast",
    "subjects": [
     "sports"
@@ -977,7 +977,7 @@
   },
   {
    "name": "New Heights with Jason & Travis Kelce",
-   "id": "new-heights-with-jason-travis-kelce",
+   "id": "apple-1643745036",
    "feed": "https://rss.art19.com/new-heights",
    "subjects": [
     "sports"
@@ -985,7 +985,7 @@
   },
   {
    "name": "No Laying Up - Golf Podcast",
-   "id": "no-laying-up-golf-podcast",
+   "id": "apple-880837011",
    "feed": "https://feeds.megaphone.fm/nolayingup",
    "subjects": [
     "sports"
@@ -1003,7 +1003,7 @@
   },
   {
    "name": "The Mel Robbins Podcast",
-   "id": "the-mel-robbins-podcast",
+   "id": "apple-1646101002",
    "feed": "https://feeds.simplecast.com/UCwaTX1J",
    "subjects": [
     "education",
@@ -1013,7 +1013,7 @@
   },
   {
    "name": "IMO with Michelle Obama and Craig Robinson",
-   "id": "imo-with-michelle-obama-and-craig-robinson",
+   "id": "apple-1532956108",
    "feed": "https://rss.art19.com/hga-imo",
    "subjects": [
     "education",
@@ -1023,7 +1023,7 @@
   },
   {
    "name": "The Jamie Kern Lima Show",
-   "id": "the-jamie-kern-lima-show",
+   "id": "apple-1728723635",
    "feed": "https://feeds.megaphone.fm/LIFEISLOVELLC4342849321",
    "subjects": [
     "education",
@@ -1042,7 +1042,7 @@
   },
   {
    "name": "Fresh Air",
-   "id": "fresh-air",
+   "id": "apple-214089682",
    "feed": "https://feeds.npr.org/381444908/podcast.xml",
    "subjects": [
     "arts",
@@ -1053,7 +1053,7 @@
   },
   {
    "name": "The Moth",
-   "id": "the-moth",
+   "id": "apple-275699983",
    "feed": "http://feeds.feedburner.com/themothpodcast",
    "subjects": [
     "arts",
@@ -1063,7 +1063,7 @@
   },
   {
    "name": "99% Invisible",
-   "id": "99-invisible",
+   "id": "apple-394775318",
    "feed": "https://feeds.simplecast.com/BqbsxVfO",
    "subjects": [
     "arts",
@@ -1082,7 +1082,7 @@
   },
   {
    "name": "Snap Judgment",
-   "id": "snap-judgment",
+   "id": "apple-283657561",
    "feed": "https://rss.pdrl.fm/9ba5b0/snap.feed.snapjudgment.org",
    "subjects": [
     "arts",
@@ -1118,7 +1118,7 @@
   },
   {
    "name": "The Book Review",
-   "id": "the-book-review",
+   "id": "apple-120315179",
    "feed": "https://feeds.simplecast.com/zyaxg_KL",
    "subjects": [
     "arts"
@@ -1126,7 +1126,7 @@
   },
   {
    "name": "Stories of Art",
-   "id": "stories-of-art",
+   "id": "apple-1877705944",
    "feed": "https://rss2.flightcast.com/mqmgmtnt1tf3r7iyurohb3ib.xml",
    "subjects": [
     "arts",
@@ -1143,7 +1143,7 @@
   },
   {
    "name": "The Magnus Archives",
-   "id": "the-magnus-archives",
+   "id": "apple-1095138637",
    "feed": "https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8",
    "subjects": [
     "arts"
@@ -1151,7 +1151,7 @@
   },
   {
    "name": "The Chef's Cut",
-   "id": "the-chef-s-cut",
+   "id": "apple-1820686169",
    "feed": "https://feeds.megaphone.fm/LMINC5612116895",
    "subjects": [
     "arts"
@@ -1159,7 +1159,7 @@
   },
   {
    "name": "Happy Hour with Ina Garten",
-   "id": "happy-hour-with-ina-garten",
+   "id": "apple-6805930852",
    "feed": "https://feeds.megaphone.fm/VMP2612107147",
    "subjects": [
     "arts"
@@ -1167,7 +1167,7 @@
   },
   {
    "name": "Jeselnik Book Club",
-   "id": "jeselnik-book-club",
+   "id": "apple-6813196901",
    "feed": "https://feeds.megaphone.fm/jeselnik-book-club",
    "subjects": [
     "arts",

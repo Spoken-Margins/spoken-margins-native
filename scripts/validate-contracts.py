@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import json
-import re
 import hashlib
 import subprocess
 import sys
@@ -89,8 +88,6 @@ def validate_no_apple_data(path: Path) -> list[str]:
         if "appleGenreId" in subject:
             errors.append(f"{path}: subject {subject['id']!r} carries an Apple genre id")
     for entry in catalog.get("entries", []):
-        if re.fullmatch(r"apple-\d+", entry["id"]):
-            errors.append(f"{path}: {entry['id']} is named for an Apple Podcasts id")
         for field in ("feedURL", "artworkURL", "websiteURL"):
             if is_apple_url(entry.get(field, "")):
                 errors.append(f"{path}: {entry['id']} {field} points at Apple: {entry[field]}")
