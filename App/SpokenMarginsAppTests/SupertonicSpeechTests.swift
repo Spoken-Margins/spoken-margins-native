@@ -1955,8 +1955,10 @@ final class SupertonicSpeechTests: XCTestCase {
 
     // #1673: the app is away, A ends and B is still rendering. Waiting for the render needs the app to run when it
     // lands, and a backgrounded app with nothing playing can be suspended first (the 2026-10-07 export). The iOS
-    // voice reads on from B's place at once, the app is told why, and the chosen voice comes back at the next play.
-    func testAChunkNotRenderedAtABackgroundSeamHandsOverToTheIOSVoice() async throws {
+    // voice reads on from B's place at once and the app is told why.
+    // #1786: with no bundled voice to take the gap, the iOS voice is the last resort, and it keeps the item to its
+    // end; a play inside the item stays with it, and the next item gets the chosen voice.
+    func testAChunkNotRenderedAtABackgroundSeamWithNoBundledVoiceHandsOverToTheIOSVoiceForTheItem() async throws {
         let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false })
         defer { harness.tearDown() }
         let chunk = harness.chunkStarts
@@ -1978,11 +1980,20 @@ final class SupertonicSpeechTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(harness.playerStarts, before, "no second voice starts on top of the iOS voice")
 
-        // The chosen voice comes back at the next play, not at the listener's Retry.
+        // A play inside the item keeps the iOS voice: no bounce back to Supertonic (#1786).
         try harness.client.pause()
         try harness.play(from: chunk[1])
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(harness.playerStarts, before, "Supertonic doesn't take the item back")
+        XCTAssertTrue(harness.client.isSystemVoiceActive)
+        XCTAssertEqual(harness.systemVoice.playedOffsets.last, chunk[1], "the iOS voice reads on from the play")
+
+        // The next item gets the chosen voice.
+        try harness.client.stop()
+        _ = try harness.client.prepareSpeechText(harness.text)
+        try harness.client.play(targetId: "next-item", from: 0)
         let back = await harness.waitForPlayerStarts(before + 1)
-        XCTAssertTrue(back, "Supertonic plays again in a new player")
+        XCTAssertTrue(back, "Supertonic reads the next item in a new player")
         XCTAssertFalse(harness.client.isSystemVoiceActive)
     }
 
