@@ -745,8 +745,8 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
 
     /// Kitten renders the rest of `request`'s generation from here on, and holds its item until `voiceHold` lets go
     /// (#849 audit, #1786).
-    private func holdBundledVoice(for request: RenderRequest, block: SpeechFallbackReason? = nil) {
-        let block = block ?? OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
+    private func holdBundledVoice(for request: RenderRequest) {
+        let block = OnDeviceVoiceGovernor.app.supertonicRenderingBlock()
         lock.withLock {
             guard self.generation == request.generation else { return }
             if bundledVoiceGeneration != request.generation { bundledVoiceBlock = block }
