@@ -1,0 +1,273 @@
+# Hosted T2 and T3 on a GitHub-hosted Mac (#1389): build the app for the simulator and, unsigned, for a
+# device (T2), then, when `tests` names any, run those app-hosted test classes or methods in a fresh
+# simulator (T3). The lane does both on the owner's Mac today (scripts/lane-runner.py, verify-tests.py).
+#
+# Draft, started by hand only. The private repo's free minutes are spent and spending money needs the
+# owner. Once the repo is public, standard hosted runners are free; the PR that wires this to pull
+# requests or the lane's labels is a separate change, after a measured first run (#1389).
+#
+# Image and Xcode: #1384's benchmark ran on `xcode-27` (image xcode-27-arm64, Xcode 27.0 default) and
+# `macos-26` (Xcode 26.6). This repo builds with Xcode 27 and its iOS 27 SDK (docs/testing.md) and the lane
+# Mac runs Xcode 27.0, so this pins /Applications/Xcode_27.0.app on the xcode-27 image. Measured there: a
+# clean simulator build-for-testing 2-3.5x slower than the owner's Mac, simulator boot 68-243 s, 7 GB RAM.
+# Inference, not measured: the lane's real T3 (482 s average on the Mac) comes to about 16-25 min here.
+#
+# Caching: not DerivedData itself (GBs, and a restored copy is stale against a fresh checkout's file times).
+# Instead Xcode's compilation cache (#1331), with the same prefix mapping the lane uses so cached compiles
+# don't depend on the checkout path, plus the SwiftPM package checkouts and the LFS voice models.
+#
+# What stays on the owner's Mac (owner, 2026-10-16): journeys (T4/T5, Test Desk), phone builds and signing.
+# Nothing here signs, archives or uploads, and nothing here holds a secret.
+name: hosted-app-macos
+
+on:
+  workflow_dispatch:
+    inputs:
+      tests:
+        description: 'T3 tests, as in a lane request: `Class` or `Class/method`, comma-separated (e.g. SourceLinkImportTests/testSubstackCustomDomain, Gate1AppModelWorkflowTests). Empty runs T2 only.'
+        required: false
+        type: string
+        default: ''
+      plan:
+        description: 'Test plan the T3 classes are in'
+        required: false
+        type: choice
+        options: [AppBehavior, AudioAdapters]
+        default: AppBehavior
+      device_build:
+        description: 'T2 also builds for a device (unsigned), as the lane T2 does'
+        required: false
+        type: boolean
+        default: true
+      blackhole:
+        description: 'Install the BlackHole virtual audio device so the simulator has an audio output'
+        required: false
+        type: boolean
+        default: false
+      simulator:
+        description: 'Simulator device type for T3'
+        required: false
+        type: string
+        default: 'iPhone 17'
+      ios:
+        description: 'Simulator iOS version for T3 (a runtime the image ships)'
+        required: false
+        type: string
+        default: '27.0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-app-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.0.app/Contents/Developer
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  app:
+    runs-on: xcode-27
+    # T2 about 10 min on the benchmark's numbers, T3 up to 25 min, plus one retry of a stalled start.
+    timeout-minutes: 75
+    env:
+      DERIVED: ${{ github.workspace }}/.build/hosted-dd
+      CAS: ${{ github.workspace }}/.build/compilation-cache
+      SPM: ${{ github.workspace }}/.build/spm
+      RESULTS: ${{ github.workspace }}/.build/hosted-results
+    steps:
+      - name: Start the clock
+        run: echo "STARTED=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Check the tests input
+        id: tests
+        env:
+          TESTS: ${{ inputs.tests }}
+        run: |
+          # Only class and method names reach xcodebuild: each entry is Class or Class/method.
+          selectors=()
+          IFS=',' read -ra entries <<< "$TESTS"
+          for raw in "${entries[@]}"; do
+            entry=$(echo "$raw" | xargs)
+            [ -z "$entry" ] && continue
+            if ! [[ "$entry" =~ ^[A-Za-z_][A-Za-z0-9_]*(/[A-Za-z_][A-Za-z0-9_]*(\(\))?)?$ ]]; then
+              echo "::error::Not a test class or Class/method: '$entry'"
+              exit 1
+            fi
+            selectors+=("-only-testing:SpokenMarginsAppTests/$entry")
+          done
+          echo "count=${#selectors[@]}" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "${selectors[@]}" > "$RUNNER_TEMP/selectors.txt"
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # The voice models are LFS files (about 200 MB) that the app bundles. Cache them so every run doesn't
+      # spend that from the LFS bandwidth quota.
+      # hashFiles reads only inside the workspace, so the id list goes under .build (git-ignored).
+      - name: List LFS objects
+        run: mkdir -p .build && git lfs ls-files --long | cut -d' ' -f1 | sort > .build/lfs-ids.txt
+      - uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.build/lfs-ids.txt') }}
+          restore-keys: lfs-
+      # The checkout keeps no credentials; the read-only job token is handed to this one command.
+      - name: Fetch LFS files
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          auth=$(printf 'x-access-token:%s' "$TOKEN" | base64 | tr -d '\n')
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" lfs pull
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.SPM }}
+          key: spm-${{ hashFiles('SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved', 'Packages/SessionKit/Package.resolved') }}
+          restore-keys: spm-
+      # Rolling key: every run saves its cache, the next restores the newest. Xcode bounds the store itself.
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.CAS }}
+          key: xcode-cas-27.0-${{ github.run_id }}
+          restore-keys: xcode-cas-27.0-
+
+      - name: Toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          sysctl -n hw.ncpu hw.memsize
+          df -h "$GITHUB_WORKSPACE" | tail -1
+
+      - name: T2 - build for the simulator (build-for-testing)
+        run: |
+          mkdir -p "$RESULTS"
+          root="$GITHUB_WORKSPACE"
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppBehavior -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath "$DERIVED" \
+            -clonedSourcePackagesDirPath "$SPM" \
+            COMPILATION_CACHE_ENABLE_CACHING=YES COMPILATION_CACHE_CAS_PATH="$CAS" COMPILATION_CACHE_LIMIT_SIZE=1G \
+            SWIFT_ENABLE_PREFIX_MAPPING=YES SWIFT_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            CLANG_ENABLE_PREFIX_MAPPING=YES CLANG_ENABLE_PROJECT_PREFIX_MAPPING=YES \
+            SWIFT_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" CLANG_OTHER_PREFIX_MAPPINGS="\"$root=/^tree\"" \
+            build-for-testing 2>&1 | tee "$RESULTS/build-for-testing.log" | grep -E 'error:|warning: .*deprecated|BUILD|cacheable tasks' || true
+          grep -q 'TEST BUILD SUCCEEDED' "$RESULTS/build-for-testing.log"
+          grep -oE '[0-9]+ hits / [0-9]+ cacheable tasks \([0-9]+%\)' "$RESULTS/build-for-testing.log" | tail -1 \
+            | sed 's/^/Compilation cache: /' | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: T2 - check the bundled contracts
+        run: python3 scripts/verify-bundle.py "$DERIVED/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app"
+
+      - name: T2 - build for a device (unsigned)
+        if: inputs.device_build
+        run: |
+          set -o pipefail
+          xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Debug \
+            -destination 'generic/platform=iOS' -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$SPM" \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee "$RESULTS/device-build.log" | grep -E 'error:|BUILD' || true
+          grep -q 'BUILD SUCCEEDED' "$RESULTS/device-build.log"
+
+      # Optional, for the audio loopback harness another thread is building. Hosted Macs have no audio
+      # hardware; BlackHole gives Core Audio, and so the simulator, an output device. brew refuses to run
+      # as root; the cask's installer asks for sudo itself, which is passwordless on hosted runners.
+      - name: Install BlackHole (virtual audio output)
+        if: inputs.blackhole && steps.tests.outputs.count != '0'
+        run: |
+          brew install --cask blackhole-2ch
+          brew install switchaudio-osx
+          # Core Audio picks up a new driver only after it restarts.
+          sudo killall coreaudiod || true
+          sleep 5
+          SwitchAudioSource -t output -s "BlackHole 2ch"
+          SwitchAudioSource -t output -c | sed 's/^/Default output: /' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: T3 - boot a fresh simulator
+        if: steps.tests.outputs.count != '0'
+        env:
+          SIM_TYPE: ${{ inputs.simulator }}
+          SIM_OS: ${{ inputs.ios }}
+        run: |
+          runtime="com.apple.CoreSimulator.SimRuntime.iOS-${SIM_OS//./-}"
+          udid=$(xcrun simctl create "SM Hosted T3" "$SIM_TYPE" "$runtime")
+          echo "UDID=$udid" >> "$GITHUB_ENV"
+          booted=$(date +%s)
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+          echo "Simulator $SIM_TYPE, iOS $SIM_OS booted in $(( $(date +%s) - booted ))s." | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # One retry, only for a run that never started a test (the startup stall in #705). A test failure is
+      # never retried.
+      - name: T3 - app-hosted tests
+        if: steps.tests.outputs.count != '0'
+        env:
+          PLAN: ${{ inputs.plan }}
+        run: |
+          # Checked entries hold no spaces, so plain word splitting is safe (and works in macOS's bash 3.2).
+          selectors=($(cat "$RUNNER_TEMP/selectors.txt"))
+          attempt=1
+          while :; do
+            bundle="$RESULTS/tests-$attempt.xcresult"
+            log="$RESULTS/tests-$attempt.log"
+            set +e
+            xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsAppBehavior -testPlan "$PLAN" \
+              -destination "id=$UDID" -derivedDataPath "$DERIVED" -clonedSourcePackagesDirPath "$SPM" \
+              "${selectors[@]}" test-without-building -parallel-testing-enabled NO \
+              -collect-test-diagnostics never -test-timeouts-enabled YES -resultBundlePath "$bundle" > "$log" 2>&1
+            status=$?
+            set -e
+            grep -E "^Test [Cc]ase '.*' (passed|failed)|error:|\*\* TEST" "$log" | tail -200 || true
+            if [ "$status" -ne 0 ] && ! grep -qE "^Test [Cc]ase '" "$log" && [ "$attempt" -lt 2 ]; then
+              echo "::warning::No test started (startup stall?); restarting the simulator and trying once more."
+              echo "Attempt $attempt: no test started; retried once." >> "$GITHUB_STEP_SUMMARY"
+              xcrun simctl shutdown "$UDID" || true
+              xcrun simctl boot "$UDID"
+              xcrun simctl bootstatus "$UDID" -b
+              attempt=$((attempt + 1))
+              continue
+            fi
+            break
+          done
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+          exit "$status"
+
+      - name: T3 - test counts
+        if: always() && env.BUNDLE != ''
+        run: |
+          xcrun xcresulttool get test-results summary --path "$BUNDLE" --compact > "$RESULTS/summary.json"
+          python3 - "$RESULTS/summary.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          s = json.load(open(sys.argv[1]))
+          total = s.get('totalTestCount', 0)
+          print(f"T3: {s.get('result')}, {total} tests: {s.get('passedTests', 0)} passed, "
+                f"{s.get('failedTests', 0)} failed, {s.get('skippedTests', 0)} skipped.")
+          for failure in s.get('testFailures', [])[:20]:
+              print(f"- {failure.get('testIdentifierString') or failure.get('testName')}: {failure.get('failureText', '')[:200]}")
+          # A named test that ran nothing is a failure, as in verify-tests.py.
+          sys.exit(1 if total == 0 else 0)
+          PY
+
+      - name: Shut down the simulator
+        if: always() && env.UDID != ''
+        run: xcrun simctl delete "$UDID" || true
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-app-macos-${{ github.run_id }}
+          path: |
+            .build/hosted-results/*.log
+            .build/hosted-results/summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Report time
+        if: always()
+        run: |
+          seconds=$(( $(date +%s) - STARTED ))
+          echo "hosted-app-macos took ${seconds}s on xcode-27 (Xcode 27.0)." | tee -a "$GITHUB_STEP_SUMMARY"
