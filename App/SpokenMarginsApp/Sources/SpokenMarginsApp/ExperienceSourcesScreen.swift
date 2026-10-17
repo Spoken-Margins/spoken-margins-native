@@ -58,6 +58,7 @@ struct ExperienceSourcesScreen: View {
                 .background(AppColors.bone)
                 .scrollContentBackground(.hidden)
                 .listStyle(.plain)
+                .refreshable { await model.pullToRefreshFollowing() }
                 .animation(.smooth(duration: 0.24), value: orderedCandidates.map(\.id))
                 .confirmationDialog(
                     "Clear the \(clearableEntryIDs.count) entries listed in New?",
