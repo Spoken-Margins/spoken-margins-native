@@ -29,7 +29,7 @@ OTHER_KEY_ID = "sm-unknown-key"
 
 # Where the files will be mirrored on the owner's site. Not published yet: the site slice of #1391
 # serves these paths. Only files whose licence allows redistribution list it.
-MIRROR_BASE = "https://spokenmargins.proximitytoprogress.com/voices/supertonic-3-int8/2026-05-11/"
+MIRROR_BASE = "https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/2026-05-11/"
 HF_BASE = "https://huggingface.co/Supertone/supertonic-3/resolve/"
 
 # The Terms of Use bind listeners to paragraph 5 and Attachment A of the Open RAIL-M licence.
