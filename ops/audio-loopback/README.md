@@ -55,7 +55,8 @@ python3 ops/audio-loopback/loopback.py check artifacts/loopback/run.wav --max-st
 | `loopback restore` | Puts back a default output that a killed `route` left behind. |
 | `loopback record --device <device> --seconds <s> --out <file.wav>` | Records that device's input to a 16 kHz mono 16-bit wav. |
 | `loopback play --device <device> <file>` | Plays a file to one device without changing the default. |
-| `loopback transcribe <file.wav> [--locale en-US]` | On-device transcript as JSON, with word timings. |
+| `loopback transcribe <file.wav> [--locale en-US]` | On-device transcript of one file as it is, as JSON, with word timings. For recordings use `loopback.py transcribe` (below), which splits at pauses. |
+| `python3 loopback.py transcribe <file.wav>` | On-device transcript of a recording, cut at pauses longer than 0.8 s and transcribed one stretch of speech at a time; word starts are in the recording's time. Exits 1 with `empty_reason` when no words came back. |
 
 A device can be named by UID, by exact name, or by the start of its name (`BlackHole`).
 
@@ -77,7 +78,7 @@ macOS asks the first time, and it asks on behalf of the **app that started the c
 1. **Microphone**, for `record`, because BlackHole counts as an input device. Without it, macOS hands the recorder digital silence instead of an error. `check` warns when a recording is digital silence.
 2. **Speech Recognition**, for `transcribe`. Recognition stays on the Mac (`requiresOnDeviceRecognition`); nothing is sent to Apple.
 
-Terminal can ask for both; allow them once and they stick (System Settings → Privacy & Security → Microphone, and → Speech Recognition). Claude Code can't: on 2026-10-16 macOS stopped `transcribe` run from a Claude Code session ("attempted to access privacy-sensitive data without a usage description", exit 134), because the Claude Code process carries no Speech Recognition usage text. So an agent can record and run `check`, but transcription runs from Terminal or from a lane job whose parent app has been allowed. `check --expected` reports "could not check the words" in that case and fails, rather than passing a check it didn't run. The levels, stalls and repeats need no permission beyond Microphone.
+Terminal can ask for both; allow them once and they stick (System Settings → Privacy & Security → Microphone, and → Speech Recognition). Claude Code can't: on 2026-10-16 macOS stopped `transcribe` run from a Claude Code session ("attempted to access privacy-sensitive data without a usage description", exit 134), because the Claude Code process carries no Speech Recognition usage text. So an agent can record and run `check`, but transcription runs from Terminal, from the Claude desktop app's terminal pane (allowed on 2026-10-17), or from a lane job whose parent app has been allowed. `check --expected` reports "could not check the words" in that case and fails, rather than passing a check it didn't run. The levels, stalls and repeats need no permission beyond Microphone.
 
 A headless CI runner has no one to click those prompts. On a GitHub-hosted macOS runner, the Microphone permission must be granted ahead of time (see below), and transcription may not be available; the analysis (levels, stalls, repeats) still runs without it.
 
@@ -142,6 +143,24 @@ Through BlackHole 2ch on the owner's Mac, recorded with `record` while `play` or
 | One phrase, then nothing (the #1763 shape) | 5.17 s | FAIL with `--max-stall 3`: 11.05 s of trailing silence |
 
 Transcription wasn't part of it: it ran from a Claude Code session, which macOS doesn't allow (see Permissions).
+
+On 2026-10-17, `prove-host.sh` with words, run from the Claude desktop app's terminal pane: 5.16 s of sound, all 15 words heard, word error rate 0.0, PASS.
+
+## Transcription: why recordings are cut at pauses
+
+macOS's on-device recogniser forgets what it heard when a pause of more than about a second follows it. Its final result keeps only the speech after the last long pause, and is empty when the file ends in silence. Found on 2026-10-17 (#1790), from the terminal pane, with clean `say` speech at 16 kHz:
+
+| File | Final transcript |
+| --- | --- |
+| The phrase alone, or with 1, 3 or 5 s of silence before it; 16 kHz, 44.1 kHz or `.aiff` | Every word |
+| The phrase, then 1 s of silence | Every word |
+| The phrase, then 2, 3 or 5 s of silence | Empty, though the partial results just before had every word |
+| Two sentences with a 2 s or 5 s pause between them | Only the second sentence |
+| 6 s of silence | Error 1110, "No speech detected" |
+
+Every recording ends in silence, because the record window runs past the audio, so the 10-17 `prove-host.sh` runs all came back empty. A recording of an app that stalls (#1763) has long pauses inside it too. So `loopback.py transcribe`, and `check --transcribe` or `--expected`, find the stretches of sound, join those less than 0.8 s apart, pad each with 0.2 s of silence and transcribe them one by one. The on-device speech model was installed throughout; nothing was downloaded.
+
+When no words come back, the transcript says why in `empty_reason`: no sound in the recording, "no speech detected", or the recogniser heard words and then dropped them at a pause. `check --expected` then fails with "could not check the words: …" instead of a word error rate of 1.0.
 
 ## How the analysis works
 

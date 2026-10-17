@@ -13,6 +13,9 @@
 # The build folder lives outside the checkout (actions/checkout's clean would delete it) and is
 # kept between runs, so after the first cold build each PR builds incrementally. One runner means
 # one job at a time; a newer push to the same PR cancels the run in progress.
+#
+# Fork PRs never run here (#1719): the job's `if` skips them, and the runner's own job-started hook
+# (ops/runner-guard) refuses them even if a fork's copy of this file drops the `if`.
 name: linux-t1
 
 on:
@@ -28,6 +31,8 @@ concurrency:
 
 jobs:
   sessionkit-core:
+    # Same-repo PRs only: a fork's PR would run its own code on the owner's VPS.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [sm-vps-t1]
     timeout-minutes: 45
     steps:

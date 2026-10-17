@@ -23,6 +23,11 @@ extension Gate1AppModel {
         "\(interjection.sessionId)::\(interjection.id)"
     }
 
+    /// Names a failed transcription's Retry offer, so retrying or transcribing the Margin another way withdraws it.
+    static func transcriptionRetryKey(_ interjection: Interjection) -> String {
+        "transcription:\(marginIdentity(interjection))"
+    }
+
     /// Margin IDs repeat per session, so per-Margin diagnostics carry a hashed session token.
     static func marginDiagnosticKey(_ name: String, sessionId: String, interjectionId: String) -> String {
         PodcastAnchorCaptureDiagnostics.marginKey(name, sessionId: sessionId, interjectionId: interjectionId)
@@ -46,20 +51,58 @@ extension Gate1AppModel {
 
     func retryAnchorContext(_ interjection: Interjection) {
         guard interjection.captureKind != .written else { return }
+        guard currentMargin(matching: interjection).verdict != .gone else {
+            reportFailure("That Margin was deleted, so its context can't be retried.")
+            return
+        }
         guard !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
         if !scheduleSourceWindowContextIfNeeded(for: interjection, reportsResult: true) {
             reportWarning("Context needs a source timestamp and completed Margin transcription. Retry when transcription finishes.")
         }
     }
 
+    /// The Margin as stored now, with the verdict on retranscribing it. A Retry offer holds the Margin as it
+    /// was when the failure was posted, so deleting the Margin or its item must not leave that copy usable (#430).
+    func currentMargin(matching interjection: Interjection) -> (margin: Interjection?, verdict: MarginTranscriptionRetry.Verdict) {
+        let store = try? requireStore()
+        let current = (try? store?.loadInterjections(sessionId: interjection.sessionId))?.first { $0.id == interjection.id }
+        let itemDeletedAt = (try? store?.loadItem(id: interjection.itemId))?.deletedAt
+        return (current, MarginTranscriptionRetry.verdict(current: current, itemDeletedAt: itemDeletedAt))
+    }
+
     func retryInterjectionTranscription(_ interjection: Interjection) {
-        guard interjection.captureKind != .written, interjection.audioPath != nil else {
+        withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
+        let (current, verdict) = currentMargin(matching: interjection)
+        guard verdict != .gone, let current else {
+            reportFailure("That Margin was deleted, so there is nothing to retranscribe.")
+            return
+        }
+        guard verdict == .retry else {
             reportFailure("The saved Margin audio is unavailable.")
             return
         }
-        guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
-        scheduleRetriedTranscription(for: interjection)
+        guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted else { return }
+        scheduleRetriedTranscription(for: current)
         reportConfirmation("Retranscribing the saved Margin audio.")
+    }
+
+    /// A transcription failure is about the Margin's own listen, so on the Now screen it is the tag under the
+    /// title, with Retry, and the full message stays on the item (#430). A Margin deleted while it was
+    /// transcribing gets no notice at all: there is nothing left to retry or to tell the listener about.
+    func presentTranscriptionFailure(_ notice: TranscriptionFailureWording.Notice, for interjection: Interjection) {
+        guard currentMargin(matching: interjection).verdict != .gone else { return }
+        let origin = FeedbackOrigin(itemId: interjection.itemId, sessionId: interjection.sessionId, work: .marginTranscription)
+        notice.present(
+            warning: { reportWarning($0, origin: origin) },
+            failure: {
+                reportFailure(
+                    $0,
+                    itemId: interjection.itemId,
+                    retry: .init(key: Self.transcriptionRetryKey(interjection)) { [weak self] in self?.retryInterjectionTranscription(interjection) },
+                    origin: origin
+                )
+            }
+        )
     }
 
     func deleteTranscript(interjection: Interjection) {
@@ -75,6 +118,8 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
+            // Its failed-transcription Retry would otherwise outlive it (#430).
+            withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
             reportSuccess("Deleted Margin.")
         }
         refreshMarginRows()

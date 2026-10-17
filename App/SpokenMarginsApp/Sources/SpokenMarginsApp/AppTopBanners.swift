@@ -44,7 +44,7 @@ struct StickyTopBanners: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     private var errorFeedback: UserFeedbackEvent? {
-        guard let event = model.feedbackEvent, event.kind == .error else { return nil }
+        guard let event = model.feedbackEvent, event.kind == .error, model.playbackFeedbackTag == nil else { return nil }
         return event
     }
 
@@ -69,12 +69,13 @@ struct StickyTopBanners: View {
 }
 
 /// A confirmation or warning, drawn over the content below the navigation bar where an error would sit.
+/// Neither banner shows an event that the playback screen draws as its one-line tag (#430).
 struct FloatingFeedbackBanner: View {
     @EnvironmentObject private var model: Gate1AppModel
 
     var body: some View {
         if !model.recordingNavigationIsLocked,
-           let feedback = model.feedbackEvent, feedback.kind != .error {
+           let feedback = model.feedbackEvent, feedback.kind != .error, model.playbackFeedbackTag == nil {
             UserFeedbackBanner(feedback: feedback)
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
