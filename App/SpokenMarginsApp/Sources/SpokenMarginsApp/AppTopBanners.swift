@@ -23,7 +23,8 @@ struct AppFeedbackPresentation: ViewModifier {
         // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
         let announcement = event.action.map { "\(event.message) \($0.title) is available." } ?? event.message
         effects.announce(announcement)
-        hold.reset()
+        // A touch from the previous banner can't carry over; VoiceOver focus stays where it is.
+        hold.setTouched(false)
         guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
             for: event.kind,
             offersAction: event.action != nil,
@@ -32,7 +33,12 @@ struct AppFeedbackPresentation: ViewModifier {
         do {
             try await effects.sleep(.seconds(seconds))
             // A listener still touching the banner, or with VoiceOver on it, keeps it (#1927).
-            while hold.isHeld { try await effects.sleep(.seconds(1)) }
+            // At most 30 more seconds, so a touch that SwiftUI never reports as ended can't keep it forever.
+            var heldSeconds = 0
+            while hold.isHeld, heldSeconds < 30 {
+                try await effects.sleep(.seconds(1))
+                heldSeconds += 1
+            }
             try Task.checkCancellation()
             model.dismissFeedback(id: event.id)
         } catch {}
