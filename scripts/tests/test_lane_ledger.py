@@ -460,7 +460,8 @@ class CatchClassTests(unittest.TestCase):
             def run(command, log, timeout):
                 output = Path(command[command.index('--output') + 1])
                 output.mkdir(parents=True, exist_ok=True)
-                (output / 'manifest.json').write_text(json.dumps({'steps': [{
+                (output / 'manifest.json').write_text(json.dumps({
+                    'status': 'failed' if 'failed' in statuses.values() else 'verified', 'steps': [{
                     'name': 'xunit', 'exit_code': 0, 'tests': {t: {'status': s} for t, s in statuses.items()}}]}))
                 return 1 if 'failed' in statuses.values() else 0
             return run
@@ -486,6 +487,14 @@ class CatchClassTests(unittest.TestCase):
             os.chdir(cwd)
         written = [json.loads(x) for x in (state / lane_ledger.CATCHES).read_text().splitlines()]
         self.assertEqual([(w['test'], w['class']) for w in written], [('A/a', 'catch')])
+        ledger = json.loads((state / lane_ledger.LEDGER).read_text())['steps']['host tests']
+        self.assertEqual((ledger['fail'], ledger['pass']), (1, 2))  # the later runs really were PASSes
+
+    def test_a_skipped_test_is_not_a_run_of_it(self):
+        with tempfile.TemporaryDirectory() as evidence:
+            (Path(evidence) / 'manifest.json').write_text(json.dumps({'steps': [{'name': 'x', 'exit_code': 0, 'tests': {
+                'A/a': {'status': 'skipped'}, 'B/b': {'status': 'passed'}}}]}))
+            self.assertEqual(lane.manifest_failures(Path(evidence)), ([], False, ['B/b']))
 
     def test_a_step_failure_without_test_names_is_recorded_under_the_step(self):
         lines = self.fail_then_pass(lambda: self.repo.commit('App/A.swift'), tests=())

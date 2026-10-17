@@ -348,7 +348,7 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
                 continue
             tests = step.get('tests') or {}
             counted += len(tests)
-            ran += tests
+            ran += [test for test, record in tests.items() if record.get('status') != 'skipped']  # a skip is not a run
             failed += [test for test, record in tests.items() if record.get('status') == 'failed']
             if step.get('exit_code') and not step.get('interrupted') and not tests:
                 failed.append(str(step.get('name')))
