@@ -32,10 +32,10 @@ Reads and writes .spokenmargins packets.
 - Licence: MIT
 - From: Steph Ango
 - Source: <https://github.com/kepano/defuddle>
-- Where: `App/SharedResources`
+- Where: `App/SharedResources/browserTextCapture.js`, `App/SharedResources/Defuddle-LICENSE.txt`, `App/SharedResources/BundledJavaScript-NOTICES.txt`, `App/SpokenMarginsShareExtension/Resources`
 - Licence text: [Defuddle-LICENSE.txt](App/SharedResources/Defuddle-LICENSE.txt)
 
-Reads web pages. Compiled into browserTextCapture.js and SourceLinkPreprocessor.js for the app, the Safari extension and the Share extension.
+Reads web pages. Compiled into browserTextCapture.js and SourceLinkPreprocessor.js for the app, the Safari extension and the Share extension. The Share extension carries identical copies of the two notice files (checked).
 
 ### turndown 7.2.4
 
@@ -73,7 +73,7 @@ Compiled into Defuddle's bundle.
 
 Compiled into Defuddle's bundle.
 
-### Kitten fallback voice: KittenTTS nano 0.8 model and the Jasper voice style 0.8 (fp32)
+### Kitten fallback voice (KittenTTS nano model and the Jasper voice style) 0.8 (fp32)
 
 - Licence: Apache-2.0
 - From: KittenML
@@ -114,7 +114,7 @@ SupertonicRuntime.swift is adapted from Supertone's Swift example; its header sa
 
 ## Downloaded, not distributed here
 
-The app fetches these on request. They are not in this repository or in the app. Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.
+Fetched on request. They are not in this repository or in the app. Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.
 
 ### Kyutai Pocket TTS voice
 
@@ -124,7 +124,7 @@ The app fetches these on request. They are not in this repository or in the app.
 - Where: `Packages/SessionKit/Sources/SessionKitPocket`
 - Licence text: <https://huggingface.co/kyutai/pocket-tts>
 
-Downloaded, not distributed here. No Pocket TTS model or voice file is in this repository or the app, and the app doesn't link its runtime yet. The repository holds only our own runtime code and a tokenizer test fixture. The research harness fetches the int8 ONNX export (KevinAHM/pocket-tts-onnx) and alba's voice state (kyutai/pocket-tts-without-voice-cloning), both CC BY 4.0, so the voice needs an attribution line where it is offered. The voice catalog (#1818) will carry the current download address and licence text. Details: research/C2/pocket/README.md.
+Downloaded, not distributed here. No Pocket TTS model or voice file is in this repository or the app, and the app doesn't link its runtime yet. The repository holds only our own runtime code and a tokenizer test fixture. The research harness fetches the int8 ONNX export (KevinAHM/pocket-tts-onnx) and alba's voice state (kyutai/pocket-tts-without-voice-cloning), both CC BY 4.0, so the voice needs an attribution line where it is offered. The voice catalog (#1818) will carry the current download address and licence text. The MIT code licence is recorded in research/C2/README.md; the licence texts are on the model page. Details: research/C2/pocket/README.md.
 
 ## Build, test and research tools
 
@@ -137,7 +137,7 @@ Used to build, test or research. None of them ships in the app.
 - Source: <https://github.com/apple/swift-crypto>
 - Licence text: <https://github.com/apple/swift-crypto/blob/main/LICENSE.txt>
 
-Replaces CryptoKit when SessionKit's tests build on Linux. Never part of the app.
+Replaces CryptoKit when SessionKit's tests build on Linux. Never part of the app. SwiftPM may also fetch swift-crypto's own dependencies there (for example swift-asn1, Apache-2.0); they are build-time only.
 
 ### esbuild 0.28.1
 
@@ -167,7 +167,7 @@ Stands in for a browser page in the page-reading tests. Not shipped.
 - Where: `scripts`
 - Licence text: <https://github.com/python-jsonschema/jsonschema/blob/main/COPYING>
 
-Checks the repository's JSON contracts. Installed from requirements-dev.txt; not shipped.
+Checks the repository's JSON contracts. Installed from requirements-dev.txt with its format-nongpl extra, which pulls in further small validator packages (for example idna, webcolors, jsonpointer, referencing); all are build-time only and none ships.
 
 ### Design prototypes' npm packages
 
@@ -202,6 +202,6 @@ Built from Apple's Top Charts RSS feeds and linking to Apple-hosted artwork. Whe
 
 - Licence: Not licensed by this project: copyright stays with each publisher
 - From: Podcast and website publishers
-- Where: `Contracts/fixtures`, `Contracts/traces`, `Packages/SessionKit/Tests/SessionKitTests/Fixtures`
+- Where: `Contracts/fixtures`, `Contracts/traces`, `fixtures`, `traces`, `App/TestFixtures`, `Packages/SessionKit/Tests/SessionKitTests/Fixtures`
 
 Some of these are saved copies of feeds, pages, OPML and search responses, kept so tests can replay them; the rest are written for the tests. Contracts/fixtures and Contracts/traces are also bundled in the app today for its test hooks. The public-source audit (#1383) prunes or confirms them.

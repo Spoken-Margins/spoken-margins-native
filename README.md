@@ -21,18 +21,18 @@ The app is in private testing on TestFlight. There is no public App Store releas
 - No public App Store release.
 - Share links (a web link that opens a shared Margin) are not turned on. The phone can seal and open them with end-to-end encryption, but creating and hosting them for the public waits for a legal review.
 - Community Listening Maps are off by default and not open to the public yet. When a listener opts in, the app sends an episode's transcript to the owner's server, which has it summarized by a third-party AI service (Anthropic's API) to make the map. The same legal review applies.
-- The app itself embeds no third-party AI provider. OpenAI and other providers are switched off. (The server-side maps above are the one place an outside AI service is involved.)
+- No third-party AI service is used from the phone. The app ships with its OpenAI provider code switched off. (The server-side maps above are the one place an outside AI service is involved.)
 - Cloud voices and any payment are not built.
 
 ## What needs the owner's server
 
 The app talks to one small server that the owner runs. The server is needed only for:
 
-- the introductory tour (fetched at launch until you delete it) and the starter podcast list;
+- the introductory tour (fetched at launch until you delete it) and updates to the starter podcast list (a first list is bundled in the app and works offline);
 - the optional community Listening Maps lookup and contribution, which are off until you switch them on in Settings;
 - share links, once they ship.
 
-Everything else the app fetches comes from the sources you choose (feeds, article sites, audio hosts) or from Apple (for example the on-device speech model, and podcast name search). The full list is in the [privacy policy draft](docs/legal/privacy-policy-draft.md); it is a working draft, and the live policy is published on the project's site.
+Everything else the app fetches comes from the sources you choose (feeds, article sites, audio hosts), from the services you connect (Readwise Reader, Raindrop.io), from Apple (for example the on-device speech model, and podcast name search), and from Spotify when you paste a Spotify link (to find the episode's title). The full list is in the [privacy policy draft](docs/legal/privacy-policy-draft.md); it is a working draft, and the live policy is published on the project's site.
 
 ## What works offline
 

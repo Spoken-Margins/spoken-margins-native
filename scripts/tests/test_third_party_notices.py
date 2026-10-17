@@ -17,7 +17,10 @@ import third_party_notices as notices  # noqa: E402
 REAL = notices.ROOT
 READ = ['docs/legal/third-party-components.json', 'THIRD_PARTY_NOTICES.md', 'project.yml', 'package.json',
         'requirements-dev.txt', 'Packages/SessionKit/Package.swift', 'Packages/SessionKit/Package.resolved',
-        'App/SharedResources/BundledJavaScript-NOTICES.txt']
+        'App/SharedResources/BundledJavaScript-NOTICES.txt', 'App/SharedResources/Defuddle-LICENSE.txt',
+        'App/SpokenMarginsShareExtension/Resources/BundledJavaScript-NOTICES.txt',
+        'App/SpokenMarginsShareExtension/Resources/Defuddle-LICENSE.txt',
+        'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved']
 
 
 class ThirdPartyNoticesTests(unittest.TestCase):
@@ -122,6 +125,74 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         self.edit_json(root / 'docs/legal/third-party-components.json',
                        lambda d: d['components'][1].pop('licenseFiles'))
         self.assertProblem(root, 'zipfoundation: needs licenseFiles or licenseUrl')
+
+    def test_a_changed_version_fails_in_each_manifest(self):
+        root = self.tree()
+        swift = root / 'Packages/SessionKit/Package.swift'
+        text = swift.read_text()
+        swift.write_text(text.replace('exact: "1.24.2"', 'exact: "1.99.0"'))
+        self.assertProblem(root, 'Swift package onnxruntime-swift-package-manager: Package.swift')
+        swift.write_text(text)
+        self.edit_json(root / 'package.json', lambda d: d['devDependencies'].update({'esbuild': '0.99.0'}))
+        self.assertProblem(root, 'npm package esbuild: package.json says 0.99.0')
+        requirements = root / 'requirements-dev.txt'
+        requirements.write_text(requirements.read_text().replace('4.26.0', '4.99.0'))
+        self.assertProblem(root, 'Python requirement jsonschema: requirements-dev.txt says 4.99.0')
+
+    def test_a_package_declared_in_project_yml_or_the_app_resolved_file_needs_an_entry(self):
+        root = self.tree()
+        project = root / 'project.yml'
+        original = project.read_text()
+        project.write_text(original.replace('packages:\n', 'packages:\n  Lottie:\n    url: https://github.com/airbnb/lottie-spm.git\n    from: 4.0.0\n', 1))
+        self.assertProblem(root, 'Swift package lottie-spm')
+        project.write_text(original)
+        resolved = root / 'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'
+        self.edit_json(resolved, lambda d: d['pins'].append({'identity': 'app-only-pin', 'state': {}}))
+        self.assertProblem(root, 'Swift package app-only-pin')
+
+    def test_the_extension_copies_of_the_notices_must_match(self):
+        root = self.tree()
+        copy = root / 'App/SpokenMarginsShareExtension/Resources/Defuddle-LICENSE.txt'
+        copy.write_text(copy.read_text() + 'changed\n')
+        self.assertProblem(root, 'Defuddle-LICENSE.txt differs from')
+
+    def test_a_tool_entry_s_folder_does_not_cover_a_model_file(self):
+        root = self.tree()
+        (root / 'scripts/stray.onnx').touch()
+        (root / 'App/SharedResources/Serif.ttf').touch()
+        self.assertProblem(root, 'scripts/stray.onnx')
+        self.assertProblem(root, 'App/SharedResources/Serif.ttf')
+
+    def test_other_model_file_types_are_caught(self):
+        root = self.tree()
+        (root / 'Stray').mkdir()
+        for name in ('m.ort', 'tok.model', 'w.pkl', 'x.data', 'f.ttc'):
+            (root / 'Stray' / name).touch()
+        for name in ('m.ort', 'tok.model', 'w.pkl', 'x.data', 'f.ttc'):
+            self.assertProblem(root, f'Stray/{name}')
+
+    def test_worktrees_and_build_folders_are_not_the_repository(self):
+        root = self.tree()
+        (root / '.claude/worktrees/ws-1').mkdir(parents=True)
+        (root / '.claude/worktrees/ws-1/package.json').write_text('{}')
+        (root / '.claude/worktrees/ws-1/voice.onnx').touch()
+        self.assertEqual(notices.problems(root), [])
+
+    def test_a_source_folder_before_a_resource_folder_is_not_read_as_a_resource(self):
+        root = self.tree()
+        project = root / 'project.yml'
+        original = project.read_text()
+        marker = '      - path: App/SpokenMarginsApp/Resources/Supertonic\n'
+        self.assertIn(marker, original)
+        project.write_text(original.replace(marker, '      - path: App/NewSources\n' + marker, 1))
+        self.assertEqual(notices.problems(root), [])
+
+    def test_pip_option_lines_and_extras_are_read(self):
+        root = self.tree()
+        requirements = root / 'requirements-dev.txt'
+        requirements.write_text('-r other.txt\n' + requirements.read_text())
+        self.assertEqual(notices.problems(root), [])
+        self.assertEqual(set(notices.pip_requirements(root)), {'jsonschema'})
 
     def test_a_stale_generated_file_fails(self):
         root = self.tree()

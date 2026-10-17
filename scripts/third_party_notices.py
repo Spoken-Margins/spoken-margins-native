@@ -17,6 +17,7 @@ This script fails when:
 import argparse
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,18 +31,26 @@ HEADINGS = {
     'bundled': ('Ships in the app',
                 'These are compiled into or packaged with the app, and some are also stored in this repository.'),
     'downloaded': ('Downloaded, not distributed here',
-                   'The app fetches these on request. They are not in this repository or in the app. '
+                   'Fetched on request. They are not in this repository or in the app. '
                    'Where the voice catalog (#1818) publishes the current address and licence text, it is the reference.'),
     'tool': ('Build, test and research tools',
              'Used to build, test or research. None of them ships in the app.'),
     'content': ('Third-party content in the repository',
                 'Data and text captured from other people\'s work. This project does not license it; the rights stay with their owners.'),
 }
-MODEL_SUFFIXES = {'.ttf', '.otf', '.woff', '.woff2', '.onnx', '.mlmodel', '.gguf', '.safetensors', '.npz',
-                  '.tflite', '.bin', '.f32', '.pt', '.pth'}
+# Model and font files only. Artwork, audio and images are not checked: the manifest's "about" says so.
+MODEL_SUFFIXES = {'.ttf', '.otf', '.ttc', '.woff', '.woff2', '.eot', '.onnx', '.ort', '.mlmodel', '.mlmodelc',
+                  '.gguf', '.safetensors', '.npz', '.tflite', '.pb', '.h5', '.pkl', '.model', '.spm', '.data',
+                  '.bin', '.f32', '.pt', '.pth'}
 MANIFEST_NAMES = re.compile(r'^(package\.json|requirements[^/]*\.txt|go\.mod|Package\.swift|Package\.resolved|'
                             r'Podfile|Cartfile|Gemfile|pyproject\.toml|Cargo\.toml)$')
-SKIPPED_DIRS = {'.git', 'node_modules', '.build', '.venv', 'artifacts', 'DerivedData', 'tmp'}
+# Only used when git can't list the files. Worktrees (.claude/worktrees) and build leftovers are not the repository.
+SKIPPED_DIRS = {'.git', '.claude', 'node_modules', '.build', '.swiftpm', '.venv', 'artifacts', 'DerivedData', 'dist', '.next'}
+# These two files are kept as copies beside each extension's scripts and must stay identical.
+COPIES = (('App/SharedResources/BundledJavaScript-NOTICES.txt',
+           'App/SpokenMarginsShareExtension/Resources/BundledJavaScript-NOTICES.txt'),
+          ('App/SharedResources/Defuddle-LICENSE.txt',
+           'App/SpokenMarginsShareExtension/Resources/Defuddle-LICENSE.txt'))
 
 
 def load(root):
@@ -49,7 +58,15 @@ def load(root):
 
 
 def walk(root):
-    """Every file under root as a posix path relative to it, leaving out build and tool folders."""
+    """Every file the repository tracks, as posix paths relative to root. Without git: every file but build and tool folders."""
+    try:
+        listed = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], capture_output=True, check=True).stdout
+        for name in listed.decode().split('\0'):
+            if name and (root / name).is_file():
+                yield name
+        return
+    except (OSError, subprocess.CalledProcessError):
+        pass
     stack = [root]
     while stack:
         folder = stack.pop()
@@ -65,28 +82,42 @@ def covers(prefixes, path):
     return any(path == prefix or path.startswith(prefix.rstrip('/') + '/') for prefix in prefixes)
 
 
-def swift_package_identities(root):
-    """Identities of every `.package(url:)` in SessionKit's Package.swift, Linux block included."""
+def identity(url):
+    return url.rstrip('/').rsplit('/', 1)[-1].removesuffix('.git').lower()
+
+
+def swift_packages(root):
+    """{identity: version or None} for every remote Swift package: `.package(url:)` in SessionKit's Package.swift
+    (Linux block included), `url:` in project.yml's packages, and the pins of both Package.resolved files."""
     text = (root / 'Packages/SessionKit/Package.swift').read_text()
     text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('//'))
-    names = {url.rstrip('/').rsplit('/', 1)[-1].removesuffix('.git').lower()
-             for url in re.findall(r'\.package\(\s*url:\s*"([^"]+)"', text)}
-    pins = json.loads((root / 'Packages/SessionKit/Package.resolved').read_text())['pins']
-    return names | {pin['identity'] for pin in pins}
+    found = {identity(url): version for url, version in
+             re.findall(r'\.package\(\s*url:\s*"([^"]+)"(?:\s*,\s*exact:\s*"([^"]+)")?', text)}
+    for url in re.findall(r'^\s+url:\s*(\S+)', (root / 'project.yml').read_text(), re.M):
+        found.setdefault(identity(url), None)
+    for resolved in ('Packages/SessionKit/Package.resolved',
+                     'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'):
+        if (root / resolved).exists():
+            for pin in json.loads((root / resolved).read_text())['pins']:
+                found.setdefault(pin['identity'], None)
+    return found
 
 
 def npm_dependencies(root):
+    """{name: version or None}; a range such as ^1.0 gives None."""
     manifest = json.loads((root / 'package.json').read_text())
-    return {**manifest.get('dependencies', {}), **manifest.get('devDependencies', {})}
+    declared = {**manifest.get('dependencies', {}), **manifest.get('devDependencies', {})}
+    return {name: (version if re.fullmatch(r'\d[\w.+-]*', version) else None) for name, version in declared.items()}
 
 
 def pip_requirements(root):
-    names = set()
+    """{normalised name: pinned version or None} from requirements-dev.txt; option lines like -r are skipped."""
+    found = {}
     for line in (root / 'requirements-dev.txt').read_text().splitlines():
-        match = re.match(r'\s*([A-Za-z0-9_.-]+)', line)
-        if match and not line.lstrip().startswith('#'):
-            names.add(match.group(1).lower())
-    return names
+        match = re.match(r'\s*([A-Za-z0-9][A-Za-z0-9_.-]*)(?:\[[^\]]*\])?\s*(?:==\s*([\w.+-]+))?', line)
+        if match and not line.lstrip().startswith(('#', '-')):
+            found[re.sub(r'[-_.]+', '-', match.group(1)).lower()] = match.group(2)
+    return found
 
 
 def bundled_js_packages(root):
@@ -100,9 +131,16 @@ def resource_folders(root):
     lines = (root / 'project.yml').read_text().splitlines()
     found = set()
     for index, line in enumerate(lines):
-        match = re.match(r'\s*- path: (\S+)', line)
-        if match and re.search(r'buildPhase: resources|type: folder\b', ' '.join(lines[index + 1:index + 4])):
-            found.add(match.group(1))
+        match = re.match(r'(\s*)- path: (\S+)', line)
+        if not match:
+            continue
+        body = []
+        for follower in lines[index + 1:]:
+            if re.match(r'\s*- ', follower) or not follower.startswith(match.group(1) + '  '):
+                break  # the next list item, or the end of this one
+            body.append(follower)
+        if re.search(r'buildPhase: resources|type: folder\b', ' '.join(body)):
+            found.add(match.group(2))
     return found
 
 
@@ -130,15 +168,21 @@ def problems(root):
             if not (root / path).exists():
                 found.append(f'{label}: {path} does not exist')
 
-    packages = tracked('swiftPackage')
-    for identity in sorted(swift_package_identities(root) - set(packages)):
-        found.append(f'Swift package {identity} (Package.swift or Package.resolved) has no entry in {MANIFEST}')
-    npm = tracked('npm')
-    for name in sorted(set(npm_dependencies(root)) - set(npm)):
-        found.append(f'npm package {name} (package.json) has no entry in {MANIFEST}')
-    pip = tracked('pip')
-    for name in sorted(pip_requirements(root) - set(pip)):
-        found.append(f'Python requirement {name} (requirements-dev.txt) has no entry in {MANIFEST}')
+    def compare(kind, declared, where, label):
+        entries = tracked(kind)
+        for name, version in sorted(declared.items()):
+            entry = entries.get(name.lower())
+            if entry is None:
+                found.append(f'{label} {name} ({where}) has no entry in {MANIFEST}')
+            elif version and entry.get('version') != version:
+                found.append(f'{label} {name}: {where} says {version}; the entry says {entry.get("version")}')
+
+    compare('swiftPackage', swift_packages(root), 'Package.swift, project.yml or Package.resolved', 'Swift package')
+    compare('npm', npm_dependencies(root), 'package.json', 'npm package')
+    compare('pip', pip_requirements(root), 'requirements-dev.txt', 'Python requirement')
+    for original, copy in COPIES:
+        if (root / original).read_bytes() != (root / copy).read_bytes():
+            found.append(f'{copy} differs from {original}; the extension must ship the same notice')
     bundled = tracked('bundledJs')
     for name, (version, licence) in sorted(bundled_js_packages(root).items()):
         entry = bundled.get(name.lower())
@@ -148,7 +192,9 @@ def problems(root):
             found.append(f'{name}: {BUNDLED_JS_NOTICES} says {version} ({licence}); the entry says '
                          f'{entry.get("version")} ({entry["license"]})')
 
-    prefixes = [path for component in components for path in component.get('paths', [])]
+    # Tool entries list where a tool lives, not what it owns: a model under scripts/ is not a jsonschema file.
+    prefixes = [path for component in components if component['distribution'] != 'tool'
+                for path in component.get('paths', [])]
     own = data.get('projectAuthored', [])
     for path in sorted(resource_folders(root)):
         if not covers([*prefixes, *own], path) and not any(covers([path], listed) for listed in [*prefixes, *own]):
