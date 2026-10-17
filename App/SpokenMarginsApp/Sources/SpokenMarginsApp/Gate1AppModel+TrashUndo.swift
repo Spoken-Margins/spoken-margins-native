@@ -26,6 +26,7 @@ extension Gate1AppModel {
                 selectedItem = libraryItems.first.map { (try? loadItemDetail(id: $0.id, store: store)) ?? ItemDetailState() } ?? ItemDetailState()
             }
             screen = .home
+            withdrawFeedback(aboutItem: id)
             presentTrashUndo(itemId: id, title: item.title)
             reportSuccess("Moved \(item.title) to Recently Deleted.")
         } catch {
@@ -102,6 +103,7 @@ extension Gate1AppModel {
             if trashUndo?.itemId == id {
                 dismissTrashUndo()
             }
+            withdrawFeedback(aboutItem: id)
             reportSuccess("Permanently deleted \(item.title).")
         } catch {
             reportFailure(error, context: "Permanent delete failed")
@@ -137,6 +139,7 @@ extension Gate1AppModel {
             if let undoItemId = trashUndo?.itemId, ids.contains(undoItemId) {
                 dismissTrashUndo()
             }
+            withdrawFeedback(aboutItems: ids)
             reportSuccess("Permanently deleted \(ids.count) item\(ids.count == 1 ? "" : "s") from Recently Deleted.")
         } catch {
             reportFailure(error, context: "Empty Recently Deleted failed")

@@ -176,7 +176,8 @@ extension Gate1AppModel {
                     itemId: itemId,
                     retry: .init(key: "summary") { [weak self] in self?.retryLocalSummary(retryContext) },
                     feedbackMessage: presentation.feedbackMessage,
-                    settling: originSessionId.map { ProviderFailureOrigin(sessionId: $0, turnId: turnId) }
+                    settling: originSessionId.map { ProviderFailureOrigin(sessionId: $0, turnId: turnId) },
+                    feedbackOrigin: originSessionId.map { FeedbackOrigin(itemId: itemId, sessionId: $0, work: .summary) }
                 )
             }
         }
@@ -325,7 +326,7 @@ extension Gate1AppModel {
         var turnId: String
     }
 
-    func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, settling origin: ProviderFailureOrigin? = nil) {
+    func markProviderFailure(_ error: String, userMessage: String, itemId: String, retry: UserFeedbackEvent.Retry? = nil, feedbackMessage: String? = nil, settling origin: ProviderFailureOrigin? = nil, feedbackOrigin: FeedbackOrigin? = nil) {
         do {
             if let engine {
                 snapshot = try engine.aiProviderFailed(error: error, sessionId: origin?.sessionId, turnId: origin?.turnId)
@@ -336,7 +337,7 @@ extension Gate1AppModel {
         }
         providerProbeStatus = userMessage
         diagnostics["providerProbe"] = providerProbeStatus
-        reportFailure(userMessage, itemId: itemId, retry: retry, feedbackMessage: feedbackMessage)
+        reportFailure(userMessage, itemId: itemId, retry: retry, feedbackMessage: feedbackMessage, origin: feedbackOrigin)
     }
 }
 

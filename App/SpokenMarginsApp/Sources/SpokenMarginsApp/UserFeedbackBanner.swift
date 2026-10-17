@@ -29,6 +29,10 @@ struct UserFeedbackEvent: Identifiable, Equatable {
 
     var action: Action? = nil
 
+    /// The listen a summary or transcription failure is about. While that listen's playback screen shows,
+    /// the event is a one-line tag at its top instead of this banner (#430).
+    var origin: FeedbackOrigin? = nil
+
     /// Each event is new, so its id decides equality; the retry action can't be compared.
     static func == (lhs: UserFeedbackEvent, rhs: UserFeedbackEvent) -> Bool {
         lhs.id == rhs.id

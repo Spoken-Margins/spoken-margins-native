@@ -91,6 +91,8 @@ final class SummaryFailureOwnershipWorkflowTests: XCTestCase {
         XCTAssertEqual(try reopened.loadTurns(sessionId: f.a).last?.status, "failed")
         XCTAssertEqual(f.model.itemFailures.lastFailure(itemId: "item-pill")?.message, f.model.lastError)
         XCTAssertNil(f.model.itemFailures.lastFailure(itemId: "summary-b"))
+        XCTAssertEqual(f.model.feedbackEvent?.origin, FeedbackOrigin(itemId: "item-pill", sessionId: f.a, work: .summary))
+        XCTAssertNil(f.model.playbackFeedbackTag, "A's late failure must not read as a tag on B's Now screen (#430)")
         return try XCTUnwrap(f.model.feedbackEvent?.retry)
     }
 
