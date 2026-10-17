@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// Moved from the app test target (#318): the contrast audit is Foundation only, so it runs on the host.
 final class ExperienceColorContrastTests: XCTestCase {
@@ -40,20 +41,14 @@ final class ExperienceColorContrastTests: XCTestCase {
 
 /// #1921: the audit must cover every colour the app draws with, and say what it knows is failing.
 final class AppColorContrastCoverageTests: XCTestCase {
-    private static let repositoryRoot: URL = {
-        var url = URL(fileURLWithPath: #filePath)
-        while url.path != "/", !FileManager.default.fileExists(atPath: url.appending(path: "project.yml").path) {
-            url.deleteLastPathComponent()
-        }
-        return url
-    }()
+    /// Read into a `let` first: a skip thrown inside an `XCTAssert` expression would be recorded as a failure.
+    private func tokenSource() throws -> String {
+        let url = TestInputs.packageRoot.appending(path: "Sources/SessionKit/ExperienceColorContrast.swift")
+        return try String(contentsOf: url, encoding: .utf8)
+    }
 
-    private func source(_ relativePath: String) throws -> String {
-        let url = Self.repositoryRoot.appending(path: relativePath)
-        return try XCTUnwrap(
-            try? String(contentsOf: url, encoding: .utf8),
-            "\(relativePath) is missing, so this coverage test cannot check anything"
-        )
+    private func appColorsSource() throws -> String {
+        try TestInputs.text(.appSources, "Gate1RootView.swift")
     }
 
     private func block(_ text: String, startingAt header: String) throws -> String {
@@ -72,7 +67,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
     }
 
     func testEveryTokenIsInTheTokenListAndInAtLeastOnePair() throws {
-        let file = try source("Packages/SessionKit/Sources/SessionKit/ExperienceColorContrast.swift")
+        let file = try tokenSource()
         let body = try block(file, startingAt: "public enum AppSemanticColorRGB {")
         let declared = try names(in: body, pattern: #"public static let (\w+) = "#).filter { $0 != "all" }
         let listed = AppSemanticColorRGB.all.map(\.name)
@@ -87,7 +82,7 @@ final class AppColorContrastCoverageTests: XCTestCase {
     }
 
     func testTheAppBuildsEveryColourFromTheSharedTokens() throws {
-        let app = try source("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1RootView.swift")
+        let app = try appColorsSource()
         let body = try block(app, startingAt: "enum AppColors {")
         let colours = try names(in: body, pattern: #"static let (\w+) = "#)
         XCTAssertGreaterThan(colours.count, 20)
