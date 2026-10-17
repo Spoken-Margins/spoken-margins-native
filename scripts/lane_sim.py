@@ -10,7 +10,8 @@ So each boot:
 - holds both build slots, so no build runs while a simulator boots;
 - never retries a failed `simctl boot`: it shuts the device down and marks it unsafe;
 - at a boot stall (SpringBoard restarted or vanished while booting), boot_with_retry deletes that device and
-  boots one fresh device in its place, once, for callers that can make one; each stall is logged on #705;
+  boots one fresh device in its place, once, for callers that can make one, unless a crash report for the stalled
+  device lands within LATE_REPORT_WAIT (a possible flood: no retry); each stall is logged on #1802;
 - watches the device's SpringBoard process until it is ready, and stops at the first restart or
   disappearance (crash reports reach DiagnosticReports about 80 s late, after a flood is under way),
   with crash reports as a second signal.
@@ -655,11 +656,11 @@ def boot(udid: str, label: str, out=sys.stderr, timeout: float | None = None, lo
         raise
 
 
-STALL_ISSUE = 705  # where every boot stall is logged as evidence (owner's call 2026-10-11)
+STALL_ISSUE = 1802  # where every boot stall is logged as evidence (#705 is closed)
 
 
 def stall_note(label: str, stalls: list, outcome: str) -> str:
-    """The #705 comment for one boot with a stall: what stalled, and how the retry went."""
+    """The evidence-log comment for one boot with a stall: what stalled, and how the retry went."""
     lines = [f'Boot stall {outcome}: {label}, {datetime.datetime.now().isoformat(timespec="seconds")} local.']
     for number, stall in enumerate(stalls, 1):
         lines.append(f'- Boot {number}, device `{stall["udid"]}` (memory pressure {stall.get("pressure", "unknown")}): '
@@ -669,7 +670,7 @@ def stall_note(label: str, stalls: list, outcome: str) -> str:
 
 
 def post_stall(label: str, stalls: list, outcome: str) -> None:
-    """The default stall log: a comment on #705. Best effort; a boot never fails on it."""
+    """The default stall log: a comment on the evidence log (STALL_ISSUE). Best effort; a boot never fails on it."""
     announce(stall_note(label, stalls, outcome), issue=STALL_ISSUE)
 
 
@@ -683,16 +684,21 @@ def boot_with_retry(udid: str, label: str, replace=None, out=sys.stderr, timeout
     replace, or for any failure that isn't a stall (simctl boot failing, a crash report, a timeout), this is
     boot() unchanged: those keep the old rules, and a crash report is a flood's first sign. A stall on the
     fresh device too raises BootError, so the run stays INCONCLUSIVE as before. A stalled device is never booted
-    again: boot() has marked it unsafe. Owner's call 2026-10-11: one stall that recovers and then passes is a
-    PASS.
+    again: boot() has marked it unsafe.
+
+    A SpringBoard restart can be a crash flood's first sign, and crash reports land about 80 s late. So before any
+    retry this waits LATE_REPORT_WAIT and looks for a crash report naming the stalled device during its boot; if
+    one is there, nothing is retried (the rule: don't switch devices to get around a flood). The retry happens
+    before any app is installed or test runs, so it can't hide an app failure; the caller's report names it.
 
     info['udid'] always names the device the caller holds now (the one to release, even after a failure), and
-    info['boot_stalls'] lists each stall. log_stall(label, stalls, outcome) logs them, by default on #705.
+    info['boot_stalls'] lists each stall. log_stall(label, stalls, outcome) logs them, by default on the evidence log (#1802).
     """
     info = {} if info is None else info
     stalls = info.setdefault('boot_stalls', [])
     log_stall = post_stall if log_stall is None else log_stall
     info['udid'] = udid
+    started = time.time()
     try:
         return udid, boot(udid, label, out=out, timeout=timeout, lock_wait=lock_wait, info=info, first_boot=first_boot)
     except BootError as error:
@@ -700,9 +706,20 @@ def boot_with_retry(udid: str, label: str, replace=None, out=sys.stderr, timeout
             raise
         stalls.append({'udid': udid, 'error': str(error), 'pressure': info.get('pressure', 'unknown')})
         first = error
-    print(f'[lane] boot stall on {udid}: {first}; deleting it and booting one fresh device in its place (#705)',
+    window = (started, time.time())
+    print(f'[lane] boot stall on {udid}: {first}; waiting {LATE_REPORT_WAIT}s for any late crash report before a retry',
           file=out, flush=True)
-    record_event(udid, 'boot stall: replaced by a fresh device for one retry (#705)')
+    time.sleep(LATE_REPORT_WAIT)
+    report = late_report(crash_reports_dir(), udid, window)
+    if report:
+        mark_unsafe(udid, f'late crash report for a crash during boot: {report.name}')
+        record_event(udid, f'boot stall with a crash report ({report.name}): no retry, a possible crash flood')
+        log_stall(label, stalls, f'not retried: crash report {report.name} names the stalled device (a possible crash flood)')
+        raise BootError(f'{first} Crash report {report.name} names this device, so no fresh device was booted: a '
+                        'possible crash flood. Look before booting again.') from None
+    print(f'[lane] no crash report for {udid}; deleting it and booting one fresh device in its place (#1802)',
+          file=out, flush=True)
+    record_event(udid, 'boot stall: replaced by a fresh device for one retry (#1802)')
     try:
         fresh = replace(udid)
     except Exception as made:  # noqa: BLE001 - however making it failed, the stall is logged and reported

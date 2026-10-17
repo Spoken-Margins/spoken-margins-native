@@ -863,9 +863,10 @@ class BootRetryTests(unittest.TestCase):
     def setUp(self):
         LaneSimTests.setUp(self)
         counter = Path(self.temporary.name) / 'created'
-        patch = mock.patch.dict(os.environ, {'FAKE_CREATE_COUNTER': str(counter)})
-        patch.start()
-        self.addCleanup(patch.stop)
+        for patch in (mock.patch.dict(os.environ, {'FAKE_CREATE_COUNTER': str(counter)}),
+                      mock.patch.object(lane_sim, 'LATE_REPORT_WAIT', 0)):
+            patch.start()
+            self.addCleanup(patch.stop)
         self.logged = []
         self.replaced = []
 
@@ -935,6 +936,37 @@ class BootRetryTests(unittest.TestCase):
         self.assertFalse(error.stall)
         self.assertEqual((self.booted(), self.replaced), ([UDID], []))
 
+    def test_a_late_crash_report_for_the_stalled_device_means_no_retry(self):
+        # A SpringBoard restart can start a crash flood, and its reports land about 80 s late (#184): the lane
+        # waits LATE_REPORT_WAIT, and a report naming the stalled device stops it from switching devices.
+        real_sleep = time.sleep
+
+        def report_arrives(seconds):
+            stamp = time.strftime('%Y-%m-%d %H:%M:%S.00 +0000', time.gmtime(time.time() - 0.5))
+            (Path(self.env['SM_LANE_CRASH_REPORTS']) / 'SpringBoard-late.ips').write_text(
+                '{"timestamp":"x"}\n{"captureTime" : "%s"} com.apple.CoreSimulator.SimDevice.%s' % (stamp, UDID))
+            real_sleep(min(seconds, 0.01))
+
+        with mock.patch.object(lane_sim.time, 'sleep', side_effect=report_arrives):
+            error, info = self.boot(UDID)
+        self.assertIsInstance(error, lane_sim.BootError)
+        self.assertFalse(error.stall)
+        self.assertIn('possible crash flood', str(error))
+        self.assertEqual((self.booted(), self.replaced, info['udid']), ([UDID], [], UDID))
+        self.assertIn('late crash report', lane_sim.unsafe_devices()[UDID]['reason'])
+        (_, _, outcome), = self.logged
+        self.assertIn('not retried: crash report SpringBoard-late.ips', outcome)
+
+    def test_a_retry_waits_for_late_reports_first(self):
+        real_sleep = time.sleep
+        with mock.patch.object(lane_sim, 'LATE_REPORT_WAIT', 7), \
+                mock.patch.object(lane_sim, 'late_report', return_value=None) as checked, \
+                mock.patch.object(lane_sim.time, 'sleep', side_effect=lambda seconds: real_sleep(min(seconds, 0.01))) as slept:
+            (udid, _), _ = self.boot(UDID)
+        self.assertEqual(udid, 'FRESH-0001')
+        self.assertIn(mock.call(7), slept.call_args_list)
+        self.assertEqual(checked.call_args.args[1], UDID)
+
     def test_a_fresh_device_that_cannot_be_made_is_logged_and_stops(self):
         def broken(stalled):
             raise subprocess.CalledProcessError(1, ['simctl', 'create'])
@@ -951,7 +983,7 @@ class BootRetryTests(unittest.TestCase):
             lane_sim.boot_with_retry(UDID, 'verify-tests --plan app boot at abc1234', self.replace, out=self.quiet,
                                      first_boot=True)
         posted = self.comments.read_text()
-        self.assertIn('issue comment 705', posted)
+        self.assertIn('issue comment 1802', posted)
         self.assertIn('Boot stall recovered on a fresh device', posted)
         self.assertIn('verify-tests --plan app boot at abc1234', posted)
         self.assertIn(UDID, posted)

@@ -256,15 +256,17 @@ Simulators:
   wait until the watcher has exited (`ps -p $(cat ~/Library/Caches/SpokenMarginsLane/watch-<udid>.pid)` lists no
   process; the file stays behind, so don't wait for it to go), and the next --pool deletes it. A device that only fails
   to erase stays in the pool and is passed over; the helper prints STOP only when no pool device will erase, so report that on #184.
-- **One fresh device after a boot stall (#705).** A boot stall is SpringBoard restarting or vanishing while the
+- **One fresh device after a boot stall (#1802).** A boot stall is SpringBoard restarting or vanishing while the
   device boots, with no crash report. From 10-09 to 10-16 it caused 26 of 45 INCONCLUSIVE integration runs and 22 of
   42 INCONCLUSIVE T3s, on fresh devices too (#1389). `lane_sim.boot_with_retry` marks the stalled device unsafe,
   deletes it, and boots one fresh device in its place: a new clone for the runner's T3, a new Test Runner for
   `verify-tests.py`, another pool device for `--pool`, a new device for `--fresh`. A device named on the command
   line (`lane-sim-boot <udid>`, `verify-tests.py --device`) gets no retry. A second stall, a failed `simctl boot`,
-  a crash report and a timeout all stop as before. Each stall is logged on #705: the runner posts it after its
-  report, with the link and verdict; the other callers post it from `lane_sim.py`. A run whose one stall
-  recovered and then passed is a PASS (owner's call 2026-10-11).
+  a crash report and a timeout all stop as before. Before a retry the lane waits 150 s for late crash reports; one
+  naming the stalled device means a possible crash flood, and nothing is retried. The retry happens before any app
+  is installed or test runs, so it can't hide an app failure; the report names the retry and the replaced device.
+  Each stall is logged on #1802: the runner posts it after its report, with the link and verdict; the other
+  callers post it from `lane_sim.py`.
 - The old standing device, "SM Lane Desk erase-approval" (1330F268-5467-4421-9D55-1FCC3FF5CF8A),
   stays retired: never boot, erase or reuse it. Stay on iOS 26.5: iOS 27's Apple Intelligence
   services crash-flood on this Mac (#184). `--fresh` still makes a one-off device, for work that
