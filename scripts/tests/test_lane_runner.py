@@ -3166,7 +3166,7 @@ class RecoveredStallTests(unittest.TestCase):
         self.assertEqual(len(details), 1)
         self.assertIn('app: recovered after 1 startup stall', details[0])
         self.assertIn('passed 3 test(s)', details[0])
-        self.assertIn('Logged on #705', details[0])
+        self.assertIn('Logged on #1802', details[0])
 
     def test_two_stalls_before_a_pass_keep_their_verdict(self):
         # verify-tests.py leaves the step in error (and its status not verified) for two or more stalls.
@@ -3265,6 +3265,8 @@ class BootStallRetryTests(unittest.TestCase):
                 mock.patch.object(lane_sim, 'release', side_effect=lambda udid, *a, **k: released.append(udid)), \
                 mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
                 mock.patch.object(lane_sim, 'post_stall') as posted, \
+                mock.patch.object(lane_sim, 'LATE_REPORT_WAIT', 0), \
+                mock.patch.object(lane_sim, 'late_report', return_value=None), \
                 mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})],
                                                                    ['verified'], ['A (1 passed)'], [])):
             result = lane._t3_on_claimed_device({'app': ['T/A']}, 'r9', evidence,
@@ -3290,7 +3292,7 @@ class BootStallRetryTests(unittest.TestCase):
     def test_the_boot_stalls_are_posted_on_705_with_the_report_and_verdict(self):
         for outcome, verdict, expected in (
                 ('recovered on a fresh device (`U2`, ready after 40s)', 'PASS',
-                 "Boot stall recovered on a fresh device, counted as a PASS (owner's call 2026-10-11)"),
+                 'Boot stall recovered on a fresh device; the run then ended PASS'),
                 ('recovered on a fresh device (`U2`, ready after 40s)', 'FAIL',
                  'Boot stall recovered on a fresh device; the run then ended FAIL'),
                 ('not recovered (two in a row), so the run stays INCONCLUSIVE', 'INCONCLUSIVE',

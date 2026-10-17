@@ -1520,6 +1520,8 @@ class VerificationTests(unittest.TestCase):
                     patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
                     patch.object(verification.lane_sim, 'boot', side_effect=boot), \
                     patch.object(verification.lane_sim, 'post_stall') as posted, \
+                    patch.object(verification.lane_sim, 'LATE_REPORT_WAIT', 0), \
+                    patch.object(verification.lane_sim, 'late_report', return_value=None), \
                     patch.object(verification, 'acquire_simulator_slot', return_value=None), \
                     patch.object(verification.subprocess, 'run'), \
                     patch.object(run, 'command', side_effect=lambda name, args, **_: commands.append((name, args)) or ''), \

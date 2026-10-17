@@ -351,7 +351,7 @@ class PoolDeviceTests(unittest.TestCase):
             return (10, 20 + min(calls[udid] - 1, 2)) if udid in stalls else (10, 20)
 
         with mock.patch.object(lane_sim, 'device_processes', processes), \
-                mock.patch.object(lane_sim, 'post_stall') as posted:
+                mock.patch.object(lane_sim, 'post_stall') as posted, mock.patch.object(lane_sim, 'LATE_REPORT_WAIT', 0):
             return self.run_helper(*arguments, FAKE_STALL=','.join(stalls)), posted
 
     def test_a_pool_boot_stall_retires_the_device_and_boots_one_fresh_pool_device(self):

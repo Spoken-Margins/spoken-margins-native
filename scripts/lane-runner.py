@@ -347,14 +347,14 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
     return failed, counted == 0
 
 
-STALL_ISSUE = 705  # the open regression for the app test host that launches and never reaches XCTest
+STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
 BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
 
 
 def recovered_startup_stalls(manifest: dict) -> list[dict]:
     """The steps of a verify-tests.py manifest that stalled once at startup, recovered on the first retry and passed.
 
-    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on #705. Two or more stalls
+    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on the evidence log (STALL_ISSUE). Two or more stalls
     before a pass stay a step error, so they never show up here.
     """
     return [{'step': step.get('name'), 'stall': step['startup_stalls'][0],
@@ -364,7 +364,7 @@ def recovered_startup_stalls(manifest: dict) -> list[dict]:
 
 
 def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict: str) -> str | None:
-    """The #705 comment for the T3 boot's stalls (<evidence>/boot-stalls.json), in the startup stalls' format."""
+    """The evidence-log comment for the T3 boot's stalls (<evidence>/boot-stalls.json), in the startup stalls' format."""
     try:
         found = json.loads((evidence / BOOT_STALLS).read_text())
         stalls, outcome = found['stalls'], found['outcome']
@@ -373,8 +373,7 @@ def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict
     if not stalls:
         return None
     if outcome.startswith('recovered'):
-        title = ('Boot stall recovered on a fresh device, counted as a PASS (owner\'s call 2026-10-11)'
-                 if verdict == 'PASS' else f'Boot stall recovered on a fresh device; the run then ended {verdict}')
+        title = f'Boot stall recovered on a fresh device; the run then ended {verdict}'
     else:
         title = f'Boot stall, {outcome}'
     lines = [f'{title}: the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).']
@@ -389,7 +388,7 @@ def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict
 
 def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post, verdict: str = '') -> int:
     """Post the T3 boot's stalls, and each recovered startup stall in the verify-* manifests under <evidence>,
-    on #705 with post(body).
+    on the evidence log (STALL_ISSUE) with post(body).
 
     Best effort: the report is already posted, and nothing here can fail the job. Returns how many were posted.
     """
@@ -1882,8 +1881,8 @@ def boot_t3_device(udid: str, log, replace=None, evidence: Path | None = None, i
 
     A clone has never booted as itself, so it gets the first-boot tolerance (one SpringBoard change in the
     first 30 s, #184). Without it every clone boot stopped on that change from 06:00 UTC on 2026-10-11 (#1359).
-    At a boot stall, replace(old) gives one fresh clone to boot instead (#705); each stall goes to
-    <evidence>/boot-stalls.json, which log_recovered_stalls posts on #705 with the report's link and verdict.
+    At a boot stall, replace(old) gives one fresh clone to boot instead (#1802); each stall goes to
+    <evidence>/boot-stalls.json, which log_recovered_stalls posts on #1802 with the report's link and verdict.
 
     Returns (None when ready or the reason it isn't, details such as the memory pressure at boot). info['udid']
     is the device the run holds now, ready or not; pass info to read it even if the boot raises.
@@ -2043,7 +2042,7 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         if boot_info.get('boot_retry'):
             retry = boot_info['boot_retry']
             details.insert(1, f'boot stall on the first clone ({retry["stalled"]}), so it was deleted and one fresh clone '
-                              f'({retry["fresh"]}) booted in {retry["seconds"]}s instead (#705); the stall is logged on #705')
+                              f'({retry["fresh"]}) booted in {retry["seconds"]}s instead, before any app install or test (#1802); the stall is logged on #1802')
         if boot_info.get('tolerated'):
             details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
                               f'#184): {boot_info["tolerated"]}')
