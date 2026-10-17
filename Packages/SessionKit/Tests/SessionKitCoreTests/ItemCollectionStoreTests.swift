@@ -77,7 +77,8 @@ final class ItemCollectionStoreTests: XCTestCase {
         XCTAssertEqual(SQLiteSessionStore.currentSchemaVersion, 5)
         // The version number alone would pass a new column or index. The tables and indexes must be
         // exactly what Build 29 wrote (#1048), read from a database its own code created.
-        XCTAssertEqual(try Self.schemaObjects(atPath: path), try Self.build29SchemaObjects(),
+        let build29Schema = try Self.build29SchemaObjects()
+        XCTAssertEqual(try Self.schemaObjects(atPath: path), build29Schema,
                        "collections add no table, column or index")
         XCTAssertEqual(existingReads(store), before)
         XCTAssertEqual(before.count, 45, "every load API the store had before collections")

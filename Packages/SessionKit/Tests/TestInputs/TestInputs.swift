@@ -12,6 +12,10 @@ import XCTest
 /// checked out alone has none of them: a test that needs one is skipped with the input named, never
 /// passed silently. `SESSIONKIT_CONTRACTS_DIR` points the Contracts input somewhere else.
 /// `scripts/sessionkit_pass.py`'s `READS` lists the same folders, so the lane's pass key covers them.
+///
+/// Read an input into a `let` before asserting on it. XCTest records a skip thrown inside an
+/// `XCTAssert…` or `XCTUnwrap` expression as a failure, and `try?` turns it into a wrong value.
+/// `scripts/check-sessionkit-standalone.sh --test` is what shows a call site that gets this wrong.
 public enum TestInputs {
     public enum Input: String, CaseIterable, Sendable {
         /// Schemas, fixtures and traces: the canonical home of the listening formats (#1386).
