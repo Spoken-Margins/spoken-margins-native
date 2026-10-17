@@ -256,12 +256,13 @@ def dedupe_query(test: str) -> str:
     return 'is:issue is:open "' + re.sub(r'[^A-Za-z0-9_]', '', name) + '"'
 
 
-LISTED_COMMENTS = 100  # `gh issue list --json comments` returns at most this many per issue
-
-
 def find_duplicate(issues: list[dict], tests: list[str],
                    all_comments: Optional[Callable[[int], str]] = None) -> Optional[int]:
-    """The first open issue naming one of the tests (the report issue itself never counts)."""
+    """The first open issue naming one of the tests (the report issue itself never counts).
+
+    `issues` are REST issue objects, which carry `author_association` and `user.login`; `gh issue list --json` has no
+    association field. Only the team's issues count (#1822), and `all_comments(number)` returns the text of that
+    issue's trusted comments, read only when the title and body don't already name a test and the issue has some."""
     def names_a_test(text: str) -> bool:
         return any(re.search(r'(?<!\w)' + re.escape(t.rsplit('/', 1)[-1].removesuffix('()')) + r'(?!\w)', text)
                    for t in tests)
@@ -269,13 +270,9 @@ def find_duplicate(issues: list[dict], tests: list[str],
     for issue in issues:
         if issue['number'] == REPORT_ISSUE or not comment_trust.trusted(issue):
             continue  # #1822: a stranger's issue naming a test must not swallow the failure report
-        listed = issue.get('comments') or []
-        comments = comment_trust.trusted_only(listed)
-        text = '\n'.join([issue.get('title') or '', issue.get('body') or '']
-                         + [c.get('body') or '' for c in comments])
-        if names_a_test(text):
+        if names_a_test('\n'.join([issue.get('title') or '', issue.get('body') or ''])):
             return issue['number']
-        if all_comments is not None and len(listed) >= LISTED_COMMENTS and names_a_test(all_comments(issue['number'])):
+        if all_comments is not None and (issue.get('comments') or 0) and names_a_test(all_comments(issue['number'])):
             return issue['number']
     return None
 
@@ -622,15 +619,19 @@ class Ops:
         return '\n'.join(c.get('body') or '' for c in comment_trust.trusted_only(
             [json.loads(line) for line in out.splitlines() if line.strip()]))
 
+    def open_issues_matching(self, test: str) -> list[dict]:
+        """Open issues GitHub's search ties to the test, as REST objects (they carry author_association)."""
+        out = self.must(['gh', 'api', '-X', 'GET', 'search/issues', '-f', f'q=repo:{REPO} {dedupe_query(test)}',
+                         '-f', 'per_page=100', '--jq', '.items[] | @json']).stdout or ''
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
+
     def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path,
                       cost: Optional[float]) -> list[int]:
         filed = []
         for i, group in enumerate(groups):
             duplicate = None
             for test in group['tests']:
-                issues = self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
-                                       '--search', dedupe_query(test), '--limit', '100',
-                                       '--json', 'number,title,body,comments,authorAssociation'])
+                issues = self.open_issues_matching(test)
                 duplicate = find_duplicate(issues, [test], self.issue_comments)
                 if duplicate is not None:
                     break

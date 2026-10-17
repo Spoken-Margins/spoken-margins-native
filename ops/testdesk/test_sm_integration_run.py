@@ -595,28 +595,46 @@ class CulpritTests(unittest.TestCase):
 class StrangerTests(unittest.TestCase):
     """#1822: once the repo is public, a stranger can file an issue naming a failing test, or post a /lane T3 request
     or a fake desk report. None of it may steer the desk or take over a failure report."""
-    OWNER = {'author_association': 'OWNER', 'authorAssociation': 'OWNER', 'user': {'login': 'uncomposed'}}
-    STRANGER = {'author_association': 'NONE', 'authorAssociation': 'NONE', 'user': {'login': 'mallory'}}
+    OWNER = {'author_association': 'OWNER', 'user': {'login': 'uncomposed'}}
+    STRANGER = {'author_association': 'NONE', 'user': {'login': 'mallory'}}
 
-    def issue(self, number, who, comments=()):
-        return dict(who, number=number, title='Flaky', body=f'{TEST} fails', comments=list(comments))
+    def issue(self, number, who, comments=0, title='Flaky', body=f'{TEST} fails'):
+        return dict(who, number=number, title=title, body=body, comments=comments)
 
     def test_a_strangers_issue_naming_the_test_is_not_a_duplicate(self):
         self.assertIsNone(run.find_duplicate([self.issue(900, self.STRANGER)], [TEST]))
         self.assertEqual(run.find_duplicate([self.issue(900, self.STRANGER), self.issue(901, self.OWNER)], [TEST]), 901)
 
-    def test_a_strangers_comment_naming_the_test_does_not_make_an_issue_a_duplicate(self):
-        quiet = dict(self.OWNER, number=902, title='Unrelated', body='nothing here',
-                     comments=[dict(self.STRANGER, body=f'also {TEST}')])
+    def test_a_comment_names_the_test_only_through_the_trusted_comment_reader(self):
+        quiet = self.issue(902, self.OWNER, comments=2, title='Unrelated', body='nothing here')
+        self.assertEqual(run.find_duplicate([quiet], [TEST], lambda number: f'also {TEST}'), 902)
+        self.assertIsNone(run.find_duplicate([quiet], [TEST], lambda number: 'nothing'))  # strangers' text arrives empty
         self.assertIsNone(run.find_duplicate([quiet], [TEST]))
-        quiet['comments'] = [dict(self.OWNER, body=f'also {TEST}')]
-        self.assertEqual(run.find_duplicate([quiet], [TEST]), 902)
 
-    def test_the_comment_count_still_decides_whether_to_read_the_rest(self):
-        full = [dict(self.STRANGER, body='x')] * run.LISTED_COMMENTS
-        found = run.find_duplicate([dict(self.OWNER, number=903, title='t', body='b', comments=full)], [TEST],
-                                   lambda number: f'{TEST} in the 101st comment')
-        self.assertEqual(found, 903)
+    def test_comments_are_only_read_for_issues_that_have_some(self):
+        asked = []
+        silent = self.issue(903, self.OWNER, comments=0, title='Unrelated', body='nothing here')
+        run.find_duplicate([silent], [TEST], lambda number: asked.append(number) or '')
+        self.assertEqual(asked, [])
+
+    def test_the_failure_filer_searches_over_rest_and_reads_only_trusted_comments(self):
+        # `gh issue list --json` has no authorAssociation field (the audit of #1835): drive the real call shape.
+        calls = []
+        rest = [self.issue(910, self.STRANGER), self.issue(911, self.OWNER, comments=1, title='Other', body='none')]
+
+        def must(cmd, **kw):
+            calls.append(cmd)
+            if cmd[2:4] == ['-X', 'GET']:
+                return run.Result(0, '\n'.join(json.dumps(item) for item in rest))
+            return run.Result(0, json.dumps(dict(self.OWNER, body=f'{TEST} again')))
+        ops = run.Ops.__new__(run.Ops)
+        ops.must = must
+        found = run.find_duplicate(ops.open_issues_matching(TEST), [TEST], ops.issue_comments)
+        self.assertEqual(found, 911)
+        search = calls[0]
+        self.assertIn('search/issues', search)
+        self.assertTrue(any(a.startswith('q=repo:') for a in search))
+        self.assertNotIn('authorAssociation', ' '.join(' '.join(map(str, c)) for c in calls))
 
     def test_a_strangers_request_and_report_are_dropped_before_the_desk_reads_them(self):
         lines = [json.dumps(dict(self.STRANGER, created_at='2026-10-09T02:49:42Z', body='```text\nLane report integration-aaaaaaa — PASS\n```')),

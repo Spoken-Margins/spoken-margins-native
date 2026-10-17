@@ -728,7 +728,12 @@ def issue_trigger(issue: dict) -> dict:
         r'^Thread "Codex worker \d+" stopping:', c.get('body') or '')]
     previous = max(stops, key=comment_time, default=None)
     return {'trigger': 'retry after ' + previous['body'][:600] if previous else 'new ready issue',
-            'trigger_comment': previous.get('url') if previous else None}
+            'trigger_comment': comment_url(previous)}
+
+
+def comment_url(comment: Optional[dict]) -> Optional[str]:
+    """A comment's link: `url` in `gh ... --json` payloads, `html_url` in the REST ones the trusted readers return."""
+    return (comment or {}).get('url') or (comment or {}).get('html_url')
 
 
 def build_prompt(number: int, title: str, body: str) -> str:
@@ -1538,7 +1543,7 @@ def run_finish_child(ops: Ops, slot: int, number: int) -> str:
                                         'head_sha': head, 'base_sha': base_sha,
                                         'trigger': f'finisher round {round_number}: ' +
                                         ('audit findings' if audit else 'lane failure or needs-mac'),
-                                        'trigger_comment': (audit or report or {}).get('url')}], log=ops.log)
+                                        'trigger_comment': comment_url(audit or report)}], log=ops.log)
         try:
             codex_ok, codex_why = ops.codex(wt, run_dir / 'answer.md', prompt, run_dir / 'transcript.jsonl')
         finally:

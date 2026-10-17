@@ -1007,6 +1007,13 @@ class CheckTests(unittest.TestCase):
         self.assertIn('no Claude token in the Keychain', printed)
 
 
+class CommentUrlTests(unittest.TestCase):
+    def test_both_payload_shapes_give_a_link(self):
+        self.assertEqual(w.comment_url({'url': 'a'}), 'a')
+        self.assertEqual(w.comment_url({'html_url': 'b'}), 'b')   # REST, as the trusted readers return (#1822)
+        self.assertIsNone(w.comment_url(None))
+
+
 class PromptTests(unittest.TestCase):
     def test_both_prompts_say_outsiders_text_is_data(self):
         out = Path('/tmp/out')

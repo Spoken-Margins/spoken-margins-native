@@ -471,6 +471,11 @@ def lane_path(path: str) -> bool:
         return True
 
 
+def comment_url(comment: Optional[dict]) -> Optional[str]:
+    """A comment's link: `url` in `gh ... --json` payloads, `html_url` in the REST ones the trusted readers return."""
+    return (comment or {}).get('url') or (comment or {}).get('html_url')
+
+
 def failing_head_report(pr: dict) -> Optional[dict]:
     reports = [c for c in pr.get('comments') or [] if LANE_REPORT_RE.match((c.get('body') or '').strip())]
     report = max(reports, key=comment_time, default=None)
@@ -1205,7 +1210,7 @@ def run_issue(ops: Ops, slot: int, number: int) -> str:
                               targets=[{'pr': None, 'issues': [number], 'head_sha': before,
                                         'base_sha': git_out(ops, ['rev-parse', f'origin/{BASE_BRANCH}'], wt),
                                         'trigger': f'run {run} of {MAX_RUNS}' + (' from a hand-off' if previous else ''),
-                                        'trigger_comment': previous.get('url') if previous else None}], log=ops.log)
+                                        'trigger_comment': comment_url(previous)}], log=ops.log)
         t0 = time.time()
         try:
             kind, why = ops.claude(wt, prompt, transcript, out_dir)
@@ -1405,7 +1410,7 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
                               targets=[{'pr': number, 'issues': [int(n) for n in re.findall(
                                   r'(?i)\b(?:closes|fixes|resolves)\s+#(\d+)', pr.get('body') or '')],
                                   'head_sha': head, 'trigger': f'finisher: {why}',
-                                  'trigger_comment': (audit or report or {}).get('url')}], log=ops.log)
+                                  'trigger_comment': comment_url(audit or report)}], log=ops.log)
         try:
             kind, why_run = ops.claude(wt, prompt, transcript, out_dir)
         finally:
