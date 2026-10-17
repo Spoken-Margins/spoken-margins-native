@@ -1008,11 +1008,13 @@ class AutomergeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             verdict, details = lane.run_fast(Path(folder), runner=run)
             self.assertEqual((verdict, details), ('PASS', ['SessionKitCoreTests: the parallel run failed']))
-            self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'), ([], False))
+            # the superseded parallel step's records are not a run: the serial run's one test is what ran
+            self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'),
+                             ([], False, ['SessionKitCoreTests/A/testX']))
             steps[1]['tests']['SessionKitCoreTests/A/testX']['status'] = 'failed'
             (Path(folder) / 'fast/manifest.json').write_text(json.dumps({'steps': steps}))
             self.assertEqual(lane.manifest_failures(Path(folder) / 'fast'),
-                             (['SessionKitCoreTests/A/testX'], False))
+                             (['SessionKitCoreTests/A/testX'], False, ['SessionKitCoreTests/A/testX']))
 
     def test_skipped_sessionkit_tests_are_not_a_run_of_zero_tests(self):
         # #1328: a skipped run has no test records, and the step ledger counted that as a runner fault.
@@ -1020,10 +1022,22 @@ class AutomergeTests(unittest.TestCase):
             (Path(folder) / 'manifest.json').write_text(json.dumps({
                 'status': 'verified', 'sessionkit_pass': {'reused': 'k'},
                 'steps': [{'name': 'runner-tests', 'exit_code': 0}, {'name': 'package', 'skipped': 'already passed'}]}))
-            self.assertEqual(lane.manifest_failures(Path(folder)), ([], False))
+            self.assertEqual(lane.manifest_failures(Path(folder)), ([], False, []))  # skipped: ran nothing, adds no names
             (Path(folder) / 'manifest.json').write_text(json.dumps({
                 'status': 'verified', 'steps': [{'name': 'runner-tests', 'exit_code': 0}]}))
-            self.assertEqual(lane.manifest_failures(Path(folder)), ([], True))  # still zero without the record
+            self.assertEqual(lane.manifest_failures(Path(folder)), ([], True, []))  # still zero without the record
+
+    def test_the_tests_a_run_executed_are_every_test_across_manifests_once_each(self):
+        # #1830: the ledger closes a named failure only on a run that ran it, so ran lists the passed and failed
+        # tests of every verify-* manifest, a test named in two plans once, and no step name.
+        with tempfile.TemporaryDirectory() as folder:
+            for plan, tests in (('app', {'A/a': {'status': 'passed'}, 'B/b': {'status': 'failed'}}),
+                                ('adapters', {'B/b': {'status': 'failed'}, 'C/c': {'status': 'passed'}})):
+                (Path(folder) / f'verify-{plan}').mkdir()
+                (Path(folder) / f'verify-{plan}' / 'manifest.json').write_text(json.dumps({
+                    'steps': [{'name': 'xctest', 'exit_code': 1, 'tests': tests}]}))
+            failed, zero, ran = lane.manifest_failures(*sorted(Path(folder).glob('verify-*')))
+            self.assertEqual((failed, zero, sorted(ran)), (['B/b', 'B/b'], False, ['A/a', 'B/b', 'C/c']))
 
     def test_a_lane_fault_in_the_host_tests_is_inconclusive_not_a_pr_fail(self):
         # #909: with the lane Mac's lid closed every real-player test failed, so every PR read FAIL.
