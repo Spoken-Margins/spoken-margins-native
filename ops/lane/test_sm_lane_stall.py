@@ -71,7 +71,8 @@ class GitHubReads(unittest.TestCase):
 
     def report(self, created, number):
         return {'body': f'Lane report pr{number}-r1 — PASS\ncommit abc1234', 'created_at': created,
-                'html_url': f'https://example.test/c{number}'}
+                'html_url': f'https://example.test/c{number}', 'user': {'login': 'github-actions[bot]'},
+                'author_association': 'NONE'}
 
     def other(self, number):
         return {'body': f'just a comment {number}', 'created_at': '2026-10-01T10:00:00Z', 'html_url': 'x'}
@@ -88,6 +89,14 @@ class GitHubReads(unittest.TestCase):
             self.assertEqual(s.active_lane_jobs(self.REPO), 7)
         self.assertEqual(sorted(asked), sorted(
             f'repos/owner/repo/actions/workflows/lane.yml/runs?status={status}&per_page=1' for status in counts))
+
+    def test_a_strangers_fake_report_does_not_hide_a_stall(self):
+        """#1822: a comment that looks like a lane report counts only from the owner, a collaborator or the bot."""
+        forged = dict(self.report('2026-10-01T10:00:00Z', 9), user={'login': 'mallory'}, author_association='NONE')
+        real = self.report('2026-10-01T08:00:00Z', 6)
+        with mock.patch.object(s, 'gh_json', lambda path: [forged, real]):
+            found = s.newest_report(self.REPO, NOW, 24, 20)
+        self.assertEqual(found, (dt.datetime(2026, 10, 1, 8, 0, tzinfo=dt.timezone.utc), 'https://example.test/c6'))
 
     def test_the_newest_report_is_found_on_a_later_page(self):
         pages = {1: [self.other(n) for n in range(100)],

@@ -49,6 +49,7 @@ NOT_RUN = 'not run: agent-driven journeys (they need an attended session)'
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
+import comment_trust  # noqa: E402  (#1822: whose comments and issues the desk believes)
 import integration_revert as revert  # noqa: E402
 import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
@@ -266,14 +267,15 @@ def find_duplicate(issues: list[dict], tests: list[str],
                    for t in tests)
 
     for issue in issues:
-        if issue['number'] == REPORT_ISSUE:
-            continue
-        comments = issue.get('comments') or []
+        if issue['number'] == REPORT_ISSUE or not comment_trust.trusted(issue):
+            continue  # #1822: a stranger's issue naming a test must not swallow the failure report
+        listed = issue.get('comments') or []
+        comments = comment_trust.trusted_only(listed)
         text = '\n'.join([issue.get('title') or '', issue.get('body') or '']
                          + [c.get('body') or '' for c in comments])
         if names_a_test(text):
             return issue['number']
-        if all_comments is not None and len(comments) >= LISTED_COMMENTS and names_a_test(all_comments(issue['number'])):
+        if all_comments is not None and len(listed) >= LISTED_COMMENTS and names_a_test(all_comments(issue['number'])):
             return issue['number']
     return None
 
@@ -432,8 +434,8 @@ class Ops:
         since = (dt.datetime.now(dt.timezone.utc) - REPORT_LOOKBACK).strftime('%Y-%m-%dT%H:%M:%SZ')
         out = self.must(['gh', 'api', '--paginate',
                          f'repos/{REPO}/issues/{REPORT_ISSUE}/comments?since={since}&per_page=100',
-                         '--jq', '.[] | {created_at, body} | @json']).stdout
-        return [json.loads(line) for line in out.splitlines() if line.strip()]
+                         '--jq', '.[] | {created_at, body, author_association, user: {login: .user.login}} | @json']).stdout
+        return comment_trust.trusted_only([json.loads(line) for line in out.splitlines() if line.strip()])
 
     def lane_waiting(self) -> list[int]:
         """PRs whose waiting /lane request needs the simulator. A GitHub error counts as none
@@ -442,9 +444,9 @@ class Ops:
             runs = self.gh_json(['run', 'list', '-R', REPO, '--workflow', 'lane.yml', '--limit', '50',
                                  '--json', 'status,displayTitle'])
             return [n for n in lane_requests_waiting(runs or [])
-                    if needs_simulator(json.loads(self.must(
+                    if needs_simulator([c.get('body') or '' for c in comment_trust.trusted_only(json.loads(self.must(
                         ['gh', 'api', '--paginate', f'repos/{REPO}/issues/{n}/comments',
-                         '--jq', '[.[].body]']).stdout or '[]'))]
+                         '--jq', '[.[] | {body, author_association, user: {login: .user.login}}]']).stdout or '[]'))])]
         except (RuntimeError, ValueError) as error:
             self.log('lane queue unreadable, not waiting for it: ' + str(error)[:200])
             return []
@@ -615,8 +617,10 @@ class Ops:
             git('branch', '-D', branch)
 
     def issue_comments(self, number: int) -> str:
-        return self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
-                          '--jq', '.[].body']).stdout or ''
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
+                         '--jq', '.[] | {body, author_association, user: {login: .user.login}} | @json']).stdout or ''
+        return '\n'.join(c.get('body') or '' for c in comment_trust.trusted_only(
+            [json.loads(line) for line in out.splitlines() if line.strip()]))
 
     def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path,
                       cost: Optional[float]) -> list[int]:
@@ -626,7 +630,7 @@ class Ops:
             for test in group['tests']:
                 issues = self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
                                        '--search', dedupe_query(test), '--limit', '100',
-                                       '--json', 'number,title,body,comments'])
+                                       '--json', 'number,title,body,comments,authorAssociation'])
                 duplicate = find_duplicate(issues, [test], self.issue_comments)
                 if duplicate is not None:
                     break

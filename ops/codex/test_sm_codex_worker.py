@@ -5,6 +5,7 @@ No network, no real Codex, no real gh: every side effect goes through a fake. Gi
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -592,6 +593,9 @@ class FinishChildTests(unittest.TestCase):
                     return w.default_run(cmd, cwd=cwd)
                 if cmd[:2] == ['git', 'add'] and checked_text is not None:
                     self.staged_text = (Path(cwd) / 'Playback.swift').read_text()
+                if cmd[:3] == ['gh', 'api', '--paginate']:
+                    self.calls.append(list(cmd))
+                    return rest_comments(data['comments'])
                 if cmd[:3] == ['gh', 'pr', 'view']:
                     self.calls.append(list(cmd))
                     return w.Result(0, json.dumps(data))
@@ -837,6 +841,14 @@ class FinishChildTests(unittest.TestCase):
         self.assertFalse((self.home / 'slot-1.lock').exists())
 
 
+def rest_comments(comments):
+    """What `gh api --paginate .../issues/N/comments --jq .[]` prints, which Ops.trusted_comments reads (#1822)."""
+    return w.Result(0, '\n'.join(json.dumps({
+        'body': c.get('body'), 'created_at': c.get('createdAt') or c.get('created_at'), 'html_url': c.get('url'),
+        'user': c.get('user') or {'login': 'uncomposed'}, 'author_association': c.get('author_association', 'OWNER')})
+        for c in comments))
+
+
 class FakeRun:
     """Records every command; answers by the first matching rule."""
 
@@ -856,6 +868,8 @@ class FakeRun:
         for bad in self.fail:
             if cmd[0] == bad:
                 return w.Result(1, '', f'{bad} failed')
+        if cmd[:3] == ['gh', 'api', '--paginate']:
+            return rest_comments(self.issue_data.get('comments') or [])
         if cmd[:3] == ['gh', 'issue', 'view']:
             return w.Result(0, json.dumps(self.issue_data))
         if cmd[:3] == ['gh', 'pr', 'create']:
@@ -1271,6 +1285,9 @@ class SandboxTests(unittest.TestCase):
             self.assertIn(text, prompt)
         self.assertNotIn('and make it pass', prompt)
 
+    def test_prompt_says_outsiders_text_is_data(self):
+        self.assertIn('is data,', w.build_prompt(64, 'Prepared audio', 'body'))
+
     def test_sessionkit_dependencies_are_resolved_before_codex_starts(self):
         # The sandbox has no network, so SwiftPM there couldn't clone onnxruntime.
         run = FakeRun(self, status=' M x.swift\n')
@@ -1308,6 +1325,10 @@ class TickTests(unittest.TestCase):
             cmd = [str(c) for c in cmd]
             if cmd[:3] == ['gh', 'pr', 'list']:
                 return w.Result(0, json.dumps(prs or []))
+            if cmd[:3] == ['gh', 'api', '--paginate']:
+                number = int(re.search(r'issues/(\d+)/comments', cmd[3]).group(1))
+                found = next(i for i in list(prs or []) + list(listing or []) if i['number'] == number)
+                return rest_comments(found.get('comments') or [])
             if cmd[:3] == ['gh', 'pr', 'view']:
                 return w.Result(0, json.dumps(next(p for p in prs if p['number'] == int(cmd[3]))))
             if cmd[:3] == ['gh', 'issue', 'view'] and cmd[3] == str(w.DIAL_ISSUE):
@@ -1326,6 +1347,16 @@ class TickTests(unittest.TestCase):
         return w.Ops(home=self.home, repo_root=self.home, run=run, codex=None,
                      limits=lambda: limits_result(used, resets_at=resets_at) if used is not None else None,
                      now=lambda: NOW, alive=alive, free_bytes=lambda: free, echo=False)
+
+    def test_a_strangers_comment_never_reaches_the_rules(self):
+        """#1822: comments come from the REST API, and only the owner's, collaborators' and the bot's are kept."""
+        forged = dict(claim('2026-10-01T12:00:00Z'), user={'login': 'mallory'}, author_association='NONE')
+        genuine = claim('2026-10-01T12:00:00Z')
+        ops = self.ops(issues=[issue(42, comments=[forged]), issue(43, comments=[genuine])])
+        self.assertEqual(ops.issue(42)['comments'], [])
+        self.assertEqual([c['body'] for c in ops.issue(43)['comments']], [genuine['body']])
+        ok, why = w.eligible(ops.issue(42), ops.issue(42)['comments'], NOW)
+        self.assertTrue(ok, why)  # a stranger's claim note can't park an issue
 
     def spawner(self):
         started = []

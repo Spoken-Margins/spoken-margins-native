@@ -153,7 +153,7 @@ class ConsumerTests(unittest.TestCase):
         for reviewer in ('Codex', 'Claude'):
             with self.subTest(reviewer=reviewer):
                 comment = {'body': audit.build_comment(580, HEAD, section, [580], reviewer=reviewer),
-                           'created_at': '2026-10-06T01:00:00Z'}
+                           'created_at': '2026-10-06T01:00:00Z', 'author_association': 'OWNER'}
                 pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [comment]}
                 lane = {'created_at': '2026-10-06T00:00:00Z', 'body':
                         'Lane report pr580-r1 — PASS | commit abcdef0 · tier T1\n'
@@ -170,7 +170,7 @@ class ConsumerTests(unittest.TestCase):
         for reviewer in ('Codex', 'Claude'):
             with self.subTest(reviewer=reviewer):
                 comment = {'body': audit.build_comment(580, HEAD, section, [580], reviewer=reviewer),
-                           'created_at': '2026-10-06T01:00:00Z'}
+                           'created_at': '2026-10-06T01:00:00Z', 'author_association': 'OWNER'}
                 pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [comment]}
                 self.assertIsNotNone(worker.audit_findings_on_head(pr))
                 self.assertIsNotNone(self.runner.audit_blocker([comment], HEAD))
@@ -190,7 +190,7 @@ class ClaudeConsumerTests(unittest.TestCase):
         self.assertEqual(body.splitlines()[0], '**Claude audit on `abcdef0`**')
         self.assertIn('Claude ran read-only', body)
         self.assertNotIn('Codex ran', body)
-        clean = {'body': body, 'created_at': '2026-10-06T01:00:00Z'}
+        clean = {'body': body, 'created_at': '2026-10-06T01:00:00Z', 'author_association': 'OWNER'}
         pr = {'number': 580, 'headRefOid': HEAD, 'labels': [{'name': 'automerge'}], 'comments': [clean]}
         lane = {'created_at': '2026-10-06T00:00:00Z', 'body':
                 'Lane report pr580-r1 — PASS | commit abcdef0 · tier T1\n'
@@ -241,7 +241,7 @@ class ClaudeConsumerTests(unittest.TestCase):
         for name, heading, clears in rows:
             with self.subTest(name=name):
                 c = {'body': heading + '\n\nNo blocking findings. Head `abcdef0`.',
-                     'created_at': '2026-10-06T01:00:00Z'}
+                     'created_at': '2026-10-06T01:00:00Z', 'author_association': 'OWNER'}
                 self.assertEqual(self.runner.audit_blocker([c], HEAD) is None, clears)
                 self.assertEqual(self.merge.audit_verdict([c], HEAD, self.merge.parse_time('2026-10-06T02:00:00Z'))
                                  is not None, clears)
@@ -251,7 +251,7 @@ class ClaudeConsumerTests(unittest.TestCase):
         for verdict, blocks in (('[P1] Wrong-item playback.', True), ('No blocking findings.', False)):
             with self.subTest(verdict=verdict):
                 c = {'body': '**Claude audit on `abcdef0`**\n\n' + verdict,
-                     'created_at': '2026-10-06T01:00:00Z'}
+                     'created_at': '2026-10-06T01:00:00Z', 'author_association': 'OWNER'}
                 pr = {'headRefOid': HEAD, 'comments': [c]}
                 self.assertEqual(worker.audit_findings_on_head(pr) is not None, blocks)
                 self.assertEqual(self.runner.audit_blocker([c], HEAD) is not None, blocks)

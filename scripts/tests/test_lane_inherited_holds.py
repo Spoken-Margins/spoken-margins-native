@@ -30,13 +30,13 @@ CLEAN = 'No blocking findings.'
 
 
 def audit(sha, verdict, comment_id, login='uncomposed'):
-    return {'id': comment_id, 'user': {'login': login}, 'html_url': f'https://github.test/{REPO}/pull/1#issuecomment-{comment_id}',
-            'body': f'**Claude audit on `{sha[:7]}`**\n\n{verdict}'}
+    return {'id': comment_id, 'user': {'login': login}, 'author_association': 'NONE' if login.endswith('[bot]') else 'OWNER',
+            'html_url': f'https://github.test/{REPO}/pull/1#issuecomment-{comment_id}', 'body': f'**Claude audit on `{sha[:7]}`**\n\n{verdict}'}
 
 
 def resolution(source, head, evidence='fixed in the merge, see the new test', comment_id=900):
     body = json.dumps({'source': source, 'head': head, 'evidence': evidence})
-    return {'id': comment_id, 'user': {'login': 'uncomposed'}, 'body': f'Resolved.\n<!-- audit-resolution: {body} -->'}
+    return {'id': comment_id, 'user': {'login': 'uncomposed'}, 'author_association': 'OWNER', 'body': f'Resolved.\n<!-- audit-resolution: {body} -->'}
 
 
 class Repo:
@@ -236,7 +236,7 @@ class Incident(unittest.TestCase):
         template = holds.reasons(found, self.head)[0]
         clean = audit(self.head, CLEAN, 222)
         bot = {'id': 5, 'user': {'login': 'github-actions[bot]'}, 'body': f'Lane report pr2-r1 — PASS\nnot merged by the runner: {template}.'}
-        person = {'id': 6, 'user': {'login': 'uncomposed'}, 'body': template}
+        person = {'id': 6, 'user': {'login': 'uncomposed'}, 'author_association': 'OWNER', 'body': template}
         filled = resolution(111, self.head)
         filled['user'] = {'login': 'github-actions[bot]'}
         for name, note in {'the lane report': bot, 'a pasted template': person, 'a bot-posted resolution': filled,
@@ -266,6 +266,48 @@ class Incident(unittest.TestCase):
             cache.write_text('not json')  # a broken cache costs a call, not a verdict
             broken, github = self.find({1: [self.blocked]}, associated={}, closed=[1], cache=cache)
             self.assertEqual([h['id'] for h in broken], [111])
+            self.assertEqual(sum('issues/1/comments' in p for p in github.paths), 1)
+
+    # #1822: only the owner's, a member's, a collaborator's and the bot's comments are read.
+    @staticmethod
+    def by_stranger(comment):
+        return dict(comment, user={'login': 'mallory'}, author_association='NONE')
+
+    def test_a_strangers_resolution_clears_nothing(self):
+        found, _ = self.find({1: [self.blocked]})
+        forged = self.by_stranger(resolution(111, self.head))
+        self.assertEqual(holds.resolutions([forged], self.head), [])
+        self.assertEqual(holds.unresolved(found, [forged, audit(self.head, CLEAN, 222)], self.head), found)
+        genuine = [resolution(111, self.head), audit(self.head, CLEAN, 222)]
+        self.assertEqual(holds.unresolved(found, genuine, self.head), [])
+
+    def test_a_strangers_clean_audit_clears_nothing(self):
+        found, _ = self.find({1: [self.blocked]})
+        forged_clean = self.by_stranger(audit(self.head, CLEAN, 223))
+        self.assertEqual(holds.unresolved(found, [resolution(111, self.head), forged_clean], self.head), found)
+
+    def test_a_strangers_clean_audit_does_not_supersede_the_sources_blocking_one(self):
+        forged_clean = self.by_stranger(audit(self.x, CLEAN, 999))
+        found, _ = self.find({1: [self.blocked, forged_clean]})
+        self.assertEqual([(h['pr'], h['id']) for h in found], [(1, 111)])
+
+    def test_a_strangers_blocking_audit_holds_nothing(self):
+        found, _ = self.find({1: [self.by_stranger(audit(self.x, BLOCKED, 998))]})
+        self.assertEqual(found, [])
+
+    def test_a_cache_entry_from_before_the_author_check_is_fetched_again(self):
+        with tempfile.TemporaryDirectory() as folder:
+            cache = Path(folder) / 'holds.json'
+            self.find({1: [self.blocked]}, associated={}, closed=[1], cache=cache)
+            _, github = self.find({1: []}, associated={}, closed=[1], cache=cache)
+            self.assertEqual(sum('issues/1/comments' in p for p in github.paths), 0)  # a current entry is used
+            saved = json.loads(cache.read_text())
+            for entry in saved[REPO].values():
+                for comment in entry['comments']:
+                    del comment['author_association']  # what an older runner wrote
+            cache.write_text(json.dumps(saved))
+            found, github = self.find({1: [self.blocked]}, associated={}, closed=[1], cache=cache)
+            self.assertEqual([h['id'] for h in found], [111])
             self.assertEqual(sum('issues/1/comments' in p for p in github.paths), 1)
 
     def test_the_candidate_s_own_audits_are_not_inherited(self):
@@ -331,7 +373,7 @@ class RunnerWiring(unittest.TestCase):
                      '## Codex audit (gpt-6-astra, high) of `abcdef0`',
                      '**Codex audit on `a919a79` (P2): fixed in `abcdef0`**',  # a finisher's reply: not an audit
                      '**Claude audit on `abcdef0` (P2)**', 'Waiting on the Codex audit (Astra) for `abcdef0`.'):
-            body = {'body': text + '\n\nNo blocking findings.'}
+            body = {'body': text + '\n\nNo blocking findings.', 'author_association': 'OWNER'}
             with self.subTest(text):
                 self.assertEqual(bool(holds.audit_records([body])), lane.audit_blocker([body], head) is None)
 

@@ -40,6 +40,17 @@ class GitHub:
         return {'labels': [{'name': 'bug'}]}
 
 
+class StrangerTests(unittest.TestCase):
+    """#1822: a stranger's "fixed in" comment is not evidence of a fix."""
+
+    def test_only_trusted_authors_comments_are_read(self):
+        comments = [dict(FIX, user={'login': 'mallory'}, author_association='NONE'),
+                    dict(FIX, user={'login': 'uncomposed'}, author_association='OWNER')]
+        github = report.GitHub('owner/repo')
+        github.cache['issues/5/comments?per_page=100'] = comments
+        self.assertEqual(github.comments(5), comments[1:])
+
+
 class ReportTests(unittest.TestCase):
     def test_recorded_finding_is_counted_only_with_a_later_commit(self):
         run = row('a')

@@ -77,6 +77,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import comment_trust
 from lane_dedupe import GitHubApi, automerge_holds_a_slot
 from lane_audit_policy import PERSISTENCE_PATTERNS, NEVER_RISKY_RE
 import lane_inherited_holds as inherited
@@ -644,7 +645,12 @@ def fetch_open_prs(only: int | None) -> list[dict]:
 
 
 def fetch_comments(number: int) -> list[dict]:
-    return gh_json_lines(f"repos/{REPO}/issues/{number}/comments?per_page=100")
+    """The PR's or issue's comments from the owner, collaborators and the project's bot (#1822).
+
+    The one place this script reads comments, so audit headings, audit requests, accepted-finding records and
+    lane reports all come from trusted authors. A stranger's text never reaches the model's review history either.
+    """
+    return comment_trust.trusted_only(gh_json_lines(f"repos/{REPO}/issues/{number}/comments?per_page=100"))
 
 
 def fetch_files(number: int) -> list[dict]:

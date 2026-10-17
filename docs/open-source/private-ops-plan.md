@@ -128,7 +128,7 @@ Once the repo is public, anyone can file an issue, comment, or open a fork PR. T
 | Phone build (`scripts/phone-build`) | Integration reports on #184 | Builds sooner | None | Author filter. |
 | Daily phone plan | Merged PRs and issues | Writes the owner's test plan (Claude, no tools) | No tools | Only merged PRs and owner or collaborator issues, so a stranger can't put a step on his phone plan. |
 | Board sync, sweep, status | Issues and labels | Board fields, labels | None | Low risk; same author filter for any comment it parses. |
-| Cloud daily triage routine | Every new issue | Adds `ready`, starts threads | None | **The widest door.** An outside issue gets `needs-triage`, never `ready`, until the owner or the coordinator reads it. Thread prompts quote issue text as data. |
+| Cloud daily triage routine | Every new issue | Adds `ready`, starts threads | None | **The widest door.** An outside issue gets `needs-triage-review`, never `ready`, until the owner or the coordinator reads it. Thread prompts quote issue text as data. |
 | Hourly dispatch routine | Lane reports, audits, `automerge` PRs | Labels, comments, thread starts | None | Same author filter as the lane. |
 | Mac finisher, Test Desk | `needs-mac` PRs, T4/T5 lane requests (journey scenario text) | Commits to PR branches; drives the simulator | None | Act only on requests from collaborators; scenario text is data. |
 

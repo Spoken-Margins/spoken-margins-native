@@ -25,7 +25,11 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 from typing import Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import comment_trust  # noqa: E402  (#1822: a stranger's fake lane report must not hide a stall)
 
 DEFAULT_REPO = 'uncomposed/spoken-margins-native'
 WORKFLOW = 'lane.yml'
@@ -86,7 +90,7 @@ def newest_report(repo: str, now: dt.datetime, lookback_hours: float, max_pages:
         comments = gh_json(f'repos/{repo}/issues/comments?sort=created&direction=desc'
                            f'&since={since}&per_page={PAGE_SIZE}&page={page}')
         for comment in comments:
-            if is_lane_report(comment.get('body')):
+            if is_lane_report(comment.get('body')) and comment_trust.trusted(comment):
                 return parse_time(comment['created_at']), comment['html_url']
         if len(comments) < PAGE_SIZE:
             break

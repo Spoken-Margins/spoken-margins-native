@@ -32,6 +32,8 @@ import subprocess
 import sys
 import time
 
+import comment_trust
+
 PREFIX = '**Merge check (triage desk)'
 LABEL = 'merge-audit'
 LABEL_COLOR = 'b60205'
@@ -54,7 +56,7 @@ def parse_time(text: str) -> datetime.datetime:
 def has_merge_check(comments: list[dict], head_sha: str, merged_at: str) -> bool:
     """Whether a triage-desk merge check for this head was posted before the merge."""
     sha7, merged = head_sha[:7], parse_time(merged_at)
-    for comment in comments:
+    for comment in comment_trust.trusted_only(comments):  # #1822: a stranger's look-alike is not a merge check
         body = (comment.get('body') or '').lstrip()
         if body.startswith(PREFIX) and sha7 in body and parse_time(comment['created_at']) < merged:
             return True
@@ -68,7 +70,7 @@ def same_commit(a: str, b: str) -> bool:
 def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime) -> list[tuple[str, str]]:
     """(verdict, tier) of the runner's lane reports on this head posted before the merge, oldest first."""
     found = []
-    for comment in comments:
+    for comment in comment_trust.trusted_only(comments):
         if (comment.get('user') or {}).get('login') != LANE_BOT or parse_time(comment['created_at']) >= merged:
             continue
         body = (comment.get('body') or '').lstrip()
@@ -85,7 +87,7 @@ def lane_reports(comments: list[dict], head_sha: str, merged: datetime.datetime)
 def audit_verdict(comments: list[dict], head_sha: str, merged: datetime.datetime) -> str | None:
     """The verdict line of the newest Codex or Claude audit naming this head posted before the merge, if any."""
     verdict = None
-    for comment in comments:
+    for comment in comment_trust.trusted_only(comments):  # #1822: only the owner's, a collaborator's or the bot's
         body = (comment.get('body') or '').lstrip()
         heading, _, rest = body.partition('\n')
         is_audit = (body.startswith(AUDITS[:2]) or

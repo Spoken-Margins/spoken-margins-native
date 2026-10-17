@@ -58,6 +58,18 @@ QUIET_SHOWN = dt.timedelta(hours=6)      # the status comment lists stopped/quie
 ACK_TIMEOUT = dt.timedelta(hours=3)
 STATUS_REFRESH = dt.timedelta(minutes=60)
 
+# Whose comments the gate believes (#1822). This file is deployed alone, so the rule of scripts/comment_trust.py is
+# copied here; test_dial_gate.py fails if the two drift. Anyone can comment once the repo is public: a stranger's
+# "HALT" on #337 must not stop the project, and a stranger's claim note must not fill the Dial's slots.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = ('github-actions[bot]',)
+
+
+def trusted(comment: dict) -> bool:
+    return (comment.get('author_association') in TRUSTED_ASSOCIATIONS
+            or (comment.get('user') or {}).get('login') in TRUSTED_BOTS)
+
+
 STATUS_MARK = '<!-- dial-gate-status -->'
 ACK_MARK = '<!-- dial-coordinator -->'
 # The notes Cole put in the project instructions (2026-10-01). They must open the comment,
@@ -180,7 +192,7 @@ def parse_usage(comments: list[dict]) -> dict:
     line is read only for the scoped form, so an old-style tick can't hold the gate."""
     usage = None
     halted: set[str] = set()
-    for c in comments:  # oldest first
+    for c in filter(trusted, comments):  # oldest first
         body = c.get('body') or ''
         m = re.search(r'Claude (\d+)% used', body)
         if m:
@@ -201,7 +213,7 @@ def parse_usage(comments: list[dict]) -> dict:
 
 def parse_ack(comments: list[dict]) -> dict | None:
     """The coordinator's acknowledgement: `Ack fire-<id> · running N`."""
-    for c in reversed(comments):
+    for c in reversed(list(filter(trusted, comments))):
         body = c.get('body') or ''
         if ACK_MARK in body:
             fire = re.search(r'Ack (fire-[0-9TZ]+)', body)
@@ -229,6 +241,7 @@ def parse_threads(comments: list[dict], events: list[dict], now: dt.datetime) ->
     (claimed since its last stop note), claims (all claim times), last_seen, stop_text,
     state ('active', 'stopped' or 'quiet')."""
     threads: dict[str, dict] = {}
+    comments = [c for c in comments if trusted(c)]
     for c in comments:
         body = c.get('body') or ''
         at = parse_time(c['created_at'])
@@ -559,7 +572,7 @@ def main(argv=None) -> int:
 
     # Edit the one status comment only when what it says changed, or hourly so its
     # "read at" time shows the gate is alive. Edits don't notify anyone.
-    existing = next((c for c in dial_comments if STATUS_MARK in (c.get('body') or '')), None)
+    existing = next((c for c in dial_comments if STATUS_MARK in (c.get('body') or '') and trusted(c)), None)
     material = text.split('\n', 2)[2]  # everything after the "read at" line
     changed = material != state.get('status_material')
     stale = not state.get('status_at') or now - parse_time(state['status_at']) >= STATUS_REFRESH

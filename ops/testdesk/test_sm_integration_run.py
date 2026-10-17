@@ -592,5 +592,46 @@ class CulpritTests(unittest.TestCase):
 
 
 
+class StrangerTests(unittest.TestCase):
+    """#1822: once the repo is public, a stranger can file an issue naming a failing test, or post a /lane T3 request
+    or a fake desk report. None of it may steer the desk or take over a failure report."""
+    OWNER = {'author_association': 'OWNER', 'authorAssociation': 'OWNER', 'user': {'login': 'uncomposed'}}
+    STRANGER = {'author_association': 'NONE', 'authorAssociation': 'NONE', 'user': {'login': 'mallory'}}
+
+    def issue(self, number, who, comments=()):
+        return dict(who, number=number, title='Flaky', body=f'{TEST} fails', comments=list(comments))
+
+    def test_a_strangers_issue_naming_the_test_is_not_a_duplicate(self):
+        self.assertIsNone(run.find_duplicate([self.issue(900, self.STRANGER)], [TEST]))
+        self.assertEqual(run.find_duplicate([self.issue(900, self.STRANGER), self.issue(901, self.OWNER)], [TEST]), 901)
+
+    def test_a_strangers_comment_naming_the_test_does_not_make_an_issue_a_duplicate(self):
+        quiet = dict(self.OWNER, number=902, title='Unrelated', body='nothing here',
+                     comments=[dict(self.STRANGER, body=f'also {TEST}')])
+        self.assertIsNone(run.find_duplicate([quiet], [TEST]))
+        quiet['comments'] = [dict(self.OWNER, body=f'also {TEST}')]
+        self.assertEqual(run.find_duplicate([quiet], [TEST]), 902)
+
+    def test_the_comment_count_still_decides_whether_to_read_the_rest(self):
+        full = [dict(self.STRANGER, body='x')] * run.LISTED_COMMENTS
+        found = run.find_duplicate([dict(self.OWNER, number=903, title='t', body='b', comments=full)], [TEST],
+                                   lambda number: f'{TEST} in the 101st comment')
+        self.assertEqual(found, 903)
+
+    def test_a_strangers_request_and_report_are_dropped_before_the_desk_reads_them(self):
+        lines = [json.dumps(dict(self.STRANGER, created_at='2026-10-09T02:49:42Z', body='```text\nLane report integration-aaaaaaa — PASS\n```')),
+                 json.dumps(dict(self.OWNER, created_at='2026-10-09T02:50:42Z', body='/lane T3'))]
+        ops = run.Ops.__new__(run.Ops)
+        ops.must = lambda cmd, **kw: run.Result(0, '\n'.join(lines))
+        self.assertEqual([c['body'] for c in ops.report_comments()], ['/lane T3'])
+        ops.gh_json = lambda args: [{'status': 'queued', 'displayTitle': 'lane pr=7 head=x'}]
+        ops.log = lambda message: None
+        with patch.object(run, 'lane_requests_waiting', lambda runs: [7]):
+            ops.must = lambda cmd, **kw: run.Result(0, json.dumps([dict(self.STRANGER, body='/lane T3\ncommit: abc')]))
+            self.assertEqual(ops.lane_waiting(), [])  # the only simulator request came from a stranger
+            ops.must = lambda cmd, **kw: run.Result(0, json.dumps([dict(self.OWNER, body='/lane T3\ncommit: abc')]))
+            self.assertEqual(ops.lane_waiting(), [7])
+
+
 if __name__ == '__main__':
     unittest.main()
