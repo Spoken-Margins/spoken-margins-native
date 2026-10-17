@@ -19,6 +19,18 @@ comes back:
 - shared failure: the same test fails one step on two different PRs tested against the same next commit,
   which points at next, not at either PR.
 
+Per test (#1789): a failure also opens a per-test record, and the later PASS closes it with a class, written as one
+line to test-catches.jsonl beside the ledger. The class comes from the PR's own commits between the failing
+head and the passing one (first-parent only, so next merged into the PR does not count):
+
+- catch: product code changed (App/, Packages/ or Contracts/, outside test folders);
+- wrong-test: only test files changed, so the test was wrong, not the code;
+- flake: same head, or nothing changed;
+- other: only files outside those (docs, scripts), or the diff could not be read.
+
+`python3 scripts/lane_ledger.py report` prints the totals per test. The lane reports list failing tests only, so
+"episodes" counts failures that were later closed, not every run of the test.
+
 Stdlib only, Python 3.9-compatible: lane-runner.py runs under /usr/bin/python3.
 """
 from __future__ import annotations
@@ -28,9 +40,14 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import time
 
 LEDGER = 'step-ledger.json'
+CATCHES = 'test-catches.jsonl'
+PRODUCT_ROOTS = ('App', 'Packages', 'Contracts')
 WASTE_RUNS = 20
 WASTE_SECONDS = 60
 FAULT_RUNS = 3
@@ -63,11 +80,71 @@ def duration(seconds: float) -> str:
     return f'{hours}h{minutes:02d}m' if hours else (f'{minutes}m{seconds:02d}s' if minutes else f'{seconds}s')
 
 
+def _is_test_path(file: str) -> bool:
+    parts = file.split('/')
+    name = parts[-1]
+    return (any(p in ('tests', 'Tests', 'TestPlans') or p.endswith('Tests') for p in parts[:-1])
+            or name.startswith('test_') or name.endswith(('Tests.swift', 'Test.swift', '_test.py')))
+
+
+def changed_files(repo, old: str, new: str, merges: bool = False):
+    """Files the commits from <old> to <new> changed, following first parents only, or None if git can't say.
+    With merges=False a merge commit adds nothing, so next merged into a PR doesn't count as the PR's change;
+    with merges=True (the tips of next, each a PR merge) a merge counts as its diff from its first parent."""
+    if old == new:
+        return []
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, timeout=60)
+    try:
+        if git('merge-base', '--is-ancestor', old, new).returncode == 0:
+            walk = git('log', '--first-parent', '--diff-merges=first-parent' if merges else '--no-diff-merges',
+                       '--name-only', '--format=',
+                       f'{old}..{new}')
+        else:  # rebased or force-pushed: only the two trees can be compared
+            walk = git('diff', '--name-only', old, new)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if walk.returncode:
+        return None
+    return sorted({line for line in walk.stdout.splitlines() if line})
+
+
+def classify(repo, old: str, new: str, merges: bool = False) -> str:
+    files = changed_files(repo, old, new, merges) if repo else None
+    if files is None:
+        return 'other'
+    if not files:
+        return 'flake'
+    if any(f.split('/')[0] in PRODUCT_ROOTS and not _is_test_path(f) for f in files):
+        return 'catch'
+    if all(_is_test_path(f) for f in files):
+        return 'wrong-test'
+    return 'other'
+
+
+def close_tests(sink: list, open_fail: dict, step: str, key: str, new: str, repo, merges: bool,
+                tests=None) -> None:
+    """Classify the tests in <open_fail> (all, or just <tests>) as fixed at <new>, adding a line each to <sink>."""
+    old, found = open_fail['head'], open_fail.get('tests') or [f'step:{step}']
+    kind = classify(repo, old, new, merges)
+    for test in found:
+        if tests is None or test in tests:
+            sink.append({'step': step, 'test': test, 'key': key, 'from': old, 'to': new, 'class': kind,
+                         'seconds': round(open_fail.get('seconds', 0.0), 1)})
+
+
+def _open(value) -> dict:
+    """An open failure; the first ledgers kept only the failing head."""
+    return value if isinstance(value, dict) else {'head': value, 'tests': [], 'seconds': 0.0}
+
+
 def record(ledger: dict, name: str, result: str, seconds: float, pr: int, head: str, base: str,
-           failed=()) -> list[str]:
+           failed=(), repo=None, sink=None) -> list[str]:
     """Add one run of step <name> to <ledger> and return the alarms it raises, newly, as comment bodies.
 
-    result: pass, fail or fault (outcome()). failed: the tests or parts that failed, for the shared-failure rule.
+    result: pass, fail or fault (outcome()). failed: the tests or parts that failed, for the shared-failure rule
+    and the per-test catch lines. repo: the git checkout holding the PR's heads; sink: a list that gets one dict
+    per closed test failure (record_runs writes them to test-catches.jsonl).
     """
     if result not in VERDICTS:
         raise ValueError(f'unknown step result {result!r}')
@@ -78,13 +155,23 @@ def record(ledger: dict, name: str, result: str, seconds: float, pr: int, head: 
     step[result] += 1
     if result == 'fail':
         step['since_fail_runs'], step['since_fail_seconds'] = 0, 0.0
-        step['open_fails'][pr_key] = head
+        tests = list(dict.fromkeys(failed))
+        before = step['open_fails'].get(pr_key)
+        if before is not None and sink is not None:  # tests that failed before and pass now were fixed here
+            before = _open(before)
+            gone = [t for t in (before.get('tests') or []) if t not in tests]
+            if gone and before['head'] != head:
+                close_tests(sink, before, name, f'pr:{pr}', head, repo, False, gone)
+        step['open_fails'][pr_key] = {'head': head, 'tests': tests, 'seconds': seconds}
     else:
         step['since_fail_runs'] += 1
         step['since_fail_seconds'] += seconds
     if result == 'pass' and pr_key in step['open_fails']:
-        if step['open_fails'].pop(pr_key) != head:  # a later commit fixed what the step caught
+        before = _open(step['open_fails'].pop(pr_key))
+        if before['head'] != head:  # a later commit fixed what the step caught
             step['catches'] += 1
+        if sink is not None:
+            close_tests(sink, before, name, f'pr:{pr}', head, repo, False)
     step['faults_in_a_row'] = step['faults_in_a_row'] + 1 if result == 'fault' else 0
 
     waste = f'waste:{name}'
@@ -165,12 +252,88 @@ def opened(state: Path):
         os.replace(temporary, path(state))
 
 
-def record_runs(state: Path, runs: list[dict], pr: int, head: str) -> list[str]:
+def _append_catches(state: Path, lines: list) -> None:
+    if lines:
+        stamp = int(time.time())
+        with (Path(state) / CATCHES).open('a') as out:
+            for line in lines:
+                out.write(json.dumps(dict(line, at=stamp), sort_keys=True) + '\n')
+
+
+def record_runs(state: Path, runs: list[dict], pr: int, head: str, repo=None) -> list[str]:
     """Add a job's step runs ({'step', 'result', 'seconds', 'base', 'failed'}) to the ledger in <state> and
-    return the new alarms."""
-    raised = []
+    return the new alarms. repo: the git checkout with the PR's heads, to classify closed failures; without it
+    the current directory's repository is tried."""
+    raised, lines = [], []
+    repo = repo or Path.cwd()
     with opened(state) as ledger:
         for run in runs:
             raised += record(ledger, run['step'], run['result'], run['seconds'], pr, head, run.get('base') or '',
-                             run.get('failed') or ())
+                             run.get('failed') or (), repo, lines)
+        _append_catches(state, lines)
     return raised
+
+
+def record_tip(state: Path, repo, sha: str, verdict: str, failed=(), flaky=(), seconds: float = 0.0) -> list[dict]:
+    """The integration run's version, keyed on next tips instead of a PR. FAIL opens the failing tests at <sha>
+    (a test that failed and then passed on a re-run of the same build is a flake at once); a later PASS closes
+    them against the commits between the two tips. INCONCLUSIVE changes nothing."""
+    lines = []
+    with opened(state) as ledger:
+        tips = ledger.setdefault('tips', {})
+        for test in flaky:
+            lines.append({'step': 'integration', 'test': test, 'key': 'next', 'from': sha, 'to': sha,
+                          'class': 'flake', 'seconds': round(seconds, 1)})
+        if verdict == 'FAIL':
+            before = tips.get('next')
+            tests = list(dict.fromkeys(failed))
+            if before and before['head'] != sha:
+                gone = [t for t in before['tests'] if t not in tests]
+                close_tests(lines, before, 'integration', 'next', sha, repo, True, gone)
+            tips['next'] = {'head': sha, 'tests': tests, 'seconds': seconds}
+        elif verdict == 'PASS' and 'next' in tips:
+            close_tests(lines, tips.pop('next'), 'integration', 'next', sha, repo, True)
+        _append_catches(state, lines)
+    return lines
+
+
+def report(state: Path) -> str:
+    """Per test: episodes closed, catches, wrong-test, flakes, other, and seconds spent in failing runs."""
+    totals: dict = {}
+    try:
+        rows = [json.loads(line) for line in (Path(state) / CATCHES).read_text().splitlines() if line.strip()]
+    except FileNotFoundError:
+        rows = []
+    for row in rows:
+        total = totals.setdefault(row['test'], dict.fromkeys(('episodes', 'catch', 'wrong-test', 'flake', 'other', 'seconds'), 0))
+        total['episodes'] += 1
+        total[row['class']] += 1
+        total['seconds'] += row.get('seconds', 0)
+    if not totals:
+        return 'No closed test failures recorded yet.'
+    order = sorted(totals.items(), key=lambda kv: (-kv[1]['catch'], -kv[1]['episodes'], kv[0]))
+    out = [f'{"test":<60} {"eps":>4} {"catch":>5} {"wrong":>5} {"flake":>5} {"other":>5} {"time":>7}']
+    for test, t in order:
+        name = test if len(test) <= 60 else '...' + test[-57:]
+        out.append(f'{name:<60} {t["episodes"]:>4} {t["catch"]:>5} {t["wrong-test"]:>5} {t["flake"]:>5} '
+                   f'{t["other"]:>5} {duration(t["seconds"]):>7}')
+    return '\n'.join(out)
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] != ['report']:
+        print('usage: lane_ledger.py report [state-dir]', file=sys.stderr)
+        return 2
+    if argv[1:2]:
+        state = Path(argv[1])
+    else:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from lane_slots import state_dir
+        state = state_dir()
+    print(report(state))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

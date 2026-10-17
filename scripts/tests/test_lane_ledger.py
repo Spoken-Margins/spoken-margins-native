@@ -5,6 +5,7 @@ caught no compile failure; nobody saw it until someone read a week of reports by
 """
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -267,7 +268,160 @@ class MainPostsAlarmsTests(unittest.TestCase):
             self.run_main(FakeGitHub(comments=[comment('/lane T2')]), t2=t2)
             ledger = json.loads((Path(state) / lane_ledger.LEDGER).read_text())
         self.assertEqual(ledger['failures'], {f'app builds|{MERGE}': {'device build': [5]}})
-        self.assertEqual(ledger['steps']['app builds']['open_fails'], {'5': HEAD})
+        self.assertEqual(ledger['steps']['app builds']['open_fails'], {'5': {'head': HEAD, 'tests': ['device build'], 'seconds': 200}})
+
+
+class Repo:
+    """A real temporary git repo: commit(files...) returns the new commit's sha."""
+    def __init__(self, root):
+        self.root = Path(root)
+        self.root.mkdir(parents=True)
+        self.git('init', '-q', '-b', 'next')
+        self.git('config', 'user.email', 't@example.com')
+        self.git('config', 'user.name', 'T')
+        self.commit('README.md')
+
+    def git(self, *args):
+        return subprocess.run(['git', '-C', str(self.root), *args], check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def commit(self, *files):
+        for name in files:
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(target.read_text() + 'x' if target.exists() else 'x')
+            self.git('add', name)
+        self.git('commit', '-q', '-m', 'c', '--allow-empty')
+        return self.git('rev-parse', 'HEAD')
+
+
+class CatchClassTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = Repo(Path(self.tmp.name) / 'repo')
+        self.ledger = lane_ledger.empty()
+
+    def fail_then_pass(self, fix, tests=('FooTests/testBar',), pr=7):
+        """FAIL at the current head, apply fix(), PASS at the new head; the lines written."""
+        sink = []
+        bad = self.repo.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 90.0, pr, bad, BASE, tests, self.repo.root, sink)
+        good = fix()
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 80.0, pr, good, BASE, (), self.repo.root, sink)
+        return sink
+
+    def test_product_code_change_is_a_catch(self):
+        for path in ('App/SpokenMarginsApp/Foo.swift', 'Packages/SessionKit/Sources/X.swift', 'Contracts/a.json'):
+            with self.subTest(path=path):
+                lines = self.fail_then_pass(lambda: self.repo.commit(path))
+                self.assertEqual([(l['test'], l['class'], l['seconds']) for l in lines],
+                                 [('FooTests/testBar', 'catch', 90.0)])
+
+    def test_only_test_files_changed_means_the_test_was_wrong(self):
+        for path in ('App/SpokenMarginsAppTests/FooTests.swift', 'Packages/SessionKit/Tests/SessionKitTests/A.swift',
+                     'scripts/tests/test_x.py'):
+            with self.subTest(path=path):
+                lines = self.fail_then_pass(lambda: self.repo.commit(path))
+                self.assertEqual(lines[0]['class'], 'wrong-test')
+
+    def test_test_and_product_change_together_is_a_catch(self):
+        lines = self.fail_then_pass(lambda: self.repo.commit('App/A.swift', 'App/ATests/ATests.swift'))
+        self.assertEqual(lines[0]['class'], 'catch')
+
+    def test_nothing_changed_is_a_flake_even_with_an_empty_new_commit(self):
+        self.assertEqual(self.fail_then_pass(lambda: self.repo.commit())[0]['class'], 'flake')
+        self.assertEqual(self.fail_then_pass(lambda: self.repo.git('rev-parse', 'HEAD'))[0]['class'], 'flake')
+
+    def test_docs_only_is_other(self):
+        self.assertEqual(self.fail_then_pass(lambda: self.repo.commit('docs/a.md'))[0]['class'], 'other')
+
+    def test_next_merged_into_the_pr_is_not_the_prs_change(self):
+        git = self.repo.git
+        git('checkout', '-q', '-b', 'pr')
+        bad = self.repo.commit('docs/pr.md')
+        git('checkout', '-q', 'next')
+        self.repo.commit('App/OnNext.swift')
+        git('checkout', '-q', 'pr')
+        git('merge', '-q', '--no-ff', '-m', 'merge next', 'next')
+        good = git('rev-parse', 'HEAD')
+        sink = []
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, bad, BASE, ['T/t'], self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, BASE, (), self.repo.root, sink)
+        self.assertEqual(sink[0]['class'], 'flake')  # a plain two-head diff would say catch
+
+    def test_a_test_that_stops_failing_while_another_still_fails_is_closed_then(self):
+        sink = []
+        r = self.repo
+        first = r.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, first, BASE, ['A/a', 'B/b'], r.root, sink)
+        second = r.commit('App/A.swift')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, second, BASE, ['B/b'], r.root, sink)
+        self.assertEqual([(l['test'], l['class']) for l in sink], [('A/a', 'catch')])
+        third = r.commit('App/B.swift')
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, third, BASE, (), r.root, sink)
+        self.assertEqual([(l['test'], l['from'][:7]) for l in sink[1:]], [('B/b', second[:7])])
+
+    def test_a_step_failure_without_test_names_is_recorded_under_the_step(self):
+        lines = self.fail_then_pass(lambda: self.repo.commit('App/A.swift'), tests=())
+        self.assertEqual(lines[0]['test'], 'step:app tests')
+
+    def test_a_ledger_from_before_keeps_working(self):
+        self.ledger['steps']['app tests'] = {'runs': 1, 'seconds': 1.0, 'pass': 0, 'fail': 1, 'fault': 0,
+                                             'catches': 0, 'since_fail_runs': 0, 'since_fail_seconds': 0.0,
+                                             'faults_in_a_row': 0, 'open_fails': {'7': 'a' * 40}}
+        sink = []
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 1, 7, 'b' * 40, BASE, (), self.repo.root, sink)
+        self.assertEqual(self.ledger['steps']['app tests']['catches'], 1)
+        self.assertEqual(sink[0]['class'], 'other')  # commits not in this repo: can't say
+
+    def test_unknown_commits_are_other_not_an_error(self):
+        self.assertEqual(lane_ledger.classify(self.repo.root, 'a' * 40, 'b' * 40), 'other')
+        self.assertEqual(lane_ledger.classify(None, 'a' * 40, 'b' * 40), 'other')
+
+
+class TipLedgerTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name) / 'state'
+        self.repo = Repo(Path(self.tmp.name) / 'repo')
+
+    def tip(self, *files, verdict='PASS', failed=(), flaky=()):
+        sha = self.repo.commit(*files)
+        return lane_ledger.record_tip(self.state, self.repo.root, sha, verdict, failed, flaky, 600.0)
+
+    def test_fail_then_pass_after_a_product_merge_is_a_catch_written_to_the_jsonl(self):
+        self.tip(verdict='FAIL', failed=['AppTests/testX'])
+        lines = self.tip('App/Fix.swift')
+        self.assertEqual([(l['test'], l['class']) for l in lines], [('AppTests/testX', 'catch')])
+        written = [json.loads(x) for x in (self.state / lane_ledger.CATCHES).read_text().splitlines()]
+        self.assertEqual([(w['test'], w['class'], w['key']) for w in written], [('AppTests/testX', 'catch', 'next')])
+
+    def test_inconclusive_changes_nothing_and_a_pass_on_an_unchanged_tip_is_a_flake(self):
+        self.tip(verdict='FAIL', failed=['AppTests/testX'])
+        self.assertEqual(self.tip('App/Late.swift', verdict='INCONCLUSIVE'), [])
+        lines = self.tip(verdict='PASS')  # the INCONCLUSIVE tip's App change lies between the two
+        self.assertEqual(lines[0]['class'], 'catch')
+        self.tip(verdict='FAIL', failed=['AppTests/testY'])
+        self.assertEqual(self.tip(verdict='PASS')[0]['class'], 'flake')
+
+    def test_a_rerun_flake_is_recorded_at_once(self):
+        lines = self.tip(verdict='PASS', flaky=['AppTests/testZ'])
+        self.assertEqual([(l['test'], l['class']) for l in lines], [('AppTests/testZ', 'flake')])
+
+
+class ReportTests(unittest.TestCase):
+    def test_totals_per_test_and_the_empty_case(self):
+        with tempfile.TemporaryDirectory() as state:
+            self.assertIn('No closed', lane_ledger.report(Path(state)))
+            rows = [dict(test='A/a', **{'class': c, 'seconds': 60}) for c in ('catch', 'flake', 'catch')]
+            rows.append({'test': 'B/b', 'class': 'wrong-test', 'seconds': 5})
+            (Path(state) / lane_ledger.CATCHES).write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
+            out = lane_ledger.report(Path(state)).splitlines()
+        self.assertEqual(out[1].split(), ['A/a', '3', '2', '0', '1', '0', '3m00s'])
+        self.assertEqual(out[2].split(), ['B/b', '1', '0', '1', '0', '0', '5s'])
+        self.assertEqual(lane_ledger.main(['report', str(state)]), 0)
 
 
 if __name__ == '__main__':

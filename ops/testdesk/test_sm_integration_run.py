@@ -1,4 +1,5 @@
 import contextlib
+import os
 import importlib.machinery
 import importlib.util
 import json
@@ -41,6 +42,10 @@ def load_phone_build():
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
+
+
+_STATE = tempfile.TemporaryDirectory()
+os.environ['SM_LANE_STATE_DIR'] = _STATE.name  # the catch ledger (#1789) must not write to the real lane state
 
 
 class ReportsTests(unittest.TestCase):
