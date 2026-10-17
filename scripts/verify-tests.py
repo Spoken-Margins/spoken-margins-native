@@ -526,6 +526,9 @@ def settle_before_tests(udid, sleep=time.sleep):
 # test command once more inside the same budget. The retry runs the same real tests; nothing is skipped or widened.
 STARTUP_STALL_SECONDS = 90
 STARTUP_RETRIES = 1
+# A simulator wedged at launch can leave `simctl terminate` hanging too (#1807). It normally returns at once,
+# so a short wait keeps the retry inside the step's budget.
+TERMINATE_TIMEOUT_SECONDS = 20
 TESTS_STARTED = re.compile(r"^Test (?:Suite|Case) '", re.M)
 
 
@@ -730,7 +733,14 @@ class Run:
                         stop_process_group(process)
                         if attempt > startup['retries']:
                             raise StartupStall()
-                        startup['reset'](attempt)
+                        # The hook is the runner's own housekeeping, not the step: whatever it raises (a hung
+                        # simctl is a TimeoutExpired) is recorded and the retry still goes ahead (#1807).
+                        try:
+                            relaunched = startup['reset'](attempt)
+                        except (OSError, subprocess.SubprocessError) as error:
+                            relaunched = {'error': repr(error)}
+                        if relaunched:
+                            stall['relaunch'] = relaunched
                         attempt += 1
                         log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
                         log.flush()
@@ -1101,10 +1111,16 @@ class Run:
                 # The stalled attempt's app may still be up, and xcodebuild refuses an existing result bundle.
                 app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
-                subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
-                               cwd=ROOT, capture_output=True, timeout=60)
+                # A hung terminate must not use up the retry (#1807): note it and launch again regardless.
+                note = {}
+                try:
+                    subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
+                                   cwd=ROOT, capture_output=True, timeout=TERMINATE_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    note['terminate'] = f'timed out after {TERMINATE_TIMEOUT_SECONDS}s'
                 if result_bundle.exists():
                     result_bundle.rename(self.output / f'tests-stalled-{attempt}.xcresult')
+                return note
 
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,

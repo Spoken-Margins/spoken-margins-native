@@ -1208,6 +1208,74 @@ class VerificationTests(unittest.TestCase):
             self.assertNotIn('startup_recovered', step)
             self.assertEqual([s['attempt'] for s in step['startup_stalls']], [1, 2])
 
+    def test_hung_relaunch_hook_does_not_use_up_the_retry(self):
+        # #1807: on a simulator wedged at launch, `simctl terminate` hangs too; its TimeoutExpired came out
+        # of the watch loop's try as "the step ran out of budget", so the one allowed retry never started
+        # (seven T3 runs stopped at 150 s = 90 s watch + 60 s terminate, startup_attempts 1, interrupted).
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            calls, startup = self.watch()
+
+            def hung_terminate(attempt):
+                calls['reset'].append(attempt)
+                raise subprocess.TimeoutExpired(['xcrun', 'simctl', 'terminate'], 60)
+
+            startup['reset'] = hung_terminate
+            run.command('xcode-tests', [sys.executable, '-c', self.STALLS_THEN_RUNS, str(Path(temporary) / 'seen')],
+                        timeout=60, expected={'SpokenMarginsAppTests/SpeechTests/testBundled'}, tests=True,
+                        startup=startup)
+            step = run.manifest['steps'][-1]
+            self.assertEqual((step['exit_code'], step['startup_attempts']), (0, 2))
+            self.assertFalse(step.get('interrupted'))
+            self.assertTrue(step['startup_recovered'])
+            self.assertEqual(calls['reset'], [1])
+            # What the second attempt followed is on record for the ledger.
+            self.assertIn('TimeoutExpired', step['startup_stalls'][0]['relaunch']['error'])
+
+    def test_hung_terminate_is_noted_and_the_stalled_result_bundle_is_still_moved_aside(self):
+        # The same hang, through the real relaunch hook with a fake `xcrun` that never returns: the retry
+        # needs the result-bundle path free, so the rename must not be skipped with the terminate.
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            run.manifest['input_sha256'] = 'inputs'
+            commands = {}
+
+            def command(name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
+                        startup=None):
+                commands[name] = startup
+                return ''
+
+            capture = lambda args: '{"devices": {}}' if args[:3] == ['xcrun', 'simctl', 'list'] else 'stub'
+            device = {'udid': 'synthetic-device', 'state': 'Booted', 'runtime': 'iOS-26', 'name': 'Other'}
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', side_effect=capture), \
+                    patch.object(verification, 'dedicated_simulator', return_value=(device, None)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=command):
+                run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
+            app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+            app.mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(verification.plistlib.dumps({'CFBundleIdentifier': 'com.example.app'}))
+            (run.output / 'tests.xcresult').mkdir()
+            tools = Path(temporary) / 'bin'
+            tools.mkdir()
+            (tools / 'xcrun').write_text('#!/bin/sh\nexec sleep 30\n')
+            (tools / 'xcrun').chmod(0o755)
+            with patch.object(verification, 'ROOT', root), patch.object(verification, 'TERMINATE_TIMEOUT_SECONDS', 1), \
+                    patch.dict(os.environ, {'PATH': f'{tools}{os.pathsep}{os.environ["PATH"]}'}):
+                started = time.monotonic()
+                note = commands['xcode-tests']['reset'](1)
+            self.assertLess(time.monotonic() - started, 15)
+            self.assertEqual(note, {'terminate': 'timed out after 1s'})
+            self.assertFalse((run.output / 'tests.xcresult').exists())
+            self.assertTrue((run.output / 'tests-stalled-1.xcresult').exists())
+
     def test_run_that_stalls_on_every_launch_reports_why_within_its_budget(self):
         with tempfile.TemporaryDirectory() as temporary:
             run = verification.Run(Path(temporary) / 'run', 'adapters')
