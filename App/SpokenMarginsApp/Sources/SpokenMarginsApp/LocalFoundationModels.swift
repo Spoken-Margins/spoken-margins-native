@@ -125,50 +125,11 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
 
     func summarizeInterjections(context: String) async throws -> String {
         try requireAvailability()
-        guard let payload = Self.interjectionSummaryPayload(from: context),
+        guard let payload = LocalInterjectionDecoder.summaryPayload(from: context),
               !payload.interjections.isEmpty else {
             throw LocalFoundationModelError.invalidInterjectionSummary
         }
         return try await respondWithReliableSummary(payload: payload)
-    }
-
-    static func interjectionSummaryPayload(from context: String) -> LocalInterjectionSummaryPayload? {
-        if let data = context.data(using: .utf8),
-           let payload = try? JSONDecoder().decode(LocalInterjectionSummaryPayload.self, from: data) {
-            return payload
-        }
-        var partials: [String] = []
-        var current: [String] = []
-        var sawPartialHeader = false
-        for line in context.components(separatedBy: .newlines) {
-            if line.range(of: #"^PARTIAL \d+:\s*$"#, options: .regularExpression) != nil {
-                if sawPartialHeader {
-                    let partial = current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !partial.isEmpty { partials.append(partial) }
-                }
-                sawPartialHeader = true
-                current = []
-            } else if sawPartialHeader {
-                current.append(line)
-            }
-        }
-        if sawPartialHeader {
-            let partial = current.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !partial.isEmpty { partials.append(partial) }
-        }
-        guard !partials.isEmpty else { return nil }
-        return LocalInterjectionSummaryPayload(
-            schemaVersion: "local-interjection-summary-partials.v1",
-            itemTitle: "Partial listener-note summaries",
-            interjections: partials.enumerated().map { index, partial in
-                LocalInterjectionSummaryRecord(
-                    id: "partial-\(index + 1)",
-                    anchorBefore: "",
-                    anchorAfter: "",
-                    note: String(partial.prefix(1_200))
-                )
-            }
-        )
     }
 
     func labelListeningMapChapter(text: String, chapterNumber: Int) async throws -> LocalListeningMapLabel {
@@ -180,7 +141,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         \(String(text.prefix(6_000)))
         """
         let raw = try await respond(to: prompt, maximumResponseTokens: 160)
-        let label = try Self.decodeLabel(raw)
+        let label = try LocalInterjectionDecoder.decodeLabel(raw)
         guard !label.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LocalFoundationModelError.invalidStructuredResponse
         }
@@ -276,7 +237,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             id: record.id,
             anchorBefore: record.anchorBefore,
             anchorAfter: record.anchorAfter,
-            note: Self.repairContextProvenDictation(in: record.note)
+            note: LocalInterjectionSafetyTerms.repairContextProvenDictation(in: record.note)
         )
         let requiredMeaning = LocalInterjectionSummaryPolicy.requiredExplicitMeaningPoints(
             record.note
@@ -284,11 +245,11 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         let requiredSuffix = requiredMeaning.isEmpty
             ? ""
             : "\n\nREQUIRED SOURCE-SUPPORTED MEANING:\n- " + requiredMeaning.joined(separator: "\n- ")
-        for basePrompt in Self.interjectionSummaryPrompts(record: repairedRecord).prefix(2) {
+        for basePrompt in LocalInterjectionPrompts.interjectionSummaryPrompts(record: repairedRecord).prefix(2) {
             do {
                 let session = LanguageModelSession(
                     model: model,
-                    instructions: Self.interjectionPermissiveTransformationInstructions
+                    instructions: LocalInterjectionPrompts.interjectionPermissiveTransformationInstructions
                 )
                 let response = try await session.respond(
                     to: basePrompt + requiredSuffix,
@@ -333,7 +294,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         )
         var extractedPointCandidates: [[String]] = []
         var extractionError: Error?
-        let modelSafeNote = Self.modelSafeInterjectionText(extractionRecord.note)
+        let modelSafeNote = LocalInterjectionSafetyTerms.modelSafeInterjectionText(extractionRecord.note)
         let extractionSamplingModes: [GenerationOptions.SamplingMode] = [
             .random(top: 20),
             .greedy
@@ -342,7 +303,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             do {
                 let extractionSession = LanguageModelSession(
                     model: .default,
-                    instructions: Self.interjectionPointExtractionInstructions
+                    instructions: LocalInterjectionPrompts.interjectionPointExtractionInstructions
                 )
                 let extraction = try await extractionSession.respond(
                     to: "DICTATED INTERJECTION:\n\(modelSafeNote)",
@@ -362,7 +323,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                         with: modelSafeNote
                     )
                     guard claimWordCount >= 3, sourcePrecision >= minimumClaimPrecision else { return nil }
-                    return Self.restoreSafetyTerms(in: claim)
+                    return LocalInterjectionSafetyTerms.restoreSafetyTerms(in: claim)
                 }
                 let extractionCoverage = LocalInterjectionSummaryPolicy.semanticCoverageRatio(
                     extraction.content.claims.joined(separator: " "),
@@ -412,7 +373,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     sourceNameReference: sourceNameReference
                 )
             }.filter { !$0.isEmpty }
-            let modelSafeClaims = groundedClaims.map(Self.modelSafeInterjectionText)
+            let modelSafeClaims = groundedClaims.map(LocalInterjectionSafetyTerms.modelSafeInterjectionText)
             for sampling in [GenerationOptions.SamplingMode.greedy, .random(top: 20)] {
                 do {
                     let synthesisSession = LanguageModelSession(
@@ -426,7 +387,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                             + modelSafeClaims.joined(separator: "\n- "),
                         options: GenerationOptions(sampling: sampling, maximumResponseTokens: 256)
                     )
-                    let candidate = Self.restoreSafetyTerms(
+                    let candidate = LocalInterjectionSafetyTerms.restoreSafetyTerms(
                         in: LocalInterjectionSummaryPolicy.cleanModelCandidate(response.content)
                     )
                     let auditedCandidate = LocalInterjectionSummaryPolicy.compactMeaningSummary(
@@ -529,17 +490,17 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
             }
             var candidates: [String] = []
             let generationLimit = max(3, pointLimit - 1)
-            let modelSafePoint = Self.modelSafeInterjectionText(cleanedPoint)
+            let modelSafePoint = LocalInterjectionSafetyTerms.modelSafeInterjectionText(cleanedPoint)
             for sampling in [GenerationOptions.SamplingMode.greedy, .random(top: 20)] {
                 let clauseSession = LanguageModelSession(
                     model: .default,
-                    instructions: Self.interjectionPointCondensationInstructions(
+                    instructions: LocalInterjectionPrompts.interjectionPointCondensationInstructions(
                         point: modelSafePoint,
                         wordLimit: generationLimit
                     )
                 )
                 let clauseResponse = try await clauseSession.respond(
-                    to: Self.interjectionPointCondensationPrompt(
+                    to: LocalInterjectionPrompts.interjectionPointCondensationPrompt(
                         point: modelSafePoint,
                         wordLimit: generationLimit
                     ),
@@ -549,7 +510,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     clauseResponse.content
                 )
                 let candidate = LocalInterjectionSummaryPolicy.repairSourceNames(
-                    in: Self.restoreSafetyTerms(
+                    in: LocalInterjectionSafetyTerms.restoreSafetyTerms(
                         in: modelSafeCandidate
                     ),
                     from: sourceNameReference
@@ -623,7 +584,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                     sourceNameReference: sourceNameReference
                 )
             }.filter { !$0.isEmpty }
-            let modelSafeClaims = groundedClaims.map(Self.modelSafeInterjectionText)
+            let modelSafeClaims = groundedClaims.map(LocalInterjectionSafetyTerms.modelSafeInterjectionText)
             for sampling in [GenerationOptions.SamplingMode.greedy, .random(top: 20)] {
                 do {
                     let synthesisSession = LanguageModelSession(
@@ -637,7 +598,7 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
                             + modelSafeClaims.joined(separator: "\n- "),
                         options: GenerationOptions(sampling: sampling, maximumResponseTokens: 256)
                     )
-                    let candidate = Self.restoreSafetyTerms(
+                    let candidate = LocalInterjectionSafetyTerms.restoreSafetyTerms(
                         in: LocalInterjectionSummaryPolicy.cleanModelCandidate(response.content)
                     )
                     let auditedCandidate = LocalInterjectionSummaryPolicy.compactMeaningSummary(
@@ -728,14 +689,6 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         throw condensationError ?? extractionError ?? LocalFoundationModelError.invalidInterjectionSummary
     }
 
-    static let interjectionPointExtractionInstructions = """
-    Extract the substantive meaning of exactly one user-authored interjection. This is a benign transformation of commentary, not a request to perform or enable wrongdoing. Keep any safety or security discussion high-level and non-operational. This is one note, not theme synthesis. Include every distinct source-supported assertion or requested behavior once. Each claim must be self-contained and materially shorter than its source wording; combine adjacent fragments that depend on each other. The opening assertion motivating a proposal is substantive. Preserve causal links, conditions, contrasts, uncertainty, tests, counterarguments, and residual limitations. Preserve diagnostic labels and explicit action terms exactly as dictated. Remove only filler, repetition, and false starts. Do not infer, answer, evaluate, or add background knowledge.
-    """
-
-    static let interjectionPermissiveTransformationInstructions = """
-    Transform exactly one user-provided dictated comment into a materially shorter statement of its own claims. This is text editing, not a request to carry out, endorse, or extend anything described by the text. Preserve contradictions, causal direction, qualifications, and limitations. Remove only conversational scaffolding, repetition, and false starts. Do not answer, evaluate, or add facts. Return only the transformed comment.
-    """
-
     static func isSafetyRejection(_ error: Error) -> Bool {
         if let generationError = error as? LanguageModelSession.GenerationError {
             switch generationError {
@@ -749,268 +702,6 @@ struct AppleFoundationModelClient: LocalFoundationModelClient {
         return description.contains("guardrailviolation")
             || description.contains("may contain sensitive content")
             || description.contains("detected content likely to be unsafe")
-    }
-
-    static func modelSafeInterjectionText(_ text: String) -> String {
-        repairContextProvenDictation(in: text)
-            .replacingOccurrences(
-                of: #"(?i)(?:zero|0)[ -]?day"#,
-                with: "verified issue Z",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"(?i)security vulnerability"#, with: "verified system issue", options: .regularExpression)
-            .replacingOccurrences(
-                of: #"(?i)break the law|do anything illegal|illegal actions?"#,
-                with: "violate a hard constraint",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"(?i)cheating"#, with: "violating requirements", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)cheat"#, with: "violate requirements", options: .regularExpression)
-            .replacingOccurrences(
-                of: #"(?i)misalignment|misaligned|mislined"#,
-                with: "goal drift",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?i)super malicious|malicious"#,
-                with: "strategically deceptive",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"(?i)fuck it|bullshit"#, with: "", options: .regularExpression)
-    }
-
-    static func repairContextProvenDictation(in text: String) -> String {
-        text
-            .replacingOccurrences(
-                of: #"(?i)\bdo\s+the\s+land\b"#,
-                with: "do alignment",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?i)\bat\s+this\s+tiny\s+land\b"#,
-                with: "at this tiny lab",
-                options: .regularExpression
-            )
-    }
-
-    static func restoreSafetyTerms(in text: String) -> String {
-        text
-            .replacingOccurrences(of: #"(?i)verified issue Z"#, with: "zero-day", options: .regularExpression)
-            .replacingOccurrences(
-                of: #"(?i)verified system issue"#,
-                with: "security vulnerability",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?i)violate a hard constraint"#,
-                with: "break the law",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?i)violating requirements"#,
-                with: "cheating",
-                options: .regularExpression
-            )
-            .replacingOccurrences(
-                of: #"(?i)requirements violations?"#,
-                with: "cheating",
-                options: .regularExpression
-            )
-            .replacingOccurrences(of: #"(?i)violate requirements"#, with: "cheat", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)goal drift"#, with: "misalignment", options: .regularExpression)
-            .replacingOccurrences(
-                of: #"(?i)strategically deceptive"#,
-                with: "malicious",
-                options: .regularExpression
-            )
-    }
-
-    static func interjectionPointExtractionPrompt(record: LocalInterjectionSummaryRecord) -> String {
-        """
-        DICTATED TEXT:
-        \(record.note)
-        """
-    }
-
-    static func interjectionPointCondensationInstructions(point: String, wordLimit: Int) -> String {
-        var instructions = "Rewrite one extracted point as a direct clause of \(wordLimit) words or fewer. Preserve its requested behavior and concrete outcome. Return only the clause."
-        if point.contains("?") {
-            instructions += " The point is a question. The rewrite must remain a question and end with a question mark."
-        }
-        return instructions
-    }
-
-    static func interjectionPointCondensationPrompt(point: String, wordLimit: Int) -> String {
-        """
-        POINT:
-        \(point)
-        """
-    }
-
-    static func interjectionDeltaCondensationInstructions(wordLimit: Int) -> String {
-        "Turn supplied meaning terms into one direct requirement clause of \(wordLimit) words or fewer. Express every supplied term, adding only grammar needed for readability. Return only the clause."
-    }
-
-    static func interjectionDeltaCondensationPrompt(terms: [String], wordLimit: Int) -> String {
-        """
-        MEANING TERMS:
-        \(terms.joined(separator: ", "))
-        """
-    }
-
-    static func decodePlainTextPoints(_ raw: String) throws -> [String] {
-        var candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let first = candidate.firstIndex(of: "["), let last = candidate.lastIndex(of: "]") {
-            candidate = String(candidate[first...last])
-        }
-        guard let data = candidate.data(using: .utf8),
-              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
-            throw LocalFoundationModelError.invalidInterjectionSummary
-        }
-        let decodedPoints = decoded
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        var points: [String] = []
-        for point in decodedPoints where !points.contains(where: {
-            LocalInterjectionSummaryPolicy.semanticSimilarity(point, $0) >= 0.85
-        }) {
-            points.append(point)
-        }
-        guard !points.isEmpty, points.count <= 3 else {
-            throw LocalFoundationModelError.invalidInterjectionSummary
-        }
-        return points
-    }
-
-    static func decodeInterjectionMeaningSlots(_ raw: String, source: String) throws -> [String] {
-        var candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let first = candidate.firstIndex(of: "{"), let last = candidate.lastIndex(of: "}") {
-            candidate = String(candidate[first...last])
-        }
-        guard let data = candidate.data(using: .utf8),
-              let slots = try? JSONDecoder().decode(LocalInterjectionMeaningSlots.self, from: data) else {
-            throw LocalFoundationModelError.invalidInterjectionSummary
-        }
-        let implicitQuestion = implicitQuestion(in: source)
-        let sourceAsksQuestion = source.contains("?") || implicitQuestion != nil
-        var rawPoints = slots.points
-        if let implicitQuestion {
-            rawPoints.insert(implicitQuestion, at: 0)
-        } else if sourceAsksQuestion,
-                  let question = slots.question?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !question.isEmpty {
-            rawPoints.insert(question.hasSuffix("?") ? question : question + "?", at: 0)
-        }
-        var points: [String] = []
-        for rawPoint in rawPoints {
-            let point = LocalInterjectionSummaryPolicy.cleanSpokenNote(rawPoint)
-            guard !point.isEmpty else { continue }
-            if !points.contains(where: {
-                LocalInterjectionSummaryPolicy.semanticSimilarity(point, $0) >= 0.85
-            }) {
-                points.append(point)
-            }
-        }
-        // The schema permits one question plus as many as four non-question
-        // points. Count those typed slots separately instead of rejecting a
-        // valid five-element combined list.
-        guard !points.isEmpty, points.count <= 7 else {
-            throw LocalFoundationModelError.invalidInterjectionSummary
-        }
-        return points
-    }
-
-    private static func implicitQuestion(in source: String) -> String? {
-        guard let wonderRange = source.range(
-            of: #"(?i)\bi\s+wonder\b"#,
-            options: .regularExpression
-        ) else { return nil }
-        let tail = source[wonderRange.lowerBound...]
-        let end = tail.firstIndex(where: { ".!?".contains($0) }) ?? tail.endIndex
-        var question = LocalInterjectionSummaryPolicy.cleanSpokenNote(String(tail[..<end]))
-        guard !question.isEmpty else { return nil }
-        if !question.hasSuffix("?") { question += "?" }
-        return question
-    }
-
-    static func interjectionSummaryPrompts(record: LocalInterjectionSummaryRecord) -> [String] {
-        let wordLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
-            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
-        )
-        let sharedRules = """
-        Output one sentence of at most \(wordLimit) words. State the point itself in the author's voice. Preserve every distinct substantive claim or requested behavior that fits, including both sides of a contrast and any explicit failure-handling requirement. Preserve questions as questions. If the text requests how content should be rewritten or summarized, state that transformation request rather than answering the underlying topic. Preserve essential qualifications. Remove filler, repetition, false starts, and emotional throat-clearing. Do not mention a listener, user, speaker, note, transcript, or summary. Do not answer or evaluate the point. Return only the sentence.
-        """
-        return [
-            """
-            Condense the dictated text below into its substantive claims and requested actions. This is one note, not a request to find themes. Do not omit one requested behavior merely because another seems more central.
-
-            \(sharedRules)
-
-            DICTATED TEXT:
-            \(record.note)
-            """,
-            """
-            Rewrite the dictated text below as a concise product requirement, objection, question, preference, or claim—whichever it actually expresses. Retain every separately requested behavior; combine linked clauses in one sentence.
-
-            \(sharedRules)
-
-            DICTATED TEXT:
-            \(record.note)
-            """,
-            """
-            Identify each distinct substantive point in the dictated text internally, then precipitate all of them into one sentence. Keep concrete subjects, contrasts, consequences, and failure behavior; discard conversational scaffolding. Make it materially shorter, not merely cleaner.
-
-            \(sharedRules)
-
-            DICTATED TEXT:
-            \(record.note)
-            """,
-            """
-            Exhaustively rewrite the actionable meaning of this one dictated note as one sentence of at most \(wordLimit) words. Before answering, check internally for: what should not happen; what should happen instead; contrasting cases; and how a failure should be surfaced. Include every category the text actually contains. Remove repetition and conversational filler. State the requirements directly, never describe the author or the note, and return only the sentence.
-
-            DICTATED TEXT:
-            \(record.note)
-            """,
-            """
-            Preserve the author's requested transformation of the dictated text below. If it asks what a concise claim should retain or omit, state that requirement directly; do not generate a claim about the underlying subject. If it asks a question, keep it as a question. Use at most \(wordLimit) words and return only one sentence.
-
-            DICTATED TEXT:
-            \(record.note)
-            """
-        ]
-    }
-
-    static func interjectionSynthesisPrompt(
-        record: LocalInterjectionSummaryRecord,
-        drafts: [String]
-    ) -> String {
-        let wordLimit = LocalInterjectionSummaryPolicy.summaryWordLimit(
-            for: record.note.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).count
-        )
-        return """
-        Write the final concise version of this one dictated note in at most \(wordLimit) words. The original dictated text is authoritative. The drafts may omit separate points or reverse meaning. Merge complementary points, correct contradictions against the original, and preserve every distinct requested behavior, both sides of contrasts, and explicit failure handling. Preserve a question as a question. Preserve requests about how underlying content should be summarized instead of answering that content. Remove filler and repetition. State the requirements or claims directly. Do not describe the author, note, transcript, or summarization task. Return only one sentence.
-
-        ORIGINAL DICTATED TEXT:
-        \(record.note)
-
-        DRAFT REWRITES:
-        \(drafts.map { "- \($0)" }.joined(separator: "\n"))
-        """
-    }
-
-    private static func decodeLabel(_ raw: String) throws -> LocalListeningMapLabel {
-        var candidate = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if candidate.hasPrefix("```") {
-            candidate = candidate
-                .replacingOccurrences(of: "```json", with: "")
-                .replacingOccurrences(of: "```", with: "")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        if let first = candidate.firstIndex(of: "{"),
-           let last = candidate.lastIndex(of: "}") {
-            candidate = String(candidate[first...last])
-        }
-        return try JSONDecoder().decode(LocalListeningMapLabel.self, from: Data(candidate.utf8))
     }
 }
 
