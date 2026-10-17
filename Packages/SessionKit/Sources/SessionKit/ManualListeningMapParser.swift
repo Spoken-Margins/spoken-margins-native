@@ -104,24 +104,49 @@ public enum ManualListeningMapParser {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// Turns the quotes that open and close strings into straight ones. A string opened by a curly quote
-    /// (“like this”) closes at the first quote that is followed, after any whitespace, by `:`, `,`, `}`, `]`
-    /// or the end of the text, since that is where a closing quote sits in JSON; any other quote inside it is
-    /// part of the text (curly ones stay as they are, a straight one is escaped). A string opened by a straight
-    /// quote closes at the next unescaped straight quote, as in plain JSON.
+    /// Turns the quotes that open and close strings into straight ones.
+    ///
+    /// A string opened by a straight quote closes at the next unescaped straight quote, as in plain JSON.
+    /// A string opened by a curly quote (“like this”) closes at a straight quote when one that is followed,
+    /// after whitespace, by `:`, `,`, `}`, `]` or the end of the text comes before the next string starts (the
+    /// older repair, which leaves curly quotes inside as text). Otherwise it closes at the first curly or
+    /// straight quote with that same follower. Any other quote inside is text: curly ones stay, a straight one
+    /// is escaped. A curly quote inside the text that is itself followed by one of those characters
+    /// (“she said “hi”, then left”) ends the string early, and the paste then fails to parse.
     private static func normalizingJSONDelimitersOutsideStrings(in text: String) -> String {
         let scalars = Array(text.unicodeScalars)
         var output = ""
         var inString = false
-        var openedByCurlyQuote = false
+        var closesWithStraightQuote = true
         var escaped = false
 
-        func isQuote(_ scalar: Unicode.Scalar) -> Bool { scalar == "\"" || scalar == "“" || scalar == "”" }
+        func isCurly(_ scalar: Unicode.Scalar) -> Bool { scalar == "“" || scalar == "”" }
         func endsAString(after index: Int) -> Bool {
             var next = index + 1
             while next < scalars.count, scalars[next].properties.isWhitespace { next += 1 }
             guard next < scalars.count else { return true }
             return [":", ",", "}", "]"].contains(scalars[next])
+        }
+        /// A curly quote that follows `{`, `[`, `,` or `:` starts a string rather than ending one.
+        func startsAString(at index: Int) -> Bool {
+            var before = index - 1
+            while before >= 0, scalars[before].properties.isWhitespace { before -= 1 }
+            return before < 0 || ["{", "[", ",", ":"].contains(scalars[before])
+        }
+        /// Whether the string a curly quote at `opener` starts ends at a straight quote.
+        func closesAtStraightQuote(openedAt opener: Int) -> Bool {
+            var index = opener + 1
+            while index < scalars.count {
+                let scalar = scalars[index]
+                if scalar == "\\" {
+                    index += 2
+                    continue
+                }
+                if scalar == "\"", endsAString(after: index) { return true }
+                if isCurly(scalar), startsAString(at: index) { return false }
+                index += 1
+            }
+            return false
         }
 
         for (index, scalar) in scalars.enumerated() {
@@ -132,10 +157,10 @@ public enum ManualListeningMapParser {
                 } else if scalar == "\\" {
                     output.unicodeScalars.append(scalar)
                     escaped = true
-                } else if !openedByCurlyQuote {
+                } else if closesWithStraightQuote {
                     output.unicodeScalars.append(scalar)
                     if scalar == "\"" { inString = false }
-                } else if isQuote(scalar), endsAString(after: index) {
+                } else if (scalar == "\"" || isCurly(scalar)), endsAString(after: index) {
                     output += "\""
                     inString = false
                 } else if scalar == "\"" {
@@ -146,10 +171,10 @@ public enum ManualListeningMapParser {
                 continue
             }
 
-            if isQuote(scalar) {
+            if scalar == "\"" || isCurly(scalar) {
                 output += "\""
                 inString = true
-                openedByCurlyQuote = scalar != "\""
+                closesWithStraightQuote = scalar == "\"" || closesAtStraightQuote(openedAt: index)
             } else {
                 output.unicodeScalars.append(scalar)
             }

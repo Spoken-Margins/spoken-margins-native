@@ -221,6 +221,7 @@ final class ManualListeningMapParserTests: XCTestCase {
             ("empty string", "{“a”: ””}", ""),
             ("whitespace before the comma", "{“a”: “x”   , “b”: “y”}", "x"),
             ("newline before the closing brace", "{“a”: “x”\n}", "x"),
+            ("curly opener, straight closer, curly quotes and a comma inside", "{“a\": “He called it “great”, then left\"}", "He called it “great”, then left"),
             ("curly quotes inside the text", "{“a”: “she said “hi” twice”}", "she said “hi” twice"),
             ("an apostrophe inside the text", "{“a”: “it’s fine”}", "it’s fine"),
             ("a straight quote inside the text", "{“a”: “6\" ruler”}", "6\" ruler"),
