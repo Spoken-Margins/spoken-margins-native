@@ -118,11 +118,22 @@ class ParsingTests(unittest.TestCase):
         self.assertTrue(desk.is_desk_report('**Lane report (T4): FAIL · PR #644 journeys-batch fix**'))
         self.assertTrue(desk.is_desk_report('Lane report t4-1 — PASS (integration-test of share)'))
 
-    def test_journey_steps_from_the_real_journeys_doc(self):
-        steps = desk.journey_steps(SCRIPTS.parent)
-        self.assertEqual(steps['J3'], 4)
-        self.assertEqual(steps['J1'], 3)
+    def test_journey_steps_counts_numbered_top_level_steps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / 'docs').mkdir()
+            (Path(tmp) / 'docs' / 'journeys.md').write_text(
+                '# Journeys\n1. not under a journey\n\n'
+                '## J1 \u2014 First\n\n1. one\n   - Pass: nested bullet\n2. two\n   1. nested number\n3. three\n4. four\n\n'
+                '## Notes\n\n1. not a journey\n\n'
+                '## J10 \u2014 Tenth\n\n1. only\n', encoding='utf-8')
+            self.assertEqual(desk.journey_steps(tmp), {'J1': 4, 'J10': 1})
         self.assertEqual(desk.journey_steps(SCRIPTS.parent / 'nowhere'), {})
+
+    def test_journey_steps_reads_the_real_journeys_doc(self):
+        # The doc grows as journeys gain steps (J1 went from 3 to 4 in #1579), so pin the shape, not the counts.
+        steps = desk.journey_steps(SCRIPTS.parent)
+        self.assertTrue({'J1', 'J2', 'J3'} <= set(steps))
+        self.assertTrue(all(count >= 1 for count in steps.values()), steps)
 
     def test_step_units(self):
         journeys = {'J3': 4, 'J5': 6}
