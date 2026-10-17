@@ -49,6 +49,11 @@ def literal_steps():
     return names
 
 
+def iter_tests(suite):
+    for item in suite:
+        yield from iter_tests(item) if isinstance(item, unittest.TestSuite) else [item]
+
+
 class PortableStepTable(unittest.TestCase):
     def test_every_step_the_fast_plan_names_is_run_or_left_out_with_a_reason(self):
         listed = set(verification.PORTABLE_STEPS) | set(verification.PORTABLE_LEFT_OUT)
@@ -58,12 +63,15 @@ class PortableStepTable(unittest.TestCase):
         self.assertTrue(all(reason.strip() for reason in verification.PORTABLE_LEFT_OUT.values()))
 
     def test_the_left_out_tests_exist(self):
-        for prefix in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT:
+        # Each listed id must still name at least one real test, or the exclusion is silent dead weight.
+        sys.path.insert(0, str(SCRIPTS / 'tests'))
+        for prefix, reason in verification.PORTABLE_RUNNER_TESTS_LEFT_OUT.items():
             with self.subTest(prefix):
-                module, _, rest = prefix.partition('.')
-                text = (SCRIPTS / 'tests' / f'{module}.py').read_text()
-                for part in [p for p in rest.split('.') if p]:
-                    self.assertIn(part, text)
+                self.assertTrue(reason.strip())
+                found = unittest.defaultTestLoader.loadTestsFromName(prefix.rstrip('.'))
+                self.assertGreater(found.countTestCases(), 0)
+                self.assertFalse(any(t.id().endswith('ModuleImportFailure') or '_FailedTest' in type(t).__name__
+                                     for t in iter_tests(found)), prefix)
         for folder in verification.PORTABLE_OPS_LEFT_OUT:
             self.assertTrue(any((ROOT / folder).glob('test_*.py')), folder)
 

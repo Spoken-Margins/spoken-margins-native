@@ -426,8 +426,19 @@ PORTABLE_LEFT_OUT = {
 }
 # Inside runner-tests and ops, the tests that drive an Apple tool. Each is matched as a test id prefix (module,
 # class or test) in scripts/tests, or as a folder under ops/.
+PHONE_BUILD_NEEDS_MAC = 'builds an app with xcodebuild and a fake xcrun on a Mac'
 PORTABLE_RUNNER_TESTS_LEFT_OUT = {
-    'test_phone_build.': 'drives xcodebuild, xcrun, plutil and the zsh phone installer',
+    'test_phone_build.InstallerTests.': 'runs the zsh phone installer, which calls plutil and xcrun',
+    'test_phone_build.PhoneBuildTests.test_a_failed_release_build_opens_one_item_updates_it_and_the_next_success_closes_it': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_merge_check_that_passed_and_pushed_this_commit_skips_the_host_checks': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_merge_check_that_pushed_another_commit_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_merge_check_that_says_fail_does_not_count_so_the_host_checks_run': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_a_safe_remerge_builds_release_without_repeating_host_or_simulator_checks': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_builds_writes_plan_and_points_latest': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_if_changed_skips_when_latest_is_the_tip': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_plan_starts_at_the_installed_build': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_release_cache_and_source_survive_and_are_reused_for_the_next_tip': PHONE_BUILD_NEEDS_MAC,
+    'test_phone_build.PhoneBuildTests.test_untested_commit_runs_host_checks_first': PHONE_BUILD_NEEDS_MAC,
     'test_lane_slots.VerifyTestsSlotTests.test_runner_xcodebuild_steps_take_a_slot_and_record_it': 'runs xcodebuild',
 }
 PORTABLE_OPS_LEFT_OUT = {'ops/disk': 'measures macOS volumes, Time Machine snapshots and the Mac-only caches'}
@@ -977,6 +988,7 @@ class Run:
         """The fast plan's steps that run anywhere (#1847), then every step it leaves out, named as skipped.
         No host-test slot: that is the Mac's shared pool, and a hosted job is alone on its machine."""
         self.host_steps(portable=True)
+        print('fast-portable runner-tests left out ' + ', '.join(PORTABLE_RUNNER_TESTS_LEFT_OUT), flush=True)
         for name, reason in PORTABLE_LEFT_OUT.items():
             self.skip(name, reason)
         print('fast-portable left out ' + ', '.join(PORTABLE_LEFT_OUT) + '; the fast plan on the Mac runs them.', flush=True)
