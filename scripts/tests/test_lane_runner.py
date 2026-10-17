@@ -2725,7 +2725,8 @@ class GhCliTests(unittest.TestCase):
     def test_pull_comments_and_comment_use_the_pr_s_rest_paths(self):
         github = lane.GitHub('owner/repo', 5)
         self.answer('{"head": {"sha": "abc"}, "labels": []}',
-                    json.dumps({'body': 'one'}) + '\n\n' + json.dumps({'body': 'two'}) + '\n',
+                    json.dumps({'body': 'one', 'author_association': 'OWNER'}) + '\n\n'
+                    + json.dumps({'body': 'two', 'author_association': 'OWNER'}) + '\n',
                     json.dumps({'html_url': 'https://example.test/c1'}))
         self.assertEqual(github.pull(), {'head': {'sha': 'abc'}, 'labels': []})
         self.assertEqual([c['body'] for c in github.comments()], ['one', 'two'])  # blank lines are skipped
