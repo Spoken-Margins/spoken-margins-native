@@ -202,9 +202,9 @@ def input_digests():
     return digests
 
 
-def input_identity():
+def input_identity(digests=None):
     digest = hashlib.sha256()
-    for relative, file_digest in input_digests().items():
+    for relative, file_digest in (input_digests() if digests is None else digests).items():
         digest.update(relative.encode() + b'\0' + file_digest.encode())
     return digest.hexdigest()
 
@@ -223,7 +223,8 @@ def inputs_changed_message(prefix, before, limit=5):
     if 'Packages/SessionKit/Package.resolved' in paths:
         message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
                     'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
-                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push')
+                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push; if this branch '
+                    'changes dependencies on purpose, run `swift package resolve` on a Mac instead')
     return message
 
 
@@ -666,10 +667,10 @@ class Run:
         self.output = output
         self.changed = changed  # the PR's changed paths in a lane run; None runs every step (#862)
         self.output.mkdir(parents=True, exist_ok=False)
+        self.input_files = input_digests()  # what the manifest's hash is made of, to name what changed (#1773)
         self.manifest = {'plan': plan, 'head': capture(['git', 'rev-parse', 'HEAD']),
                          'branch': capture(['git', 'branch', '--show-current']),
-                         'input_sha256': input_identity(), 'status': 'running', 'steps': []}
-        self.input_files = input_digests()  # what the manifest's hash was made of, to name what changed (#1773)
+                         'input_sha256': input_identity(self.input_files), 'status': 'running', 'steps': []}
         self.crash_baseline = None
         self.crash_times = {}
         self.save()

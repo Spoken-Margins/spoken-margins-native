@@ -21,7 +21,9 @@ def identity(url):
 
 def mac_dependencies(manifest):
     """Package identities Package.swift declares for the Mac, before the Linux block rewrites the list."""
-    return {identity(url) for url in DEPENDENCY.findall(manifest.split('#if os(Linux)')[0])}
+    mac = manifest.split('#if os(Linux)')[0]
+    mac = '\n'.join(line for line in mac.splitlines() if not line.lstrip().startswith('//'))
+    return {identity(url) for url in DEPENDENCY.findall(mac)}
 
 
 class PackageResolvedTests(unittest.TestCase):
@@ -29,8 +31,9 @@ class PackageResolvedTests(unittest.TestCase):
         declared = mac_dependencies((PACKAGE / 'Package.swift').read_text())
         pinned = {pin['identity'] for pin in json.loads((PACKAGE / 'Package.resolved').read_text())['pins']}
         self.assertTrue(declared, 'Package.swift declares no dependency this test can read')
-        self.assertEqual(
-            pinned, declared,
+        # Subset, not equality: a dependency with its own dependencies adds transitive pins.
+        self.assertLessEqual(
+            declared, pinned,
             'Packages/SessionKit/Package.resolved does not pin what Package.swift depends on on the Mac. A Linux '
             '`swift test` rewrites it (swift-crypto in, the Apple packages out); restore it with '
             '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and use '
