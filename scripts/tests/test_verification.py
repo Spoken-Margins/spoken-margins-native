@@ -582,6 +582,11 @@ class VerificationTests(unittest.TestCase):
         self.assertGreater(steps['package']['ceiling'], steps['package']['timeout'])
         self.assertLess(steps['package']['stall_seconds'], steps['package']['ceiling'] - steps['package']['timeout'])
         self.assertLess(steps['package']['ceiling'], 2400)  # the lane's FAST_TIMEOUT still bounds the plan
+        # The parallel core run loses all its results when killed (they are written at the end), so it too goes on
+        # while its progress lines stream; a hang in it is still cut short and rerun serially.
+        self.assertEqual(steps['package-core']['timeout'], verification.PARALLEL_CORE_TIMEOUT)
+        self.assertEqual(steps['package-core']['ceiling'], verification.PARALLEL_CORE_CEILING)
+        self.assertLess(steps['package-core']['stall_seconds'], steps['package']['stall_seconds'])
 
     def test_the_serial_core_fallback_has_the_same_ceiling(self):
         calls = []

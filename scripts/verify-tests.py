@@ -505,6 +505,11 @@ FAST_PLAN_SECONDS = 2340
 # SessionKitCoreTests run in parallel (#1328); the other two targets hold the real-time AVFoundation tests and
 # stay serial. A parallel run that fails for any reason is run again serially, and that result decides.
 PARALLEL_CORE_TIMEOUT = 300
+# #1767: on the three timed-out runs this step was killed at 62-76% done, its results (written at the end) were lost, and
+# the serial rerun took another 364-379 s. Its progress lines stream as it goes, so it gets the same rule as the
+# serial steps: a run still printing at 300 s goes on, one silent for the stall time is a hang and is rerun serially.
+PARALLEL_CORE_CEILING = 900
+PARALLEL_CORE_STALL_SECONDS = 120
 PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
 # detached checkout of it, so the 180 s command default left no room: built beside a simulator job, the step
@@ -992,7 +997,8 @@ class Run:
         xunit = self.output / 'package-core.xunit.xml'
         try:
             self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
-                         timeout=PARALLEL_CORE_TIMEOUT, expected=expected, tests=True,
+                         timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
+                         stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
                          record_source=lambda: xunit_records(xunit))
             return
         except RuntimeError as error:
