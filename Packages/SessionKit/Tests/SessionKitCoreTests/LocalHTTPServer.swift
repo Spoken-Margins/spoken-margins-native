@@ -22,6 +22,10 @@ final class LocalHTTPServer: @unchecked Sendable {
         var cutAfter: Int?
         /// After the cut, keep the connection open until the server stops, as a stalled server would.
         var stallAfterCut = false
+        /// Seconds the connection stays open after the bytes are written and before the cut. A client
+        /// that is handed the bytes and the close together (a busy Mac, #1882) may report the dropped
+        /// connection before it has passed on what it already received; this gives it time to do both.
+        var settleBeforeCut: TimeInterval = 0.2
     }
 
     /// Gets the request and how many requests for the same path came before it.
@@ -121,7 +125,9 @@ final class LocalHTTPServer: @unchecked Sendable {
         head += "\r\n"
         send(connection, Data(head.utf8))
         send(connection, reply.cutAfter.map { reply.body.prefix($0) } ?? reply.body)
-        if reply.cutAfter != nil, reply.stallAfterCut { release.wait() }
+        if reply.cutAfter != nil {
+            if reply.stallAfterCut { release.wait() } else { Thread.sleep(forTimeInterval: reply.settleBeforeCut) }
+        }
     }
 
     private func readRequest(_ connection: Int32) -> Request? {

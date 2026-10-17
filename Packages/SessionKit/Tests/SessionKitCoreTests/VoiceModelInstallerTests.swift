@@ -128,11 +128,13 @@ final class VoiceModelInstallerTests: XCTestCase {
 
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
         let requests = server.requests(for: "/m")
-        XCTAssertEqual(requests.count, 2)
-        XCTAssertNil(requests[0].headers["range"])
-        let resumedAt = try XCTUnwrap(requests[1].headers["range"].flatMap { Int($0.dropFirst("bytes=".count).dropLast()) })
-        XCTAssertGreaterThan(resumedAt, 0, "the second request continues instead of starting over")
-        XCTAssertLessThanOrEqual(resumedAt, 150_000)
+        // Name what the server saw, so a failure on a machine nobody can reach says what happened (#1882).
+        let seen = "requests the server saw: \(requests.map { $0.headers["range"] ?? "no Range" })"
+        XCTAssertEqual(requests.count, 2, seen)
+        XCTAssertNil(requests.first?.headers["range"], seen)
+        let resumedAt = try XCTUnwrap(requests.last?.headers["range"].flatMap { Int($0.dropFirst("bytes=".count).dropLast()) }, seen)
+        XCTAssertGreaterThan(resumedAt, 0, "the second request continues instead of starting over; \(seen)")
+        XCTAssertLessThanOrEqual(resumedAt, 150_000, seen)
     }
 
     func testAnEarlierFailedInstallLeavesAPartialFileThatALaterInstallResumes() async throws {
