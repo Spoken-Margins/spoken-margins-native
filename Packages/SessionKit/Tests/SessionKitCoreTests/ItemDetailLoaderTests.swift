@@ -1,31 +1,30 @@
 import XCTest
-import SQLite3
 @testable import SessionKit
 import SessionKitPersistence
-@testable import SpokenMarginsApp
 
-@MainActor
+/// Moved from the app test target (#318): the loader needs only SessionKit and the SQLite store, so the
+/// tests call it directly instead of through `Gate1AppModel.loadItemDetail`, and run on Linux.
 final class ItemDetailLoaderTests: XCTestCase {
     func testSnapshotForAnotherItemCannotSelectThisItemsOlderSession() throws {
-        try withFixture { model, store, _ in
+        try withFixture { fixture, store, _ in
             try seedSessions(store)
-            setSnapshot(model, item: "B", session: "A-old")
-            let detail = try model.loadItemDetail(id: "A", store: store)
+            fixture.setSnapshot(item: "B", session: "A-old")
+            let detail = try fixture.load("A", store)
             assertSelected(detail, session: "A-new")
         }
     }
 
     func testSnapshotSessionMustBelongToTheLoadedItem() throws {
-        try withFixture { model, store, _ in
+        try withFixture { fixture, store, _ in
             try seedSessions(store)
-            setSnapshot(model, item: "A", session: "B-session")
-            let detail = try model.loadItemDetail(id: "A", store: store)
+            fixture.setSnapshot(item: "A", session: "B-session")
+            let detail = try fixture.load("A", store)
             assertSelected(detail, session: "A-new")
         }
     }
 
     func testValidOlderSessionIsKeptAndAbsentOrMissingSnapshotsUseNewest() throws {
-        try withFixture { model, store, _ in
+        try withFixture { fixture, store, _ in
             try seedSessions(store)
             let cases: [(String?, String?, String)] = [
                 ("A", "A-old", "A-old"),
@@ -35,8 +34,8 @@ final class ItemDetailLoaderTests: XCTestCase {
                 ("A", "missing", "A-new")
             ]
             for (item, session, expected) in cases {
-                setSnapshot(model, item: item, session: session)
-                let detail = try model.loadItemDetail(id: "A", store: store)
+                fixture.setSnapshot(item: item, session: session)
+                let detail = try fixture.load("A", store)
                 XCTAssertEqual(detail.sessions.map(\.id), ["A-new", "A-old"])
                 assertSelected(detail, session: expected)
             }
@@ -44,7 +43,7 @@ final class ItemDetailLoaderTests: XCTestCase {
     }
 
     func testOnlyActiveMarginsAppearAndSessionRowsKeepTheirOwnActiveFilter() throws {
-        try withFixture { model, store, _ in
+        try withFixture { fixture, store, _ in
             try seedSessions(store)
             var active = note("note-A-new", session: "A-new", item: "A", time: 200)
             active.cleanedTranscript = "  Cleaned note  "
@@ -60,7 +59,7 @@ final class ItemDetailLoaderTests: XCTestCase {
                 .filter { $0.status == "active" }.map(\.id), ["note-A-new", "zz-blank-cleaned"],
                 "The blank cleaned note must be considered first by the reverse-order preview lookup")
 
-            let detail = try model.loadItemDetail(id: "A", store: store)
+            let detail = try fixture.load("A", store)
             XCTAssertEqual(Set(detail.interjections.map(\.id)), ["note-A-new", "zz-blank-cleaned"])
             let row = try XCTUnwrap(detail.sessionRows.first { $0.id == "A-new" })
             XCTAssertEqual(row.interjectionCount, 2)
@@ -70,7 +69,7 @@ final class ItemDetailLoaderTests: XCTestCase {
     }
 
     func testSummaryTurnsRequireEveryReferencedMarginToRemainActive() throws {
-        try withFixture { model, store, _ in
+        try withFixture { fixture, store, _ in
             try seedSessions(store)
             var deleted = note("deleted", session: "A-new", item: "A", time: 300)
             deleted.status = "deleted"
@@ -87,17 +86,17 @@ final class ItemDetailLoaderTests: XCTestCase {
             }
             try store.saveTurn(turn("ordinary-missing-source", session: "A-new", sources: ["missing"]))
 
-            let detail = try model.loadItemDetail(id: "A", store: store)
+            let detail = try fixture.load("A", store)
             XCTAssertEqual(Set(detail.turns.map(\.id)),
                            ["turn-A-new", "summary-active", "summary-empty", "ordinary-missing-source"])
         }
     }
 
     func testDerivedMapIsReturnedAndPersistedThroughAnotherConnection() throws {
-        try withFixture { model, store, database in
+        try withFixture { fixture, store, database in
             try seedCanonical(store)
             XCTAssertNil(try store.loadListeningMap(itemId: "A"))
-            let detail = try model.loadItemDetail(id: "A", store: store)
+            let detail = try fixture.load("A", store)
             XCTAssertEqual(detail.navigation.map(\.id), ["chapter-one", "chapter-two"])
             assertChapters(detail.chapters)
             let reader = try SQLiteSessionStore(path: database.path)
@@ -108,17 +107,18 @@ final class ItemDetailLoaderTests: XCTestCase {
     }
 
     func testStrictTimelineFailurePropagatesAfterTheDerivedMapWasSaved() throws {
-        try withFixture { model, store, database in
+        try withFixture { fixture, store, database in
             try seedCanonical(store)
-            try executeSQL("""
-                INSERT INTO records(kind,id,item_id,payload)
-                VALUES('source_transcript_timeline','bad-timeline','A','not json');
+            try executeSQL([
+                "INSERT INTO records(kind,id,item_id,payload) VALUES('source_transcript_timeline','bad-timeline','A','not json')",
+                """
                 CREATE TRIGGER refuse_timeline_quarantine BEFORE INSERT ON quarantined_records
                 WHEN NEW.kind = 'source_transcript_timeline'
-                BEGIN SELECT RAISE(ABORT, 'loader strict fixture'); END;
-                """, database: database)
+                BEGIN SELECT RAISE(ABORT, 'loader strict fixture'); END
+                """
+            ], database: database)
 
-            XCTAssertThrowsError(try model.loadItemDetail(id: "A", store: store)) { error in
+            XCTAssertThrowsError(try fixture.load("A", store)) { error in
                 XCTAssertEqual(error as? SessionKitError, .persistenceFailed("step_quarantine"))
             }
             let reader = try SQLiteSessionStore(path: database.path)
@@ -127,18 +127,19 @@ final class ItemDetailLoaderTests: XCTestCase {
     }
 
     func testOptionalTurnReadFailureReturnsNoTurnsAfterAHealthyControl() throws {
-        try withFixture { model, store, database in
+        try withFixture { fixture, store, database in
             try seedSessions(store)
-            assertSelected(try model.loadItemDetail(id: "A", store: store), session: "A-new")
-            try executeSQL("""
-                INSERT INTO records(kind,id,session_id,payload)
-                VALUES('turn','bad-turn','A-new','not json');
+            assertSelected(try fixture.load("A", store), session: "A-new")
+            try executeSQL([
+                "INSERT INTO records(kind,id,session_id,payload) VALUES('turn','bad-turn','A-new','not json')",
+                """
                 CREATE TRIGGER refuse_turn_quarantine BEFORE INSERT ON quarantined_records
                 WHEN NEW.kind = 'turn'
-                BEGIN SELECT RAISE(ABORT, 'loader optional fixture'); END;
-                """, database: database)
+                BEGIN SELECT RAISE(ABORT, 'loader optional fixture'); END
+                """
+            ], database: database)
 
-            let detail = try model.loadItemDetail(id: "A", store: store)
+            let detail = try fixture.load("A", store)
             XCTAssertTrue(detail.turns.isEmpty)
             XCTAssertEqual(detail.interjections.map(\.id), ["note-A-new"])
         }
@@ -147,7 +148,7 @@ final class ItemDetailLoaderTests: XCTestCase {
     func testPlacementPassUsesDecodedItemIdentityWhenStoredKeyDiffers() throws {
         try withFixture { _, store, database in
             try store.saveItem(item("A"))
-            try executeSQL("UPDATE records SET id = 'alias' WHERE kind = 'item' AND id = 'A';", database: database)
+            try executeSQL(["UPDATE records SET id = 'alias' WHERE kind = 'item' AND id = 'A'"], database: database)
             XCTAssertEqual(try store.loadItem(id: "alias").id, "A", "Only the stored key changed")
             var passes = SharedMarginPlacementPasses()
             passes.begin(.matching, itemId: "A")
@@ -188,7 +189,7 @@ final class ItemDetailLoaderTests: XCTestCase {
     /// #1167: the Item screen's "Open Original Source" shows for an item added by link and not for one
     /// imported from a file, a feed link that may hold a secret, or an item with no address.
     func testOriginalSourceIsOfferedOnlyForAPublicWebAddress() throws {
-        try withFixture { model, store, _ in
+        try withFixture { fixture, store, _ in
             let rows: [(id: String, reference: String?, type: String?, expected: String?)] = [
                 ("link", "https://example.com/essay", "url", "https://example.com/essay"),
                 ("file", "/var/mobile/Documents/essay.md", "file", nil),
@@ -201,33 +202,38 @@ final class ItemDetailLoaderTests: XCTestCase {
                 saved.externalReference = row.reference
                 saved.externalReferenceType = row.type
                 try store.saveItem(saved)
-                let detail = try model.loadItemDetail(id: row.id, store: store)
+                let detail = try fixture.load(row.id, store)
                 XCTAssertEqual(detail.originalSourceURL?.absoluteString, row.expected, row.id)
             }
         }
     }
 
-    private func withFixture(_ body: (Gate1AppModel, SQLiteSessionStore, URL) throws -> Void) throws {
-        let preferences = VoicePreferencesSnapshot.capture()
-        defer { preferences.restore() }
+    /// What the app model passes in beside the id: the snapshot's selected item and session.
+    private final class Fixture {
+        var snapshotItemId: String?
+        var snapshotSessionId: String?
+
+        func setSnapshot(item: String?, session: String?) {
+            snapshotItemId = item
+            snapshotSessionId = session
+        }
+
+        func load(_ id: String, _ store: SQLiteSessionStore) throws -> ItemDetailState {
+            try ItemDetailLoader.load(id: id, store: store, snapshotItemId: snapshotItemId,
+                snapshotSessionId: snapshotSessionId, placementPasses: SharedMarginPlacementPasses())
+        }
+    }
+
+    private func withFixture(_ body: (Fixture, SQLiteSessionStore, URL) throws -> Void) throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("item-detail-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let database = root.appendingPathComponent("library.sqlite")
-        // This scope releases both SQLite owners before the directory is removed.
+        // This scope releases the SQLite owner before the directory is removed.
         do {
             let store = try SQLiteSessionStore(path: database.path)
-            let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient(), databaseURLOverride: database)
-            model.preparationSeams.memoryBackoffActive = { true }
-            try body(model, store, database)
+            try body(Fixture(), store, database)
         }
-    }
-
-    private func setSnapshot(_ model: Gate1AppModel, item: String?, session: String?) {
-        var snapshot = SessionSnapshot()
-        snapshot.itemId = item
-        snapshot.sessionId = session
-        model.snapshot = snapshot
     }
 
     private func assertSelected(_ detail: ItemDetailState, session: String,
@@ -286,17 +292,7 @@ final class ItemDetailLoaderTests: XCTestCase {
                          summary: nil, text: id, rawText: nil, chapters: nil, sourceInterjectionIds: sources)
     }
 
-    private func executeSQL(_ sql: String, database: URL) throws {
-        var connection: OpaquePointer?
-        guard sqlite3_open(database.path, &connection) == SQLITE_OK else {
-            if let connection { sqlite3_close(connection) }
-            throw NSError(domain: "ItemDetailLoaderTests", code: 1)
-        }
-        defer { sqlite3_close(connection) }
-        let result = sqlite3_exec(connection, sql, nil, nil, nil)
-        guard result == SQLITE_OK else {
-            throw NSError(domain: "ItemDetailLoaderTests", code: Int(result),
-                          userInfo: [NSLocalizedDescriptionKey: String(cString: sqlite3_errmsg(connection))])
-        }
+    private func executeSQL(_ statements: [String], database: URL) throws {
+        try StoreRawSQL.execute(statements, at: database.path)
     }
 }
