@@ -28,6 +28,8 @@ The former iOS 16.7 compatibility app was retired by product-owner decision on 2
 - `Packages/SessionKit/`: canonical session, persistence, audio, and AI-domain behavior
 - `App/`: iPhone app plus Safari and share extensions
 
+For readers new to the project: [how it is built](docs/overview/architecture.md), [what stays compatible](docs/overview/compatibility.md), and [what works offline and what leaves the phone](docs/overview/offline-and-privacy.md).
+
 The active product boundary and stopping rules are in `Contracts/docs/recovery-mvp.md`. Older gate documents describe project history rather than current priorities.
 
 ## Development Setup
