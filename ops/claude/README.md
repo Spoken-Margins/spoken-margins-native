@@ -1,6 +1,6 @@
 # Claude Mac worker (#1599)
 
-A Mac-side worker that takes Mac-only `ready` issues and stalled PRs with **headless Claude** (`claude -p`), one fresh session per job, so nobody taps Allow for each new Mac thread and no single session runs out of context mid-issue. It replaces the Codex worker (`ops/codex/sm_codex_worker.py`), which retires after 2026-10-15 (#1195).
+A Mac-side worker that takes Mac-only `ready` issues and stalled PRs with **headless Claude** (`claude -p`), one fresh session per job, so nobody taps Allow for each new Mac thread and no single session runs out of context mid-issue. It replaced the Codex worker, which was retired by #1195 and deleted by #1853.
 
 Nothing here is installed by default. Loading the job and the first real run need the owner's Mac: see "Mac steps".
 
@@ -66,12 +66,7 @@ cp ~/SpokenMarginsOps/repo/ops/claude/com.spokenmargins.claude-worker.plist ~/Li
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.claude-worker.plist
 ```
 
-5. After 2026-10-15, unload the Codex worker (the job here and the Codex one never run together on one issue, because the Codex worker skips `where:mac`, but the Codex allowance is gone):
-
-```zsh
-launchctl bootout gui/$(id -u)/com.spokenmargins.codex-worker
-rm ~/Library/LaunchAgents/com.spokenmargins.codex-worker.plist
-```
+5. The Codex worker is gone (unloaded 2026-10-17, files deleted by #1853). If `~/Library/LaunchAgents/com.spokenmargins.codex-worker.plist` is still there, delete it.
 
 6. Watch the first run: `tail -f ~/SpokenMarginsOps/claude-worker/log.txt`, then the claim note and the stop note on the issue it took. Look for: the claim note appearing, the branch pushed, a stop note in the Dial gate's format, and the Dial's status comment on #589 counting the run among the Claude threads. If the first run is a fault, its note says why (the usual causes are the Keychain prompt on first use, which needs one click on the Mac, and a flag the installed `claude` does not know).
 
