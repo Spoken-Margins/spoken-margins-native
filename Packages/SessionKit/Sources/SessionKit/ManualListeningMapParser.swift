@@ -104,27 +104,52 @@ public enum ManualListeningMapParser {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Turns the quotes that open and close strings into straight ones. A string opened by a curly quote
+    /// (“like this”) closes at the first quote that is followed, after any whitespace, by `:`, `,`, `}`, `]`
+    /// or the end of the text, since that is where a closing quote sits in JSON; any other quote inside it is
+    /// part of the text (curly ones stay as they are, a straight one is escaped). A string opened by a straight
+    /// quote closes at the next unescaped straight quote, as in plain JSON.
     private static func normalizingJSONDelimitersOutsideStrings(in text: String) -> String {
+        let scalars = Array(text.unicodeScalars)
         var output = ""
         var inString = false
+        var openedByCurlyQuote = false
         var escaped = false
 
-        for scalar in text.unicodeScalars {
+        func isQuote(_ scalar: Unicode.Scalar) -> Bool { scalar == "\"" || scalar == "“" || scalar == "”" }
+        func endsAString(after index: Int) -> Bool {
+            var next = index + 1
+            while next < scalars.count, scalars[next].properties.isWhitespace { next += 1 }
+            guard next < scalars.count else { return true }
+            return [":", ",", "}", "]"].contains(scalars[next])
+        }
+
+        for (index, scalar) in scalars.enumerated() {
             if inString {
-                output.unicodeScalars.append(scalar)
                 if escaped {
+                    output.unicodeScalars.append(scalar)
                     escaped = false
                 } else if scalar == "\\" {
+                    output.unicodeScalars.append(scalar)
                     escaped = true
-                } else if scalar == "\"" {
+                } else if !openedByCurlyQuote {
+                    output.unicodeScalars.append(scalar)
+                    if scalar == "\"" { inString = false }
+                } else if isQuote(scalar), endsAString(after: index) {
+                    output += "\""
                     inString = false
+                } else if scalar == "\"" {
+                    output += "\\\""
+                } else {
+                    output.unicodeScalars.append(scalar)
                 }
                 continue
             }
 
-            if scalar == "\"" || scalar == "“" || scalar == "”" {
+            if isQuote(scalar) {
                 output += "\""
                 inString = true
+                openedByCurlyQuote = scalar != "\""
             } else {
                 output.unicodeScalars.append(scalar)
             }
