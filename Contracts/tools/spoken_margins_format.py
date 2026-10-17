@@ -408,6 +408,11 @@ def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _is_date(value):
+    """What the package decoder's date strategy accepts: an ISO-8601 string (InterjectionPackageArchive)."""
+    return isinstance(value, str) and bool(_ISO_DATE.fullmatch(value))
+
+
 def _length_ok(value, maximum):
     return value is None or (isinstance(value, str) and character_count(value) <= maximum)
 
@@ -508,7 +513,7 @@ def _check_manifest_types(report, manifest):
 
     need(isinstance(manifest.get('schemaVersion'), str), 'schemaVersion is absent')
     need(isinstance(manifest.get('packageId'), str), 'packageId is absent')
-    need(isinstance(manifest.get('createdAt'), str) and bool(_ISO_DATE.fullmatch(manifest['createdAt'])),
+    need(_is_date(manifest.get('createdAt')),
          'createdAt is not an ISO-8601 date and time with a zone')
     need(isinstance(manifest.get('requiredCapabilities'), list)
          and all(isinstance(c, str) for c in manifest['requiredCapabilities']), 'requiredCapabilities is absent')
@@ -581,6 +586,8 @@ def _decode_artifacts(report, manifest, entries):
                 _refuse(report, 'invalid-manifest', f'{context} {list_key} are absent', where)
             for entry in value[list_key]:
                 _unknown_keys(report, entry, entry_keys, entry_context)
+            if 'createdAt' in keys and not _is_date(value.get('createdAt')):
+                _refuse(report, 'invalid-manifest', f'{context} createdAt is not an ISO-8601 date and time', where)
         if value.get('id') != descriptor['id'] or value.get('schemaVersion') != version:
             _refuse(report, 'invalid-manifest', f'{kind} id or schemaVersion does not match its descriptor', where)
         decoded[kind].append((descriptor, value))
@@ -726,13 +733,13 @@ def _check_layer(report, layer, assets_by_id):
             report.warn('ignored-field', f'{key!r} is not an anchor field; shipped readers ignore it', at)
         representations = margin.get('representations')
         ints = [anchor.get(k) for k in ('startChar', 'endChar', 'mediaTimeMs', 'roughPercent')]
-        decodes = (isinstance(margin.get('packageScopedId'), str) and isinstance(margin.get('createdAt'), str)
+        decodes = (isinstance(margin.get('packageScopedId'), str) and _is_date(margin.get('createdAt'))
                    and isinstance(margin.get('defaultRepresentationId'), str) and isinstance(representations, list)
                    and anchor.get('anchorType') in ANCHOR_TYPES
                    and isinstance(anchor.get('machineEvidenceAssetIds'), list)
                    and all(v is None or _is_int(v) for v in ints))
         if not decodes:
-            _refuse(report, 'invalid-manifest', 'a Margin lacks packageScopedId, createdAt, anchor (with anchorType '
+            _refuse(report, 'invalid-manifest', 'a Margin lacks packageScopedId, an ISO-8601 createdAt, anchor (with anchorType '
                     'and machineEvidenceAssetIds), defaultRepresentationId or representations', at)
         start, end = anchor.get('startChar'), anchor.get('endChar')
         bounded = (1 <= len(margin['packageScopedId']) <= 200 and representations
@@ -788,7 +795,7 @@ def _decodes_as_anchor(anchor):
 def _decodes_as_proposal(proposal):
     """What decoding PortableListeningMapProposalArtifact needs (its id and schemaVersion are checked already)."""
     scenes = proposal.get('scenes')
-    return (isinstance(proposal.get('generator'), str) and isinstance(proposal.get('createdAt'), str)
+    return (isinstance(proposal.get('generator'), str) and _is_date(proposal.get('createdAt'))
             and (proposal.get('languageCode') is None or isinstance(proposal['languageCode'], str))
             and isinstance(scenes, list)
             and all(isinstance(scene, dict) and isinstance(scene.get('id'), str) and _is_int(scene.get('order'))
@@ -909,15 +916,36 @@ def for_sharing(proposal, item_text=None):
     return (None, violations) if violations else (kept, [])
 
 
+def _could_quote(text):
+    """Whether Swift could find the 10 words a quotation needs in a text. Swift splits between characters that are
+    not letters or numbers, judging a character by its first code point; every code point _words keeps is one Swift
+    counts as a letter or number, so each Swift word holds a word _words finds or a mark or symbol it skips (a
+    combining mark at the start, a circled letter). Counting both never finds fewer words than Swift does, so a text
+    below 10 here can't quote in Swift either."""
+    if not text:
+        return False
+    lowered = text.lower()
+    skipped = sum(1 for ch in lowered if not ch.isascii() and not ch.isalnum()
+                  and unicodedata.category(ch) in ('Mn', 'Mc', 'Me', 'So'))
+    return len(_words(lowered)) + skipped >= VERBATIM_RUN_WORDS
+
+
 def _matches_swift_words(proposal, item_text):
-    """True when every text the quotation rule reads is ASCII (and the item text has no CRLF, one Swift character),
-    so this module splits words and counts characters exactly as Swift does."""
-    texts = [item_text or '']
+    """True when this module's quotation verdicts are Swift's. A scene's verdicts are certain when none of its notes
+    has 10 words, or none of its sources (anchor quotes and the item text) has; otherwise every text the rule reads
+    must be ASCII (and the item text free of CRLF, one Swift character), so words split and characters count exactly
+    as they do in Swift."""
+    item = item_text or ''
     for scene in proposal['scenes']:
-        texts += [scene.get(k) or '' for k in ('title', 'summaryText', 'eligibilityReason')]
-        for anchor in (scene['startAnchor'], scene['endAnchor']):
-            texts += [_anchor_quote(anchor), anchor.get('chapterTitle') or '']
-    return all(t.isascii() for t in texts) and '\r\n' not in (item_text or '')
+        anchors = (scene['startAnchor'], scene['endAnchor'])
+        notes = [scene.get(k) for k in ('title', 'summaryText', 'eligibilityReason')]
+        notes = [n for n in notes + [a.get('chapterTitle') for a in anchors] if _could_quote(n)]
+        sources = [s for s in [_anchor_quote(a) for a in anchors] + [item] if _could_quote(s)]
+        if not notes or not sources:
+            continue
+        if not all(t.isascii() for t in notes + sources) or (item in sources and '\r\n' in item):
+            return False
+    return True
 
 
 def _proposal_bounds_problem(proposal, assets_by_id, eligible_needs_summary=False):

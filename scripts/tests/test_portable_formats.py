@@ -116,6 +116,34 @@ class BothDirectionsTests(unittest.TestCase):
         self.manifest['createdAt'] = 'October 9'
         self.assertEqual(verdict(self.packet()), 'invalid-manifest')
 
+    def test_every_date_field_decodes_as_a_date(self):
+        """Claude audit on 746d96f: the package decoder reads every Date as an ISO-8601 string and refuses the packet
+        on anything else, in a Margin and in the closed artifacts as in the manifest."""
+        spine = {'id': 'spine', 'schemaVersion': fmt.FINGERPRINT_SPINE_VERSION, 'itemId': 'item',
+                 'generatorVersion': 'test', 'landmarks': []}
+        # Within the readers' sketch bounds (a 32-byte salt, the builder's widths), which this module doesn't model.
+        sketch = {'id': 'sketch', 'schemaVersion': fmt.PHRASE_SKETCH_VERSION, 'itemId': 'item',
+                  'saltBase64': 'AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=', 'normalizationVersion': 'v1',
+                  'shingleWidth': 3, 'maximumHashesPerWindow': 24, 'windows': []}
+        for label, kind, document in [('a Margin', None, None), ('a fingerprint spine', 'edition_fingerprint_spine',
+                                                                  spine),
+                                      ('a phrase sketch', 'transcript_phrase_sketch', sketch)]:
+            for created, expected in [('2026-10-09T12:00:00Z', 'valid'), ('2026-10-09T12:00:00.250+02:00', 'valid'),
+                                      ('October 9', 'invalid-manifest'), ('2026-10-09', 'invalid-manifest'),
+                                      (None, 'invalid-manifest')]:
+                with self.subTest(label, createdAt=created):
+                    manifest, artifacts = json.loads(json.dumps(self.manifest)), dict(self.artifacts)
+                    if kind is None:
+                        layer = self.layer()
+                        layer['interjections'][0]['createdAt'] = created
+                        artifacts[self.layer_path] = fmt.encode_manifest(layer)
+                    else:
+                        path = f'artifacts/{document["id"]}.json'
+                        manifest['artifacts'].append({'id': document['id'], 'kind': kind, 'path': path,
+                                                      'required': False, 'schemaVersion': document['schemaVersion']})
+                        artifacts[path] = fmt.encode_manifest({**document, 'createdAt': created})
+                    self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, self.assets)), expected)
+
     def test_a_very_repetitive_transcript_is_written_the_way_the_readers_accept(self):
         # Claude audit on f529489: deflate squeezes this past the 100x ratio every shipped reader refuses, so the
         # Swift writer stores such an entry uncompressed, and stores every asset uncompressed.
@@ -293,6 +321,7 @@ class RefusalTests(unittest.TestCase):
             ('missing default', lambda l: l['interjections'][0].update(defaultRepresentationId='nope')),
             ('evidence that is not a signature', lambda l: l['interjections'][0]['anchor'].update(
                 machineEvidenceAssetIds=['nope'])),
+            ('a createdAt that is not a date', lambda l: l['interjections'][0].update(createdAt='October 9')),
         ]
         for label, change in cases:
             with self.subTest(label):
@@ -339,19 +368,19 @@ class ListeningMapProposalTests(unittest.TestCase):
              'endAnchor': self.media(600_000)},
         ]
 
-    def read(self, scenes, assets=()):
+    def read(self, scenes, assets=(), created='2026-10-17T12:00:00Z'):
         manifest = json.loads(json.dumps(self.manifest))
         manifest['assets'] += list(assets)
         manifest['artifacts'].append({'id': 'map', 'kind': 'listening_map_proposal', 'path': 'artifacts/map.json',
                                       'required': False, 'schemaVersion': fmt.LISTENING_MAP_PROPOSAL_VERSION})
         proposal = {'id': 'map', 'schemaVersion': fmt.LISTENING_MAP_PROPOSAL_VERSION,
-                    'createdAt': '2026-10-17T12:00:00Z', 'generator': 'test', 'scenes': scenes}
+                    'createdAt': created, 'generator': 'test', 'scenes': scenes}
         artifacts = {**self.artifacts, 'artifacts/map.json': fmt.encode_manifest(proposal)}
         assets_bytes = {**self.assets, **{a['path']: b'\0\0\0\x18ftypM4A ' + b'\0' * 64 for a in assets}}
         return fmt.read_packet(fmt.write_packet(manifest, artifacts, assets_bytes))
 
-    def outcome(self, scenes, assets=()):
-        report = self.read(scenes, assets)
+    def outcome(self, scenes, assets=(), created='2026-10-17T12:00:00Z'):
+        report = self.read(scenes, assets, created)
         if report.errors:
             return report.errors[0].code
         return ' '.join(['valid'] + sorted({w.code for w in report.warnings}))
@@ -408,6 +437,22 @@ class ListeningMapProposalTests(unittest.TestCase):
             ('a summary quoting non-ASCII text', lambda s: s[1].update(
                 summaryText='caf\u00e9 ' + self.QUOTE, startAnchor=self.media(60_000, exactText='caf\u00e9 ' + self.QUOTE)),
              (), 'valid not-checked'),
+            # Claude audit on 746d96f: non-ASCII text that can't hold a quotation leaves the order rule exact.
+            ('a non-ASCII title, order reversed', lambda s: (s[1].update(title='Caf\u00e9 talk'), s[0].update(order=1),
+                                                             s[1].update(order=0)), (), 'invalid-manifest'),
+            ('a decomposed accent in the title, order reversed', lambda s: (
+                s[1].update(title='Cafe\u0301 talk'), s[0].update(order=1), s[1].update(order=0)), (),
+             'invalid-manifest'),
+            ('a curly apostrophe and an em dash in the summary, order reversed', lambda s: (
+                s[1].update(summaryText='Don\u2019t skip it \u2014 the best part.'), s[0].update(order=1),
+                s[1].update(order=0)), (), 'invalid-manifest'),
+            ('a long non-ASCII title and no 10-word source, order reversed', lambda s: (
+                s[1].update(title='caf\u00e9 ' + self.QUOTE, startAnchor=self.media(60_000, exactText='a short quote')),
+                s[0].update(order=1), s[1].update(order=0)), (), 'invalid-manifest'),
+            ('a long non-ASCII summary beside a long anchor, order reversed', lambda s: (
+                s[1].update(summaryText='caf\u00e9 ' + self.QUOTE, startAnchor=self.media(
+                    60_000, exactText='a different sentence of eleven words that shares no run at all')),
+                s[0].update(order=1), s[1].update(order=0)), (), 'valid not-checked older-reader-refuses'),
             ('a scene that does not decode', lambda s: s[1].update(eligibility='maybe'), (), 'invalid-manifest'),
             ('a scene that is not an object', lambda s: s.append('scene'), (), 'invalid-manifest'),
         ]
@@ -416,6 +461,13 @@ class ListeningMapProposalTests(unittest.TestCase):
                 scenes = self.scenes()
                 change(scenes)
                 self.assertEqual(self.outcome(scenes, assets), expected)
+
+    def test_a_proposal_created_at_must_be_a_date(self):
+        """Claude audit on 746d96f: PortableListeningMapProposalArtifact.createdAt is a Date."""
+        for created, expected in [('2026-10-17T12:00:00Z', 'valid'), ('2026-10-17T12:00:00.5Z', 'valid'),
+                                  ('October 9', 'invalid-manifest'), ('', 'invalid-manifest'), (17, 'invalid-manifest')]:
+            with self.subTest(created):
+                self.assertEqual(self.outcome(self.scenes(), created=created), expected)
 
     def test_an_embedded_text_quotation_drops_the_proposal(self):
         base = fmt.unpack((EXAMPLES / 'article-embedded-text.spokenmargins').read_bytes())
@@ -564,6 +616,23 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(listed[0]['findings'][0]['code'], 'digest-mismatch')
         inspected = json.loads(self.run_cli('inspect', good).stdout)
         self.assertEqual(len(inspected['summary']['margins']), 2)
+
+
+class SwiftWordBoundTests(unittest.TestCase):
+    """_could_quote never finds fewer words than Swift's split (letters or numbers by first code point)."""
+
+    def test_word_bound_table(self):
+        for text, expected in [
+            ('', False), ('nine words is one short of what runs need', False),
+            ('ten words make exactly what one run of text needs', True),
+            ('Caf\u00e9 talk', False), ('Cafe\u0301 talk', False), ('Don\u2019t \u2014 stop', False),
+            ('\u24d0 ' * 10, True),               # circled letters: Swift letters, not Python word characters
+            ('\n\u0bbe' * 10, True),             # a combining vowel sign that starts its own character
+            ('\u00e9t\u00e9 ' * 9, False), ('\u00e9t\u00e9 ' * 10, True),
+            ('UPPER Case MIXED ' * 4, True),
+        ]:
+            with self.subTest(repr(text)):
+                self.assertEqual(fmt._could_quote(text), expected)
 
 
 class CharacterCountTests(unittest.TestCase):
