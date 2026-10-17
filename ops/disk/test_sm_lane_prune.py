@@ -212,7 +212,9 @@ class Warm(LaneTests):
         b_new = self.cache(self.runner_b, 'b-new', 30 * MiB, 2 * DAY)
         b_old = self.cache(self.runner_b, 'b-old', 30 * MiB, 5 * DAY)
         plan = self.plan(cap=100 * MiB)
-        self.assertGreater(plan.total, 120 * MiB)
+        # Four 30 MiB caches. A directory takes blocks on ext4 and none on APFS, so the total is 120 MiB on the Mac
+        # and a little over on Linux (#1781).
+        self.assertGreaterEqual(plan.total, 120 * MiB)
         self.assertEqual([i.path for i in plan.items], [b_old])  # 120 MiB falls to 90 with the oldest gone
         plan = self.plan(cap=70 * MiB)
         self.assertEqual([i.path for i in plan.items], [b_old, a_mid])
