@@ -1,0 +1,5 @@
+journal-footnotes-block
+First Placeholder Section
+Second Placeholder Section
+Third Placeholder Section
+Fourth Placeholder Section

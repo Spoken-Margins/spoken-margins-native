@@ -148,12 +148,62 @@ export function captureSelectedText(globalRef, documentRef) {
   return buildPayload(globalRef, documentRef, "selected_text", "plain_text", text);
 }
 
+// Defuddle strips every element whose class or id starts with "ad-" or ends
+// with "-ad" as an advertisement. A few publishers name the article body that
+// way (e-flux: "article__body article__body--with-ad"), and then the essay
+// disappears and only the footnotes are left. Defuddle copies the page before
+// it cleans, so rename the ad-looking names on a prose container while it
+// runs and put them back straight after, leaving the page as it was found.
+const AD_NAMED_SELECTOR = [
+  '[class^="ad-" i]', '[class$="-ad" i]', '[id^="ad-" i]', '[id$="-ad" i]'
+].join(",");
+const PROSE_CONTAINER_MIN_WORDS = 150;
+const PROSE_CONTAINER_MIN_PARAGRAPHS = 3;
+
+function isProseContainer(element) {
+  const words = normalizeWhitespace(element.textContent).split(" ").length;
+  return words >= PROSE_CONTAINER_MIN_WORDS
+    && element.querySelectorAll("p").length >= PROSE_CONTAINER_MIN_PARAGRAPHS;
+}
+
+function withoutAdLookingName(name) {
+  const unprefixed = /^ad-/i.test(name) ? `sm-${name}` : name;
+  return /-ad$/i.test(unprefixed) ? `${unprefixed}-sm` : unprefixed;
+}
+
+function shieldProseFromAdSelectors(documentRef) {
+  const restores = [];
+  for (const element of documentRef.querySelectorAll(AD_NAMED_SELECTOR)) {
+    if (!isProseContainer(element)) {
+      continue;
+    }
+    for (const attribute of ["class", "id"]) {
+      const original = element.getAttribute(attribute);
+      if (original === null) {
+        continue;
+      }
+      const renamed = original.split(/\s+/).map(withoutAdLookingName).join(" ");
+      if (renamed !== original) {
+        element.setAttribute(attribute, renamed);
+        restores.push(() => element.setAttribute(attribute, original));
+      }
+    }
+  }
+  return () => restores.forEach(restore => restore());
+}
+
 export function extractReadableMarkdown(documentRef) {
-  const result = new Defuddle(documentRef, {
-    markdown: true,
-    useAsync: false,
-    url: documentURL(documentRef)
-  }).parse();
+  const restoreAdNames = shieldProseFromAdSelectors(documentRef);
+  let result;
+  try {
+    result = new Defuddle(documentRef, {
+      markdown: true,
+      useAsync: false,
+      url: documentURL(documentRef)
+    }).parse();
+  } finally {
+    restoreAdNames();
+  }
   const markdown = normalizeSocialEmbedsForReading(
     String(result.contentMarkdown || result.content || "")
   ).trim();

@@ -163,6 +163,28 @@ final class ItemDetailLoaderTests: XCTestCase {
         }
     }
 
+    func testItemScreenCarriesTheReadableDateAndDescriptionOnlyWhenTheFeedGaveThem() throws {
+        try withFixture { _, store, _ in
+            var episode = item("episode")
+            episode.publishedAt = "Tue, 29 Sep 2026 10:00:00 GMT"
+            episode.descriptionText = String(repeating: "A long description. ", count: 200)
+            try store.saveItem(episode)
+            try store.saveItem(item("pasted"))
+            var garbage = item("garbage")
+            garbage.publishedAt = "not a date"
+            try store.saveItem(garbage)
+
+            let present = try ItemDetailLoader.load(id: "episode", store: store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+            XCTAssertEqual(present.publishedDateText?.contains("2026"), true)
+            XCTAssertEqual(present.descriptionText, episode.descriptionText, "the stored text is whole; the screen cuts the preview")
+            let missing = try ItemDetailLoader.load(id: "pasted", store: store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+            XCTAssertNil(missing.publishedDateText)
+            XCTAssertNil(missing.descriptionText)
+            let unreadable = try ItemDetailLoader.load(id: "garbage", store: store, snapshotItemId: nil, snapshotSessionId: nil, placementPasses: SharedMarginPlacementPasses())
+            XCTAssertNil(unreadable.publishedDateText, "an unreadable date is omitted, not shown as written")
+        }
+    }
+
     /// #1167: the Item screen's "Open Original Source" shows for an item added by link and not for one
     /// imported from a file, a feed link that may hold a secret, or an item with no address.
     func testOriginalSourceIsOfferedOnlyForAPublicWebAddress() throws {

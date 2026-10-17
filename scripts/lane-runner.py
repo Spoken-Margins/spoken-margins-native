@@ -144,7 +144,10 @@ BUILD_RUNNER_FREE_DISK = 20 * 10**9
 # Trial (2026-10-01): host-only jobs on the build runner may run beside a simulator job, with this much disk.
 BESIDE_SIMULATOR_FREE_DISK = 30 * 2**30
 BESIDE_SIMULATOR_LOG = 'beside-simulator.log'  # in the lane state folder: one line per job, to count crashes against
-WARM_FREE_FLOOR = 15 * 10**9
+# Above the 20 GiB at which the Mac finisher pauses and BUILD_RUNNER_FREE_DISK, so idle caches go before other
+# work stops for lack of disk (#1775). The lane folder's overall cap is ops/disk/sm_lane_prune.py's.
+WARM_FREE_FLOOR = 25 * 10**9
+PRUNE_TIMEOUT = 300
 PROJECT_FILE = 'SpokenMarginsNative.xcodeproj/project.pbxproj'  # its layout names Xcode's VFS folders (#405)
 # How the T3 gate's hold reads in an automerge report, now and before #421 (PRs held by an older runner).
 HELD_FOR_T3 = ('not merged: held for T3', 'after a T3 PASS, push or remove and re-add automerge to merge')
@@ -1523,6 +1526,24 @@ def warm_build_folders(tree: Path, root: Path | None = None, free=lambda path: s
     return f'build folders: {"warm" if was_warm else "cold, new cache"} (SessionKit {key})'
 
 
+def prune_lane_folder(evidence_root: Path) -> str:
+    """Cap the lane folder and age out lane evidence before a build takes room (#1775): ops/disk/sm_lane_prune.py
+    from the tools checkout, which the disk relief job also runs, though it can't read artifacts/lane in
+    ~/Documents. Returns a line for the log; never fails the job."""
+    script = tools_source() / 'ops/disk/sm_lane_prune.py'
+    if not script.is_file():
+        return 'lane folder prune: not installed in the tools checkout'
+    state = Path(os.environ.get('SM_LANE_STATE_DIR') or Path.home() / 'Library/Caches/SpokenMarginsLane')
+    try:
+        done = subprocess.run([sys.executable, str(script), '--lane-dir', str(state), '--evidence-dir',
+                               str(evidence_root)], capture_output=True, text=True, timeout=PRUNE_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        return f'lane folder prune: did not run ({error!r})'
+    if done.returncode != 0:
+        return f'lane folder prune: failed ({done.stderr.strip()[-200:]})'
+    return 'lane folder prune: ' + (done.stdout.strip().splitlines() or ['nothing to do'])[-1]
+
+
 def _cache_busy(cache: Path) -> bool:
     import fcntl
     try:
@@ -2660,10 +2681,12 @@ def main(argv=None) -> int:
             details = [f'The PR does not merge cleanly into {args.base} ({base_sha[:7]}): {", ".join(conflicts[:10])}. '
                        f'Merge {args.base} into your branch, push, and ask again.']
         elif request['tier'] == 'T2':
+            print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)
             verdict, ran, details = run_t2(evidence)
             where, crashes, details = 'no simulator (compile only)', 'none', [warm] + details
         else:
+            print(prune_lane_folder(evidence.parent), flush=True)
             warm = warm_build_folders(ROOT)
             classes, problem = t3_scope(ROOT, args.base, evidence)
             verdict, where, ran, details, crashes, cc = run_t3(request['tests'], request_id, evidence, classes)
