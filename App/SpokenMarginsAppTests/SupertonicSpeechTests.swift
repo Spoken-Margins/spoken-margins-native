@@ -2270,6 +2270,81 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 3")
     }
 
+    // #1763: a new player the system would not start with the phone locked sat at time 0 with rate 0 ("SetRateFailed")
+    // for 5 s before the watchdog noticed, re-seated it, and then nothing brought the sound back before the
+    // listener opened the app. A refusal still standing a second later is a stall at once: one re-seat, and a
+    // second refusal from the re-seated player hands over to the iOS voice, with no tap.
+    func testARefusedStartWithTheAppInTheBackgroundIsReseatedAtOnce() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated, "a new player was started well inside the watchdog's 5 s")
+        XCTAssertEqual(harness.stallEvents.values, ["supertonic.stall"])
+        XCTAssertEqual(harness.fallbackReasons.values, [], "still the chosen voice")
+    }
+
+    func testARefusedStartThatTheReseatDoesNotFixHandsOverToTheIOSVoice() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+        harness.refuseTheNewestPlayersStart()
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated)
+
+        harness.refuseTheNewestPlayersStart()                       // the new player is turned down too
+
+        for _ in 0..<150 where !harness.stallEvents.values.contains("supertonic.stall_handover") {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(harness.stallEvents.values.prefix(2), ["supertonic.stall", "supertonic.stall_handover"])
+        XCTAssertFalse(harness.systemVoice.playedOffsets.isEmpty, "the iOS voice reads on")
+        XCTAssertEqual(harness.fallbackReasons.values, ["supertonic_player_stalled"])
+        XCTAssertFalse(harness.stallEvents.values.contains("supertonic.stall_paused"), "not left paused for a tap")
+    }
+
+    // The listener pauses within the second the refusal gets to clear: nothing is recovered.
+    func testARefusedStartIsLeftAloneWhenTheListenerPausesFirst() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try harness.client.pause()
+        try await Task.sleep(for: .milliseconds(1_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no re-seat of a player the listener paused")
+        XCTAssertEqual(harness.stallEvents.values, [])
+    }
+
+    // In front of the listener, who can tap, the watchdog's own timing stands.
+    func testARefusedStartWithTheAppInFrontIsLeftToTheWatchdog() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { true }, applicationIsInBackground: { false }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try await Task.sleep(for: .milliseconds(2_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no early re-seat")
+        XCTAssertEqual(harness.stallEvents.values, [])
+    }
+
     // The listener pauses with a chunk queued: nothing is lost. Playing again carries on, and the queued chunk
     // follows without a new player.
     func testPausingAndResumingWithAChunkQueuedKeepsTheQueue() async throws {
