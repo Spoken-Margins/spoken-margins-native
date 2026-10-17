@@ -178,7 +178,7 @@ The owner decides; none of this has been done.
 
 ## 9. Branches and worktrees
 
-- **`codex/desktop`** (`/Users/colemiller/.codex/worktrees/spoken-margins-desktop/spoken-margins-native`, at `82e61bc`):
+- **`codex/desktop`** (`~/.codex/worktrees/spoken-margins-desktop/spoken-margins-native`, at `82e61bc`):
   - Contents: a macOS menu-bar companion (`App/SpokenMarginsDesktop`), a Safari extension, build scripts, three docs and about 11k lines of Swift. Almost all of it is **untracked**; only `release-lanes.md` and one line in `SupertonicNarrationRenderer.swift` are tracked edits.
   - It is independent of co-op, but it should be rebuilt against whichever SessionKit survives. **Commit it before any cleanup.**
 - **Local `codex/provisional-next`** is `82e61bc`, one ahead of `origin` (unpushed).
