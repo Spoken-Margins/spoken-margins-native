@@ -685,6 +685,39 @@ class SwiftTextRuleTests(unittest.TestCase):
         self.assertEqual(verdict(fmt.write_packet(manifest, self.artifacts, assets)), 'invalid-manifest')
         del layer
 
+    def test_json_constants_python_accepts_are_refused(self):
+        layer = self.artifacts[self.path].decode().replace('"interjections"', '"extra":NaN,"interjections"', 1)
+        packet = fmt.write_packet(self.manifest, {**self.artifacts, self.path: layer.encode()}, self.assets)
+        self.assertEqual(verdict(packet), 'invalid-manifest')
+
+    def test_dates_are_digits_in_range(self):
+        for value, expected in [
+            ('2026-10-09T12:00:00Z', True), ('2026-10-09T12:00:00.250+02:00', True), ('2024-02-29T00:00:00Z', True),
+            ('\u0662\u0660\u0662\u0666-10-09T12:00:00Z', False), ('2026-13-45T25:61:61Z', False),
+            ('2026-02-30T00:00:00Z', False), ('2026-10-09T12:00:00', False), ('2026-10-09', False), (20261009, False),
+        ]:
+            with self.subTest(value):
+                self.assertEqual(fmt._is_date(value), expected)
+
+    def test_ids_match_by_canonical_equivalence_like_swift_strings(self):
+        composed, decomposed = 'caf\u00e9', 'cafe\u0301'
+        self.assertEqual(fmt._canon(composed), fmt._canon(decomposed))
+        manifest = json.loads(json.dumps(self.manifest))
+        manifest['assets'] = [
+            {'id': f'v-{name}', 'mimeType': 'audio/mp4', 'path': f'assets/audio/{name}.m4a',
+             'provenance': 'sender_approved_original', 'role': 'original_voice'} for name in (composed, decomposed)]
+        assets = {f'assets/audio/{name}.m4a': b'\0\0\0\x18ftypM4A ' + b'\0' * 64 for name in (composed, decomposed)}
+        self.assertEqual(verdict(fmt.write_packet(manifest, self.artifacts, assets)), 'invalid-manifest')
+        # An id spelled one way in the descriptor and the other in the layer is the same id.
+        layer = json.loads(self.artifacts[self.path])
+        first = layer['interjections'][0]
+        first['packageScopedId'] = composed
+        first['representations'][0]['id'] = composed
+        first['defaultRepresentationId'] = decomposed
+        self.assertEqual(verdict(fmt.write_packet(self.manifest, {**self.artifacts, self.path: fmt.encode_manifest(layer)},
+                                                   self.assets)), 'valid')
+        self.assertEqual(fmt.swift_split('\u7530\u4e2d\u3000\u592a\u90ce'), ['\u7530\u4e2d', '\u592a\u90ce'])
+
     def test_only_regular_files_are_read(self):
         entries = []
         with zipfile.ZipFile(io.BytesIO(fmt.write_packet(self.manifest, self.artifacts, self.assets))) as archive:
@@ -729,7 +762,8 @@ class SwiftTextRuleTests(unittest.TestCase):
             ('a\r\nb', 3), ('\r\n\r\n', 2), ('\U0001f1fa\U0001f1f8', 1), ('\U0001f1fa\U0001f1f8\U0001f1eb\U0001f1f7', 2),
             ('\U0001f1fa\U0001f1f8\U0001f1eb', 2), ('\U0001f468\u200d\U0001f469\u200d\U0001f467\u200d\U0001f466', 1),
             ('\U0001f44d\U0001f3fd', 1), ('e\u0301', 1), ('\u1100\u1161\u11a8', 1), ('\u0928\u092e\u0938\u094d\u0924\u0947', 3),
-            ('\u2764\ufe0f', 1), ('a\u200db', 2), ('\u65e5\u672c', 2),
+            ('\u2764\ufe0f', 1), ('a\u200db', 2), ('\u65e5\u672c', 2), ('\uff8a\uff9e', 1),
+            ('\U0001f468\u200d\u200d\U0001f469', 2),
         ]:
             with self.subTest(text):
                 self.assertEqual(fmt.character_count(text), expected)

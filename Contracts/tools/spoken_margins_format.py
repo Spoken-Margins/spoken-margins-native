@@ -237,7 +237,7 @@ FIXED_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
 _SHA256 = re.compile(r'[0-9a-f]{64}')
 # ISO8601DateFormatter's internet date-time, with or without fractional seconds.
-_ISO_DATE = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:?\d\d)')
+_ISO_DATE = re.compile(r'([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?(Z|[+-]([0-9]{2}):?([0-9]{2}))')
 
 
 @dataclass
@@ -411,6 +411,21 @@ def _is_swift_space(char):
     return char in '\t\n\v\f\r\x85' or unicodedata.category(char)[0] == 'Z'
 
 
+def _canon(text):
+    """Swift compares and hashes Strings by canonical equivalence, so `caf\u00e9` and `cafe\u0301` are one id."""
+    return unicodedata.normalize('NFC', text)
+
+
+class _ById(dict):
+    """A dictionary keyed by id the way a Swift [String: T] is: by canonical equivalence."""
+
+    def __init__(self, items):
+        super().__init__((_canon(k), v) for k, v in items)
+
+    def get(self, key, default=None):
+        return super().get(_canon(key), default) if isinstance(key, str) else default
+
+
 def swift_strip(text):
     """trimmingCharacters(in: .whitespacesAndNewlines)."""
     start, end = 0, len(text)
@@ -423,8 +438,17 @@ def swift_strip(text):
 
 def swift_split(text):
     """components(separatedBy: .whitespacesAndNewlines) without the empty parts."""
-    return [part for part in re.split('[' + ''.join(c for c in map(chr, range(0x3000)) if _is_swift_space(c)) + ']+',
-                                      text) if part]
+    parts, current = [], []
+    for char in text:
+        if _is_swift_space(char):
+            if current:
+                parts.append(''.join(current))
+            current = []
+        else:
+            current.append(char)
+    if current:
+        parts.append(''.join(current))
+    return parts
 
 
 # Extended grapheme clusters (UAX #29), which are Swift's Character and so what String.count counts. Python has no
@@ -473,7 +497,7 @@ def _grapheme_class(char):
     if any(low <= code <= high for low, high in _INCB_CONSONANTS):
         return 'Consonant'
     category = unicodedata.category(char)
-    if code == 0x200C or category in ('Mn', 'Me', 'Mc') or 0x1F3FB <= code <= 0x1F3FF or 0xE0020 <= code <= 0xE007F \
+    if code in (0xFF9E, 0xFF9F) or code == 0x200C or category in ('Mn', 'Me', 'Mc') or 0x1F3FB <= code <= 0x1F3FF or 0xE0020 <= code <= 0xE007F \
             or code in (0xE33, 0xEB3):
         return 'Extend'
     if category in ('Cc', 'Zl', 'Zp', 'Cf'):
@@ -535,7 +559,9 @@ def graphemes(text):
             regional += 1
         if kind == 'Pict':
             pictographic = True
-        elif kind not in ('Extend', 'ZWJ'):
+        elif kind == 'ZWJ':
+            pictographic = pictographic and previous != 'ZWJ'     # ExtPict Extend* ZWJ, one joiner
+        elif kind != 'Extend':
             pictographic = False
         previous = kind
     clusters.append(current)
@@ -650,7 +676,16 @@ def _is_int(value):
 
 def _is_date(value):
     """A string the packet decoder turns into a Date: ISO 8601 with a zone, with or without fractional seconds."""
-    return isinstance(value, str) and bool(_ISO_DATE.fullmatch(value))
+    match = _ISO_DATE.fullmatch(value) if isinstance(value, str) else None
+    if not match:
+        return False
+    year, month, day, hour, minute, second = (int(g) for g in match.groups()[:6])
+    zone_hours, zone_minutes = int(match.group(9) or 0), int(match.group(10) or 0)
+    try:
+        datetime(year, month, day, hour, minute, second)
+    except ValueError:
+        return False
+    return zone_hours < 24 and zone_minutes < 60
 
 
 def _swift_type(name, owner):
@@ -777,8 +812,11 @@ def _check_zip(report, archive, size):
 
 
 def _load_json(report, data, where, code='invalid-manifest'):
+    def not_a_number(constant):
+        raise json.JSONDecodeError(f'{constant} is not JSON', '', 0)
     try:
-        return json.loads(data.decode('utf-8'))
+        # Python accepts NaN and Infinity; Swift's JSON parser refuses them, even inside a field it ignores.
+        return json.loads(data.decode('utf-8'), parse_constant=not_a_number)
     except (UnicodeDecodeError, json.JSONDecodeError) as error:
         _refuse(report, code, f'not JSON: {error}', where)
 
@@ -820,11 +858,11 @@ def _check_manifest_types(report, manifest):
 
 def _check_distinct(report, manifest):
     artifacts, assets = manifest['artifacts'], manifest['assets']
-    for group in ([a['id'] for a in artifacts], [a['id'] for a in assets],
-                  [a['path'] for a in artifacts], [a['path'] for a in assets]):
+    for group in ([_canon(a['id']) for a in artifacts], [_canon(a['id']) for a in assets],
+                  [_canon(a['path']) for a in artifacts], [_canon(a['path']) for a in assets]):
         if len(set(group)) != len(group):
             _refuse(report, 'invalid-manifest', 'descriptor identities are not unique')
-    names = [staged_file_name(a).lower() for a in assets]
+    names = [_canon(staged_file_name(a).lower()) for a in assets]
     if len(set(names)) != len(names):
         _refuse(report, 'invalid-manifest', 'asset ids would extract to the same file')
 
@@ -858,7 +896,7 @@ def _decode_artifacts(report, manifest, entries):
         problem = decode_problem(value, KIND_SWIFT_TYPE[kind])
         if problem:
             _refuse(report, 'invalid-manifest', f'{kind} does not decode: {problem}', where)
-        if value.get('id') != descriptor['id'] or value.get('schemaVersion') != version:
+        if _canon(value['id']) != _canon(descriptor['id']) or value.get('schemaVersion') != version:
             _refuse(report, 'invalid-manifest', f'{kind} id or schemaVersion does not match its descriptor', where)
         decoded[kind].append((descriptor, value))
     return decoded
@@ -931,7 +969,7 @@ def _check_boundary(report, manifest, decoded):
     else:
         if (item.get('canonicalURL') is not None or item['itemType'] == 'podcast'
                 or transport.get('rightsBasis') is None or redactions['fullItemOmitted'] or len(embedded) != 1
-                or embedded[0][1].get('id') != transport.get('embeddedArtifactId')):
+                or _canon(embedded[0][1]['id']) != _canon(transport.get('embeddedArtifactId') or '')):
             _refuse(report, 'transport-inconsistent', 'embedded_text transport needs one embedded_text_item named by '
                     'embeddedArtifactId, a rightsBasis, fullItemOmitted false, no canonicalURL and a non-podcast item')
         artifact = embedded[0][1]
@@ -950,7 +988,7 @@ def _check_boundary(report, manifest, decoded):
         elif item.get('normalizedContentSHA256') != normalized:
             _refuse(report, 'edition-mismatch', 'item.normalizedContentSHA256 does not match the embedded text')
 
-    assets_by_id = {a['id']: a for a in manifest['assets']}
+    assets_by_id = _ById((a['id'], a) for a in manifest['assets'])
     _check_layer(report, layers[0][1], assets_by_id)
     item_text = embedded[0][1].get('text') if embedded else None
     for descriptor, proposal in decoded['listening_map_proposal']:
@@ -962,13 +1000,13 @@ def _check_boundary(report, manifest, decoded):
                     descriptor['path'])
     if len(decoded['conversation']) > 1:
         _refuse(report, 'invalid-manifest', 'more than one conversation artifact')
-    scoped = {m['packageScopedId'] for m in layers[0][1]['interjections']}
+    scoped = {_canon(m['packageScopedId']) for m in layers[0][1]['interjections']}
     for descriptor, conversation in decoded['conversation']:
         replies = conversation['replies']
         if not 1 <= len(replies) <= MAX_MARGINS * 4:
             _refuse(report, 'invalid-manifest', 'the conversation is empty or too large', descriptor['path'])
         for reply in replies:
-            if (reply.get('packageScopedId') not in scoped or not _is_sha(reply.get('parentPackageDigest'))
+            if (_canon(reply['packageScopedId']) not in scoped or not _is_sha(reply.get('parentPackageDigest'))
                     or not isinstance(reply.get('conversationId'), str) or not 1 <= len(reply['conversationId']) <= 200
                     or not isinstance(reply.get('parentPackageScopedId'), str)
                     or not 1 <= len(reply['parentPackageScopedId']) <= 200):
@@ -989,7 +1027,7 @@ def _check_layer(report, layer, assets_by_id):
     interjections = layer['interjections']
     if not 1 <= len(interjections) <= MAX_MARGINS:
         _refuse(report, 'invalid-manifest', f'the commentary layer needs 1-{MAX_MARGINS} Margins', where)
-    scoped = [m['packageScopedId'] for m in interjections]
+    scoped = [_canon(m['packageScopedId']) for m in interjections]
     if len(set(scoped)) != len(scoped):
         _refuse(report, 'invalid-manifest', 'package-scoped Margin ids are not unique', where)
     for index, margin in enumerate(interjections):
@@ -1002,8 +1040,8 @@ def _check_layer(report, layer, assets_by_id):
         representations = margin['representations']
         start, end = anchor.get('startChar'), anchor.get('endChar')
         bounded = (1 <= character_count(margin['packageScopedId']) <= 200 and representations
-                   and len({r['id'] for r in representations}) == len(representations)
-                   and any(r['id'] == margin['defaultRepresentationId'] for r in representations)
+                   and len({_canon(r['id']) for r in representations}) == len(representations)
+                   and any(_canon(r['id']) == _canon(margin['defaultRepresentationId']) for r in representations)
                    and all(v is None or v >= 0 for v in (start, end, anchor.get('mediaTimeMs')))
                    and (start is None or end is None or end >= start)
                    and _length_ok(anchor.get('exactText'), MAX_EXACT_TEXT)
@@ -1192,7 +1230,7 @@ def _proposal_bounds_problem(proposal, assets_by_id, eligible_needs_summary=Fals
     frozen reader (Packages/SessionKit/Tests/ShippedReader) runs it, with the eligible-summary rule, on every
     proposal as decoded; later readers run it only on what survives forSharing."""
     scenes = proposal['scenes']
-    if (not scenes or character_count(proposal['generator']) > 200 or len({s['id'] for s in scenes}) != len(scenes)
+    if (not scenes or character_count(proposal['generator']) > 200 or len({_canon(s['id']) for s in scenes}) != len(scenes)
             or [s['order'] for s in scenes] != list(range(len(scenes)))):
         return 'Listening Map proposal order is invalid'
     for scene in scenes:
@@ -1306,7 +1344,7 @@ def summarize(manifest, decoded):
     margins = []
     for margin in layer['interjections']:
         anchor = margin['anchor']
-        default = next(r for r in margin['representations'] if r['id'] == margin['defaultRepresentationId'])
+        default = next(r for r in margin['representations'] if _canon(r['id']) == _canon(margin['defaultRepresentationId']))
         margins.append({key: value for key, value in {
             'id': margin['packageScopedId'], 'anchorType': anchor['anchorType'],
             'mediaTimeMs': anchor.get('mediaTimeMs'), 'exactText': anchor.get('exactText'),
