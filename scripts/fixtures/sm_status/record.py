@@ -33,7 +33,8 @@ def trim_body(body, user):
 
 def trim_comment(comment):
     login = (comment.get('user') or {}).get('login') or ''
-    return {'id': comment['id'], 'user': {'login': login}, 'created_at': comment['created_at'],
+    return {'id': comment['id'], 'user': {'login': login}, 'author_association': comment.get('author_association'),
+            'created_at': comment['created_at'],
             'html_url': comment.get('html_url'), 'issue_url': comment.get('issue_url'),
             'body': trim_body(comment.get('body'), login)}
 

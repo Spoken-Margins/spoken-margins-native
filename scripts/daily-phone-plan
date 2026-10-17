@@ -82,7 +82,7 @@ def collect(sha, previous):
         issue = next(issue for issue in pending if issue['number'] == number)
         sources = [(node or {}).get('source') or {} for node in
                    (issue.get('timelineItems') or {}).get('nodes') or []]
-        named = {int(a or b) for comment in (issue.get('comments') or {}).get('nodes') or []
+        named = {int(a or b) for comment in phone.trusted_nodes(issue)
                  for a, b in phone.FIXED_IN.findall(comment.get('body') or '')}
         if not (named & reverted or any(pr.get('number') in reverted for pr in sources)):
             raise RuntimeError(f'previous still-open issue #{number} lost its build evidence')

@@ -52,6 +52,7 @@ NOT_RUN = 'not run: agent-driven journeys (they need an attended session)'
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
+import comment_trust  # noqa: E402  (#1822: whose comments and issues the desk believes)
 import integration_revert as revert  # noqa: E402
 import journey_promotion  # noqa: E402
 import lane_ledger  # noqa: E402
@@ -284,9 +285,6 @@ def dedupe_query(test: str) -> str:
     return 'is:issue is:open "' + re.sub(r'[^A-Za-z0-9_]', '', name) + '"'
 
 
-LISTED_COMMENTS = 100  # `gh issue list --json comments` returns at most this many per issue
-
-
 def find_duplicate(issues: list[dict], tests: list[str],
                    all_comments: Optional[Callable[[int], str]] = None) -> Optional[int]:
     """The first open issue that is a failure report for one of the tests (the report issue never counts).
@@ -295,7 +293,12 @@ def find_duplicate(issues: list[dict], tests: list[str],
     nothing (#1871). An issue is a failure report when it carries `regression` (part of FAIL_LABELS, which
     every filed failure gets) and names the test, or when a "Failing tests:" line in its body or comments
     names the test, as the runs' own issues and an earlier run's comment do. The `regression` label alone is
-    not enough, because a regression about something else may still mention the test in passing."""
+    not enough, because a regression about something else may still mention the test in passing.
+
+    `issues` are REST issue objects, which carry `author_association`, `user.login` and labels; `gh issue list
+    --json` has no association field. Only the team's issues count (#1822), and `all_comments(number)` returns the
+    text of that issue's trusted comments, read only when the title and body don't already settle it and the issue
+    has some."""
     names = [t.rsplit('/', 1)[-1].removesuffix('()') for t in tests]
 
     def names_a_test(text: str) -> bool:
@@ -309,14 +312,12 @@ def find_duplicate(issues: list[dict], tests: list[str],
         return lists_a_failing_test(text) or ('regression' in labels and names_a_test(text))
 
     for issue in issues:
-        if issue['number'] == REPORT_ISSUE:
-            continue
-        comments = issue.get('comments') or []
-        text = '\n'.join([issue.get('title') or '', issue.get('body') or '']
-                         + [c.get('body') or '' for c in comments])
+        if issue['number'] == REPORT_ISSUE or not comment_trust.trusted(issue):
+            continue  # #1822: a stranger's issue naming a test must not swallow the failure report
+        text = '\n'.join([issue.get('title') or '', issue.get('body') or ''])
         if is_failure_report(issue, text):
             return issue['number']
-        if all_comments is not None and len(comments) >= LISTED_COMMENTS:
+        if all_comments is not None and (issue.get('comments') or 0):
             if is_failure_report(issue, text + '\n' + all_comments(issue['number'])):
                 return issue['number']
     return None
@@ -476,8 +477,8 @@ class Ops:
         since = (dt.datetime.now(dt.timezone.utc) - REPORT_LOOKBACK).strftime('%Y-%m-%dT%H:%M:%SZ')
         out = self.must(['gh', 'api', '--paginate',
                          f'repos/{REPO}/issues/{REPORT_ISSUE}/comments?since={since}&per_page=100',
-                         '--jq', '.[] | {created_at, body} | @json']).stdout
-        return [json.loads(line) for line in out.splitlines() if line.strip()]
+                         '--jq', '.[] | {created_at, body, author_association, user: {login: .user.login}} | @json']).stdout
+        return comment_trust.trusted_only([json.loads(line) for line in out.splitlines() if line.strip()])
 
     def lane_waiting(self) -> list[int]:
         """PRs whose waiting /lane request needs the simulator. A GitHub error counts as none
@@ -486,9 +487,9 @@ class Ops:
             runs = self.gh_json(['run', 'list', '-R', REPO, '--workflow', 'lane.yml', '--limit', '50',
                                  '--json', 'status,displayTitle'])
             return [n for n in lane_requests_waiting(runs or [])
-                    if needs_simulator(json.loads(self.must(
+                    if needs_simulator([c.get('body') or '' for c in comment_trust.trusted_only(json.loads(self.must(
                         ['gh', 'api', '--paginate', f'repos/{REPO}/issues/{n}/comments',
-                         '--jq', '[.[].body]']).stdout or '[]'))]
+                         '--jq', '[.[] | {body, author_association, user: {login: .user.login}}]']).stdout or '[]'))])]
         except (RuntimeError, ValueError) as error:
             self.log('lane queue unreadable, not waiting for it: ' + str(error)[:200])
             return []
@@ -659,8 +660,16 @@ class Ops:
             git('branch', '-D', branch)
 
     def issue_comments(self, number: int) -> str:
-        return self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
-                          '--jq', '.[].body']).stdout or ''
+        out = self.must(['gh', 'api', '--paginate', f'repos/{REPO}/issues/{number}/comments',
+                         '--jq', '.[] | {body, author_association, user: {login: .user.login}} | @json']).stdout or ''
+        return '\n'.join(c.get('body') or '' for c in comment_trust.trusted_only(
+            [json.loads(line) for line in out.splitlines() if line.strip()]))
+
+    def open_issues_matching(self, test: str) -> list[dict]:
+        """Open issues GitHub's search ties to the test, as REST objects (they carry author_association)."""
+        out = self.must(['gh', 'api', '-X', 'GET', 'search/issues', '-f', f'q=repo:{REPO} {dedupe_query(test)}',
+                         '-f', 'per_page=100', '--jq', '.items[] | @json']).stdout or ''
+        return [json.loads(line) for line in out.splitlines() if line.strip()]
 
     def file_failures(self, groups: list[dict], sha: str, report: str, evidence: Path,
                       cost: Optional[float]) -> list[int]:
@@ -668,9 +677,7 @@ class Ops:
         for i, group in enumerate(groups):
             duplicate = None
             for test in group['tests']:
-                issues = self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
-                                       '--search', dedupe_query(test), '--limit', '100',
-                                       '--json', 'number,title,body,comments,labels'])
+                issues = self.open_issues_matching(test)
                 duplicate = find_duplicate(issues, [test], self.issue_comments)
                 if duplicate is not None:
                     break
