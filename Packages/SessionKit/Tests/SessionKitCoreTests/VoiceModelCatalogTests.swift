@@ -35,13 +35,13 @@ final class VoiceModelCatalogTests: XCTestCase {
 
     /// The private half of the test key, derived the way scripts/voice_catalog_tools.py derives it, so a
     /// test can sign a catalog it built. It signs nothing real.
-    private func testSigningKey() throws -> Curve25519.Signing.PrivateKey {
+    private func fixtureSigningKey() throws -> Curve25519.Signing.PrivateKey {
         let seed = Data(SHA256.hash(data: Data("spoken-margins voice-model-catalog test key".utf8)))
         return try Curve25519.Signing.PrivateKey(rawRepresentation: seed)
     }
 
     private func signedEnvelope(_ payload: Data, keyId: String = "sm-test-1", context: Data = VoiceModelCatalogVerifier.signingContext) throws -> Data {
-        let signature = try testSigningKey().signature(for: context + payload)
+        let signature = try fixtureSigningKey().signature(for: context + payload)
         let envelope = VoiceModelCatalogEnvelope(keyId: keyId, payload: payload.base64EncodedString(), signature: Data(signature).base64EncodedString())
         return try JSONEncoder().encode(envelope)
     }
@@ -65,7 +65,7 @@ final class VoiceModelCatalogTests: XCTestCase {
 
     func testTheTestKeyInTheFixturesIsTheOneThePythonToolSigns() throws {
         let published = try trustedKeys()[0].publicKey
-        XCTAssertEqual(try testSigningKey().publicKey.rawRepresentation, published)
+        XCTAssertEqual(try fixtureSigningKey().publicKey.rawRepresentation, published)
     }
 
     func testEveryFixtureDecodes() throws {
