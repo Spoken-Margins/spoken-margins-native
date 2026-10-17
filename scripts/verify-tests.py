@@ -526,8 +526,9 @@ def settle_before_tests(udid, sleep=time.sleep):
 # test command once more inside the same budget. The retry runs the same real tests; nothing is skipped or widened.
 STARTUP_STALL_SECONDS = 90
 STARTUP_RETRIES = 1
-# A simulator wedged at launch can leave `simctl terminate` hanging too (#1807).
-TERMINATE_TIMEOUT_SECONDS = 60
+# A simulator wedged at launch can leave `simctl terminate` hanging too (#1807). It normally returns at once,
+# so a short wait keeps the retry inside the step's budget.
+TERMINATE_TIMEOUT_SECONDS = 20
 TESTS_STARTED = re.compile(r"^Test (?:Suite|Case) '", re.M)
 
 
