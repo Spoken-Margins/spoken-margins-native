@@ -192,6 +192,33 @@ final class LocalInterjectionPromptsTests: XCTestCase {
         }
     }
 
+    func testEachSafetyTermBecomesItsOwnExactStandIn() {
+        // The round trip above can hide a deleted rule behind a neighbouring one ("cheating" would still come back
+        // through the "cheat" rule), so the stand-ins themselves are pinned.
+        let standIns: [String: String] = [
+            "zero-day": "verified issue Z",
+            "security vulnerability": "verified system issue",
+            "break the law": "violate a hard constraint",
+            "do anything illegal": "violate a hard constraint",
+            "cheating": "violating requirements",
+            "cheat": "violate requirements",
+            "misalignment": "goal drift",
+            "super malicious": "strategically deceptive"
+        ]
+        for (spoken, standIn) in standIns {
+            XCTAssertEqual(LocalInterjectionSafetyTerms.modelSafeInterjectionText(spoken), standIn, spoken)
+        }
+        XCTAssertEqual(LocalInterjectionSafetyTerms.modelSafeInterjectionText("0day and zeroday"), "verified issue Z and verified issue Z")
+        XCTAssertEqual(LocalInterjectionSafetyTerms.modelSafeInterjectionText("Well, bullshit, fuck it."), "Well, , .")
+    }
+
+    func testDictationRepairsReachTheModelAndTheRestoreAcceptsTheModelsOwnWording() {
+        XCTAssertEqual(LocalInterjectionSafetyTerms.modelSafeInterjectionText("We do the land at this tiny land."), "We do alignment at this tiny lab.")
+        XCTAssertEqual(LocalInterjectionSafetyTerms.restoreSafetyTerms(in: "A requirements violation, two requirements violations."), "A cheating, two cheating.")
+        XCTAssertEqual(LocalInterjectionSafetyTerms.restoreSafetyTerms(in: "Do not violate requirements."), "Do not cheat.")
+        XCTAssertEqual(LocalInterjectionSafetyTerms.restoreSafetyTerms(in: "Verified Issue Z and GOAL DRIFT"), "zero-day and misalignment")
+    }
+
     func testTheSafetyStandInsForSeveralSpokenFormsAreRestoredToOneCanonicalTerm() {
         XCTAssertEqual(
             LocalInterjectionSafetyTerms.modelSafeInterjectionText("misaligned"),

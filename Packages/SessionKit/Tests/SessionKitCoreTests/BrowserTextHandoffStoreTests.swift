@@ -88,7 +88,7 @@ final class BrowserTextHandoffStoreTests: XCTestCase {
 
     func testTheStoreDropsTheDocumentStructureOnPurposeBecauseOnlyTheSafariAndShortcutsPayloadsUseIt() throws {
         // PDF structure travels with the in-process import (`importBrowserTextInBackground(_:structuredDocument:)`), never
-        // through this store, whose writers are the Safari extension and the Add Article shortcut. If a writer
+        // through this store, whose writers are the Add Article shortcut and the Safari and share extensions' own JSON. If a writer
         // ever needs it here, `BrowserTextPayload` must carry it and this test changes with it.
         let structure = PDFDocumentStructure(
             extractionEngine: .pdfKit, analysisStatus: .complete, pageCount: 3, analyzedPageCount: 3
