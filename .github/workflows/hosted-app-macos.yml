@@ -5,6 +5,8 @@
 # Draft, started by hand only. The private repo's free minutes are spent and spending money needs the
 # owner. Once the repo is public, standard hosted runners are free; the PR that wires this to pull
 # requests or the lane's labels is a separate change, after a measured first run (#1389).
+# GitHub offers workflow_dispatch only for a workflow file that is on the default branch (main). Until
+# the owner moves main past this file, `gh workflow run <file> --ref next` is likely to be refused.
 #
 # Image and Xcode: #1384's benchmark ran on `xcode-27` (image xcode-27-arm64, Xcode 27.0 default) and
 # `macos-26` (Xcode 26.6). This repo builds with Xcode 27 and its iOS 27 SDK (docs/testing.md) and the lane
