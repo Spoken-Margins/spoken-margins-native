@@ -44,7 +44,7 @@
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "optionalSHA256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
-    "httpsURL": { "type": "string", "pattern": "^[hH][tT][tT][pP][sS]://[^\\s<>@/]+(/[^\\s<>]*)?$" },
+    "httpsURL": { "type": "string", "pattern": "^[hH][tT][tT][pP][sS]://[^\\s<>@/?#]+([/?#][^\\s<>]*)?$" },
     "optionalHTTPSURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
     "optionalText": { "type": ["string", "null"] },
     "item": {
@@ -105,7 +105,7 @@
         "id": { "type": "string", "minLength": 1 },
         "kind": { "type": "string", "minLength": 1 },
         "schemaVersion": { "type": "string", "minLength": 1 },
-        "path": { "type": "string", "pattern": "^artifacts/[A-Za-z0-9._-]+\\.json$" },
+        "path": { "type": "string", "pattern": "^artifacts/(?!.*\\.\\.)[^/\\\\\\s]+\\.json$" },
         "required": { "type": "boolean" },
         "byteCount": { "type": "integer", "minimum": 0, "maximum": 5242880 },
         "sha256": { "$ref": "#/$defs/sha256" }
@@ -120,7 +120,7 @@
         "role": { "type": "string", "minLength": 1 },
         "path": {
           "type": "string",
-          "pattern": "^assets/(audio/[A-Za-z0-9._-]+\\.m4a|evidence/[A-Za-z0-9._-]+\\.shazamsignature)$"
+          "pattern": "^assets/(?!.*\\.\\.)(audio/[^/\\\\\\s]+\\.m4a|evidence/[^/\\\\\\s]+\\.shazamsignature)$"
         },
         "mimeType": { "type": "string", "minLength": 1 },
         "durationMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 600000 },

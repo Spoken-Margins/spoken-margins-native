@@ -49,10 +49,13 @@ A packet is a zip holding `manifest.json`, `preview.md`, `artifacts/<name>.json`
 The Swift reader in `Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift` stays the authority. This reader leaves to it:
 
 - decoding voice audio (it only looks for an MPEG-4 `ftyp` box) and parsing acoustic signatures;
-- the Listening Map quotation rule (`PortableListeningMapContract`) on non-ASCII text, where Python splits words and counts characters differently (it warns `not-checked` instead), and the bounds inside fingerprint spines and phrase sketches;
+- the Listening Map quotation rule (`PortableListeningMapContract`) when it turns on non-ASCII text, where Python splits words differently (it warns `not-checked` instead; a text under ten words, or a scene with no source of ten words, needs no guess), and the bounds inside fingerprint spines and phrase sketches (their field types are checked);
+- URL syntax beyond the scheme, host and user name (Foundation's `URLComponents`), and the range of the fields inside a date (the shape is checked);
 - the normalized-content hash of non-ASCII text, which depends on Foundation's case and diacritic folding (it warns instead).
 
-It counts characters as grapheme clusters only approximately, which matters only for limits and the preview of unusual text.
+It counts characters as extended grapheme clusters (UAX #29, with the Indic conjunct rule of Unicode 15.1) from its own property ranges, since Python has no segmenter; the emoji ranges are the common ones, so a rare symbol may count differently. That matters only for the limits and the character count in the preview.
+
+How it decides that a field decodes: `SWIFT_TYPES` in the reader lists the stored properties of every Swift type a shipped reader decodes, with the Swift type of each, and one function (`decode_problem`) reads that table for the manifest and every artifact. `scripts/validate-contracts.py` compares the table with the Swift structs and enums in the app and in Build 29's frozen reader, so a field with a type the table gets wrong, or lacks, fails the fast plan. Asset ids and file names use Swift's `CharacterSet.alphanumerics` (letters, marks and numbers of any script), and an archive entry must be a regular file, as ZIPFoundation reports it: a symlink at an allowed path is refused.
 
 Listening Map proposals pass through `PortableListeningMapContract.forSharing` first, as in the Swift reader: summaries on excluded and unknown scenes are stripped, and a proposal that still breaks a scene rule is left out while its Margins import (warning `proposal-dropped`). Only a proposal that survives meets the order, bounds and summary-asset checks that refuse a packet. Build 29 has no `forSharing` step and refuses some packets that Build 30 and later import; the reader reports those as `older-reader-refuses`, so `--strict` fails them.
 

@@ -419,8 +419,8 @@ def _manifest_problems(name, manifest):
                 descriptor.get('schemaVersion') != COMMENTARY_CAPABILITY or descriptor.get('required') is not True):
             problems.append(f'{name}: the commentary layer must be required and use {COMMENTARY_CAPABILITY}')
     # Packages/SessionKit SpokenMarginsPackageArchive.requireDistinctDescriptors (newer builds): two assets whose
-    # ids differ only by case or by characters outside letters, digits and `._-` would extract to one file.
-    extracted = [(re.sub(r'[^A-Za-z0-9._-]', '-', str(a.get('id'))) + Path(str(a.get('path'))).suffix).lower() for a in assets]
+    # ids differ only by case or by characters that aren't letters, digits (in any script) or `._-` would extract to one file.
+    extracted = [_format.staged_file_name(a).lower() for a in assets]
     if len(set(extracted)) != len(extracted):
         problems.append(f'{name}: two assets would extract to the same file name')
     ids = [a.get('id') for a in artifacts + assets]

@@ -8,6 +8,7 @@ import contextlib
 import importlib.util
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -408,7 +409,21 @@ class ListeningMapProposalTests(unittest.TestCase):
             ('a summary quoting non-ASCII text', lambda s: s[1].update(
                 summaryText='caf\u00e9 ' + self.QUOTE, startAnchor=self.media(60_000, exactText='caf\u00e9 ' + self.QUOTE)),
              (), 'valid not-checked'),
+            # Claude audit on 746d96f: a quotation needs ten words, so non-ASCII text under that needs no guess.
+            ('a non-ASCII title, orders reversed', lambda s: (s[1].update(title='Caf\u00e9 talk'), s[0].update(order=1),
+                                                             s[1].update(order=0)), (), 'invalid-manifest'),
+            ('a curly apostrophe in the summary, orders reversed', lambda s: (
+                s[1].update(summaryText='It\u2019s a summary \u2014 written for this test.'), s[0].update(order=1),
+                s[1].update(order=0)), (), 'invalid-manifest'),
+            ('a non-ASCII summary under ten words', lambda s: s[1].update(summaryText='Un r\u00e9sum\u00e9 \u00e9crit.'), (),
+             'valid'),
+            ('a non-ASCII anchor quote of ten words, no scene text to quote it', lambda s: s[1].update(
+                startAnchor=self.media(60_000, exactText='caf\u00e9 ' + self.QUOTE)), (), 'valid'),
+            ('a non-ASCII title that could quote an ASCII anchor, orders reversed', lambda s: (
+                s[1].update(title='caf\u00e9 ' + self.QUOTE, startAnchor=self.media(60_000, exactText=self.QUOTE)),
+                s[0].update(order=1), s[1].update(order=0)), (), 'valid not-checked older-reader-refuses'),
             ('a scene that does not decode', lambda s: s[1].update(eligibility='maybe'), (), 'invalid-manifest'),
+            ('a scene order that is text', lambda s: s[1].update(order='1'), (), 'invalid-manifest'),
             ('a scene that is not an object', lambda s: s.append('scene'), (), 'invalid-manifest'),
         ]
         for label, change, assets, expected in cases:
@@ -434,6 +449,269 @@ class ListeningMapProposalTests(unittest.TestCase):
                            'startAnchor': {'anchorType': 'text', 'startChar': start, 'machineEvidenceAssetIds': []},
                            'endAnchor': {'anchorType': 'text', 'endChar': end, 'machineEvidenceAssetIds': []}}]
                 self.assertEqual(self.outcome(scenes), expected)
+
+
+class DecodeTests(unittest.TestCase):
+    """Claude audit on 746d96f: a `createdAt` that isn't a date passed in a Margin and in a proposal. The class is a
+    field whose Swift type the reader checked weaker than Swift decodes it, so every field of every Codable type is
+    tried here, from the one table (fmt.SWIFT_TYPES) that decode_problem reads."""
+
+    DATE = '2026-10-17T12:00:00Z'
+
+    def sample(self, swift_type, owner=None):
+        optional = swift_type.endswith('?')
+        base = swift_type[:-1] if optional else swift_type
+        if base.startswith('['):
+            return [self.sample(base[1:-1], owner)]
+        simple = {'String': 'x', 'Int': 1, 'Bool': True, 'Date': self.DATE}
+        if base in simple:
+            return simple[base]
+        key = fmt._swift_type(base, owner)
+        if key in fmt.SWIFT_ENUMS:
+            return sorted(fmt.SWIFT_ENUMS[key])[0]
+        return {name: self.sample(kind, key) for name, kind in fmt.SWIFT_TYPES[key].items()}
+
+    WRONG = {
+        'String': [5, True, [], {}], 'Int': ['5', 1.5, True, 2 ** 63, []], 'Bool': [1, 'true', []],
+        'Date': ['October 9', 5, '2026-10-17', '2026-10-17T12:00:00', True],
+    }
+
+    def test_every_field_of_every_type_is_checked_as_swift_decodes_it(self):
+        for type_name, fields in fmt.SWIFT_TYPES.items():
+            self.assertIsNone(fmt.decode_problem(self.sample(type_name), type_name), type_name)
+            for field, swift_type in fields.items():
+                optional = swift_type.endswith('?')
+                base = swift_type.rstrip('?')
+                wrong = list(self.WRONG.get(base, []))
+                if base.startswith('['):
+                    wrong += ['x', 5, {}]
+                elif base not in self.WRONG:
+                    key = fmt._swift_type(base, type_name)
+                    wrong += ['nope', 5, []] if key in fmt.SWIFT_ENUMS else ['x', 5, []]
+                for label, value in [('missing', fmt.decode_problem), ('null', fmt.decode_problem)][:0]:
+                    pass
+                with self.subTest(type=type_name, field=field):
+                    document = self.sample(type_name)
+                    del document[field]
+                    self.assertEqual(fmt.decode_problem(document, type_name) is None, optional, 'missing')
+                    document[field] = None
+                    self.assertEqual(fmt.decode_problem(document, type_name) is None, optional, 'null')
+                    for value in wrong:
+                        document[field] = value
+                        self.assertIsNotNone(fmt.decode_problem(document, type_name), f'{value!r}')
+                    document[field] = self.sample(swift_type, type_name)
+                    self.assertIsNone(fmt.decode_problem(document, type_name))
+
+    def test_every_swift_date_is_a_date_in_the_table(self):
+        structs, _, _ = contracts.swift_declarations(contracts.SWIFT_SOURCES)
+        for type_name, fields in fmt.SWIFT_TYPES.items():
+            for field, swift_type in structs[type_name].items():
+                if swift_type.rstrip('?') == 'Date':
+                    self.assertEqual(fields[field], swift_type, f'{type_name}.{field}')
+
+    def test_a_table_that_drifts_from_the_swift_structs_is_caught(self):
+        self.assertEqual(contracts.codable_problems(fmt), [])
+        drifted = load('spoken_margins_format_types', READER_PATH)
+        drifted.SWIFT_TYPES = {**drifted.SWIFT_TYPES, 'EditionFingerprintSpineArtifact': {
+            **drifted.SWIFT_TYPES['EditionFingerprintSpineArtifact'], 'createdAt': 'String'}}
+        drifted.SWIFT_ENUMS = {**drifted.SWIFT_ENUMS, 'AnchorType': frozenset({'text'})}
+        problems = contracts.codable_problems(drifted)
+        self.assertTrue(any('EditionFingerprintSpineArtifact differs' in p and 'createdAt' in p for p in problems), problems)
+        self.assertTrue(any('AnchorType values differ' in p for p in problems), problems)
+
+    def packet_with(self, kind, document, required=False):
+        manifest, artifacts, assets = example('podcast-reference.spokenmargins')
+        manifest = json.loads(json.dumps(manifest))
+        path = f'artifacts/{kind}.json'
+        version = fmt.ARTIFACT_VERSIONS[kind]
+        manifest['artifacts'].append({'id': document['id'], 'kind': kind, 'path': path, 'required': required,
+                                      'schemaVersion': version})
+        artifacts = {**artifacts, path: fmt.encode_manifest({**document, 'schemaVersion': version})}
+        return fmt.write_packet(manifest, artifacts, assets)
+
+    def test_a_date_that_is_not_a_date_refuses_the_packet_wherever_it_sits(self):
+        spine = {'id': 'spine', 'itemId': 'i', 'createdAt': self.DATE, 'generatorVersion': 'g', 'landmarks': []}
+        sketch = {'id': 'sketch', 'itemId': 'i', 'saltBase64': 'AA==', 'normalizationVersion': 'v', 'shingleWidth': 3,
+                  'maximumHashesPerWindow': 24, 'createdAt': self.DATE, 'windows': []}
+        for kind, document in [('edition_fingerprint_spine', spine), ('transcript_phrase_sketch', sketch)]:
+            with self.subTest(kind):
+                self.assertEqual(verdict(self.packet_with(kind, document)), 'valid')
+                self.assertEqual(verdict(self.packet_with(kind, {**document, 'createdAt': 'October 9'})),
+                                 'invalid-manifest')
+                self.assertEqual(verdict(self.packet_with(kind, {**document, 'createdAt': None})), 'invalid-manifest')
+        landmark = {'id': 'l', 'order': 0, 'sourceMediaStartMs': 0, 'sourceMediaEndMs': 10, 'anchorMediaTimeMs': 5,
+                    'continuityEpoch': 0, 'trigger': 'initial_playback', 'provenance': 'observed_decoded_playback',
+                    'signatureAssetId': 'sig', 'generatorVersion': 'g'}
+        self.assertEqual(verdict(self.packet_with('edition_fingerprint_spine', {**spine, 'landmarks': [landmark]})), 'valid')
+        for change in [{'trigger': 'sometimes'}, {'order': '0'}, {'signatureAssetId': None}]:
+            with self.subTest(landmark=change):
+                self.assertEqual(verdict(self.packet_with('edition_fingerprint_spine', {
+                    **spine, 'landmarks': [{**landmark, **change}]})), 'invalid-manifest')
+
+    def test_a_margin_and_a_proposal_need_a_real_date(self):
+        manifest, artifacts, assets = example('podcast-reference.spokenmargins')
+        path = 'artifacts/commentary-layer.json'
+        layer = json.loads(artifacts[path])
+        for value in ['October 9', '2026-10-17', 12, None]:
+            with self.subTest(createdAt=value):
+                changed = json.loads(json.dumps(layer))
+                changed['interjections'][0]['createdAt'] = value
+                packet = fmt.write_packet(manifest, {**artifacts, path: fmt.encode_manifest(changed)}, assets)
+                self.assertEqual(verdict(packet), 'invalid-manifest')
+        for value in ['2026-10-17T12:00:00Z', '2026-10-17T12:00:00.250+02:00']:
+            with self.subTest(createdAt=value):
+                changed = json.loads(json.dumps(layer))
+                changed['interjections'][0]['createdAt'] = value
+                packet = fmt.write_packet(manifest, {**artifacts, path: fmt.encode_manifest(changed)}, assets)
+                self.assertEqual(verdict(packet), 'valid')
+
+    def test_conversation_and_embedded_text_decode_like_swift(self):
+        base = fmt.unpack((EXAMPLES / 'article-embedded-text.spokenmargins').read_bytes())
+        embedded_path = 'artifacts/embedded-item.json'
+        for change in [{'text': 5}, {'originalMediaType': None}, {'id': 7}]:
+            with self.subTest(change):
+                artifacts = {**base[1], embedded_path: fmt.encode_manifest({**json.loads(base[1][embedded_path]), **change})}
+                self.assertIn(verdict(fmt.write_packet(base[0], artifacts, base[2])),
+                              {'invalid-manifest', 'transport-inconsistent'})
+        manifest, artifacts, assets = example('podcast-reference.spokenmargins')
+        scoped = json.loads(artifacts['artifacts/commentary-layer.json'])['interjections'][0]['packageScopedId']
+        reply = {'packageScopedId': scoped, 'conversationId': 'c', 'parentPackageDigest': 'a' * 64,
+                 'parentPackageScopedId': 'p'}
+        for change, expected in [({}, 'valid'), ({'conversationId': 5}, 'invalid-manifest'),
+                                 ({'parentPackageDigest': None}, 'invalid-manifest')]:
+            with self.subTest(reply=change):
+                packet = self.packet_with('conversation', {'id': 'conversation', 'replies': [{**reply, **change}]})
+                self.assertEqual(verdict(packet), expected)
+
+
+class SwiftTextRuleTests(unittest.TestCase):
+    """The same class one level down: where this reader approximates a Swift character rule by hand."""
+
+    def setUp(self):
+        self.manifest, self.artifacts, self.assets = example('podcast-reference.spokenmargins')
+        self.path = 'artifacts/commentary-layer.json'
+
+    def with_transcript(self, text):
+        layer = json.loads(self.artifacts[self.path])
+        layer['interjections'][0]['representations'][0]['approvedTranscript'] = text
+        return fmt.write_packet(self.manifest, {**self.artifacts, self.path: fmt.encode_manifest(layer)}, self.assets)
+
+    def test_whitespace_is_what_whitespaces_and_newlines_says(self):
+        for label, text, expected in [
+            ('empty after trimming: spaces, tab, no-break space, line separator', ' \t\u00a0\u2028\r\n', 'invalid-manifest'),
+            ('U+001C is not whitespace to Swift', '\x1c', 'valid'),
+            ('text', 'hello', 'valid'),
+        ]:
+            with self.subTest(label):
+                self.assertEqual(verdict(self.with_transcript(text)), expected)
+        self.assertEqual(fmt.swift_split(' a\x1cb \u00a0 c\n'), ['a\x1cb', 'c'])
+
+    def test_file_names_use_alphanumerics_of_any_script(self):
+        for path, expected in [
+            ('assets/audio/caf\u00e9.m4a', True), ('assets/audio/\u65e5\u672c.m4a', True),
+            ('assets/audio/caf\u0301.m4a', True), ('assets/audio/a b.m4a', False), ('assets/audio/a..m4a', False),
+            ('assets/audio/a\u2014b.m4a', False), ('assets/audio/a.mp3', False), ('assets/evidence/\u00e9.shazamsignature', True),
+            ('artifacts/caf\u00e9.json', True), ('artifacts/a/b.json', False),
+        ]:
+            with self.subTest(path):
+                self.assertEqual(fmt.allowed_package_path(path), expected)
+
+    def test_assets_that_extract_to_one_file(self):
+        def clash(first, second):
+            return fmt.staged_file_name({'id': first, 'path': 'assets/audio/x.m4a'}).lower() == \
+                fmt.staged_file_name({'id': second, 'path': 'assets/audio/y.m4a'}).lower()
+        self.assertFalse(clash('caf\u00e9', 'caf-'))
+        self.assertTrue(clash('voice/a', 'voice?a'))
+        self.assertTrue(clash('A', 'a'))
+        self.assertTrue(clash('a b', 'a-b'))
+
+    def test_a_non_ascii_asset_id_is_not_a_collision(self):
+        manifest = json.loads(json.dumps(self.manifest))
+        layer = json.loads(self.artifacts[self.path])
+        manifest['assets'] = [
+            {'id': f'v-{name}', 'mimeType': 'audio/mp4', 'path': f'assets/audio/{name}.m4a',
+             'provenance': 'sender_approved_original', 'role': 'original_voice'} for name in ('caf\u00e9', 'caf-')]
+        assets = {f'assets/audio/{name}.m4a': b'\0\0\0\x18ftypM4A ' + b'\0' * 64 for name in ('caf\u00e9', 'caf-')}
+        self.assertEqual(verdict(fmt.write_packet(manifest, self.artifacts, assets)), 'valid')
+        manifest['assets'][0]['id'] = 'v-caf?'
+        manifest['assets'][1]['id'] = 'v-caf-'
+        self.assertEqual(verdict(fmt.write_packet(manifest, self.artifacts, assets)), 'invalid-manifest')
+        del layer
+
+    def test_only_regular_files_are_read(self):
+        entries = []
+        with zipfile.ZipFile(io.BytesIO(fmt.write_packet(self.manifest, self.artifacts, self.assets))) as archive:
+            entries = [(info.filename, archive.read(info)) for info in archive.infolist()]
+
+        def rebuild(mode, system=3, name=None):
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(buffer, 'w') as archive:
+                for entry, body in entries:
+                    info = zipfile.ZipInfo(entry, fmt.FIXED_ZIP_DATE)
+                    info.create_system = system
+                    info.external_attr = (mode << 16) if entry == (name or 'preview.md') else (0o100644 << 16)
+                    archive.writestr(info, body)
+            return buffer.getvalue()
+        for label, data, expected in [
+            ('a regular file', rebuild(0o100644), 'valid'),
+            ('a symlink', rebuild(0o120777), 'unsafe-entry'),
+            ('a symlink made on macOS', rebuild(0o120755, system=19), 'unsafe-entry'),
+            ('a symlink where the host is MS-DOS', rebuild(0o120777, system=0), 'valid'),
+            ('a directory mode', rebuild(0o040755), 'unsafe-entry'),
+            ('an unusual mode reads as a file', rebuild(0o010644), 'valid'),
+        ]:
+            with self.subTest(label):
+                self.assertEqual(verdict(data), expected)
+
+    def test_crlf_text_counts_as_swift_counts_it(self):
+        base = fmt.unpack((EXAMPLES / 'article-embedded-text.spokenmargins').read_bytes())
+        manifest, artifacts, assets = json.loads(json.dumps(base[0])), dict(base[1]), dict(base[2])
+        path = 'artifacts/embedded-item.json'
+        text = 'First line.\r\nSecond line, a \U0001f1fa\U0001f1f8 flag.\r\nThird.'
+        artifacts[path] = fmt.encode_manifest({**json.loads(artifacts[path]), 'text': text})
+        manifest['item']['exactEditionSHA256'] = fmt.exact_edition_sha256(text)
+        manifest['item']['normalizedContentSHA256'] = fmt.normalized_content_sha256(text)
+        report = fmt.read_packet(fmt.write_packet(manifest, artifacts, assets))
+        self.assertEqual([e.code for e in report.errors], [])
+        self.assertIn('(48 characters)', fmt.preview_markdown(
+            manifest, json.loads(artifacts['artifacts/commentary-layer.json'])['interjections'], embedded_text=text) )
+
+    def test_a_character_is_a_grapheme_cluster(self):
+        for text, expected in [
+            ('a\r\nb', 3), ('\r\n\r\n', 2), ('\U0001f1fa\U0001f1f8', 1), ('\U0001f1fa\U0001f1f8\U0001f1eb\U0001f1f7', 2),
+            ('\U0001f1fa\U0001f1f8\U0001f1eb', 2), ('\U0001f468\u200d\U0001f469\u200d\U0001f467\u200d\U0001f466', 1),
+            ('\U0001f44d\U0001f3fd', 1), ('e\u0301', 1), ('\u1100\u1161\u11a8', 1), ('\u0928\u092e\u0938\u094d\u0924\u0947', 3),
+            ('\u2764\ufe0f', 1), ('a\u200db', 2), ('\u65e5\u672c', 2),
+        ]:
+            with self.subTest(text):
+                self.assertEqual(fmt.character_count(text), expected)
+
+
+class SchemaPatternTests(unittest.TestCase):
+    """The package schema's patterns say what the reader says about links and paths."""
+
+    @classmethod
+    def setUpClass(cls):
+        schema = json.loads((ROOT / 'Contracts' / 'schemas' / 'spoken-margins-package.schema.json').read_text())
+        defs = schema['$defs']
+        cls.link = re.compile(defs['httpsURL']['pattern'])
+        cls.artifact = re.compile(defs['artifact']['properties']['path']['pattern'])
+        cls.asset = re.compile(defs['asset']['properties']['path']['pattern'])
+
+    def test_links_agree_with_the_reader(self):
+        for value in ['https://example.com/a', 'https://example.com', 'https://example.com?ref=a@b',
+                      'https://example.com#frag', 'https://example.com/a?b=c@d', 'https://user@example.com/a',
+                      'https://user:pw@example.com', 'http://example.com', 'https://example.com/a b', 'https:///a']:
+            with self.subTest(value):
+                self.assertEqual(bool(self.link.search(value)), fmt.is_https_url(value))
+
+    def test_paths_agree_with_the_reader(self):
+        for path in ['artifacts/layer.json', 'artifacts/caf\u00e9.json', 'artifacts/a..json', 'artifacts/a b.json',
+                     'artifacts/a/b.json', 'assets/audio/caf\u00e9.m4a', 'assets/audio/a.m4a', 'assets/evidence/e.shazamsignature',
+                     'assets/audio/a.mp3', 'assets/other/a.m4a']:
+            with self.subTest(path):
+                pattern = self.artifact if path.startswith('artifacts/') else self.asset
+                self.assertEqual(bool(pattern.search(path)), fmt.allowed_package_path(path))
 
 
 class LinkTests(unittest.TestCase):
@@ -564,13 +842,6 @@ class CommandLineTests(unittest.TestCase):
         self.assertEqual(listed[0]['findings'][0]['code'], 'digest-mismatch')
         inspected = json.loads(self.run_cli('inspect', good).stdout)
         self.assertEqual(len(inspected['summary']['margins']), 2)
-
-
-class CharacterCountTests(unittest.TestCase):
-    def test_grapheme_approximation(self):
-        for text, expected in [('abc', 3), ('é', 1), ('👍🏽', 1), ('👩‍💻', 1), ('', 0)]:
-            with self.subTest(text):
-                self.assertEqual(fmt.character_count(text), expected)
 
 
 if __name__ == '__main__':

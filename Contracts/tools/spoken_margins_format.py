@@ -117,6 +117,112 @@ REPRESENTATION_PROVENANCE = frozenset({'sender_approved_original', 'deterministi
 ROLE_SIGNATURE = 'acoustic_signature'
 ROLE_SUMMARY_VOICE = 'summary_voice'
 SIGNATURE_MIME_TYPE = 'application/vnd.apple.shazam.signature'
+SCENE_ELIGIBILITY = frozenset({'eligible', 'excluded', 'unknown'})
+SUMMARY_PROVENANCE = frozenset({'publisher_supplied', 'sender_authored', 'deterministic', 'model_generated'})
+FINGERPRINT_TRIGGERS = frozenset({'initial_playback', 'periodic_playback', 'pre_interjection',
+                                  'post_interjection_resume', 'stable_post_seek', 'downloaded_preparation'})
+FINGERPRINT_PROVENANCE = frozenset({'observed_decoded_playback', 'source_window_reference',
+                                    'downloaded_source_reference'})
+
+# The stored properties of every Swift Codable type a shipped reader decodes, each with the type Swift gives it
+# (`T?` is optional, `[T]` a list). The synthesized Codable decoder needs each non-optional key present with
+# that type, so decode_problem() reads this table and nothing else: a field that the table gets wrong, or leaves
+# out, is checked wrongly everywhere. scripts/validate-contracts.py compares the table, name for name and type for
+# type, with the Swift structs in the app and in Build 29's frozen copy, so it cannot drift unseen.
+# (A type `T` nested in a struct `S` is `S.T` here and in SWIFT_ENUMS, and `S`'s own properties spell it `T`.)
+SWIFT_TYPES = {
+    'SpokenMarginsPackageManifest': {
+        'schemaVersion': 'String', 'packageId': 'String', 'createdAt': 'Date', 'contentDigest': 'String?',
+        'item': 'SharedItemIdentity', 'itemTransport': 'SharedItemTransport', 'senderDisplayLabel': 'String?',
+        'suggestedRevealMode': 'ImportedCommentaryRevealMode?', 'requiredCapabilities': '[String]',
+        'artifacts': '[SpokenMarginsArtifactDescriptor]', 'assets': '[SpokenMarginsAssetDescriptor]',
+        'redactions': 'InterjectionPackageRedactions'},
+    'SharedItemIdentity': {
+        'itemType': 'SharedItemType', 'canonicalURL': 'String?', 'originalURL': 'String?', 'title': 'String',
+        'author': 'String?', 'publisher': 'String?', 'showTitle': 'String?', 'episodeGUID': 'String?',
+        'enclosureURL': 'String?', 'publishedAt': 'String?', 'durationMs': 'Int?',
+        'normalizedContentSHA256': 'String?', 'exactEditionSHA256': 'String?', 'languageCode': 'String?',
+        'source': 'SharedSourceIdentity?'},
+    'SharedSourceIdentity': {
+        'sourceType': 'SourceType', 'canonicalURL': 'String', 'title': 'String?', 'publisher': 'String?'},
+    'SharedItemTransport': {
+        'kind': 'SharedItemTransportKind', 'embeddedArtifactId': 'String?', 'rightsBasis': 'SharedItemRightsBasis?'},
+    'InterjectionPackageRedactions': {
+        'rawAudioOmitted': 'Bool', 'rawTranscriptOmitted': 'Bool', 'fullItemOmitted': 'Bool',
+        'itemAudioOmitted': 'Bool', 'diagnosticsOmitted': 'Bool', 'filesystemPathsOmitted': 'Bool',
+        'unrelatedTurnsOmitted': 'Bool', 'privateRepresentationsOmitted': 'Bool'},
+    'SpokenMarginsArtifactDescriptor': {
+        'id': 'String', 'kind': 'String', 'schemaVersion': 'String', 'path': 'String', 'required': 'Bool',
+        'byteCount': 'Int?', 'sha256': 'String?'},
+    'SpokenMarginsAssetDescriptor': {
+        'id': 'String', 'role': 'String', 'path': 'String', 'mimeType': 'String', 'durationMs': 'Int?',
+        'anchorOffsetMs': 'Int?', 'provenance': 'String', 'byteCount': 'Int?', 'sha256': 'String?'},
+    'SharedCommentaryLayerArtifact': {
+        'id': 'String', 'schemaVersion': 'String', 'interjections': '[SharedInterjectionPackageRecord]'},
+    'SharedInterjectionPackageRecord': {
+        'packageScopedId': 'String', 'createdAt': 'Date', 'anchor': 'PortableAnchorEvidence',
+        'defaultRepresentationId': 'String', 'representations': '[SharedInterjectionRepresentation]'},
+    'SharedInterjectionRepresentation': {
+        'id': 'String', 'kind': 'SharedInterjectionRepresentationKind', 'approvedTranscript': 'String',
+        'assetId': 'String?', 'provenance': 'SharedInterjectionProvenance'},
+    'PortableAnchorEvidence': {
+        'anchorType': 'AnchorType', 'startChar': 'Int?', 'endChar': 'Int?', 'exactText': 'String?',
+        'prefix': 'String?', 'suffix': 'String?', 'mediaTimeMs': 'Int?', 'roughPercent': 'Int?',
+        'transcriptSegmentId': 'String?', 'chapterTitle': 'String?', 'machineEvidenceAssetIds': '[String]'},
+    'PortableListeningMapProposalArtifact': {
+        'id': 'String', 'schemaVersion': 'String', 'languageCode': 'String?', 'createdAt': 'Date',
+        'generator': 'String', 'scenes': '[PortableListeningMapScene]'},
+    'PortableListeningMapScene': {
+        'id': 'String', 'order': 'Int', 'title': 'String?', 'summaryText': 'String?', 'summaryAssetId': 'String?',
+        'summaryProvenance': 'PortableSummaryProvenance?', 'eligibility': 'PortableSceneEligibility',
+        'eligibilityReason': 'String?', 'startAnchor': 'PortableAnchorEvidence', 'endAnchor': 'PortableAnchorEvidence'},
+    'EditionFingerprintSpineArtifact': {
+        'id': 'String', 'schemaVersion': 'String', 'itemId': 'String', 'canonicalURL': 'String?',
+        'episodeGUID': 'String?', 'producingEditionDurationMs': 'Int?', 'producingEditionSHA256': 'String?',
+        'createdAt': 'Date', 'generatorVersion': 'String', 'landmarks': '[EpisodeFingerprintLandmark]'},
+    'EpisodeFingerprintLandmark': {
+        'id': 'String', 'order': 'Int', 'sourceMediaStartMs': 'Int', 'sourceMediaEndMs': 'Int',
+        'anchorMediaTimeMs': 'Int', 'continuityEpoch': 'Int', 'trigger': 'EpisodeFingerprintTrigger',
+        'provenance': 'EpisodeFingerprintProvenance', 'signatureAssetId': 'String',
+        'transcriptSketchWindowId': 'String?', 'generatorVersion': 'String'},
+    'TranscriptPhraseSketchArtifact': {
+        'id': 'String', 'schemaVersion': 'String', 'itemId': 'String', 'languageCode': 'String?',
+        'saltBase64': 'String', 'normalizationVersion': 'String', 'shingleWidth': 'Int',
+        'maximumHashesPerWindow': 'Int', 'createdAt': 'Date', 'windows': '[TranscriptPhraseSketchWindow]'},
+    'TranscriptPhraseSketchWindow': {
+        'id': 'String', 'sourceStartMs': 'Int', 'sourceEndMs': 'Int', 'hashes': '[String]'},
+    'MarginConversationArtifact': {
+        'id': 'String', 'schemaVersion': 'String', 'replies': '[Reply]'},
+    'MarginConversationArtifact.Reply': {
+        'packageScopedId': 'String', 'conversationId': 'String', 'parentPackageDigest': 'String',
+        'parentPackageScopedId': 'String'},
+    'EmbeddedTextItemArtifact': {
+        'id': 'String', 'schemaVersion': 'String', 'originalMediaType': 'String', 'text': 'String'},
+}
+# The raw values of the enums those types use.
+SWIFT_ENUMS = {
+    'SharedItemType': ITEM_TYPES,
+    'SharedSourceIdentity.SourceType': SOURCE_TYPES,
+    'SharedItemTransportKind': TRANSPORT_KINDS,
+    'SharedItemRightsBasis': RIGHTS_BASES,
+    'ImportedCommentaryRevealMode': REVEAL_MODES,
+    'AnchorType': ANCHOR_TYPES,
+    'SharedInterjectionRepresentationKind': TEXT_REPRESENTATIONS | AUDIO_REPRESENTATIONS,
+    'SharedInterjectionProvenance': REPRESENTATION_PROVENANCE,
+    'PortableSceneEligibility': SCENE_ELIGIBILITY,
+    'PortableSummaryProvenance': SUMMARY_PROVENANCE,
+    'EpisodeFingerprintTrigger': FINGERPRINT_TRIGGERS,
+    'EpisodeFingerprintProvenance': FINGERPRINT_PROVENANCE,
+}
+# The artifact each kind decodes as.
+KIND_SWIFT_TYPE = {
+    'commentary_layer': 'SharedCommentaryLayerArtifact',
+    'listening_map_proposal': 'PortableListeningMapProposalArtifact',
+    'edition_fingerprint_spine': 'EditionFingerprintSpineArtifact',
+    'transcript_phrase_sketch': 'TranscriptPhraseSketchArtifact',
+    'embedded_text_item': 'EmbeddedTextItemArtifact',
+    'conversation': 'MarginConversationArtifact',
+}
 
 MAX_PACKAGE_BYTES = 100 * 1024 * 1024
 MAX_MANIFEST_BYTES = 1 * 1024 * 1024
@@ -130,7 +236,6 @@ MAX_CONTEXT_PER_SIDE = 500       # BoundedAnchorContext.maximumCharactersPerSide
 FIXED_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
 _SHA256 = re.compile(r'[0-9a-f]{64}')
-_COMPONENT = re.compile(r'[A-Za-z0-9._-]+')
 # ISO8601DateFormatter's internet date-time, with or without fractional seconds.
 _ISO_DATE = re.compile(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:?\d\d)')
 
@@ -184,7 +289,7 @@ class Refused(Exception):
 
 def is_https_url(value):
     """SpokenMarginsPackageArchive.validHTTPSURL: https, a host, no user or password, no whitespace or angle brackets."""
-    if not isinstance(value, str) or any(c.isspace() for c in value) or '<' in value or '>' in value:
+    if not isinstance(value, str) or any(_is_swift_space(c) for c in value) or '<' in value or '>' in value:
         return False
     try:
         parts = urllib.parse.urlsplit(value)
@@ -300,22 +405,151 @@ def _markdown_escaped(value):
     return ''.join('\\' + c if c in _MARKDOWN_ESCAPABLE else c for c in value)
 
 
-def character_count(text):
-    """Swift's String.count (grapheme clusters), close enough for the preview: combining marks and joiners
-    don't start a new character."""
-    count = 0
-    previous_joiner = False
+# CharacterSet.whitespacesAndNewlines: category Z*, tab, U+000A-U+000D and U+0085. (str.isspace() also counts
+# U+001C-U+001F, which Swift does not.)
+def _is_swift_space(char):
+    return char in '\t\n\v\f\r\x85' or unicodedata.category(char)[0] == 'Z'
+
+
+def swift_strip(text):
+    """trimmingCharacters(in: .whitespacesAndNewlines)."""
+    start, end = 0, len(text)
+    while start < end and _is_swift_space(text[start]):
+        start += 1
+    while end > start and _is_swift_space(text[end - 1]):
+        end -= 1
+    return text[start:end]
+
+
+def swift_split(text):
+    """components(separatedBy: .whitespacesAndNewlines) without the empty parts."""
+    return [part for part in re.split('[' + ''.join(c for c in map(chr, range(0x3000)) if _is_swift_space(c)) + ']+',
+                                      text) if part]
+
+
+# Extended grapheme clusters (UAX #29), which are Swift's Character and so what String.count counts. Python has no
+# grapheme segmenter, so this carries the rules (GB3-GB13) with the property ranges that matter in practice.
+_PICTOGRAPHIC = ((0xA9, 0xA9), (0xAE, 0xAE), (0x203C, 0x203C), (0x2049, 0x2049), (0x2122, 0x2122), (0x2139, 0x2139),
+                 (0x2194, 0x2199), (0x21A9, 0x21AA), (0x231A, 0x231B), (0x2328, 0x2328), (0x2388, 0x2388),
+                 (0x23CF, 0x23CF), (0x23E9, 0x23F3), (0x23F8, 0x23FA), (0x24C2, 0x24C2), (0x25AA, 0x25AB),
+                 (0x25B6, 0x25B6), (0x25C0, 0x25C0), (0x25FB, 0x25FE), (0x2600, 0x2605), (0x2607, 0x2612),
+                 (0x2614, 0x2685), (0x2690, 0x2705), (0x2708, 0x2712), (0x2714, 0x2714), (0x2716, 0x2716),
+                 (0x271D, 0x271D), (0x2721, 0x2721), (0x2728, 0x2728), (0x2733, 0x2734), (0x2744, 0x2744),
+                 (0x2747, 0x2747), (0x274C, 0x274C), (0x274E, 0x274E), (0x2753, 0x2755), (0x2757, 0x2757),
+                 (0x2763, 0x2767), (0x2795, 0x2797), (0x27A1, 0x27A1), (0x27B0, 0x27B0), (0x27BF, 0x27BF),
+                 (0x2934, 0x2935), (0x2B05, 0x2B07), (0x2B1B, 0x2B1C), (0x2B50, 0x2B50), (0x2B55, 0x2B55),
+                 (0x3030, 0x3030), (0x303D, 0x303D), (0x3297, 0x3297), (0x3299, 0x3299), (0x1F000, 0x1F0FF),
+                 (0x1F10D, 0x1F10F), (0x1F12F, 0x1F12F), (0x1F16C, 0x1F171), (0x1F17E, 0x1F17F), (0x1F18E, 0x1F18E),
+                 (0x1F191, 0x1F19A), (0x1F1AD, 0x1F1E5), (0x1F201, 0x1F20F), (0x1F21A, 0x1F21A), (0x1F22F, 0x1F22F),
+                 (0x1F232, 0x1F23A), (0x1F23C, 0x1F23F), (0x1F249, 0x1F3FA), (0x1F400, 0x1F53D), (0x1F546, 0x1F64F),
+                 (0x1F680, 0x1F6FF), (0x1F774, 0x1F77F), (0x1F7D5, 0x1F7FF), (0x1F80C, 0x1F80F), (0x1F848, 0x1F84F),
+                 (0x1F85A, 0x1F85F), (0x1F888, 0x1F88F), (0x1F8AE, 0x1F8FF), (0x1F90C, 0x1F93A), (0x1F93C, 0x1F945),
+                 (0x1F947, 0x1FAFF), (0x1FC00, 0x1FFFD))
+# GB9c (Unicode 15.1): a conjunct such as the Devanagari स्त stays one Character.
+_INCB_LINKERS = frozenset([0x94D, 0x9CD, 0xACD, 0xB4D, 0xC4D, 0xD4D])
+_INCB_CONSONANTS = ((0x915, 0x939), (0x958, 0x95F), (0x978, 0x97F), (0x995, 0x9A8), (0x9AA, 0x9B0), (0x9B2, 0x9B2),
+                    (0x9B6, 0x9B9), (0x9DC, 0x9DF), (0x9F0, 0x9F1), (0xA95, 0xAA8), (0xAAA, 0xAB0), (0xAB2, 0xAB3),
+                    (0xAB5, 0xAB9), (0xAF9, 0xAF9), (0xB15, 0xB28), (0xB2A, 0xB30), (0xB32, 0xB33), (0xB35, 0xB39),
+                    (0xB5C, 0xB5D), (0xB5F, 0xB5F), (0xB71, 0xB71), (0xC15, 0xC28), (0xC2A, 0xC39), (0xC58, 0xC5A),
+                    (0xD15, 0xD3A))
+_PREPEND = frozenset([*range(0x600, 0x606), 0x6DD, 0x70F, 0x890, 0x891, 0x8E2, 0xD4E, 0x110BD, 0x110CD])
+_ZWJ = 0x200D
+
+
+def _grapheme_class(char):
+    code = ord(char)
+    if char == '\r':
+        return 'CR'
+    if char == '\n':
+        return 'LF'
+    if code == _ZWJ:
+        return 'ZWJ'
+    if 0x1F1E6 <= code <= 0x1F1FF:
+        return 'RI'
+    if code in _PREPEND:
+        return 'Prepend'
+    if code in _INCB_LINKERS:
+        return 'Linker'
+    if any(low <= code <= high for low, high in _INCB_CONSONANTS):
+        return 'Consonant'
+    category = unicodedata.category(char)
+    if code == 0x200C or category in ('Mn', 'Me', 'Mc') or 0x1F3FB <= code <= 0x1F3FF or 0xE0020 <= code <= 0xE007F \
+            or code in (0xE33, 0xEB3):
+        return 'Extend'
+    if category in ('Cc', 'Zl', 'Zp', 'Cf'):
+        return 'Control'
+    if 0x1100 <= code <= 0x115F or 0xA960 <= code <= 0xA97C:
+        return 'L'
+    if 0x1160 <= code <= 0x11A7 or 0xD7B0 <= code <= 0xD7C6:
+        return 'V'
+    if 0x11A8 <= code <= 0x11FF or 0xD7CB <= code <= 0xD7FB:
+        return 'T'
+    if 0xAC00 <= code <= 0xD7A3:
+        return 'LV' if (code - 0xAC00) % 28 == 0 else 'LVT'
+    if any(low <= code <= high for low, high in _PICTOGRAPHIC):
+        return 'Pict'
+    return 'Other'
+
+
+def graphemes(text):
+    """The text split into Characters."""
+    clusters, current, previous, regional, pictographic, conjunct = [], '', None, 0, False, 0
     for char in text:
-        joins = unicodedata.combining(char) or char in '\u200d\ufe0f\ufe0e' or 0x1F3FB <= ord(char) <= 0x1F3FF
-        if not joins and not previous_joiner:
-            count += 1
-        previous_joiner = char == '\u200d'
-    return count
+        kind = _grapheme_class(char)
+        if previous is None:
+            joins = False
+        elif previous == 'CR' and kind == 'LF':
+            joins = True
+        elif previous in ('CR', 'LF', 'Control') or kind in ('CR', 'LF', 'Control'):
+            joins = False
+        elif previous == 'L' and kind in ('L', 'V', 'LV', 'LVT'):
+            joins = True
+        elif previous in ('LV', 'V') and kind in ('V', 'T'):
+            joins = True
+        elif previous in ('LVT', 'T') and kind == 'T':
+            joins = True
+        elif kind in ('Extend', 'ZWJ', 'Linker'):
+            joins = True
+        elif kind == 'Consonant' and conjunct == 2:
+            joins = True
+        elif previous == 'Prepend':
+            joins = True
+        elif previous == 'ZWJ' and kind == 'Pict' and pictographic:
+            joins = True
+        elif previous == 'RI' and kind == 'RI':
+            joins = regional % 2 == 1
+        else:
+            joins = False
+        if not joins:
+            clusters.append(current)
+            current, regional, pictographic = '', 0, False
+            conjunct = 1 if kind == 'Consonant' else 0
+        current += char
+        if kind == 'Consonant':
+            conjunct = 1
+        elif kind == 'Linker' and conjunct:
+            conjunct = 2
+        elif kind not in ('Extend', 'ZWJ'):
+            conjunct = 0
+        if kind == 'RI':
+            regional += 1
+        if kind == 'Pict':
+            pictographic = True
+        elif kind not in ('Extend', 'ZWJ'):
+            pictographic = False
+        previous = kind
+    clusters.append(current)
+    return [c for c in clusters if c]
+
+
+def character_count(text):
+    """Swift's String.count."""
+    return len(graphemes(text))
 
 
 def preview_markdown(manifest, interjections, proposals=0, spines=0, sketches=0, embedded_text=None):
     """SpokenMarginsPackageArchive.previewMarkdown, which the reader compares byte for byte."""
-    sender = ' '.join((manifest.get('senderDisplayLabel') or '').split())
+    sender = ' '.join(swift_split(manifest.get('senderDisplayLabel') or ''))
     count = len(interjections)
     item = manifest.get('item') or {}
     assets = manifest.get('assets') or []
@@ -370,11 +604,16 @@ def exact_edition_sha256(text):
 
 # --- packet paths ---------------------------------------------------------------------------------------------
 
+def _path_char(char):
+    """CharacterSet.alphanumerics (any letter, mark or number, in any script) or one of ._-"""
+    return char in '._-' or unicodedata.category(char)[0] in 'LMN'
+
+
 def _valid_nested_path(path, prefix, extensions):
     if not path.startswith(prefix) or '..' in path or '\\' in path or '//' in path:
         return False
     component = path[len(prefix):]
-    if not component or '/' in component or not _COMPONENT.fullmatch(component):
+    if not component or '/' in component or not all(_path_char(c) for c in component):
         return False
     return Path(component).suffix.lstrip('.') in extensions
 
@@ -395,7 +634,7 @@ def allowed_package_path(path):
 def staged_file_name(descriptor):
     """Where an asset lands once extracted; two that land on one name (ignoring case) are refused."""
     suffix = Path(str(descriptor.get('path', ''))).suffix
-    return re.sub(r'[^A-Za-z0-9._-]', '-', str(descriptor.get('id', ''))) + suffix
+    return ''.join(c if _path_char(c) else '-' for c in str(descriptor.get('id', ''))) + suffix
 
 
 # --- the packet check ---------------------------------------------------------------------------------------
@@ -405,7 +644,59 @@ def _is_sha(value):
 
 
 def _is_int(value):
-    return isinstance(value, int) and not isinstance(value, bool)
+    """A JSON integer Swift's Int (64 bits) decodes."""
+    return isinstance(value, int) and not isinstance(value, bool) and -2 ** 63 <= value < 2 ** 63
+
+
+def _is_date(value):
+    """A string the packet decoder turns into a Date: ISO 8601 with a zone, with or without fractional seconds."""
+    return isinstance(value, str) and bool(_ISO_DATE.fullmatch(value))
+
+
+def _swift_type(name, owner):
+    """The key of a type named in `owner`'s properties: nested in the owner, or at the top."""
+    for candidate in (f'{owner}.{name}' if owner else None, name):
+        if candidate in SWIFT_TYPES or candidate in SWIFT_ENUMS:
+            return candidate
+    return name
+
+
+def decode_problem(value, swift_type, owner=None, path=''):
+    """Why Swift's synthesized Codable decoder would refuse `value` as `swift_type`, or None when it decodes. The
+    one place that knows what a field's type needs: a missing or null key fails unless the type is optional, an
+    Int needs a JSON integer, a Date an ISO 8601 string (the same rule as the manifest's createdAt), an enum one
+    of its raw values. Keys the type doesn't list are ignored here; the closed ones are refused elsewhere."""
+    optional = swift_type.endswith('?')
+    base = swift_type[:-1] if optional else swift_type
+    name = path or 'the document'
+    if value is None:
+        return None if optional else f'{name} is absent'
+    if base.startswith('['):
+        if not isinstance(value, list):
+            return f'{name} is not a list'
+        for index, element in enumerate(value):
+            problem = decode_problem(element, base[1:-1], owner, f'{path}[{index}]')
+            if problem:
+                return problem
+        return None
+    if base == 'String':
+        return None if isinstance(value, str) else f'{name} is not text'
+    if base == 'Int':
+        return None if _is_int(value) else f'{name} is not an integer'
+    if base == 'Bool':
+        return None if isinstance(value, bool) else f'{name} is not true or false'
+    if base == 'Date':
+        return None if _is_date(value) else f'{name} is not an ISO-8601 date and time with a zone'
+    key = _swift_type(base, owner)
+    if key in SWIFT_ENUMS:
+        return None if isinstance(value, str) and value in SWIFT_ENUMS[key] else f'{name} is {value!r}, which is not known'
+    if not isinstance(value, dict):
+        return f'{name} is not an object'
+    for field_name, field_type in SWIFT_TYPES[key].items():
+        problem = decode_problem(value.get(field_name), field_type, key, f'{path}.{field_name}' if path else field_name)
+        if problem:
+            return problem
+    return None
 
 
 def _length_ok(value, maximum):
@@ -434,6 +725,26 @@ def _check_link(report, value, where):
                     'left it out (ShareableLinkPolicy)', where)
 
 
+def zip_entry_type(info):
+    """ZIPFoundation's Entry.type (0.9.20): from the Unix mode when the archive was made on Unix or macOS, else
+    from a trailing slash (and the MS-DOS directory bit). The Swift reader reads only `file` entries, so a symlink
+    stored at an allowed path is refused, not read as data."""
+    directory = info.filename.endswith('/')
+    host = info.create_system
+    if host in (3, 19):
+        mode = (info.external_attr >> 16) & 0o170000
+        if mode == 0o100000:
+            return 'file'
+        if mode == 0o040000:
+            return 'directory'
+        if mode == 0o120000:
+            return 'symlink'
+        return 'directory' if directory else 'file'
+    if host == 0:
+        directory = directory or (info.external_attr >> 4) == 1
+    return 'directory' if directory else 'file'
+
+
 def _check_zip(report, archive, size):
     if size > MAX_PACKAGE_BYTES:
         _refuse(report, 'too-large', 'the packet is larger than 100 MB')
@@ -443,7 +754,7 @@ def _check_zip(report, archive, size):
         if name in seen:
             _refuse(report, 'duplicate-entry', f'the archive holds {name} twice')
         seen.add(name)
-        if info.is_dir() or not allowed_package_path(name):
+        if zip_entry_type(info) != 'file' or not allowed_package_path(name):
             _refuse(report, 'unsafe-entry', f'{name} is not an allowed packet path (manifest.json, preview.md, '
                     'artifacts/<name>.json, assets/audio/<name>.m4a, assets/evidence/<name>.shazamsignature)')
         total += info.file_size
@@ -502,46 +813,9 @@ def _check_manifest_shape(report, manifest):
 
 def _check_manifest_types(report, manifest):
     """What decoding SpokenMarginsPackageManifest needs: required fields present, with their types and enums."""
-    def need(condition, message, where=''):
-        if not condition:
-            _refuse(report, 'invalid-manifest', message, where)
-
-    need(isinstance(manifest.get('schemaVersion'), str), 'schemaVersion is absent')
-    need(isinstance(manifest.get('packageId'), str), 'packageId is absent')
-    need(isinstance(manifest.get('createdAt'), str) and bool(_ISO_DATE.fullmatch(manifest['createdAt'])),
-         'createdAt is not an ISO-8601 date and time with a zone')
-    need(isinstance(manifest.get('requiredCapabilities'), list)
-         and all(isinstance(c, str) for c in manifest['requiredCapabilities']), 'requiredCapabilities is absent')
-    need(manifest.get('suggestedRevealMode') in REVEAL_MODES | {None}, 'suggestedRevealMode is not a known mode')
-    need(manifest.get('senderDisplayLabel') is None or isinstance(manifest['senderDisplayLabel'], str),
-         'senderDisplayLabel is not text')
-    item = manifest['item']
-    need(item.get('itemType') in ITEM_TYPES, f"itemType {item.get('itemType')!r} is not known", 'item')
-    need(isinstance(item.get('title'), str), 'title is absent', 'item')
-    for key in ITEM_KEYS - {'itemType', 'title', 'durationMs', 'source'}:
-        need(item.get(key) is None or isinstance(item[key], str), f'{key} is not text', 'item')
-    need(item.get('durationMs') is None or _is_int(item['durationMs']), 'durationMs is not an integer', 'item')
-    source = item.get('source')
-    if source is not None:
-        need(isinstance(source, dict) and source.get('sourceType') in SOURCE_TYPES
-             and isinstance(source.get('canonicalURL'), str), 'source needs a known sourceType and a canonicalURL',
-             'item.source')
-    transport = manifest['itemTransport']
-    need(transport.get('kind') in TRANSPORT_KINDS, f"itemTransport kind {transport.get('kind')!r} is not known")
-    need(transport.get('rightsBasis') in RIGHTS_BASES | {None}, 'rightsBasis is not known')
-    for key in REDACTION_KEYS:
-        need(isinstance(manifest['redactions'].get(key), bool), f'redactions.{key} is absent')
-    for descriptor in manifest['artifacts']:
-        need(all(isinstance(descriptor.get(k), str) for k in ('id', 'kind', 'schemaVersion', 'path'))
-             and isinstance(descriptor.get('required'), bool), 'an artifact descriptor lacks id, kind, '
-             'schemaVersion, path or required')
-    for descriptor in manifest['assets']:
-        need(all(isinstance(descriptor.get(k), str) for k in ('id', 'role', 'path', 'mimeType', 'provenance')),
-             'an asset descriptor lacks id, role, path, mimeType or provenance')
-        for key in ('durationMs', 'anchorOffsetMs', 'byteCount'):
-            need(descriptor.get(key) is None or _is_int(descriptor[key]), f'asset {key} is not an integer')
-    for descriptor in manifest['artifacts']:
-        need(descriptor.get('byteCount') is None or _is_int(descriptor['byteCount']), 'artifact byteCount is not an integer')
+    problem = decode_problem(manifest, 'SpokenMarginsPackageManifest')
+    if problem:
+        _refuse(report, 'invalid-manifest', problem)
 
 
 def _check_distinct(report, manifest):
@@ -581,6 +855,9 @@ def _decode_artifacts(report, manifest, entries):
                 _refuse(report, 'invalid-manifest', f'{context} {list_key} are absent', where)
             for entry in value[list_key]:
                 _unknown_keys(report, entry, entry_keys, entry_context)
+        problem = decode_problem(value, KIND_SWIFT_TYPE[kind])
+        if problem:
+            _refuse(report, 'invalid-manifest', f'{kind} does not decode: {problem}', where)
         if value.get('id') != descriptor['id'] or value.get('schemaVersion') != version:
             _refuse(report, 'invalid-manifest', f'{kind} id or schemaVersion does not match its descriptor', where)
         decoded[kind].append((descriptor, value))
@@ -593,7 +870,7 @@ def _check_item(report, item):
     if isinstance(item.get('source'), dict):
         _check_link(report, item['source'].get('canonicalURL'), 'item.source.canonicalURL')
     title = item['title']
-    if not 1 <= character_count(title) <= 500 or not title.strip():
+    if not 1 <= character_count(title) <= 500 or not swift_strip(title):
         _refuse(report, 'invalid-manifest', 'title is empty or longer than 500 characters', 'item')
     limits = {'author': 300, 'publisher': 300, 'showTitle': 500, 'episodeGUID': 1_000, 'publishedAt': 100,
               'languageCode': 35}
@@ -659,7 +936,7 @@ def _check_boundary(report, manifest, decoded):
                     'embeddedArtifactId, a rightsBasis, fullItemOmitted false, no canonicalURL and a non-podcast item')
         artifact = embedded[0][1]
         text = artifact.get('text')
-        if not isinstance(text, str) or not text.strip():
+        if not isinstance(text, str) or not swift_strip(text):
             _refuse(report, 'transport-inconsistent', 'the embedded text is empty')
         if artifact.get('originalMediaType') != item['itemType']:
             _refuse(report, 'transport-inconsistent', f"embedded originalMediaType {artifact.get('originalMediaType')!r} "
@@ -709,35 +986,24 @@ def _check_layer(report, layer, assets_by_id):
     where = 'commentary layer'
     for key in sorted(set(layer) - {'id', 'schemaVersion', 'interjections'}):
         report.warn('ignored-field', f'{key!r} is not a commentary layer field; shipped readers ignore it', where)
-    interjections = layer.get('interjections')
-    if not isinstance(interjections, list) or not 1 <= len(interjections) <= MAX_MARGINS:
+    interjections = layer['interjections']
+    if not 1 <= len(interjections) <= MAX_MARGINS:
         _refuse(report, 'invalid-manifest', f'the commentary layer needs 1-{MAX_MARGINS} Margins', where)
-    scoped = [m.get('packageScopedId') if isinstance(m, dict) else None for m in interjections]
+    scoped = [m['packageScopedId'] for m in interjections]
     if len(set(scoped)) != len(scoped):
         _refuse(report, 'invalid-manifest', 'package-scoped Margin ids are not unique', where)
     for index, margin in enumerate(interjections):
         at = f'{where} Margin {index + 1}'
-        if not isinstance(margin, dict) or not isinstance(margin.get('anchor'), dict):
-            _refuse(report, 'invalid-manifest', 'a Margin or its anchor is not an object', at)
         for key in sorted(set(margin) - INTERJECTION_KEYS):
             report.warn('ignored-field', f'{key!r} is not a Margin field; shipped readers ignore it', at)
         anchor = margin['anchor']
         for key in sorted(set(anchor) - ANCHOR_KEYS):
             report.warn('ignored-field', f'{key!r} is not an anchor field; shipped readers ignore it', at)
-        representations = margin.get('representations')
-        ints = [anchor.get(k) for k in ('startChar', 'endChar', 'mediaTimeMs', 'roughPercent')]
-        decodes = (isinstance(margin.get('packageScopedId'), str) and isinstance(margin.get('createdAt'), str)
-                   and isinstance(margin.get('defaultRepresentationId'), str) and isinstance(representations, list)
-                   and anchor.get('anchorType') in ANCHOR_TYPES
-                   and isinstance(anchor.get('machineEvidenceAssetIds'), list)
-                   and all(v is None or _is_int(v) for v in ints))
-        if not decodes:
-            _refuse(report, 'invalid-manifest', 'a Margin lacks packageScopedId, createdAt, anchor (with anchorType '
-                    'and machineEvidenceAssetIds), defaultRepresentationId or representations', at)
+        representations = margin['representations']
         start, end = anchor.get('startChar'), anchor.get('endChar')
-        bounded = (1 <= len(margin['packageScopedId']) <= 200 and representations
-                   and len({r.get('id') for r in representations if isinstance(r, dict)}) == len(representations)
-                   and any(isinstance(r, dict) and r.get('id') == margin['defaultRepresentationId'] for r in representations)
+        bounded = (1 <= character_count(margin['packageScopedId']) <= 200 and representations
+                   and len({r['id'] for r in representations}) == len(representations)
+                   and any(r['id'] == margin['defaultRepresentationId'] for r in representations)
                    and all(v is None or v >= 0 for v in (start, end, anchor.get('mediaTimeMs')))
                    and (start is None or end is None or end >= start)
                    and _length_ok(anchor.get('exactText'), MAX_EXACT_TEXT)
@@ -754,13 +1020,10 @@ def _check_layer(report, layer, assets_by_id):
         for representation in representations:
             for key in sorted(set(representation) - REPRESENTATION_KEYS):
                 report.warn('ignored-field', f'{key!r} is not a representation field; shipped readers ignore it', at)
-            transcript = representation.get('approvedTranscript')
-            kind = representation.get('kind')
-            if (not isinstance(representation.get('id'), str) or not 1 <= len(representation['id']) <= 200
-                    or not isinstance(transcript, str) or not transcript.strip() or character_count(transcript) > 50_000
-                    or representation.get('provenance') not in REPRESENTATION_PROVENANCE
-                    or kind not in TEXT_REPRESENTATIONS | AUDIO_REPRESENTATIONS):
-                _refuse(report, 'invalid-manifest', 'a representation is empty, out of bounds or of an unknown kind', at)
+            transcript, kind = representation['approvedTranscript'], representation['kind']
+            if (not 1 <= character_count(representation['id']) <= 200 or not swift_strip(transcript)
+                    or character_count(transcript) > 50_000):
+                _refuse(report, 'invalid-manifest', 'a representation is empty or out of bounds', at)
             asset_id = representation.get('assetId')
             if kind in TEXT_REPRESENTATIONS and asset_id is not None:
                 _refuse(report, 'invalid-manifest', 'a text representation references audio', at)
@@ -768,36 +1031,8 @@ def _check_layer(report, layer, assets_by_id):
                 _refuse(report, 'invalid-manifest', 'an audio representation names no voice asset', at)
 
 
-SCENE_ELIGIBILITY = frozenset({'eligible', 'excluded', 'unknown'})
-SUMMARY_PROVENANCE = frozenset({'publisher_supplied', 'sender_authored', 'deterministic', 'model_generated'})
 VERBATIM_RUN_WORDS = 10          # PortableListeningMapContract.verbatimRunWords
 SUMMARY_FIELDS = ('summaryText', 'summaryAssetId', 'summaryProvenance')
-
-
-def _decodes_as_anchor(anchor):
-    """What decoding PortableAnchorEvidence needs."""
-    return (isinstance(anchor, dict) and anchor.get('anchorType') in ANCHOR_TYPES
-            and isinstance(anchor.get('machineEvidenceAssetIds'), list)
-            and all(isinstance(e, str) for e in anchor['machineEvidenceAssetIds'])
-            and all(anchor.get(k) is None or _is_int(anchor[k])
-                    for k in ('startChar', 'endChar', 'mediaTimeMs', 'roughPercent'))
-            and all(anchor.get(k) is None or isinstance(anchor[k], str)
-                    for k in ('exactText', 'prefix', 'suffix', 'transcriptSegmentId', 'chapterTitle')))
-
-
-def _decodes_as_proposal(proposal):
-    """What decoding PortableListeningMapProposalArtifact needs (its id and schemaVersion are checked already)."""
-    scenes = proposal.get('scenes')
-    return (isinstance(proposal.get('generator'), str) and isinstance(proposal.get('createdAt'), str)
-            and (proposal.get('languageCode') is None or isinstance(proposal['languageCode'], str))
-            and isinstance(scenes, list)
-            and all(isinstance(scene, dict) and isinstance(scene.get('id'), str) and _is_int(scene.get('order'))
-                    and scene.get('eligibility') in SCENE_ELIGIBILITY
-                    and scene.get('summaryProvenance') in SUMMARY_PROVENANCE | {None}
-                    and all(scene.get(k) is None or isinstance(scene[k], str)
-                            for k in ('title', 'summaryText', 'summaryAssetId', 'eligibilityReason'))
-                    and _decodes_as_anchor(scene.get('startAnchor')) and _decodes_as_anchor(scene.get('endAnchor'))
-                    for scene in scenes))
 
 
 def _words(text):
@@ -820,22 +1055,52 @@ def _anchor_quote(anchor):
     return ' '.join(anchor[k] for k in ('prefix', 'exactText', 'suffix') if anchor.get(k) is not None)
 
 
-def _quotes_source(text, scene, item_text):
-    """PortableListeningMapContract.quotesSource: the text repeats 10 words of the scene's anchors or of its span of
-    the packet's embedded text (all of that text when the span doesn't fit)."""
-    text_words = _words(text)
-    if len(text_words) < VERBATIM_RUN_WORDS:
-        return False
-    if any(_shares_run(text_words, _runs(_words(_anchor_quote(scene[a])))) for a in ('startAnchor', 'endAnchor')):
-        return True
-    if not item_text:
-        return False
-    start, end = scene['startAnchor'], scene['endAnchor']
-    lower = start.get('startChar') if start.get('startChar') is not None else start.get('endChar')
-    upper = end.get('endChar') if end.get('endChar') is not None else end.get('startChar')
-    if lower is not None and upper is not None and 0 <= lower < upper <= len(item_text):
-        return _shares_run(text_words, _runs(_words(item_text[lower:upper])))
-    return _shares_run(text_words, _runs(_words(item_text)))
+def _max_words(text):
+    """A count Swift's `words` cannot exceed: the runs of letters, marks and numbers (a Swift word is a run of
+    Characters that are letters or numbers). Unlike _words() it holds for any text, so below the 10-word minimum a
+    quotation is ruled out whatever the script."""
+    count, inside = 0, False
+    for char in text:
+        word = unicodedata.category(char)[0] in 'LMN'
+        count += word and not inside
+        inside = word
+    return count
+
+
+class Quotation:
+    """PortableListeningMapContract.quotesSource, and whether this module can decide it. Python splits words
+    and counts Characters as Swift does only for ASCII text, so a check whose answer depends on other text is
+    `undecided`. Most checks need no guess: a text under ten words can't quote anything, and neither can one whose
+    sources hold fewer than ten."""
+
+    def __init__(self, item_text=None):
+        self.item_text = item_text or ''
+        self.undecided = False      # some check could not be decided
+        self.decided = True         # the last check could
+
+    def quotes(self, text, scene):
+        self.decided = True
+        if _max_words(text) < VERBATIM_RUN_WORDS:
+            return False
+        anchors = [_anchor_quote(scene[a]) for a in ('startAnchor', 'endAnchor')]
+        sources = anchors + [self.item_text]
+        if all(_max_words(source) < VERBATIM_RUN_WORDS for source in sources):
+            return False
+        if not (text.isascii() and all(source.isascii() for source in sources)):
+            self.decided = False
+            self.undecided = True
+        text_words = _words(text)
+        if any(_shares_run(text_words, _runs(_words(anchor))) for anchor in anchors):
+            return True
+        if not self.item_text:
+            return False
+        start, end = scene['startAnchor'], scene['endAnchor']
+        lower = start.get('startChar') if start.get('startChar') is not None else start.get('endChar')
+        upper = end.get('endChar') if end.get('endChar') is not None else end.get('startChar')
+        characters = graphemes(self.item_text)
+        if lower is not None and upper is not None and 0 <= lower < upper <= len(characters):
+            return _shares_run(text_words, _runs(_words(''.join(characters[lower:upper]))))
+        return _shares_run(text_words, _runs(_words(self.item_text)))
 
 
 def _position(anchor, is_end):
@@ -856,8 +1121,9 @@ def _furthest(reached, position):
     return tuple(max((v for v in pair if v is not None), default=None) for pair in zip(reached, position))
 
 
-def listening_map_violations(proposal, item_text=None):
-    """PortableListeningMapContract.violations: (scene id, rule) for each scene rule the proposal breaks."""
+def listening_map_violations(proposal, quotation):
+    """PortableListeningMapContract.violations: (scene id, rule, certain) for each scene rule the proposal breaks.
+    A rule is certain unless it rests on a quotation check the module could not decide."""
     found = []
     reached_start = reached_end = (None, None)
     for scene in proposal['scenes']:
@@ -865,28 +1131,31 @@ def listening_map_violations(proposal, item_text=None):
         has_summary = bool(scene.get('summaryText')) or scene.get('summaryAssetId') is not None
         if scene['eligibility'] == 'eligible':
             if not scene.get('summaryText') or scene.get('summaryProvenance') is None:
-                found.append((scene_id, 'an eligible scene lacks a grounded summary'))
+                found.append((scene_id, 'an eligible scene lacks a grounded summary', True))
         elif has_summary:
-            found.append((scene_id, 'an excluded or unknown scene carries a summary'))
+            found.append((scene_id, 'an excluded or unknown scene carries a summary', True))
         start, end = _position(scene['startAnchor'], False), _position(scene['endAnchor'], True)
         if start is not None and end is not None and _is_past(start, end):
-            found.append((scene_id, 'the scene ends before it starts'))
+            found.append((scene_id, 'the scene ends before it starts', True))
         if start is not None:
             if _is_past(reached_start, start):
-                found.append((scene_id, 'the scene starts before an earlier scene'))
+                found.append((scene_id, 'the scene starts before an earlier scene', True))
             elif _is_past(reached_end, start):
-                found.append((scene_id, 'the scene overlaps an earlier scene'))
-        if scene.get('summaryText') and _quotes_source(scene['summaryText'], scene, item_text):
-            found.append((scene_id, f'the summary quotes {VERBATIM_RUN_WORDS} or more words of its source'))
-        notes = [scene.get('title'), scene.get('eligibilityReason'), scene['startAnchor'].get('chapterTitle'),
-                 scene['endAnchor'].get('chapterTitle')]
-        if any(note is not None and _quotes_source(note, scene, item_text) for note in notes):
-            found.append((scene_id, f'a title or eligibility reason quotes {VERBATIM_RUN_WORDS} or more words'))
+                found.append((scene_id, 'the scene overlaps an earlier scene', True))
+        if scene.get('summaryText') and quotation.quotes(scene['summaryText'], scene):
+            found.append((scene_id, f'the summary quotes {VERBATIM_RUN_WORDS} or more words of its source',
+                          quotation.decided))
+        for note in (scene.get('title'), scene.get('eligibilityReason'), scene['startAnchor'].get('chapterTitle'),
+                     scene['endAnchor'].get('chapterTitle')):
+            if note is not None and quotation.quotes(note, scene):
+                found.append((scene_id, f'a title or eligibility reason quotes {VERBATIM_RUN_WORDS} or more words',
+                              quotation.decided))
+                break
         reached_start, reached_end = _furthest(reached_start, start), _furthest(reached_end, end)
     return found
 
 
-def for_sharing(proposal, item_text=None):
+def for_sharing(proposal, quotation):
     """PortableListeningMapContract.forSharing for one proposal: summaries stripped from excluded and unknown scenes,
     quoting titles, eligibility reasons and chapter titles dropped. Returns (proposal, []) when it survives, and
     (None, the rules it still breaks) when the shipped reader leaves it out and imports the Margins."""
@@ -897,27 +1166,16 @@ def for_sharing(proposal, item_text=None):
             for key in SUMMARY_FIELDS:
                 scene.pop(key, None)
         for key in ('title', 'eligibilityReason'):
-            if scene.get(key) is not None and _quotes_source(scene[key], scene, item_text):
+            if scene.get(key) is not None and quotation.quotes(scene[key], scene):
                 scene.pop(key)
         for anchor in ('startAnchor', 'endAnchor'):
             title = scene[anchor].get('chapterTitle')
-            if title is not None and _quotes_source(title, scene, item_text):
+            if title is not None and quotation.quotes(title, scene):
                 scene[anchor].pop('chapterTitle')
         scenes.append(scene)
     kept = {**proposal, 'scenes': scenes}
-    violations = listening_map_violations(kept, item_text)
+    violations = listening_map_violations(kept, quotation)
     return (None, violations) if violations else (kept, [])
-
-
-def _matches_swift_words(proposal, item_text):
-    """True when every text the quotation rule reads is ASCII (and the item text has no CRLF, one Swift character),
-    so this module splits words and counts characters exactly as Swift does."""
-    texts = [item_text or '']
-    for scene in proposal['scenes']:
-        texts += [scene.get(k) or '' for k in ('title', 'summaryText', 'eligibilityReason')]
-        for anchor in (scene['startAnchor'], scene['endAnchor']):
-            texts += [_anchor_quote(anchor), anchor.get('chapterTitle') or '']
-    return all(t.isascii() for t in texts) and '\r\n' not in (item_text or '')
 
 
 def _proposal_bounds_problem(proposal, assets_by_id, eligible_needs_summary=False):
@@ -945,14 +1203,13 @@ def _check_proposal(report, proposal, assets_by_id, where, item_text=None):
     """SpokenMarginsPackageArchive.read: a proposal that breaks a scene rule after forSharing is left out (#480), and
     only a proposal that survives meets validate(proposal), where a broken bound refuses the packet. Build 29 has
     no forSharing step and refuses the packet instead, which is a warning here: Build 30 and later import it."""
-    if not _decodes_as_proposal(proposal):
-        _refuse(report, 'invalid-manifest', 'the Listening Map proposal does not decode', where)
-    exact = _matches_swift_words(proposal, item_text)
-    kept, broken = for_sharing(proposal, item_text)
+    quotation = Quotation(item_text)
+    kept, broken = for_sharing(proposal, quotation)
+    # The structural rules and every decided quotation check are exact; a quotation check on text this module
+    # can't split into words as Swift does is a guess, so what rests on one is a warning, not a verdict.
+    exact = not quotation.undecided
     if kept is None:
-        # Python splits words and counts characters as Swift does only for ASCII text, so a quotation found in other
-        # text is a guess; the structural rules are exact.
-        sure = [(i, r) for i, r in broken if exact or not r.startswith(('the summary quotes', 'a title'))]
+        sure = [(i, r) for i, r, certain in broken if certain]
         if sure:
             note = ('proposal-dropped', f'scene {sure[0][0]!r}: {sure[0][1]}; the app leaves this Listening Map '
                     'proposal out on import and keeps the Margins')
@@ -964,6 +1221,8 @@ def _check_proposal(report, proposal, assets_by_id, where, item_text=None):
             _refuse(report, 'invalid-manifest', problem, where)
         note = problem and ('not-checked', f'{problem}, unless the Swift reader finds a quotation in non-ASCII text '
                             'and leaves the proposal out')
+        if note is None and not exact:
+            note = ('not-checked', 'the Listening Map quotation rule on non-ASCII text is left to the Swift reader')
     older = _proposal_bounds_problem(proposal, assets_by_id, eligible_needs_summary=True)
     if older:
         report.warn('older-reader-refuses', f'Build 29 refuses this packet ({older}); Build 30 and later read the '

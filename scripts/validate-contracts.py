@@ -171,6 +171,7 @@ def validate_source_catalog_pair(manifest_path: Path, catalog_path: Path) -> lis
 
 PUBLIC_CONTRACTS = ROOT / "Contracts"
 SWIFT_SOURCES = ROOT / "Packages" / "SessionKit" / "Sources"
+SHIPPED_READER_SOURCES = ROOT / "Packages" / "SessionKit" / "Tests" / "ShippedReader"
 # The reader the app ships, and Build 29's frozen copy of it: packets must open in both.
 SWIFT_READERS = (
     SWIFT_SOURCES / "SessionKitSharing" / "InterjectionPackageArchive.swift",
@@ -239,6 +240,121 @@ def swift_allowed_keys(path: Path) -> dict[str, set[str]]:
     return {context: set(re.findall(r'"([^"]+)"', keys)) for keys, context in pattern.findall(text)}
 
 
+def _swift_masks(text: str) -> tuple[str, str]:
+    """(code, literals): the text with comments blanked, and the same with string contents also blanked to `x`.
+    Both keep every offset, so a brace found in the second is the brace in the first."""
+    code, masked = list(text), list(text)
+    index, length = 0, len(text)
+    while index < length:
+        two = text[index:index + 2]
+        if two == "//":
+            end = text.find("\n", index)
+            end = length if end < 0 else end
+            for i in range(index, end):
+                code[i] = masked[i] = " "
+            index = end
+        elif two == "/*":
+            end = text.find("*/", index + 2)
+            end = length if end < 0 else end + 2
+            for i in range(index, end):
+                if text[i] != "\n":
+                    code[i] = masked[i] = " "
+            index = end
+        elif text[index] == '"':
+            triple = text.startswith('"""', index)
+            quote = '"""' if triple else '"'
+            end = index + len(quote)
+            while end < length and not text.startswith(quote, end):
+                end += 2 if text[end] == "\\" else 1
+            for i in range(index + len(quote), min(end, length)):
+                if text[i] != "\n":
+                    masked[i] = "x"
+            index = end + len(quote)
+        else:
+            index += 1
+    return "".join(code), "".join(masked)
+
+
+_SWIFT_DECLARATION = re.compile(r"\b(struct|enum|class)\s+(\w+)[^{};]*\{")
+_SWIFT_PROPERTY = re.compile(r"^\s*(?:public\s+)?(?:let|var)\s+(\w+)\s*:\s*([^={}\n]+?)\s*(?:=[^\n{}]*)?$", re.M)
+
+
+def swift_declarations(root: Path) -> tuple[dict[str, dict[str, str]], dict[str, set[str]], set[str]]:
+    """(structs, enums, custom): the stored properties ({name: type}) of each struct and the raw values of each
+    enum under `root`, a nested type as `Outer.Inner`; `custom` names the types with their own `init(from:)`."""
+    structs: dict[str, dict[str, str]] = {}
+    enums: dict[str, set[str]] = {}
+    custom: set[str] = set()
+
+    def scan(code: str, masked: str, start: int, end: int, prefix: str) -> None:
+        position = start
+        while match := _SWIFT_DECLARATION.search(masked, position, end):
+            depth, close = 1, match.end()
+            while close < end and depth:
+                depth += (masked[close] == "{") - (masked[close] == "}")
+                close += 1
+            name = prefix + match.group(2)
+            body_start, body_end = match.end(), close - 1
+            scan(code, masked, body_start, body_end, name + ".")
+            flat, flat_code, nested = [], [], 0       # the body's own lines, with every {...} block emptied
+            for i in range(body_start, body_end):
+                char = masked[i]
+                nested += (char == "{") - (char == "}")
+                keep = nested == 0 or char in "{}\n"
+                flat.append(char if keep else " ")
+                flat_code.append(code[i] if keep else " ")
+            flat_text, flat_literals = "".join(flat), "".join(flat_code)
+            if match.group(1) == "enum":
+                values = enums.setdefault(name, set())
+                for case in re.finditer(r"^[ \t]*case[ \t]+([^\n{}]+)$", flat_literals, re.M):
+                    for label, raw in re.findall(r'(\w+)\s*(?:=\s*"([^"]*)")?', case.group(1)):
+                        values.add(raw or label)
+            elif match.group(1) == "struct":
+                fields = structs.setdefault(name, {})
+                for prop in _SWIFT_PROPERTY.finditer(flat_text):
+                    line = prop.group(0)
+                    if "static" in line or "{" in line:
+                        continue
+                    fields[prop.group(1)] = re.sub(r"\s+", "", prop.group(2))
+            if "init(from" in masked[body_start:body_end]:
+                custom.add(name)
+            position = close
+
+    for path in sorted(root.rglob("*.swift")):
+        code, masked = _swift_masks(path.read_text(encoding="utf-8"))
+        scan(code, masked, 0, len(masked), "")
+    return structs, enums, custom
+
+
+def codable_problems(reader) -> list[str]:
+    """The reader's table of Swift types against the structs and enums in the app and in Build 29's frozen copy."""
+    problems: list[str] = []
+    for label, root in (("the app", SWIFT_SOURCES), ("Build 29's frozen reader", SHIPPED_READER_SOURCES)):
+        structs, enums, custom = swift_declarations(root)
+        for name, fields in reader.SWIFT_TYPES.items():
+            declared = structs.get(name)
+            if declared is None:
+                if root == SWIFT_SOURCES:
+                    problems.append(f"portable formats: {name} is not a struct in {label}")
+                continue            # a type a build never shipped is one it doesn't read
+            if name in custom:
+                problems.append(f"portable formats: {name} in {label} decodes by hand; decode_problem() models "
+                                "synthesized Codable only")
+            if declared != fields:
+                changed = sorted(k for k in set(declared) | set(fields) if declared.get(k) != fields.get(k))
+                problems.append(f"portable formats: {name} differs between {label} and the reference reader's "
+                                f"SWIFT_TYPES at {changed}")
+        for name, values in reader.SWIFT_ENUMS.items():
+            declared = enums.get(name)
+            if declared is None:
+                if root == SWIFT_SOURCES:
+                    problems.append(f"portable formats: {name} is not an enum in {label}")
+            elif declared != set(values):
+                problems.append(f"portable formats: {name} values differ between {label} {sorted(declared)} and the "
+                                f"reference reader {sorted(values)}")
+    return problems
+
+
 def portable_format_problems(reader=None) -> list[str]:
     reader = reader or load_reference_reader()
     problems: list[str] = []
@@ -267,6 +383,10 @@ def portable_format_problems(reader=None) -> list[str]:
     if swift_kinds != set(reader.ARTIFACT_VERSIONS):
         problems.append(f"portable formats: artifact kinds differ: app {sorted(swift_kinds)}, reference reader "
                         f"{sorted(reader.ARTIFACT_VERSIONS)}")
+
+    problems.extend(codable_problems(reader))
+    if reader.KIND_SWIFT_TYPE != ARTIFACT_TYPES:
+        problems.append("portable formats: the reference reader decodes the artifact kinds as different Swift types")
 
     package_schema = load_json(schemas / "spoken-margins-package.schema.json")
     for swift_reader in SWIFT_READERS:
