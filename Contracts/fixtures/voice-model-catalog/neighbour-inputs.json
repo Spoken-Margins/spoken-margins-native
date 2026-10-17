@@ -1,0 +1,351 @@
+{
+ "note": "Neighbouring inputs for the voice catalog's field rules (#1816). validate-contracts holds the schema's patterns to every row; the SessionKit host tests hold VoiceModelCatalogRules to the same rows. Add a row for any input that turns out to be misjudged.",
+ "sha256": [
+  {
+   "value": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+   "valid": true,
+   "why": "64 lowercase hex"
+  },
+  {
+   "value": "C3EB91414D5FF8A7A239B7FE9E34E7E2BF8A8140D8375FFB14718B1C639325DB",
+   "valid": false,
+   "why": "uppercase hex"
+  },
+  {
+   "value": "c3eb91414d5ff8a7a239b7fe9e34e7e2BF8A8140D8375FFB14718B1C639325DB",
+   "valid": false,
+   "why": "mixed case"
+  },
+  {
+   "value": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325d",
+   "valid": false,
+   "why": "63 characters"
+  },
+  {
+   "value": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db0",
+   "valid": false,
+   "why": "65 characters"
+  },
+  {
+   "value": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db ",
+   "valid": false,
+   "why": "trailing space"
+  },
+  {
+   "value": "c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db\n",
+   "valid": false,
+   "why": "trailing newline"
+  },
+  {
+   "value": " c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+   "valid": false,
+   "why": "leading space"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
+  },
+  {
+   "value": "0xc3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325",
+   "valid": false,
+   "why": "0x prefix"
+  },
+  {
+   "value": "sha256:c3eb91414d5ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+   "valid": false,
+   "why": "algorithm prefix"
+  },
+  {
+   "value": "c3eb91414dgff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+   "valid": false,
+   "why": "non-hex letter"
+  },
+  {
+   "value": "c3eb91414d\u0430ff8a7a239b7fe9e34e7e2bf8a8140d8375ffb14718b1c639325db",
+   "valid": false,
+   "why": "Cyrillic letter that looks like an ASCII one"
+  }
+ ],
+ "httpsURL": [
+  {
+   "value": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1e/onnx/tts.json",
+   "valid": true,
+   "why": "upstream file"
+  },
+  {
+   "value": "https://mirror.example.net:8443/a/b.bin?x=1",
+   "valid": true,
+   "why": "port and query"
+  },
+  {
+   "value": "https://EXAMPLE.org/a",
+   "valid": true,
+   "why": "uppercase host"
+  },
+  {
+   "value": "https://example.org",
+   "valid": true,
+   "why": "no path"
+  },
+  {
+   "value": "http://example.org/a",
+   "valid": false,
+   "why": "plain http"
+  },
+  {
+   "value": "HTTPS://example.org/a",
+   "valid": false,
+   "why": "uppercase scheme"
+  },
+  {
+   "value": "https://example.org/a ",
+   "valid": false,
+   "why": "trailing space"
+  },
+  {
+   "value": "https://example.org/a\n",
+   "valid": false,
+   "why": "trailing newline"
+  },
+  {
+   "value": " https://example.org/a",
+   "valid": false,
+   "why": "leading space"
+  },
+  {
+   "value": "https://example.org/a b",
+   "valid": false,
+   "why": "space in path"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
+  },
+  {
+   "value": "https://",
+   "valid": false,
+   "why": "no host"
+  },
+  {
+   "value": "https:///a",
+   "valid": false,
+   "why": "empty host"
+  },
+  {
+   "value": "example.org/a",
+   "valid": false,
+   "why": "no scheme"
+  },
+  {
+   "value": "//example.org/a",
+   "valid": false,
+   "why": "scheme-relative"
+  },
+  {
+   "value": "ftp://example.org/a",
+   "valid": false,
+   "why": "ftp"
+  },
+  {
+   "value": "file:///etc/passwd",
+   "valid": false,
+   "why": "file"
+  },
+  {
+   "value": "javascript:alert(1)",
+   "valid": false,
+   "why": "javascript"
+  },
+  {
+   "value": "https://user:pass@example.org/a",
+   "valid": false,
+   "why": "credentials"
+  },
+  {
+   "value": "https://example.org@evil.example/a",
+   "valid": false,
+   "why": "credentials that look like a host"
+  },
+  {
+   "value": "https://example.org/a#frag",
+   "valid": false,
+   "why": "fragment"
+  },
+  {
+   "value": "https://example.org./a",
+   "valid": false,
+   "why": "trailing dot host"
+  },
+  {
+   "value": "https://.example.org/a",
+   "valid": false,
+   "why": "leading dot host"
+  },
+  {
+   "value": "https://exa mple.org/a",
+   "valid": false,
+   "why": "space in host"
+  },
+  {
+   "value": "https://m\u00fcnchen.example/a",
+   "valid": false,
+   "why": "non-ASCII host"
+  },
+  {
+   "value": "https://example.org:123456/a",
+   "valid": false,
+   "why": "port too long"
+  },
+  {
+   "value": "https://example.org:80a/a",
+   "valid": false,
+   "why": "port not digits"
+  },
+  {
+   "value": "https://example.org:/a",
+   "valid": false,
+   "why": "empty port"
+  },
+  {
+   "value": "https://example.org/\u00e9",
+   "valid": false,
+   "why": "non-ASCII path"
+  }
+ ],
+ "filePath": [
+  {
+   "value": "onnx/tts.json",
+   "valid": true,
+   "why": "nested"
+  },
+  {
+   "value": "model.onnx",
+   "valid": true,
+   "why": "top level"
+  },
+  {
+   "value": "licenses/ONNXRUNTIME_MIT.txt",
+   "valid": true,
+   "why": "licence text"
+  },
+  {
+   "value": "a/..b",
+   "valid": true,
+   "why": "a segment that merely starts with dots"
+  },
+  {
+   "value": "../x",
+   "valid": false,
+   "why": "parent segment"
+  },
+  {
+   "value": "a/../x",
+   "valid": false,
+   "why": "parent segment inside"
+  },
+  {
+   "value": "a/..",
+   "valid": false,
+   "why": "trailing parent segment"
+  },
+  {
+   "value": "./a",
+   "valid": false,
+   "why": "current-directory segment"
+  },
+  {
+   "value": "a/./b",
+   "valid": false,
+   "why": "current-directory segment inside"
+  },
+  {
+   "value": "/abs",
+   "valid": false,
+   "why": "absolute"
+  },
+  {
+   "value": "a//b",
+   "valid": false,
+   "why": "empty segment"
+  },
+  {
+   "value": "a/",
+   "valid": false,
+   "why": "trailing slash"
+  },
+  {
+   "value": "a\\b",
+   "valid": false,
+   "why": "backslash"
+  },
+  {
+   "value": "a b",
+   "valid": false,
+   "why": "space"
+  },
+  {
+   "value": "a\n",
+   "valid": false,
+   "why": "trailing newline"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
+  }
+ ],
+ "id": [
+  {
+   "value": "a",
+   "valid": true,
+   "why": "one character"
+  },
+  {
+   "value": "supertonic-3-int8",
+   "valid": true,
+   "why": "typical"
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true,
+   "why": "64 characters"
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false,
+   "why": "65 characters"
+  },
+  {
+   "value": "-a",
+   "valid": false,
+   "why": "leading hyphen"
+  },
+  {
+   "value": "Aa",
+   "valid": false,
+   "why": "uppercase"
+  },
+  {
+   "value": "a_b",
+   "valid": false,
+   "why": "underscore"
+  },
+  {
+   "value": "a b",
+   "valid": false,
+   "why": "space"
+  },
+  {
+   "value": "a\n",
+   "valid": false,
+   "why": "trailing newline"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
+  }
+ ]
+}

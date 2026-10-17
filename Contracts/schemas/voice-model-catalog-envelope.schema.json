@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-model-catalog-envelope.schema.json",
+  "title": "Signed voice model catalog envelope (#1816)",
+  "description": "The file the app downloads. 'payload' is the base64 of a voice-model-catalog.schema.json document, byte for byte as signed, so there is no re-serialising for the signer and verifier to disagree about. 'signature' is the base64 Ed25519 signature over the ASCII line \"SpokenMargins-VoiceModelCatalog-v1\\n\" followed by the payload bytes. The app trusts only keys compiled into the build, looked up by keyId, so a key is rotated by shipping the new key in one build and signing with it once that build is out. Missing or bad signature, an unknown keyId or algorithm, or a payload that doesn't decode rejects the whole catalog.",
+  "type": "object",
+  "required": ["schemaVersion", "keyId", "algorithm", "payload", "signature"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {"const": "voice-model-catalog-envelope.v1"},
+    "keyId": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}(?![\\s\\S])"},
+    "algorithm": {"const": "ed25519"},
+    "payload": {"type": "string", "minLength": 4, "maxLength": 1048576, "pattern": "^[A-Za-z0-9+/]+={0,2}(?![\\s\\S])"},
+    "signature": {"type": "string", "minLength": 88, "maxLength": 88, "pattern": "^[A-Za-z0-9+/]{86}==(?![\\s\\S])"}
+  }
+}

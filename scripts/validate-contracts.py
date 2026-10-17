@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import base64
 import json
 import hashlib
 import subprocess
@@ -6,6 +7,8 @@ import sys
 from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
+
+import voice_catalog_tools
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +45,9 @@ PATH_SCHEMA_RULES = [
     ("fixtures/source-catalog/*.json", "source-catalog.schema.json"),
     ("fixtures/source-catalog-manifest/*.json", "source-catalog-manifest.schema.json"),
     ("fixtures/source-resolution/*.json", "source-resolution.schema.json"),
+    ("fixtures/voice-model-catalog/envelope-*.json", "voice-model-catalog-envelope.schema.json"),
+    ("fixtures/voice-model-catalog/catalog-*.json", "voice-model-catalog.schema.json"),
+    ("fixtures/voice-model-catalog/draft-*.catalog.json", "voice-model-catalog.schema.json"),
     ("fixtures/podcast-search/test-names.json", "podcast-search-test-list.schema.json"),
     ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
@@ -51,6 +57,7 @@ NEGATIVE_PATH_SCHEMA_RULES = [
     ("fixtures/invalid/interjection-packages/*.json", "spoken-margins-package.schema.json"),
     ("fixtures/invalid/source-catalog/*.json", "source-catalog.schema.json"),
     ("fixtures/invalid/source-resolution/*.json", "source-resolution.schema.json"),
+    ("fixtures/invalid/voice-model-catalog/*.json", "voice-model-catalog-envelope.schema.json"),
     ("fixtures/invalid/listening-signals/*.json", "i4-engagement.schema.json"),
 ]
 
@@ -87,6 +94,29 @@ def validate_file(path: Path, schema_path: Path, mode: str | None = None) -> lis
         for error in sorted(validator.iter_errors(value), key=lambda err: list(err.path)):
             location = ".".join(str(part) for part in error.path) or "<root>"
             errors.append(f"{prefix}: {location}: {error.message}")
+    return errors
+
+
+def validate_voice_catalogs() -> list[str]:
+    """The signed voice catalog (#1816): each envelope's payload is a valid catalog, the field rules in
+    the schema agree with the neighbouring-input table, and the Supertonic draft lists the bundled files."""
+    errors: list[str] = []
+    folder = CONTRACTS / "fixtures/voice-model-catalog"
+    catalog_schema = load_json(SCHEMAS / "voice-model-catalog.schema.json")
+    for envelope_path in sorted(folder.glob("envelope-*.json")):
+        payload = base64.b64decode(load_json(envelope_path)["payload"])
+        validator = Draft202012Validator(catalog_schema, format_checker=FormatChecker())
+        for error in validator.iter_errors(json.loads(payload)):
+            location = ".".join(str(part) for part in error.path) or "<root>"
+            errors.append(f"{envelope_path}: payload: {location}: {error.message}")
+    table = load_json(folder / "neighbour-inputs.json")
+    for rule in ("sha256", "httpsURL", "filePath", "id"):
+        validator = Draft202012Validator(catalog_schema["$defs"][rule])
+        for row in table[rule]:
+            if validator.is_valid(row["value"]) != row["valid"]:
+                errors.append(f"{folder / 'neighbour-inputs.json'}: schema {rule} judges {row['value']!r} ({row['why']}) wrongly")
+    errors += voice_catalog_tools.check_envelope_payloads()
+    errors += voice_catalog_tools.check_draft_matches_manifest()
     return errors
 
 
@@ -185,6 +215,8 @@ def main() -> int:
 
     for manifest_path, catalog_path in SOURCE_CATALOG_PAIRS:
         errors.extend(validate_source_catalog_pair(manifest_path, catalog_path))
+
+    errors.extend(validate_voice_catalogs())
 
     for pattern, schema_name in NEGATIVE_PATH_SCHEMA_RULES:
         schema_path = SCHEMAS / schema_name
