@@ -157,6 +157,12 @@ AUDITS = ('**Codex audit (Astra)', '## Codex audit', '**Claude audit on `')
 AUDITED = {'audio': 'the audio session', 'persistence': 'persistence', 'packet': 'packets'}
 BOT = ('github-actions[bot]', '41898282+github-actions[bot]@users.noreply.github.com')
 RUNNER_TIERS = ('T2', 'T3')
+# Whose PR comments the runner reads (#1719). Once the repository is public, anyone can comment, and a /lane
+# request runs the PR's code on the Mac; a fake report or note could also answer a request or lift the T3 hold.
+# So the runner sees only comments from the owner, the organisation's members and the repository's
+# collaborators (GitHub's author_association), and from the project's own bot, the workflows' github-actions.
+TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
+TRUSTED_BOTS = (BOT[0],)
 APP_TEST_TARGET = 'SpokenMarginsAppTests'
 PLANS = {'app': 'AppBehavior', 'adapters': 'AudioAdapters'}
 # The device build compiles without signing: the runner is a background service with no access to
@@ -184,6 +190,15 @@ LANE_WORKFLOW = 'lane.yml'
 
 
 # ---- Requests -----------------------------------------------------------------------------------
+
+def trusted_comment(comment: dict) -> bool:
+    """Whether the runner may act on this comment: the owner's, a member's or collaborator's, or the project's bot.
+
+    A comment without author_association (GitHub always sends it) is not trusted.
+    """
+    login = (comment.get('user') or {}).get('login')
+    return comment.get('author_association') in TRUSTED_ASSOCIATIONS or login in TRUSTED_BOTS
+
 
 def parse_request(body: str) -> dict | None:
     """The /lane line and the `key: value` lines after it, or None if the comment isn't a request."""
@@ -2115,8 +2130,15 @@ class GitHub:
         return json.loads(self.api(f'repos/{self.repo}/pulls/{self.pr}'))
 
     def comments(self) -> list[dict]:
+        """The PR's comments the runner may act on: only trusted authors' (trusted_comment, #1719)."""
         lines = self.api('--paginate', '--jq', '.[] | @json', f'repos/{self.repo}/issues/{self.pr}/comments')
-        return [json.loads(line) for line in lines.splitlines() if line.strip()]
+        comments = [json.loads(line) for line in lines.splitlines() if line.strip()]
+        kept = [comment for comment in comments if trusted_comment(comment)]
+        if len(kept) < len(comments):
+            ignored = sorted({(c.get('user') or {}).get('login') or 'unknown' for c in comments if not trusted_comment(c)})
+            print(f'[lane] ignored {len(comments) - len(kept)} comment(s) from authors who are not the owner, a '
+                  f'collaborator or the project\'s bot: {", ".join(ignored)}', flush=True)
+        return kept
 
     def comment(self, body: str) -> str:
         return json.loads(self.api(f'repos/{self.repo}/issues/{self.pr}/comments', '-f', f'body={body}'))['html_url']
