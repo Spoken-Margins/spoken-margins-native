@@ -55,7 +55,7 @@ final class SharedMarginTallyTests: XCTestCase {
         for id in ["a", "b", "c", "d", "e"] { try store.saveItem(item(id)) }
         XCTAssertEqual(try store.loadSharedMarginTallies(), [:], "nothing shared yet")
 
-        // a: two friends, three Margins. b: a friend who is switched off. c: a deleted layer. d: none.
+        // a: two friends, three Margins. b: a friend who is switched off still shows on the Margins screen, so it counts. c: a deleted layer. d: none.
         // e: one Margin, already heard. An unresolved layer (no item) belongs to no row.
         _ = try store.importCommentaryLayer(layer("ann", item: "a"), interjections: [margin("m1", layer: "ann"), margin("m2", layer: "ann")])
         _ = try store.importCommentaryLayer(layer("ben", item: "a"), interjections: [margin("m3", layer: "ben")])
@@ -67,6 +67,7 @@ final class SharedMarginTallyTests: XCTestCase {
 
         XCTAssertEqual(try store.loadSharedMarginTallies(), [
             "a": SharedMarginTally(total: 3, new: 3),
+            "b": SharedMarginTally(total: 1, new: 1),
             "e": SharedMarginTally(total: 1, new: 0)
         ])
 

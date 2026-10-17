@@ -1656,7 +1656,7 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
 
     /// Margins other people shared, counted per item for the Library rows (#1792). One query in SQL:
     /// opening the Library must not decode every imported recording, transcript and anchor. Only a
-    /// layer the listener hasn't deleted and still has switched on counts, as on the Margins screens.
+    /// layer the listener hasn't deleted counts, as on the Margins screens (which ignore the on/off switch).
     public func loadSharedMarginTallies() throws -> [String: SharedMarginTally] {
         try withConnectionLock {
             var statement: OpaquePointer?
@@ -1667,10 +1667,9 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
                        SUM(CASE WHEN json_extract(note.payload, '$.firstHeardAt') IS NULL THEN 1 ELSE 0 END)
                 FROM records AS layer
                 JOIN records AS note
-                  ON note.kind = ? AND json_valid(note.payload) AND json_extract(note.payload, '$.layerId') = layer.id
-                WHERE layer.kind = ? AND layer.item_id IS NOT NULL AND json_valid(layer.payload)
-                  AND json_extract(layer.payload, '$.deletedAt') IS NULL
-                  AND COALESCE(json_extract(layer.payload, '$.isEnabled'), 0) != 0
+                  ON note.kind = ? AND CASE WHEN json_valid(note.payload) THEN json_extract(note.payload, '$.layerId') = layer.id ELSE 0 END
+                WHERE layer.kind = ? AND layer.item_id IS NOT NULL
+                  AND CASE WHEN json_valid(layer.payload) THEN json_extract(layer.payload, '$.deletedAt') IS NULL ELSE 0 END
                 GROUP BY layer.item_id;
                 """,
                 -1,
