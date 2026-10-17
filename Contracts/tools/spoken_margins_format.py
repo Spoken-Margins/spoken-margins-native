@@ -1055,13 +1055,22 @@ def _anchor_quote(anchor):
     return ' '.join(anchor[k] for k in ('prefix', 'exactText', 'suffix') if anchor.get(k) is not None)
 
 
+# Letters Swift's Character.isLetter (Unicode "Alphabetic") counts although their category is a symbol: circled and
+# squared letters.
+_SYMBOL_LETTERS = ((0x24B6, 0x24E9), (0x1F130, 0x1F149), (0x1F150, 0x1F169), (0x1F170, 0x1F189))
+
+
+def _is_word_character(char):
+    return unicodedata.category(char)[0] in 'LMN' or any(low <= ord(char) <= high for low, high in _SYMBOL_LETTERS)
+
+
 def _max_words(text):
     """A count Swift's `words` cannot exceed: the runs of letters, marks and numbers (a Swift word is a run of
-    Characters that are letters or numbers). Unlike _words() it holds for any text, so below the 10-word minimum a
-    quotation is ruled out whatever the script."""
+    Characters whose first code point is a letter or a number). Unlike _words() it holds for any text, so below the
+    10-word minimum a quotation is ruled out whatever the script."""
     count, inside = 0, False
     for char in text:
-        word = unicodedata.category(char)[0] in 'LMN'
+        word = _is_word_character(char)
         count += word and not inside
         inside = word
     return count

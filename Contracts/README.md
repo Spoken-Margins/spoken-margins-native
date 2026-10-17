@@ -90,7 +90,7 @@ Every redaction flag but `fullItemOmitted` must be true: a packet never carries 
 - **Evidence clips.** `anchorOffsetMs` on an evidence asset is the Margin's moment measured from the start of that clip; it is negative when the clip starts after the moment.
 - **`roughPercent`** is a whole-number percentage (0–100) of the item's duration, a fallback when nothing finer resolves.
 - **Text positions.** `startChar` and `endChar` are offsets in Swift `Character`s (grapheme clusters) into the exact edition: `startChar` is the first character and `endChar` the one after the last. They are used only when the recipient's text has the same `exactEditionSHA256`. Otherwise the reader matches `exactText` (at most 1,000 characters) with up to 500 characters of `prefix` and `suffix`.
-- **Dates** are ISO-8601 with a zone. The manifest's `createdAt` is written in UTC with milliseconds.
+- **Dates** are ISO-8601 with a zone, in every field the readers decode as a date (the manifest, Margins, Listening Map proposals, fingerprint spines and phrase sketches); anything else refuses the packet. The manifest's `createdAt` is written in UTC with milliseconds.
 
 **Listening Map provenance.** Each proposal names its `generator`, and each scene its `summaryProvenance`: `publisher_supplied`, `sender_authored`, `deterministic` or `model_generated`. A recipient's app never turns a proposal on by itself.
 
