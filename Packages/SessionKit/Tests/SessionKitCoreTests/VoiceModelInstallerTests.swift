@@ -208,7 +208,7 @@ final class VoiceModelInstallerTests: XCTestCase {
         XCTAssertEqual(server.requests(for: "/mirror/m").count, 1)
     }
 
-    func testMovesToTheNextSourceWhenTheFirstSendsTheWrongNumberOfBytes() async throws {
+    func testMovesToTheNextSourceWhenTheFirstSendsThreeBytesTooMany() async throws {
         let model = payload(60_000, seed: 10)
         let server = try startServer { request, _ in
             switch request.path {
@@ -222,6 +222,37 @@ final class VoiceModelInstallerTests: XCTestCase {
         ])
 
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+    }
+
+    func testStopsWritingWhenASourceSendsFarMoreThanTheExpectedBytes() async throws {
+        let model = payload(60_000, seed: 29)
+        let tooMuch = model + payload(3_000_000, seed: 30)
+        let server = try startServer { request, _ in
+            request.path == "/long" ? .init(body: tooMuch) : LocalHTTPServer.file(model, for: request)
+        }
+        let rootURL: URL = root
+        let watching = SizeWatchingTransport(root: { rootURL })
+        let installer = VoiceModelInstaller(
+            root: root,
+            transport: watching,
+            configuration: .init(marginBytes: 0, attemptsPerSource: 3, retryDelay: .zero, availableCapacity: { _ in nil })
+        )
+
+        do {
+            try await installer.install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/long")])])
+            XCTFail("a source that sends too many bytes must fail")
+        } catch let error as VoiceModelInstallError {
+            XCTAssertEqual(error, .downloadFailed(path: "model.onnx", problem: "the server sent more bytes than expected"))
+        }
+        XCTAssertLessThanOrEqual(watching.largestFileSeen, Int64(model.count), "nothing past the expected size is ever written to disk")
+        XCTAssertEqual(server.requests(for: "/long").count, 1, "an oversize source isn't retried")
+
+        // The next source is still tried afterwards.
+        let folder = try await installer.install(voiceId: "w", version: "1", files: [
+            installFile("model.onnx", model, sources: [server.url("/long"), server.url("/right")]),
+        ])
+        XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+        XCTAssertLessThanOrEqual(watching.largestFileSeen, Int64(model.count))
     }
 
     func testMovesToTheNextSourceWhenTheFirstOneKeepsFailing() async throws {
@@ -254,24 +285,62 @@ final class VoiceModelInstallerTests: XCTestCase {
 
     func testUsesOnlyHTTPSAddressesWithoutCredentials() async throws {
         let model = payload(20_000, seed: 13)
-        let server = try fileServer(["/m": model])
         let refused = [
             "http://example.com/m", "ftp://example.com/m", "file:///etc/passwd",
-            "https://user:secret@example.com/m", "not a url", "https:///no-host",
+            "https://user:secret@example.com/m", "https://:secret@example.com/m", "not a url", "https:///no-host",
         ]
+        let allowed = "https://downloads.example.com/m"
 
-        // The refused addresses are skipped without a request; the loopback one still works.
-        let folder = try await installer().install(voiceId: "v", version: "1", files: [
-            installFile("model.onnx", model, sources: refused + [server.url("/m")]),
+        // The refused addresses are never requested; the one plain HTTPS address is, and installs.
+        let transport = RecordingTransport(serving: model)
+        let installer = VoiceModelInstaller(
+            root: root,
+            transport: transport,
+            configuration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil })
+        )
+        let folder = try await installer.install(voiceId: "v", version: "1", files: [
+            installFile("model.onnx", model, sources: refused + [allowed]),
         ])
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+        XCTAssertEqual(transport.fetched, [allowed], "only the HTTPS address without credentials was requested")
 
+        // With nothing usable the install fails without a single request, naming the last refused address.
+        let onlyRefused = RecordingTransport(serving: model)
+        let refusingInstaller = VoiceModelInstaller(
+            root: root,
+            transport: onlyRefused,
+            configuration: .init(marginBytes: 0, attemptsPerSource: 1, retryDelay: .zero, availableCapacity: { _ in nil })
+        )
         do {
-            try await installer().install(voiceId: "w", version: "1", files: [installFile("model.onnx", model, sources: refused)])
+            try await refusingInstaller.install(voiceId: "w", version: "1", files: [installFile("model.onnx", model, sources: refused)])
             XCTFail("only refused addresses")
         } catch let error as VoiceModelInstallError {
-            guard case .downloadFailed = error else { return XCTFail("unexpected \(error)") }
+            XCTAssertEqual(error, .downloadFailed(path: "model.onnx", problem: "https:///no-host is not a usable address"))
         }
+        XCTAssertEqual(onlyRefused.fetched, [])
+        XCTAssertFalse(exists("w"))
+    }
+
+    func testNeverSendsARequestToAnAddressThatCarriesCredentialsEvenOnThisMachine() async throws {
+        let model = payload(20_000, seed: 28)
+        let server = try fileServer(["/m": model])
+        let withUser = server.url("/m").replacingOccurrences(of: "http://", with: "http://user@")
+        let withPassword = server.url("/m").replacingOccurrences(of: "http://", with: "http://user:pw@")
+
+        do {
+            try await installer().install(voiceId: "v", version: "1", files: [
+                installFile("model.onnx", model, sources: [withUser, withPassword]),
+            ])
+            XCTFail("an address with credentials must not be used")
+        } catch let error as VoiceModelInstallError {
+            XCTAssertEqual(error, .downloadFailed(path: "model.onnx", problem: "\(withPassword) is not a usable address"))
+        }
+        XCTAssertEqual(server.requests.count, 0, "the loopback server never saw a request")
+
+        // The same server without credentials is a usable source, so the refusal above is about the credentials.
+        let folder = try await installer().install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/m")])])
+        XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+        XCTAssertEqual(server.requests.count, 1)
     }
 
     // MARK: Upgrades
@@ -299,18 +368,26 @@ final class VoiceModelInstallerTests: XCTestCase {
         let v1 = payload(30_000, seed: 16)
         let v2 = payload(90_000, seed: 17)
         let server = try startServer { request, _ in
-            request.path == "/v1" ? LocalHTTPServer.file(v1, for: request) : .init(status: 500)
+            guard request.path == "/v2" else { return LocalHTTPServer.file(v1, for: request) }
+            var reply = LocalHTTPServer.file(v2, for: request)
+            reply.cutAfter = 40_000
+            return reply
         }
         let installer = installer(attemptsPerSource: 1)
 
         try await installer.install(voiceId: "v", version: "1", files: [installFile("model.onnx", v1, sources: [server.url("/v1")])])
         do {
             try await installer.install(voiceId: "v", version: "2", files: [installFile("model.onnx", v2, sources: [server.url("/v2")])])
-            XCTFail("the server is down")
+            XCTFail("the connection is cut")
         } catch is VoiceModelInstallError {}
 
         XCTAssertEqual(installer.installedVersions(voiceId: "v"), ["1"])
         XCTAssertEqual(try read(root.appendingPathComponent("v/1/model.onnx")), v1)
+        XCTAssertEqual(stagedFolders(), ["v@2"], "the unfinished upgrade stays staged")
+        let partial = try read(root.appendingPathComponent(".staging/v@2/model.onnx.partial"))
+        XCTAssertGreaterThan(partial.count, 0)
+        XCTAssertLessThan(partial.count, v2.count)
+        XCTAssertEqual(partial, v2.prefix(partial.count), "what was kept is the start of the new version")
     }
 
     func testASuccessfulUpgradeReplacesTheOldVersion() async throws {
@@ -563,6 +640,59 @@ final class VoiceModelInstallerTests: XCTestCase {
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
     }
 
+    // MARK: Files left staged by an earlier attempt
+
+    private func stage(_ relative: String, _ data: Data) throws {
+        let url = root.appendingPathComponent(".staging/v@1").appendingPathComponent(relative)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url)
+    }
+
+    func testAFinishedFileThatNoLongerMatchesItsChecksumIsDownloadedAgain() async throws {
+        let model = payload(40_000, seed: 31)
+        var damaged = model
+        damaged[1_000] ^= 0xFF
+        try stage("model.onnx", damaged)
+        let server = try fileServer(["/m": model])
+
+        let folder = try await installer().install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/m")])])
+
+        XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model, "a staged file of the right size is not trusted without hashing it")
+        XCTAssertEqual(server.requests(for: "/m").count, 1)
+    }
+
+    func testAFinishedFileThatStillMatchesIsNotDownloadedAgain() async throws {
+        let model = payload(40_000, seed: 32)
+        try stage("model.onnx", model)
+        let server = try fileServer([:])
+
+        let folder = try await installer().install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/m")])])
+
+        XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+        XCTAssertEqual(server.requests.count, 0)
+    }
+
+    func testAPartialFileAlreadyHoldingEveryByteIsCheckedNotTrusted() async throws {
+        let model = payload(40_000, seed: 33)
+        let server = try fileServer(["/m": model])
+
+        // Complete and right: checked, then used with no request.
+        try stage("model.onnx.partial", model)
+        let folder = try await installer().install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/m")])])
+        XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+        XCTAssertEqual(server.requests.count, 0)
+
+        // Full length but wrong bytes: thrown away and fetched from the start.
+        try FileManager.default.removeItem(at: root)
+        var damaged = model
+        damaged[20_000] ^= 0x01
+        try stage("model.onnx.partial", damaged)
+        let again = try await installer().install(voiceId: "v", version: "1", files: [installFile("model.onnx", model, sources: [server.url("/m")])])
+        XCTAssertEqual(try read(again.appendingPathComponent("model.onnx")), model)
+        XCTAssertEqual(server.requests(for: "/m").count, 1)
+        XCTAssertNil(server.requests(for: "/m").first?.headers["range"], "the damaged bytes were dropped, so the fetch starts at zero")
+    }
+
     // MARK: Backup
 
     func testInstalledVoicesAreExcludedFromBackup() async throws {
@@ -598,5 +728,76 @@ private final class ProgressLog: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return all
+    }
+}
+
+/// Answers every request with `body` and records which addresses were asked for. No network.
+private final class RecordingTransport: VoiceModelTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private let body: Data
+    private var urls: [String] = []
+
+    init(serving body: Data) { self.body = body }
+
+    var fetched: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return urls
+    }
+
+    private func record(_ url: URL) {
+        lock.lock()
+        urls.append(url.absoluteString)
+        lock.unlock()
+    }
+
+    func fetch(
+        _ url: URL,
+        from offset: Int,
+        onHead: @escaping @Sendable (VoiceModelResponseHead) throws -> Bool,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        record(url)
+        guard try onHead(VoiceModelResponseHead(statusCode: 200)) else { return }
+        try onChunk(body)
+    }
+}
+
+/// The real transport, plus a note of the biggest file under `root` after every piece of body.
+private final class SizeWatchingTransport: VoiceModelTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private let root: @Sendable () -> URL
+    private let inner = URLSessionVoiceModelTransport()
+    private var largest: Int64 = 0
+
+    init(root: @escaping @Sendable () -> URL) { self.root = root }
+
+    var largestFileSeen: Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        return largest
+    }
+
+    private func measure() {
+        guard let files = FileManager.default.enumerator(at: root(), includingPropertiesForKeys: [.fileSizeKey]) else { return }
+        var biggest: Int64 = 0
+        for case let url as URL in files {
+            biggest = max(biggest, Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0))
+        }
+        lock.lock()
+        largest = max(largest, biggest)
+        lock.unlock()
+    }
+
+    func fetch(
+        _ url: URL,
+        from offset: Int,
+        onHead: @escaping @Sendable (VoiceModelResponseHead) throws -> Bool,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        try await inner.fetch(url, from: offset, onHead: onHead) { data in
+            defer { self.measure() }
+            try onChunk(data)
+        }
     }
 }
