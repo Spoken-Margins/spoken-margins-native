@@ -69,7 +69,7 @@ final class ImportedPodcastPlacementCoordinator {
     }
 
     /// The transient transcript may start again this long after the last one started.
-    static let transientCooldown: TimeInterval = 60
+    static let transientCooldown = ImportedPodcastPlacementPolicy.transientCooldown
 
     let matching = PodcastPlacementPassCoordinator()
     private(set) var requestedURL: [String: URL] = [:]
@@ -108,8 +108,8 @@ final class ImportedPodcastPlacementCoordinator {
     func scheduleTransientTranscript(for item: Item, localSourceURL: URL) -> Bool {
         guard let sourceFile = try? PodcastPlacementFile(url: localSourceURL) else { return false }
         let now = deps.now()
-        guard lastTransientStart[item.id].map({ now.timeIntervalSince($0) >= Self.transientCooldown }) ?? true,
-              admission[item.id] == nil else { return false }
+        guard ImportedPodcastPlacementPolicy.transientTranscriptMayStart(
+            lastStart: lastTransientStart[item.id], now: now, slotIsFree: admission[item.id] == nil) else { return false }
         admission[item.id] = .transient(sourceFile)
         lastTransientStart[item.id] = now
         deps.recordDiagnostic("recipientAlignmentTranscript:\(item.id)", "transcribing_transiently")
@@ -307,8 +307,9 @@ final class ImportedPodcastPlacementCoordinator {
 
     func commentaryNeedsTranscript(itemId: String, store: SQLiteSessionStore) -> Bool {
         guard let layers = try? store.loadImportedCommentaryLayers(itemId: itemId) else { return false }
-        return ImportedPodcastPlacement.podcastLayerRecords(layers: layers) { layer in
-            try? store.loadImportedCommentaryInterjections(layerId: layer.id)
-        }.contains { $0.1.contains(where: ImportedPodcastPlacement.recordNeedsTranscript) }
+        return ImportedPodcastPlacementPolicy.commentaryNeedsTranscript(
+            layers: layers,
+            loadRecords: { try? store.loadImportedCommentaryInterjections(layerId: $0.id) },
+            recordNeedsTranscript: ImportedPodcastPlacement.recordNeedsTranscript)
     }
 }
