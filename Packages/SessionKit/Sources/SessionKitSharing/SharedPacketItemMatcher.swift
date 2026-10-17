@@ -28,7 +28,11 @@ public enum SharedPacketItemMatcher {
         guard candidates.count > 1, [.text, .pdf, .epub].contains(packetItem.itemType) else { return nil }
         let exact = candidates.filter { sameDigest(packetItem.exactEditionSHA256, $0.identity.exactEditionSHA256) }
         let sameText = candidates.filter { sameDigest(packetItem.normalizedContentSHA256, $0.identity.normalizedContentSHA256) }
-        let tier = !exact.isEmpty ? exact : (!sameText.isEmpty ? sameText : candidates)
+        // Address alone is the weakest evidence, so it only chooses among readable copies: an audio episode on
+        // the same page is not a copy of the article.
+        let sameKind = candidates.filter { [.text, .pdf, .epub].contains($0.identity.itemType) }
+        let tier = !exact.isEmpty ? exact : (!sameText.isEmpty ? sameText : sameKind)
+        if tier.isEmpty { return nil }
         if tier.count == 1 { return tier[0].item.id }
         return tier.max { newer($1.item, than: $0.item) }?.item.id
     }

@@ -77,6 +77,15 @@ final class SharedPacketEditionMatchTests: XCTestCase {
         XCTAssertNil(match(podcast, [first, second]))
     }
 
+    func testAnAudioEpisodeOnTheSamePageIsNotACopyOfTheArticle() {
+        let episode = Item(id: "episode", title: "A story", mediaType: "podcast", text: nil, externalReference: Self.url,
+                           status: "ready", media: ItemMedia(sourceType: .remoteStream, url: "https://audio.example.com/story.mp3"),
+                           createdAt: Date(timeIntervalSince1970: 300))
+        let old = article("old", text: Self.original, added: 100)
+        let new = article("new", text: Self.revised, added: 200)
+        XCTAssertEqual(match(packet(carrying: Self.third), [old, new, episode]), "new", "the newest article, not the newer episode")
+    }
+
     func testAPDFPacketPicksTheExactEditionToo() {
         let old = article("old", text: Self.original, added: 100, mediaType: "pdf")
         let new = article("new", text: Self.revised, added: 200, mediaType: "pdf")
