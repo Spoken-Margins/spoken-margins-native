@@ -244,6 +244,7 @@ final class VoiceModelInstallerTests: XCTestCase {
         } catch let error as VoiceModelInstallError {
             XCTAssertEqual(error, .downloadFailed(path: "model.onnx", problem: "the server sent more bytes than expected"))
         }
+        XCTAssertGreaterThan(watching.largestFileSeen, 0, "the watcher saw the partial file")
         XCTAssertLessThanOrEqual(watching.largestFileSeen, Int64(model.count), "nothing past the expected size is ever written to disk")
         XCTAssertEqual(server.requests(for: "/long").count, 1, "an oversize source isn't retried")
 
@@ -326,10 +327,11 @@ final class VoiceModelInstallerTests: XCTestCase {
         let server = try fileServer(["/m": model])
         let withUser = server.url("/m").replacingOccurrences(of: "http://", with: "http://user@")
         let withPassword = server.url("/m").replacingOccurrences(of: "http://", with: "http://user:pw@")
+        let withPasswordOnly = server.url("/m").replacingOccurrences(of: "http://", with: "http://:pw@")
 
         do {
             try await installer().install(voiceId: "v", version: "1", files: [
-                installFile("model.onnx", model, sources: [withUser, withPassword]),
+                installFile("model.onnx", model, sources: [withUser, withPasswordOnly, withPassword]),
             ])
             XCTFail("an address with credentials must not be used")
         } catch let error as VoiceModelInstallError {
