@@ -27,7 +27,6 @@ The former iOS 16.7 compatibility app was retired by product-owner decision on 2
 - `docs/`, `schemas/`, `fixtures/`, `traces/`: legacy mirrors retained while references migrate to `Contracts/`
 - `Packages/SessionKit/`: canonical session, persistence, audio, and AI-domain behavior
 - `App/`: iPhone app plus Safari and share extensions
-- `references/prototype-exports/`: real prototype exports kept as product references, not yet production fixtures
 
 The active product boundary and stopping rules are in `Contracts/docs/recovery-mvp.md`. Older gate documents describe project history rather than current priorities.
 
