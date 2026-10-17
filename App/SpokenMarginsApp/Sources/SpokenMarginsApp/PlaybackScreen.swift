@@ -133,6 +133,17 @@ struct PlaybackScreen: View {
                             PlaybackMarginsView()
                         }
                     }
+                    // Pinned above every pane, not inside the Now pane's scrolling header: a failure about this
+                    // listen hides the top banner, so the tag must stay in sight on Timeline and Margins too (#430).
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        if !model.recordingNavigationIsLocked, let feedback = model.playbackFeedbackTag {
+                            PlaybackFeedbackTagView(event: feedback.event, tag: feedback.tag)
+                                .padding(.horizontal, horizontalSizeClass == .regular ? 36 : 22)
+                                .frame(maxWidth: 620)
+                                .frame(maxWidth: .infinity)
+                                .background(AppColors.listeningBackground)
+                        }
+                    }
                     .safeAreaInset(edge: .bottom, spacing: 0) {
                         if !isTimelineEditing { playbackControls }
                     }
