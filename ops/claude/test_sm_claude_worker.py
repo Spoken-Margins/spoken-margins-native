@@ -893,6 +893,22 @@ class PrRunTests(unittest.TestCase):
         self.assertIn('PR not armed · no push', self.h.gh.comments(50)[-1])
         self.assertIn('The audit finding is wrong', self.h.gh.comments(50)[-1])
 
+    def test_re_arming_without_a_push_keeps_automerge(self):
+        # #1777: the agent decided no code change was needed and only re-armed (#1757); the head did not move.
+        self.h.plan({'handoff': 'The failure is a lane fault; nothing to change.'})
+        ops = self.h.ops()
+        real = ops.claude
+
+        def claude(wt, prompt, transcript, out_dir):
+            res = real(wt, prompt, transcript, out_dir)
+            self.h.gh.items[50]['labels'].append({'name': 'automerge'})
+            return res
+        ops.claude = claude
+        self.assertEqual(w.run_pr(ops, 1, 50), 'finished')
+        self.assertIn('automerge', self.h.gh.names(50))
+        self.assertNotIn('needs-mac', self.h.gh.names(50))
+        self.assertEqual(self.h.gh.comments(50)[-1], 'Thread "Claude Mac worker 1" stopping: PR #50 armed · done')
+
     def test_work_left_off_github_is_kept_for_a_human(self):
         self.h.plan({'files': {'fix.txt': 'fix'}, 'commit': False})
         self.assertEqual(w.run_pr(self.h.ops(), 1, 50), 'kept')

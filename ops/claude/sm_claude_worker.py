@@ -1401,7 +1401,7 @@ def run_pr(ops: Ops, slot: int, number: int) -> str:
             wt_added = False
             stop(f'the run ended with work not on GitHub; its worktree is at `{kept}` for a human')
             return 'kept'
-        if moved and 'automerge' in label_names(fresh):   # armed on GitHub, whatever Claude's exit said
+        if 'automerge' in label_names(fresh):   # armed on GitHub, whatever Claude's exit said and with or without a push
             if 'needs-mac' in label_names(fresh):
                 ops.label(number, remove='needs-mac')
             if usage_run:
