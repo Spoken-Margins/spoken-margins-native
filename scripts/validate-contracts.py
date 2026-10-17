@@ -9,7 +9,8 @@ from pathlib import Path
 
 from jsonschema import Draft202012Validator, FormatChecker
 
-import voice_catalog_tools
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import voice_catalog_tools  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,6 +50,8 @@ PATH_SCHEMA_RULES = [
     ("fixtures/voice-model-catalog/envelope-*.json", "voice-model-catalog-envelope.schema.json"),
     ("fixtures/voice-model-catalog/catalog-*.json", "voice-model-catalog.schema.json"),
     ("fixtures/voice-model-catalog/draft-*.catalog.json", "voice-model-catalog.schema.json"),
+    ("fixtures/voice-model-catalog/test-keys.json", "voice-model-catalog-test-keys.schema.json"),
+    ("fixtures/voice-model-catalog/neighbour-inputs.json", "voice-model-catalog-neighbour-inputs.schema.json"),
     ("fixtures/podcast-search/test-names.json", "podcast-search-test-list.schema.json"),
     ("fixtures/podcast-search/itunes-responses/*.json", "itunes-search-response.schema.json"),
     ("traces/*.json", "session-trace.schema.json"),
