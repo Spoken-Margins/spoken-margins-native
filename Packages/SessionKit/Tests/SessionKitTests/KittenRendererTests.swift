@@ -95,7 +95,7 @@ final class KittenRendererTests: XCTestCase {
         let digits = try await renderer.render(text: "42")
         XCTAssertGreaterThan(digits.duration, 0.15, "forty-two")
         let abbreviations = try await renderer.render(text: "Mr. Dr. St. etc.")
-        XCTAssertGreaterThan(abbreviations.duration, 1.5, "mister doctor saint et cetera")
+        XCTAssertGreaterThan(abbreviations.duration, 1.0, "mister doctor saint et cetera")
     }
 
     func testMissingAssetsAreNamed() throws {

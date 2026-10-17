@@ -25,7 +25,8 @@ final class ModelCheckTests: XCTestCase {
 
     func testRequireModelThrowsASkipForAMissingFileOnALocalRun() throws {
         let missing = FileManager.default.temporaryDirectory.appending(path: "no-such-model-\(UUID().uuidString).onnx")
-        let required = !(ProcessInfo.processInfo.environment["CI"] ?? "").isEmpty || !(ProcessInfo.processInfo.environment["SM_REQUIRE_MODELS"] ?? "").isEmpty
+        let environment = ProcessInfo.processInfo.environment
+        let required = TestInputs.requireModelsVariables.contains { !(environment[$0] ?? "").isEmpty }
         do {
             try TestInputs.requireModel(at: missing)
             XCTFail("a missing model can't be present")
