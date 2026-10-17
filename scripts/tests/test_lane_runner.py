@@ -1613,8 +1613,14 @@ class WarmBuildTests(unittest.TestCase):
             self.warm()
             time.sleep(0.01)
         self.assertEqual(len(self.caches()), lane.WARM_KEEP)
-        self.assertIn('cold (less than 15 GB free)', self.warm(free=10**9))
+        self.assertIn('cold (less than 25 GB free)', self.warm(free=10**9))
         self.assertEqual(len(self.caches()), 1)  # this key's
+
+    def test_the_floor_that_clears_idle_caches_sits_above_the_finisher_pause(self):
+        # The Mac finisher pauses below 20 GiB (ops/claude/sm_claude_worker.py MIN_FREE_GIB), the build runner
+        # waits below 20 GB. Caches must go before either, not after (#1775).
+        self.assertGreater(lane.WARM_FREE_FLOOR, 20 * 2**30)
+        self.assertGreater(lane.WARM_FREE_FLOOR, lane.BUILD_RUNNER_FREE_DISK)
 
     def test_a_cache_in_use_by_another_runner_job_is_left_alone(self):
         import fcntl
@@ -1924,6 +1930,7 @@ class MainFlowTests(unittest.TestCase):
                 mock.patch.object(lane, 'fetch_base', return_value=MERGE), \
                 mock.patch.object(lane, 'merge_base_branch', return_value=self.conflicts), \
                 mock.patch.object(lane, 'link_tools'), mock.patch('builtins.print'), \
+                mock.patch.object(lane, 'prune_lane_folder', return_value='lane folder prune: test'), \
                 mock.patch.object(lane, 'warm_build_folders', return_value='build folders: warm (SessionKit test)'):
             return lane.main(['--pr', '5', '--event-head', event_head, '--run-id', '42', *extra])
 
@@ -3244,3 +3251,42 @@ class RecoveredStallTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PruneLaneFolderTests(unittest.TestCase):
+    """prune_lane_folder runs ops/disk/sm_lane_prune.py; the rules have their own tests (ops/disk)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.state = Path(self.tmp.name) / 'state'
+        self.evidence = Path(self.tmp.name) / 'checkout/artifacts/lane'
+        self.old = self.evidence / 'pr999999-r1'
+        self.new = self.evidence / 'pr999998-r2'
+        for folder, days in ((self.old, 40), (self.new, 1)):
+            folder.mkdir(parents=True)
+            (folder / 'report.md').write_text('x')
+            stamp = time.time() - days * 86400
+            os.utime(folder / 'report.md', (stamp, stamp))
+            os.utime(folder, (stamp, stamp))
+
+    def prune(self, tools=None):
+        with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(self.state)}), \
+                mock.patch.object(lane, 'tools_source', return_value=tools or SCRIPTS.parent):
+            return lane.prune_lane_folder(self.evidence)
+
+    def test_old_evidence_in_the_runners_evidence_folder_is_removed_and_new_stays(self):
+        line = self.prune()
+        self.assertTrue(line.startswith('lane folder prune:'), line)
+        self.assertFalse(self.old.exists())
+        self.assertTrue(self.new.exists())
+
+    def test_a_tools_checkout_without_the_script_or_with_a_broken_one_never_fails_the_job(self):
+        empty = Path(self.tmp.name) / 'empty'
+        empty.mkdir()
+        self.assertIn('not installed', self.prune(empty))
+        broken = Path(self.tmp.name) / 'broken'
+        (broken / 'ops/disk').mkdir(parents=True)
+        (broken / 'ops/disk/sm_lane_prune.py').write_text('raise SystemExit(3)\n')
+        self.assertIn('failed', self.prune(broken))
+        self.assertTrue(self.old.exists())
