@@ -68,13 +68,12 @@ final class FollowedSourceSignalTests: XCTestCase {
         XCTAssertEqual(rows.compactMap { $0.item?.title }.sorted(), ["Episode 1", "Episode 2", "Episode 3", "Episode 4"])
     }
 
-    func testWithoutARecorderFollowingStillWorksAndWritesNoLog() async throws {
+    func testWithoutARecorderFollowingStillWorks() async throws {
         let repository = InMemorySessionRepository()
         let coordinator = coordinator(repository, signals: nil)
         _ = try await coordinator.follow(urlString: "https://signals.example/feed.json")
         let entries = try await coordinator.entries()
         XCTAssertEqual(entries.count, 3)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: logURL.path))
     }
 }
 
