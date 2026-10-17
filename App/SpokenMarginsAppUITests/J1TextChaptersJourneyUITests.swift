@@ -29,15 +29,23 @@ final class J1TextChaptersJourneyUITests: XCTestCase {
             XCTAssertTrue(start.waitForExistence(timeout: 8), "The fixture article's start control is missing")
             start.tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 8), "Now Playing did not open")
-            // Pause first, so "playback is unchanged" is a position that holds, not a clock that keeps moving.
+            // Start paused, so "playback is unchanged" is a position that holds, not a clock that keeps moving.
+            // The bundled fixture is not on the live-speech path the J1 text seed uses: on a fresh simulator it can
+            // open Now Playing still reading "Play" while its audio is prepared (#1815: "Play" for the whole 10 s
+            // on Build 34, 7257db6 and a7ffe49). Starting playback is J1 step 2's claim, not this step's, so this
+            // waits like Gate1FlowUITests' pausePlaybackIfNeeded: pause if it starts, carry on paused if it doesn't.
             let playPause = app.buttons["playback.play.button"]
             XCTAssertTrue(playPause.waitForExistence(timeout: 8), "Playback control is missing")
             let started = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label == %@ AND enabled == true", "Pause"), object: playPause)
-            XCTAssertEqual(XCTWaiter().wait(for: [started], timeout: 10), .completed, "Article never started playing")
-            playPause.tap()
-            let paused = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "Play"), object: playPause)
-            XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 5), .completed, "Article did not pause")
+            if XCTWaiter().wait(for: [started], timeout: 20) == .completed {
+                playPause.tap()
+            } else {
+                screenshot("J1 text chapters: the fixture article had not started after 20 s")
+            }
+            let paused = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label == %@ AND enabled == true", "Play"), object: playPause)
+            XCTAssertEqual(XCTWaiter().wait(for: [paused], timeout: 5), .completed, "Article is not paused")
             // Let the last progress tick land, then take the position that must hold.
             let settling = XCTNSPredicateExpectation(
                 predicate: NSPredicate(format: "label != %@", element("playback.progress.label").label),
@@ -95,7 +103,7 @@ final class J1TextChaptersJourneyUITests: XCTestCase {
         XCTContext.runActivity(named: "J1 step 4d: Closing the reader leaves Now Playing as it was") { _ in
             app.buttons["Close"].tap()
             XCTAssertTrue(element("playback.screen").waitForExistence(timeout: 5), "Close did not return to Now Playing")
-            XCTAssertEqual(app.buttons["playback.play.button"].label, "Play", "Browsing the text resumed playback")
+            XCTAssertEqual(app.buttons["playback.play.button"].label, "Play", "Playback was running after browsing the text (browsing resumed it, or a delayed start from step 4a)")
             XCTAssertEqual(element("playback.progress.label").label, pausedPosition,
                            "Browsing chapters in the reader moved the playback position")
         }
