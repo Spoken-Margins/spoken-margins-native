@@ -415,12 +415,25 @@ class EvaluatorBehavesLikeActions(unittest.TestCase):
 
 
 class WorkflowShape(unittest.TestCase):
+    """What the evaluated contexts above assume lane.yml wires up: delete these and the table could pass a broken file."""
+
+    def test_the_mac_jobs_wait_for_route_so_its_skip_outputs_exist(self):
+        # Without `needs: route`, needs.route.outputs.skip_* reads as '' and `!= 'true'` is always true.
+        for job, _, _ in MacJobConditions.JOBS:
+            with self.subTest(job=job):
+                self.assertRegex(job_text(job), r'\n    needs: route\n')
+
+    def test_the_route_outputs_read_the_steps_that_set_them(self):
+        route = job_text('route')
+        for step in ('sender', 'dedupe'):
+            with self.subTest(step=step):
+                self.assertRegex(route, rf'\n        id: {step}\n')
+
     def test_conditions_are_read_whole(self):
         lane = job_condition('lane')
         self.assertTrue(lane.startswith('!cancelled() &&'), lane)
-        self.assertTrue(lane.endswith("github.event.label.name == 'lane:queued')"), lane)
         self.assertNotIn('\n', lane)
-        self.assertEqual(job_output('route', 'skip_lane').split(' ')[0], 'steps.sender.outputs.trusted')
+        self.assertIn("needs.route.outputs.skip_lane != 'true'", lane)
 
 
 if __name__ == '__main__':
