@@ -30,11 +30,13 @@ import html
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
+from http.client import HTTPException
 from pathlib import Path
 from typing import Callable
 
@@ -193,6 +195,8 @@ def validate_sources(sources: dict, paths: Paths = Paths()) -> list[str]:
             reviewed = paths.root / licence.get("reviewedText", "")
             if not licence.get("reviewedText") or not reviewed.is_file():
                 errors.append(f"{label}: licence {licence.get('id')!r} has no reviewedText file")
+            elif licence.get("watchURL") and not licence["watchURL"].startswith("https://"):
+                errors.append(f"{label}: licence {licence.get('id')!r}: watchURL must be https")
             elif sha256_hex(reviewed.read_bytes()) != licence.get("textSHA256"):
                 errors.append(f"{label}: licence {licence.get('id')!r}: {licence['reviewedText']} does not hash to textSHA256")
 
@@ -255,11 +259,11 @@ class HTTP:
             try:
                 return make()
             except urllib.error.HTTPError as error:
-                if error.code < 500:
+                if error.code < 500 and error.code != 429:
                     return error
                 error.close()
                 last = error
-            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as error:
+            except (urllib.error.URLError, TimeoutError, ConnectionError, OSError, HTTPException) as error:
                 last = error
         raise last  # type: ignore[misc]
 
@@ -283,23 +287,34 @@ class HTTP:
 
     def download(self, url: str, destination: Path) -> tuple[int, int, str]:
         """Stream the body to `destination`; returns (status, bytes, sha256)."""
-        destination.parent.mkdir(parents=True, exist_ok=True)
         response = self._retrying(lambda: self._open(url))
         status = _status(response)
+        if status != 200:
+            response.close()
+            return status, 0, ""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        expected = _int(response.headers.get("Content-Length"))
         digest, count = hashlib.sha256(), 0
-        with destination.open("wb") as out:
-            while chunk := response.read(1 << 20):
-                out.write(chunk)
-                digest.update(chunk)
-                count += len(chunk)
-        response.close()
+        try:
+            with destination.open("wb") as out:
+                while chunk := response.read(1 << 20):
+                    out.write(chunk)
+                    digest.update(chunk)
+                    count += len(chunk)
+        finally:
+            response.close()
+        if expected is not None and count < expected:
+            destination.unlink(missing_ok=True)
+            raise ConnectionError(f"the connection closed after {count} of {expected} bytes")
         return status, count, digest.hexdigest()
 
     def text(self, url: str, limit: int = LICENCE_TEXT_LIMIT) -> tuple[int, bytes]:
         response = self._retrying(lambda: self._open(url))
         status = _status(response)
-        body = response.read(limit + 1)
-        response.close()
+        try:
+            body = response.read(limit + 1)
+        finally:
+            response.close()
         if len(body) > limit:
             raise ToolError(f"{url} is bigger than {limit} bytes; a licence text should not be")
         return status, body
@@ -326,14 +341,21 @@ def _load_state(paths: Paths) -> dict:
         return {"sources": {}}
 
 
+def _live_voice_ids(paths: Paths) -> set[str]:
+    _, published, _ = read_published(paths)
+    return {voice["id"] for voice in published["voices"]} if published else set()
+
+
 def check_sources(sources: dict, http: HTTP, paths: Paths, now: str) -> dict:
     """Ask every file source and licence text what it serves now. Returns the report (also written to
     artifacts/voice-catalog/report.json); `held` lists everything someone has to look at before the catalog
     is published again. A warning (our mirror not published yet) does not hold anything back."""
+    paths.held.unlink(missing_ok=True)  # a run that dies half way must not leave an older clean result behind
     state = _load_state(paths)
     known = state.setdefault("sources", {})
     licence_cache: dict[str, tuple[int | None, bytes | None, str | None]] = {}
     voices_report = []
+    live = _live_voice_ids(paths)
 
     for voice in sources["voices"]:
         held: list[dict] = []
@@ -346,7 +368,10 @@ def check_sources(sources: dict, http: HTTP, paths: Paths, now: str) -> dict:
                 urls.append((mirror_url(sources, voice, file), "mirror"))
             for url, role in urls:
                 subject = file["path"] if role == "upstream" else f"{file['path']} (mirror)"
-                finding = _check_one_source(voice, file, url, role, http, paths, known, now, counts)
+                # Our mirror is only a warning until the voice is published; after that, where it is a file's
+                # only source, a missing mirror file means the catalog advertises a download that cannot work.
+                sole = role == "mirror" and not file["upstream"] and voice["id"] in live
+                finding = _check_one_source(voice, file, url, "upstream" if sole else role, http, paths, known, now, counts)
                 if finding:
                     (held if finding["severity"] == "held" else warnings).append({"subject": subject, "url": url, **finding})
 
@@ -387,7 +412,7 @@ def _check_one_source(voice, file, url, role, http, paths, known, now, counts) -
     destination = paths.out / "downloads" / voice["id"] / f"{_url_key(url)}-{Path(file['path']).name}"
     try:
         status, size, digest = http.download(url, destination)
-    except (urllib.error.URLError, OSError) as error:
+    except (urllib.error.URLError, OSError, HTTPException) as error:
         return {"kind": "unreachable", "severity": severity_if_gone, "detail": f"download failed: {error}"}
     if status != 200:
         return {"kind": "unreachable", "severity": severity_if_gone, "detail": f"HTTP {status} on download"}
@@ -402,12 +427,14 @@ def _check_one_source(voice, file, url, role, http, paths, known, now, counts) -
 
 
 def _check_licence(licence, http, paths, cache) -> dict | None:
-    url = licence["textURL"]
+    # Pinned textURLs cannot change, so a licence that has a pinned one also names where its publisher
+    # keeps the current text (watchURL); that is the one checked.
+    url = licence.get("watchURL") or licence["textURL"]
     if url not in cache:
         try:
             status, body = http.text(url)
             cache[url] = (status, body, None)
-        except (urllib.error.URLError, OSError, ToolError) as error:
+        except (urllib.error.URLError, OSError, HTTPException, ToolError) as error:
             cache[url] = (None, None, str(error))
     status, body, error = cache[url]
     if error is not None:
@@ -435,7 +462,7 @@ def summary_lines(report: dict) -> list[str]:
         if voice["held"]:
             lines.append(f"{voice['id']}: HELD - " + "; ".join(f"{item['subject']}: {item['kind']}" for item in voice["held"]))
         else:
-            note = f"{counts['files']} files ({counts['unchanged']} unchanged by ETag), {counts['licences']} licences"
+            note = f"{counts['files']} files ({counts['unchanged']} sources unchanged by ETag), {counts['licences']} licences"
             if voice["warnings"]:
                 note += f"; {len(voice['warnings'])} warnings, e.g. {voice['warnings'][0]['kind']}"
             lines.append(f"{voice['id']}: ok - {note}")
@@ -448,14 +475,15 @@ def licence_issue(voice_id: str, item: dict, licence: dict, paths: Paths) -> tup
     diff_path = paths.out / "licences" / f"{licence['id']}.diff"
     diff = diff_path.read_text(encoding="utf-8").splitlines() if diff_path.is_file() else []
     shown = "\n".join(diff[:ISSUE_DIFF_LINES]) + (f"\n... {len(diff) - ISSUE_DIFF_LINES} more lines in {diff_path}" if len(diff) > ISSUE_DIFF_LINES else "")
+    fence = "`" * max(3, max((len(run) for run in re.findall(r"`+", shown)), default=0) + 1)
     title = f"Voice licence changed: {licence['id']} ({new_hash[:8]})"
     body = f"""**Outcome.** The licence text for "{licence['name']}" (used by `{voice_id}`) now differs from the text we reviewed. Someone reads the change and either updates the reviewed copy or withdraws the voice. Until then `scripts/voice-catalog publish` refuses to run.
 
 **Evidence.** `scripts/voice-catalog check` fetched {licence['textURL']}. It hashes to `{new_hash}`; the reviewed copy (`{licence['reviewedText']}`) hashes to `{licence['textSHA256']}`.
 
-```diff
+{fence}diff
 {shown}
-```
+{fence}
 
 **Done when.**
 1. A thread reads the diff. If the new terms add use restrictions, or forbid how we distribute the files, the owner decides; otherwise the thread decides.
@@ -472,12 +500,16 @@ def file_licence_issues(report: dict, sources: dict, paths: Paths, run: Callable
     """Open one issue per changed licence text through `gh`, unless an issue with that title already exists."""
     licences = {(v["id"], lic["id"]): lic for v in sources["voices"] for lic in v["licenses"]}
     messages = []
+    seen_titles: set[str] = set()
     for voice in report["voices"]:
         for item in voice["held"]:
             if item["kind"] != "licence-changed":
                 continue
             licence = licences[(voice["id"], item["subject"].removeprefix("licence "))]
             title, body = licence_issue(voice["id"], item, licence, paths)
+            if title in seen_titles:  # one licence text shared by two voices is one issue
+                continue
+            seen_titles.add(title)
             existing = run(["gh", "issue", "list", "--state", "all", "--search", f'"{title}" in:title', "--json", "title"],
                            capture_output=True, text=True)
             if existing.returncode == 0 and any(row["title"] == title for row in json.loads(existing.stdout or "[]")):
@@ -687,20 +719,23 @@ def render_page(catalog: dict, app_runtimes: list[str]) -> str:
         for licence in voice["licenses"]:
             item = _link(licence["textURL"], licence["name"])
             if licence["requiresAcceptance"]:
-                item += (" — you agree to its use restrictions before the app downloads the voice."
+                item += (" — you agree to its use restrictions before downloading the voice."
                          f"<details><summary>What you agree to</summary><p>{html.escape(licence['restrictionsSummary'])}</p></details>")
             items.append(f"<li>{item}</li>")
         notes.append("<p><strong>Licences</strong></p><ul>" + "".join(items) + "</ul>")
         sections.append(f'<section class="card"><h2>{html.escape(voice["displayName"])}</h2>'
                         f'<p class="meta">{html.escape(" · ".join(details))}</p>{"".join(notes)}</section>')
     issued = catalog["issuedAt"][:10]
+    bundled = [v["displayName"] for v in voices if v["bundled"] and v["status"] == "available"]
+    built_in = f"{html.escape(', '.join(bundled))} is built into the app. " if len(bundled) == 1 else (
+        f"{html.escape(', '.join(bundled))} are built into the app. " if bundled else "")
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>Voices — Spoken Margins</title><link rel="stylesheet" href="../assets/site.css"></head>\n'
         '<body><main><header><div class="mark"><a href="../">Spoken Margins</a></div><h1>Voices</h1>'
         f'<p class="meta">Catalog version {catalog["catalogVersion"]} · issued {html.escape(issued)}</p></header>\n'
-        '<p class="lede">The speech voices Spoken Margins can read with. One is built into the app. The others download only when you '
-        'tap Download in Settings → Voices, and you can remove them there.</p>\n'
+        f'<p class="lede">The speech voices Spoken Margins can read with. {built_in}'
+        'The others are optional: a voice downloads only when you ask for it in the app, and you can remove it there.</p>\n'
         + "\n".join(sections) +
         '\n<p class="meta">The app reads the signed catalog at <a href="v1/catalog.json">v1/catalog.json</a>. This page is made from the same data.</p>\n'
         '<footer><a href="../privacy/">Privacy Policy</a> · <a href="../terms/">Terms</a> · <a href="../support/">Support</a> · <a href="../">Home</a></footer>'
@@ -728,14 +763,25 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def plan_publish(sources: dict, paths: Paths, mirror_from: dict[str, Path] | None = None) -> tuple[list[str], list[tuple[Path, str]]]:
+CHECK_MAX_AGE = dt.timedelta(hours=24)
+
+
+def _parse_time(text: str) -> dt.datetime:
+    return dt.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+
+
+def plan_publish(sources: dict, paths: Paths, mirror_from: dict[str, Path] | None = None, now: str | None = None,
+                 http: HTTP | None = None) -> tuple[list[str], list[tuple[Path, str]]]:
     """Everything that must be true before anything goes public. Returns (problems, mirror uploads)."""
     problems: list[str] = []
     uploads: list[tuple[Path, str]] = []
     if paths.held.is_file():
-        held = load_json(paths.held)["held"]
-        for item in held:
+        result = load_json(paths.held)
+        for item in result["held"]:
             problems.append(f"held back: {item['voice']}: {item['subject']}: {item['kind']}. Look at it, update sources.json, run `check` again.")
+        age = _parse_time(now or utc_now()) - _parse_time(result["checkedAt"]) if "checkedAt" in result else None
+        if age is None or age > CHECK_MAX_AGE or age < -dt.timedelta(minutes=5):
+            problems.append("The last `check` is more than a day old (or undated): run `scripts/voice-catalog check` again, here, just before publishing.")
     else:
         problems.append("No check result: run `scripts/voice-catalog check` first.")
 
@@ -753,6 +799,17 @@ def plan_publish(sources: dict, paths: Paths, mirror_from: dict[str, Path] | Non
     catalog_file = (paths.site / CATALOG_PATH).read_bytes()
     if not manifest_path.is_file() or load_json(manifest_path).get("catalogChecksumSHA256") != sha256_hex(catalog_file):
         problems.append("Site/voices/v1/manifest.json does not describe catalog.json: run `sign`.")
+
+    if http is not None:
+        # The local copy may be older than what is live; never move the live catalogVersion backwards.
+        try:
+            status, body = http.text(SITE_BASE + MANIFEST_PATH)
+        except (urllib.error.URLError, OSError, HTTPException, ToolError) as error:
+            problems.append(f"Could not read the live manifest to compare versions ({error}).")
+        else:
+            if status == 200 and json.loads(body)["contentVersion"] > published["catalogVersion"]:
+                problems.append(f"The live catalog is version {json.loads(body)['contentVersion']}, newer than this checkout's {published['catalogVersion']}: "
+                                "pull the latest Site/voices/ first.")
 
     for voice in sources["voices"]:
         mirrored = [file for file in voice["files"] if file.get("mirrored")]
@@ -774,13 +831,21 @@ def plan_publish(sources: dict, paths: Paths, mirror_from: dict[str, Path] | Non
 
 
 def stage_mirror(paths: Paths, uploads: list[tuple[Path, str]]) -> Path:
+    """The files laid out as they go under voices/files/. Hard links (a copy across volumes), so rsync needs no
+    link-following option, and directories at 0755 whatever the umask, because `rsync -a` copies their mode."""
     stage = paths.out / "mirror-stage"
     if stage.exists():
-        subprocess.run(["rm", "-rf", str(stage)], check=True)
+        shutil.rmtree(stage)
     for local, remote in uploads:
         target = stage / remote
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.symlink_to(local.resolve())
+        try:
+            os.link(local, target)
+        except OSError:
+            shutil.copy2(local, target)
+        target.chmod(0o644)
+    for directory in [stage, *[p for p in stage.rglob("*") if p.is_dir()]]:
+        directory.chmod(0o755)
     return stage
 
 
@@ -841,7 +906,7 @@ def main(argv: list[str] | None = None, paths: Paths = Paths(), http: HTTP | Non
             for spec in args.mirror_from:
                 voice_id, _, directory = spec.partition("=")
                 mirror_from[voice_id] = Path(directory).expanduser()
-            blockers, uploads = plan_publish(sources, paths, mirror_from)
+            blockers, uploads = plan_publish(sources, paths, mirror_from, http=http or HTTP())
             if blockers:
                 print("\n".join(blockers), file=sys.stderr)
                 return 1

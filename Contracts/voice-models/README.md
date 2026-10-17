@@ -10,11 +10,11 @@ Run them as `scripts/voice-catalog <command>`. Each prints one line per voice an
 
 | Command | What it does |
 | --- | --- |
-| `check` | Asks every file source and licence text what it serves now. A file whose ETag and size match the last run is trusted; anything else is downloaded into `artifacts/`, hashed and compared with the reviewed values. A moved or deleted upstream file, changed bytes, or a changed or unreachable licence text goes to `held.json`. An unpublished mirror is only a warning. Exit 1 if anything is held. `--file-issues` opens one GitHub issue per changed licence, with the old and new text diff (needs `gh`). |
+| `check` | Asks every file source and licence text what it serves now. A file whose ETag and size match the last run is trusted; anything else is downloaded into `artifacts/`, hashed and compared with the reviewed values. A moved or deleted upstream file, changed bytes, or a changed or unreachable licence text goes to `held.json`. A licence whose `textURL` is pinned to a revision also has a `watchURL` (where the publisher keeps the current text); that is the one fetched. Where our mirror is a file's only source, a missing mirror file is held once the voice is published, and a warning before that. An unpublished mirror is only a warning. Exit 1 if anything is held. `--file-issues` opens one GitHub issue per changed licence, with the old and new text diff (needs `gh`). |
 | `build` | Writes `artifacts/voice-catalog/payload.json` from `sources.json`. `catalogVersion` goes up only when the voices differ from the published catalog, so rebuilding an unchanged list gives the same bytes. |
 | `sign` | Signs the payload with the Ed25519 key in the Mac's login Keychain and writes `Site/voices/v1/catalog.json` (the envelope) and `manifest.json`. Refuses a lower `catalogVersion`. Checks its own signature before writing. |
 | `page` | Writes `Site/voices/index.html`, the plain page, from the same payload. |
-| `publish` | Dry run. It stops while `check` holds anything, while the catalog, manifest or page disagree with `sources.json`, or while a mirror file is missing or has the wrong hash. `--apply` stages the mirror files and runs `scripts/deploy-spoken-margins-site.sh`, which uploads them to `voices/files/` (never deleting there) and then the rest of `Site/`. |
+| `publish` | Dry run. It stops while `check` holds anything or its last run is over a day old (run `check` here, just before), while the live manifest has a higher `contentVersion` than this checkout, while the catalog, manifest or page disagree with `sources.json`, or while a mirror file is missing or has the wrong hash. `--apply` stages the mirror files and runs `scripts/deploy-spoken-margins-site.sh`, which uploads them to `voices/files/` (never deleting there) and then the rest of `Site/`. |
 | `keygen` | Once, on the Mac: makes the signing key in the login Keychain and prints its public half. |
 
 Order for a change: edit `sources.json`, then `check`, `build`, `sign`, `page`, `publish`, and commit the `Site/voices/` files.
@@ -37,4 +37,4 @@ Weekly, on a machine that doesn't need the Mac awake: a checkout of this reposit
 
     17 6 * * 1  cd /srv/spoken-margins-native && git pull -q && python3 scripts/voice-catalog check --file-issues >> /var/log/voice-catalog-check.log 2>&1
 
-`state.json` (ETags) lives in `artifacts/voice-catalog/` on that machine, so only the first run downloads everything.
+The weekly run is what files the licence issue; `publish` still needs its own fresh `check` on the machine that publishes. `state.json` (ETags) lives in `artifacts/voice-catalog/` on that machine, so only the first run downloads everything.

@@ -8,6 +8,7 @@ repository and skip when it is absent.
 import base64
 import contextlib
 import copy
+import datetime as dt
 import hashlib
 import io
 import json
@@ -16,7 +17,9 @@ import sys
 import tempfile
 import threading
 import unittest
+import unittest.mock
 import urllib.error
+from http.client import BadStatusLine, IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -62,7 +65,7 @@ class Server:
                     return
                 if route.get('fail', 0) > 0:
                     route['fail'] -= 1
-                    self.send_response(503)
+                    self.send_response(route.get('fail_status', 503))
                     self.send_header('Content-Length', '0')
                     self.end_headers()
                     return
@@ -75,7 +78,7 @@ class Server:
                     self.send_header('Content-Range', f'bytes 0-0/{len(route["body"])}')
                 else:
                     self.send_response(status)
-                self.send_header('Content-Length', str(len(body)))
+                self.send_header('Content-Length', str(len(body) + (10 if route.get('short') and method == 'GET' else 0)))
                 if route.get('etag'):
                     self.send_header('ETag', route['etag'])
                 self.end_headers()
@@ -196,10 +199,13 @@ class CheckTests(SiteTestCase):
         self.assertTrue(site.summary_lines(report)[0].startswith('test-voice: HELD'))
         self.assertEqual(json.loads(self.paths.held.read_text())['held'][0]['kind'], 'changed')
 
-    def test_a_different_length_is_caught_even_when_the_etag_is_missing(self):
+    def test_a_source_with_no_etag_is_downloaded_every_run_and_a_wrong_length_is_caught(self):
+        self.server.routes['/up/model.bin'] = {'body': MODEL, 'etag': None}
+        self.check()
+        self.check()
+        self.assertEqual(len(self.server.gets('/up/model.bin')), 2)  # nothing to trust, so it is read again
         self.server.routes['/up/model.bin'] = {'body': MODEL + b'!', 'etag': None}
-        report = self.check()
-        self.assertEqual(self.held_kinds(report), [('model.bin', 'changed')])
+        self.assertEqual(self.held_kinds(self.check()), [('model.bin', 'changed')])
 
     def test_a_new_reviewed_hash_forces_a_fresh_download_despite_the_same_etag(self):
         self.check()
@@ -297,12 +303,95 @@ class CheckTests(SiteTestCase):
         self.assertEqual([c[2] for c in calls], ['list'])
         self.assertIn('already exists', messages[0])
 
-    def test_the_cli_exit_code_and_summary_follow_the_findings(self):
-        self.copy_schema()
-        (self.tmp / 'Contracts/voice-models').mkdir(parents=True, exist_ok=True)
-        # The CLI refuses non-https lists, so drive the module function the CLI wraps.
+    def run_main(self, *argv, store=None):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                unittest.mock.patch.object(site, 'validate_sources', return_value=[]):
+            code = site.main(list(argv), self.paths, http=self.http(), store=store)
+        return code, out.getvalue(), err.getvalue()
+
+    def test_the_cli_exits_0_when_clean_and_1_with_one_line_per_voice_when_held(self):
+        self.paths.sources.write_text(json.dumps(self.sources))
+        code, out, _ = self.run_main('check')
+        self.assertEqual(code, 0)
+        self.assertEqual([line.split(':')[0] for line in out.splitlines()[:1]], ['test-voice'])
+        self.server.routes['/up/model.bin'] = {'body': b'x' * len(MODEL), 'etag': '"m2"'}
+        code, out, _ = self.run_main('check')
+        self.assertEqual(code, 1)
+        self.assertIn('test-voice: HELD - model.bin: changed', out)
+
+    def test_a_crashed_check_leaves_no_clean_result_behind(self):
+        self.check()
+        self.assertTrue(self.paths.held.is_file())
+        with unittest.mock.patch.object(site, '_check_one_source', side_effect=RuntimeError('boom')):
+            with self.assertRaises(RuntimeError):
+                self.check()
+        self.assertFalse(self.paths.held.exists())
+
+    def test_a_connection_that_drops_mid_body_is_unreachable_not_changed_and_leaves_no_file(self):
+        self.server.routes['/up/model.bin'] = {'body': MODEL, 'etag': '"m9"', 'short': True}
         report = self.check()
-        self.assertFalse(any(voice['held'] for voice in report['voices']))
+        self.assertEqual(self.held_kinds(report), [('model.bin', 'unreachable')])
+        self.assertEqual(list((self.paths.out / 'downloads').rglob('*.bin')), [])
+
+    def test_http_client_errors_are_reported_not_raised(self):
+        with unittest.mock.patch.object(site.HTTP, 'download', side_effect=IncompleteRead(b'abc')):
+            self.assertEqual(self.held_kinds(self.check()), [('model.bin', 'unreachable')])
+        with unittest.mock.patch.object(site.HTTP, 'text', side_effect=BadStatusLine('x')):
+            self.assertIn(('licence lic', 'licence-unreachable'), self.held_kinds(self.check()))
+
+    def test_a_non_200_download_writes_no_file(self):
+        destination = self.tmp / 'out.bin'
+        self.server.routes['/up/model.bin'] = {'body': b'nope', 'status': 403, 'head': 200}
+        self.assertEqual(self.http().download(self.server.url + '/up/model.bin', destination), (403, 0, ''))
+        self.assertFalse(destination.exists())
+
+    def test_a_429_is_retried(self):
+        self.server.routes['/up/model.bin']['fail'] = 1
+        self.server.routes['/up/model.bin']['fail_status'] = 429
+        self.assertEqual(self.check(attempts=2)['voices'][0]['held'], [])
+
+    def test_a_licence_with_a_pinned_text_url_is_watched_at_its_watch_url(self):
+        pinned = self.sources['voices'][0]['licenses'][0]
+        pinned['textURL'] = self.server.url + '/pinned/lic.txt'
+        pinned['watchURL'] = self.server.url + '/main/lic.txt'
+        self.server.routes['/pinned/lic.txt'] = {'body': LICENCE}
+        self.server.routes['/main/lic.txt'] = {'body': LICENCE}
+        self.assertEqual(self.check()['voices'][0]['held'], [])
+        self.server.routes['/main/lic.txt'] = {'body': b'Changed on main.\n'}
+        self.assertEqual(self.held_kinds(self.check()), [('licence lic', 'licence-changed')])
+
+    def test_a_missing_mirror_is_a_warning_before_the_voice_is_live_and_a_hold_after_when_it_is_the_only_source(self):
+        self.sources['voices'][0]['files'][0]['upstream'] = []
+        del self.server.routes['/voices/files/test-voice/1/model.bin']
+        report = self.check()
+        self.assertEqual((report['voices'][0]['held'], len(report['voices'][0]['warnings'])), ([], 1))
+        BuildTests.publish_envelope(self, site.build_catalog(self.sources, 1, '2026-10-17T10:00:00Z'))
+        self.assertEqual(self.held_kinds(self.check()), [('model.bin (mirror)', 'source-missing')])
+
+    def test_one_licence_text_shared_by_two_voices_opens_one_issue(self):
+        second = copy.deepcopy(self.sources['voices'][0])
+        second['id'] = 'second-voice'
+        second['mirror']['directory'] = 'second-voice/1/'
+        self.sources['voices'].append(second)
+        self.server.routes['/lic.txt'] = {'body': b'Changed ```fenced``` text.\n'}
+        self.server.routes['/voices/files/second-voice/1/model.bin'] = {'body': MODEL, 'etag': '"m1"'}
+        report = self.check()
+        calls = []
+
+        def run(command, **kwargs):
+            calls.append(command)
+
+            class Result:
+                returncode = 0
+                stdout = '[]' if command[2] == 'list' else 'url\n'
+                stderr = ''
+            return Result()
+
+        site.file_licence_issues(report, self.sources, self.paths, run)
+        self.assertEqual([c[2] for c in calls], ['list', 'create'])
+        body = Path(calls[1][calls[1].index('--body-file') + 1]).read_text()
+        self.assertIn('````diff', body)  # a fence longer than any backtick run in the diff
 
 
 class BuildTests(SiteTestCase):
@@ -541,6 +630,14 @@ class PageTests(SiteTestCase):
         self.assertLess(page.index('Built In'), page.index('Old Voice'))
         self.assertLess(page.index('Test Voice'), page.index('Old Voice'))
 
+    def test_the_lede_names_the_built_in_voice_and_promises_no_screen_that_may_not_exist(self):
+        bundled = copy.deepcopy(self.sources['voices'][0])
+        bundled.update(id='built-in', displayName='Built In', bundled=True, files=[])
+        self.sources['voices'].append(bundled)
+        page = site.render_page(self.catalog(), ['onnxruntime'])
+        self.assertIn('Built In is built into the app.', page)
+        self.assertNotIn('Settings', page)
+
     def test_rendering_twice_gives_the_same_bytes(self):
         self.assertEqual(site.render_page(self.catalog(), ['onnxruntime']), site.render_page(self.catalog(), ['onnxruntime']))
 
@@ -556,7 +653,7 @@ class PublishTests(SiteTestCase):
         (self.paths.site / site.MANIFEST_PATH).write_bytes(site.pretty({'catalogChecksumSHA256': sha(catalog_file)}))
         (self.paths.site / 'index.html').write_text(site.render_page(catalog, self.sources['appRuntimes']), encoding='utf-8')
         self.paths.out.mkdir(parents=True, exist_ok=True)
-        self.paths.held.write_text(json.dumps({'held': []}))
+        self.paths.held.write_text(json.dumps({'held': [], 'checkedAt': site.utc_now()}))
         source = self.tmp / 'mirror-source'
         source.mkdir()
         (source / 'model.bin').write_bytes(MODEL)
@@ -570,9 +667,62 @@ class PublishTests(SiteTestCase):
         stage = site.stage_mirror(self.paths, uploads)
         self.assertEqual((stage / 'test-voice/1/model.bin').read_bytes(), MODEL)
 
+    def test_an_old_or_undated_check_stops_the_publish(self):
+        self.prepare()
+        stamp = lambda t: self.paths.held.write_text(json.dumps({'held': [], 'checkedAt': t}))  # noqa: E731
+        stamp('2026-10-17T00:00:00Z')
+        self.assertEqual(site.plan_publish(self.sources, self.paths, now='2026-10-17T20:00:00Z')[0], [])
+        problems = site.plan_publish(self.sources, self.paths, now='2026-10-18T01:00:00Z')[0]
+        self.assertTrue(any('more than a day old' in p for p in problems))
+        self.paths.held.write_text(json.dumps({'held': []}))
+        self.assertTrue(any('more than a day old' in p for p in site.plan_publish(self.sources, self.paths)[0]))
+
+    def test_a_live_catalog_newer_than_this_checkout_stops_the_publish(self):
+        self.prepare()
+        live = {'status': 200, 'body': json.dumps({'contentVersion': 2}).encode()}
+
+        class Http:
+            def text(self, url):
+                self.url = url
+                return live['status'], live['body']
+        http = Http()
+        problems, _ = site.plan_publish(self.sources, self.paths, http=http)
+        self.assertEqual(http.url, site.SITE_BASE + 'v1/manifest.json')
+        self.assertTrue(any('live catalog is version 2' in p for p in problems))
+        live.update(status=404, body=b'')
+        self.assertEqual(site.plan_publish(self.sources, self.paths, http=http)[0], [])
+
+    def test_the_stage_uses_files_not_symlinks_and_world_readable_modes(self):
+        self.prepare()
+        _, uploads = site.plan_publish(self.sources, self.paths)
+        stage = site.stage_mirror(self.paths, uploads)
+        staged = stage / 'test-voice/1/model.bin'
+        self.assertFalse(staged.is_symlink())
+        self.assertEqual(staged.stat().st_mode & 0o777, 0o644)
+        self.assertEqual((stage / 'test-voice').stat().st_mode & 0o777, 0o755)
+
+    def test_publish_dry_run_prints_the_plan_and_uploads_nothing(self):
+        self.prepare()
+        self.paths.held.write_text(json.dumps({'held': [], 'checkedAt': site.utc_now()}))
+        self.paths.sources.write_text(json.dumps(self.sources))
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), \
+                unittest.mock.patch.object(site, 'validate_sources', return_value=[]), \
+                unittest.mock.patch.object(site.subprocess, 'run') as run:
+            code = site.main(['publish'], self.paths, http=self.http_that_has_no_live_catalog())
+        self.assertEqual((code, run.called), (0, False), err.getvalue())
+        self.assertIn('Dry run: nothing uploaded', out.getvalue())
+        self.assertIn('1 mirror files', out.getvalue())
+
+    def http_that_has_no_live_catalog(self):
+        class Http:
+            def text(self, url):
+                return 404, b''
+        return Http()
+
     def test_anything_held_stops_the_publish_and_names_it(self):
         self.prepare()
-        self.paths.held.write_text(json.dumps({'held': [{'voice': 'test-voice', 'subject': 'licence lic', 'kind': 'licence-changed'}]}))
+        self.paths.held.write_text(json.dumps({'checkedAt': site.utc_now(), 'held': [{'voice': 'test-voice', 'subject': 'licence lic', 'kind': 'licence-changed'}]}))
         problems, _ = site.plan_publish(self.sources, self.paths)
         self.assertEqual(len(problems), 1)
         self.assertIn('licence lic: licence-changed', problems[0])
@@ -614,12 +764,27 @@ class PublishTests(SiteTestCase):
 
 
 class DeployScriptTests(unittest.TestCase):
-    def test_the_deploy_script_protects_the_mirror_from_delete_and_takes_it_from_the_stage(self):
+    def test_the_deploy_script_excludes_the_mirror_from_delete_and_takes_it_from_the_stage(self):
         script = (SCRIPTS / 'deploy-spoken-margins-site.sh').read_text()
-        self.assertIn("--filter 'protect /voices/files/'", script)
-        self.assertIn("--filter 'protect /voices/files/**'", script)
+        self.assertIn("--exclude '/voices/files/'", script)
+        self.assertNotIn('--delete-excluded', script)
         mirror_upload = script.index('SPOKEN_MARGINS_MIRROR_STAGE')
         self.assertNotIn('--delete', script[mirror_upload:script.index('echo "Uploading ${site_directory}/."')])
+
+    @unittest.skipUnless(shutil.which('rsync'), 'rsync is not installed')
+    def test_rsync_with_that_exclude_deletes_stale_pages_but_not_the_mirror(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as folder:
+            sender, receiver = Path(folder) / 'Site', Path(folder) / 'web'
+            (sender / 'voices/v1').mkdir(parents=True)
+            (sender / 'index.html').write_text('new')
+            (receiver / 'voices/files/v/1').mkdir(parents=True)
+            (receiver / 'voices/files/v/1/model.bin').write_bytes(b'bytes')
+            (receiver / 'stale.html').write_text('old')
+            subprocess.run(['rsync', '--archive', '--delete', '--exclude', '/voices/files/', f'{sender}/', f'{receiver}/'], check=True)
+            self.assertTrue((receiver / 'voices/files/v/1/model.bin').is_file())
+            self.assertFalse((receiver / 'stale.html').exists())
+            self.assertTrue((receiver / 'index.html').is_file())
 
 
 if __name__ == '__main__':

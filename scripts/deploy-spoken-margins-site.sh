@@ -63,22 +63,20 @@ if [[ -n "${SPOKEN_MARGINS_MIRROR_STAGE:-}" ]]; then
   rsync \
     --archive \
     --compress \
-    --copy-links \
-    --partial \
     -e "ssh -S ${control_socket}" \
     "${SPOKEN_MARGINS_MIRROR_STAGE}/" \
     "${vps_remote}:${web_root}/voices/files/"
 fi
 
 echo "Uploading ${site_directory}/."
-# The protect rule keeps --delete away from the mirror, which lives beside the pages but not in Site/.
+# The exclude keeps --delete away from the mirror, which lives beside the pages but not in Site/.
+# (An excluded path is neither sent nor deleted, as long as the delete-excluded option is not used.)
 rsync \
   --archive \
   --compress \
   --delete \
   --exclude '.DS_Store' \
-  --filter 'protect /voices/files/' \
-  --filter 'protect /voices/files/**' \
+  --exclude '/voices/files/' \
   -e "ssh -S ${control_socket}" \
   "${site_directory}/" \
   "${vps_remote}:${web_root}/"
@@ -136,5 +134,19 @@ for route in "${routes[@]}"; do
   fi
   echo "HTTP 200 https://${site_host}${route}"
 done
+
+if [[ -n "${SPOKEN_MARGINS_MIRROR_STAGE:-}" ]]; then
+  first_mirror_file="$(cd "${SPOKEN_MARGINS_MIRROR_STAGE}" && find . -type f | sort | head -n 1)"
+  first_mirror_file="${first_mirror_file#./}"
+  if [[ -n "${first_mirror_file}" ]]; then
+    mirror_url="https://${site_host}/voices/files/${first_mirror_file}"
+    status_code="$(curl --silent --location --head --output /dev/null --write-out '%{http_code}' --max-time 30 --retry 5 --retry-delay 2 --retry-all-errors "${mirror_url}")" || status_code="unreachable"
+    if [[ "${status_code}" != "200" ]]; then
+      echo "Verification failed: ${mirror_url} returned ${status_code}." >&2
+      exit 1
+    fi
+    echo "HTTP 200 ${mirror_url}"
+  fi
+fi
 
 echo "Spoken Margins support site deployment succeeded."

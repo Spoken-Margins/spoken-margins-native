@@ -260,6 +260,7 @@
           "id": "supertonic-model-openrail-m",
           "name": "BigScience Open RAIL-M License (Supertonic 3 model)",
           "textURL": "https://huggingface.co/Supertone/supertonic-3/resolve/3cadd1ee6394adea1bd021217a0e650ede09a323/LICENSE",
+          "watchURL": "https://huggingface.co/Supertone/supertonic-3/resolve/main/LICENSE",
           "textSHA256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f",
           "requiresAcceptance": true,
           "restrictionsSummary": "You may not use the voice, anything derived from it, or its output to: break the law; exploit or harm children; deliberately spread false information to hurt people, or personal information that can be used to harm someone; defame, harass or impersonate someone without their consent; make fully automated decisions that affect a person's legal rights; discriminate against or harm people or groups because of their behaviour, personality or legally protected characteristics; exploit the vulnerabilities of a group because of their age or their social, physical or mental characteristics so as to harm them; give medical advice or interpret medical results; or support justice, law-enforcement, immigration or asylum decisions about individuals (Attachment A has the exact wording). Anything the voice generates and you share must be clearly labelled as machine-generated.",
@@ -279,6 +280,7 @@
           "name": "MIT License (ONNX Runtime)",
           "spdxId": "MIT",
           "textURL": "https://raw.githubusercontent.com/microsoft/onnxruntime/v1.24.2/LICENSE",
+          "watchURL": "https://raw.githubusercontent.com/microsoft/onnxruntime/main/LICENSE",
           "textSHA256": "2f07c72751aed99790b8a4869cf2311df85a860b22ded05fa22803587a48922c",
           "requiresAcceptance": false,
           "reviewedText": "Contracts/voice-models/licenses/mit-onnxruntime.txt"
@@ -440,6 +442,7 @@
           "name": "Creative Commons Attribution 4.0 (Pocket TTS ONNX export and alba voice)",
           "spdxId": "CC-BY-4.0",
           "textURL": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/58a6d00cf13d239b6748cb0769f35c580a8f606c/onnx/LICENSE",
+          "watchURL": "https://huggingface.co/KevinAHM/pocket-tts-onnx/resolve/main/onnx/LICENSE",
           "textSHA256": "fe7b4ce83b8381cc5b216bbb4af73c570688d1b819c73bbaed8ca401f4677cd6",
           "requiresAcceptance": false,
           "reviewedText": "Contracts/voice-models/licenses/cc-by-4.0-pocket-tts.txt"
