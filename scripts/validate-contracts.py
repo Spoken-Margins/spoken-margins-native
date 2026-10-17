@@ -113,6 +113,10 @@ def validate_voice_catalogs() -> list[str]:
     the schema agree with the neighbouring-input table, and the Supertonic draft lists the bundled files."""
     errors: list[str] = []
     folder = CONTRACTS / "fixtures/voice-model-catalog"
+    if not folder.is_dir():
+        # A Contracts tree without the voice catalog (the sharing-fixture tests build one) has nothing to check;
+        # the SessionKit tests fail if the real folder's fixtures go missing.
+        return errors
     catalog_schema = load_json(SCHEMAS / "voice-model-catalog.schema.json")
     for envelope_path in sorted(folder.glob("envelope-*.json")):
         payload = base64.b64decode(load_json(envelope_path)["payload"])
