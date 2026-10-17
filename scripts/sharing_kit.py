@@ -25,7 +25,6 @@ import subprocess
 import sys
 import tempfile
 import urllib.parse
-import uuid
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +34,8 @@ PROCEDURE_FILE = KIT_DIR / 'procedure.md'
 PACKETS_DIR = KIT_DIR / 'packets'
 SCHEMAS = ROOT / 'Contracts' / 'schemas'
 DEFAULT_WORK = ROOT / 'artifacts' / 'sharing-kit'
+sys.path.insert(0, str(ROOT / 'Contracts' / 'tools'))
+import spoken_margins_format as _format  # noqa: E402
 COOP_PACKET = ROOT / 'Packages' / 'SessionKit'
 
 # The limits below come from the code that reads and writes packets.
@@ -50,22 +51,14 @@ PACKAGE_SCHEMA = 'spoken-margins.package.v1'
 COMMENTARY_CAPABILITY = 'spoken-margins.commentary-layer.v1'
 # Build 29 reads these two and no other; a packet that needs more would not open there.
 BUILD_29_CAPABILITIES = {COMMENTARY_CAPABILITY, 'spoken-margins.embedded-text-item.v1'}
-MANIFEST_KEYS = {
-    'schemaVersion', 'packageId', 'createdAt', 'contentDigest', 'item', 'itemTransport', 'senderDisplayLabel',
-    'suggestedRevealMode', 'requiredCapabilities', 'artifacts', 'assets', 'redactions',
-}
-ITEM_KEYS = {
-    'itemType', 'canonicalURL', 'originalURL', 'title', 'author', 'publisher', 'showTitle', 'episodeGUID',
-    'enclosureURL', 'publishedAt', 'durationMs', 'normalizedContentSHA256', 'exactEditionSHA256', 'languageCode',
-    'source',
-}
-TRANSPORT_KEYS = {'kind', 'embeddedArtifactId', 'rightsBasis'}
-REDACTION_KEYS = {
-    'rawAudioOmitted', 'rawTranscriptOmitted', 'fullItemOmitted', 'itemAudioOmitted', 'diagnosticsOmitted',
-    'filesystemPathsOmitted', 'unrelatedTurnsOmitted', 'privateRepresentationsOmitted',
-}
-ARTIFACT_KEYS = {'id', 'kind', 'schemaVersion', 'path', 'required', 'byteCount', 'sha256'}
-ASSET_KEYS = {'id', 'role', 'path', 'mimeType', 'durationMs', 'anchorOffsetMs', 'provenance', 'byteCount', 'sha256'}
+# The manifest keys, and the shareable-link rule below, come from the portable formats' reference reader
+# (Contracts/tools/spoken_margins_format.py), which validate-contracts.py checks against the Swift readers.
+MANIFEST_KEYS = _format.MANIFEST_KEYS
+ITEM_KEYS = _format.ITEM_KEYS
+TRANSPORT_KEYS = _format.TRANSPORT_KEYS
+REDACTION_KEYS = _format.REDACTION_KEYS
+ARTIFACT_KEYS = _format.ARTIFACT_KEYS
+ASSET_KEYS = _format.ASSET_KEYS
 ITEM_TYPES = {'podcast': 'podcast', 'article': 'text'}
 ASSET_ROLE_VOICE = 'original_voice'
 ASSET_ROLE_SIGNATURE = 'acoustic_signature'
@@ -99,58 +92,7 @@ def margin_count_phrase(count):
 
 # --- the shareable-link rule, as SessionKit's ShareableLinkPolicy applies it -----------------------------------
 
-PRIVATE_HOST_SUFFIXES = (
-    'patreon.com', 'patreonusercontent.com', 'supercast.com', 'supercast.tech',
-    'supportingcast.fm', 'memberful.com', 'memberfulcontent.com',
-)
-PRIVATE_PATH_MARKERS = {
-    'private', 'premium', 'paid', 'subscriber', 'subscribers', 'member', 'members', 'patron', 'patrons',
-    'supporter', 'supporters',
-}
-CREDENTIAL_QUERY_FRAGMENTS = (
-    'token', 'auth', 'key', 'secret', 'sig', 'hash', 'pass', 'pwd', 'session', 'credential', 'jwt', 'expire',
-    'policy', 'hmac', 'access',
-)
-PUBLIC_HEX_IDENTIFIER_FEED_HOSTS = ('rss.amperwave.net',)
-
-
-def _looks_like_secret(value):
-    trimmed = value.strip('=')
-    if len(trimmed) < 32:
-        return False
-    try:
-        uuid.UUID(trimmed)
-        return False
-    except ValueError:
-        pass
-    if not re.fullmatch(r'[A-Za-z0-9_-]+', trimmed):
-        return False
-    return any(c.isalpha() for c in trimmed) and any(c.isdigit() for c in trimmed)
-
-
-def is_shareable_link(value):
-    """True when the exporter would keep this link in a packet (no access secret in it)."""
-    parts = urllib.parse.urlsplit(value)
-    host = (parts.hostname or '').lower()
-    if parts.scheme.lower() not in ('http', 'https') or not host or parts.username or parts.password:
-        return False
-    if any(host == s or host.endswith('.' + s) for s in PRIVATE_HOST_SUFFIXES):
-        return False
-    allows_hex = host in PUBLIC_HEX_IDENTIFIER_FEED_HOSTS
-    for segment in (s for s in parts.path.split('/') if s):
-        stem = segment.split('.', 1)[0]
-        if stem.lower() in PRIVATE_PATH_MARKERS:
-            return False
-        if allows_hex and re.fullmatch(r'[0-9a-fA-F]{32}', stem):
-            continue
-        if _looks_like_secret(stem):
-            return False
-    for name, item_value in urllib.parse.parse_qsl(parts.query, keep_blank_values=True):
-        if any(fragment in name.lower() for fragment in CREDENTIAL_QUERY_FRAGMENTS):
-            return False
-        if _looks_like_secret(item_value):
-            return False
-    return True
+is_shareable_link = _format.is_shareable_link
 
 
 # --- kit.json rules ----------------------------------------------------------------------------------------------
@@ -437,8 +379,8 @@ def _unknown_keys(label, document, allowed):
 
 def _manifest_problems(name, manifest):
     """The manifest rules of SpokenMarginsPackageArchive, for the packets this kit builds (reference transport,
-    one commentary layer, voices and fingerprints). `Contracts/schemas/spoken-margins-package.schema.json` is not
-    used: it describes an older manifest (`source`, `sourceAudioOmitted`) that no build writes."""
+    one commentary layer, voices and fingerprints). `Contracts/tools/spoken_margins_format.py check` reads any packet;
+    this adds the kit's own rules."""
     problems = _unknown_keys(f'{name}: manifest', manifest, MANIFEST_KEYS)
     if manifest.get('schemaVersion') != PACKAGE_SCHEMA:
         problems.append(f"{name}: schemaVersion is {manifest.get('schemaVersion')!r}, not {PACKAGE_SCHEMA!r}")
