@@ -3310,5 +3310,71 @@ class BootStallRetryTests(unittest.TestCase):
             self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'u', self.fail, 'PASS'), 0)
 
 
+
+class TrustedCommentTests(unittest.TestCase):
+    """Once the repository is public, only the owner, collaborators and the project's bot steer the lane (#1719)."""
+
+    @staticmethod
+    def comment(body, login, association):
+        return {'body': body, 'user': {'login': login}, 'author_association': association,
+                'html_url': f'https://example.test/{login}'}
+
+    def test_who_is_trusted(self):
+        for login, association, trusted in (
+                ('uncomposed', 'OWNER', True),
+                ('a-member', 'MEMBER', True),
+                ('a-collaborator', 'COLLABORATOR', True),
+                ('github-actions[bot]', 'NONE', True),
+                ('stranger', 'NONE', False),
+                ('past-contributor', 'CONTRIBUTOR', False),
+                ('first-timer', 'FIRST_TIME_CONTRIBUTOR', False),
+                ('first-timer', 'FIRST_TIMER', False),
+                ('mannequin', 'MANNEQUIN', False),
+                ('chatgpt-codex-connector[bot]', 'NONE', False),
+                ('github-actions', 'NONE', False),  # not the bot: the [bot] suffix is reserved for apps
+                ('owner-lookalike', 'owner', False),  # GitHub sends it upper case; anything else is not trusted
+                ('no-association', None, False)):
+            with self.subTest(login=login, association=association):
+                self.assertEqual(lane.trusted_comment(self.comment('/lane T3', login, association)), trusted)
+        self.assertFalse(lane.trusted_comment({'body': '/lane T3'}))  # no author at all
+
+    def comments_from(self, *comments):
+        github = lane.GitHub('o/r', 5)
+        lines = '\n'.join(json.dumps(c) for c in comments)
+        with mock.patch.object(github, 'api', return_value=lines), mock.patch('builtins.print') as printed:
+            return github.comments(), printed
+
+    def test_a_strangers_lane_request_is_never_run(self):
+        kept, printed = self.comments_from(
+            self.comment('/lane T3\ntests: SpeechTests', 'uncomposed', 'OWNER'),
+            self.comment('/lane T2\ncommit: deadbeef', 'stranger', 'NONE'))
+        request, _ = lane.pending_requests(kept)
+        self.assertEqual((request['tier'], request['author']), ('T3', 'uncomposed'))
+        self.assertIn('ignored 1 comment(s)', printed.call_args.args[0])
+        self.assertIn('stranger', printed.call_args.args[0])
+
+    def test_a_contributors_request_alone_leaves_nothing_to_run(self):
+        kept, _ = self.comments_from(self.comment('/lane T3\ntests: SpeechTests', 'drive-by', 'CONTRIBUTOR'))
+        self.assertEqual(lane.pending_requests(kept), (None, False))
+
+    def test_a_fake_report_cannot_answer_a_request_or_lift_the_t3_hold(self):
+        identity = json.dumps(lane.identity('T3', HEAD, 'b' * 40, []))
+        fake = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
+        kept, _ = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
+                                     self.comment(fake, 'stranger', 'NONE'))
+        request, _ = lane.pending_requests(kept)
+        self.assertIsNotNone(request)  # still waiting for the real runner
+        self.assertIsNotNone(lane.t3_gate(kept))  # still held: no trusted T3 report
+
+    def test_the_project_bots_reports_still_count(self):
+        identity = json.dumps(lane.identity('T3', HEAD, 'b' * 40, []))
+        report = f'Lane report r1 — PASS\n<!-- lane-request: {identity} -->'
+        kept, printed = self.comments_from(self.comment('/lane T3\ncommit: aaaaaaa', 'uncomposed', 'OWNER'),
+                                           self.comment(report, 'github-actions[bot]', 'NONE'))
+        self.assertEqual(len(kept), 2)
+        self.assertEqual(lane.pending_requests(kept), (None, False))
+        printed.assert_not_called()
+
+
 if __name__ == '__main__':
     unittest.main()
