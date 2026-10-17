@@ -564,6 +564,153 @@ class VerificationTests(unittest.TestCase):
         self.assertTrue(steps['package'][1]['tests'])  # the exact-test-ID check stays on the tests
         self.assertFalse(steps['package-build'][1].get('tests'))
 
+    def test_package_test_steps_may_run_past_their_budget_while_printing_and_not_forever(self):
+        # #1767: the tests' 600 s budget killed three PRs' runs on a busy Mac with hundreds of tests missing and none
+        # failing; the suite was slow, not hung. Both test steps carry a ceiling and a stall time.
+        calls = []
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(verification.os.environ, {}, clear=False):
+            verification.os.environ.pop('CODEX_SANDBOX', None)
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=lambda name, args, **kw: calls.append((name, kw))), \
+                    patch.object(run, 'ops_steps'), \
+                    patch.object(verification.host_audio, 'audio_output', return_value={'usable': True, 'why': 'test'}), \
+                    patch.object(verification, 'swift_tests', return_value={'SessionKitCoreTests/A/testA'}), \
+                    patch.object(verification, 'input_identity', return_value=run.manifest['input_sha256']):
+                run.package_steps({'SessionKitCoreTests/A/testA', 'SessionKitTests/B/testB'})
+        steps = dict(calls)
+        self.assertEqual(steps['package']['timeout'], 600)
+        self.assertGreater(steps['package']['ceiling'], steps['package']['timeout'])
+        self.assertLess(steps['package']['stall_seconds'], steps['package']['ceiling'] - steps['package']['timeout'])
+        self.assertLess(steps['package']['ceiling'], 2400)  # the lane's FAST_TIMEOUT still bounds the plan
+        # The parallel core run loses all its results when killed (they are written at the end), so it too goes on
+        # while its progress lines stream; a hang in it is still cut short and rerun serially.
+        self.assertEqual(steps['package-core']['timeout'], verification.PARALLEL_CORE_TIMEOUT)
+        self.assertEqual(steps['package-core']['ceiling'], verification.PARALLEL_CORE_CEILING)
+        self.assertLess(steps['package-core']['stall_seconds'], steps['package']['stall_seconds'])
+
+    def test_the_serial_core_fallback_has_the_same_ceiling(self):
+        calls = []
+
+        def command(name, args, **kw):
+            calls.append((name, kw))
+            run.manifest['steps'].append({'name': name})
+            if name == 'package-core':
+                raise RuntimeError('parallel run failed')
+
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            with patch.object(run, 'command', side_effect=command):
+                run.package_core({'SessionKitCoreTests/A/testA'})
+        serial = dict(calls)['package-core-serial']
+        self.assertEqual(serial['timeout'], verification.PACKAGE_TEST_TIMEOUT)
+        self.assertEqual(serial['ceiling'], verification.PACKAGE_TEST_CEILING)
+        self.assertEqual(serial['stall_seconds'], verification.PACKAGE_STALL_SECONDS)
+
+    def test_a_fast_plan_cuts_a_steps_ceiling_to_what_is_left_of_the_lanes_clock(self):
+        # The lane's 2400 s FAST_TIMEOUT starts before verify-tests.py, so a long slot wait leaves less of it.
+        script = 'import time\nwhile True:\n    print("Test Case passed", flush=True)\n    time.sleep(0.1)\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            run.started -= verification.FAST_PLAN_SECONDS - 3  # about 3 s of the plan left
+            started = time.monotonic()
+            with self.assertRaises(RuntimeError):
+                run.command('package', [sys.executable, '-c', script], timeout=1, ceiling=600, stall_seconds=60)
+            self.assertLess(time.monotonic() - started, 10)
+            step = run.manifest['steps'][-1]
+            self.assertIn('ceiling', step['errors'][1])
+            self.assertLessEqual(step['ceiling_seconds'], 3)
+
+    def test_a_step_still_printing_when_its_budget_ends_goes_on_to_the_ceiling(self):
+        script = 'import time\nfor i in range(14):\n    print("Test Case passed", flush=True)\n    time.sleep(0.25)\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            run.command('slow-tests', [sys.executable, '-c', script], timeout=2, ceiling=10, stall_seconds=3)
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['exit_code'], 0)
+            self.assertTrue(step['ran_past_its_limit'])
+            self.assertGreater(step['seconds'], 1)
+
+    def test_a_step_with_no_ceiling_is_still_stopped_at_its_budget_however_much_it_prints(self):
+        script = 'import time\nwhile True:\n    print("Test Case passed", flush=True)\n    time.sleep(0.1)\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            started = time.monotonic()
+            with self.assertRaises(RuntimeError):
+                run.command('plain', [sys.executable, '-c', script], timeout=1)
+            self.assertLess(time.monotonic() - started, 6)
+            self.assertEqual(run.manifest['steps'][-1]['exit_code'], 124)
+
+    def test_a_step_that_goes_quiet_after_its_budget_is_stopped_as_a_hang(self):
+        script = 'import time\nfor i in range(8):\n    print("Test Case passed", flush=True)\n    time.sleep(0.25)\ntime.sleep(60)\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            started = time.monotonic()
+            with self.assertRaises(RuntimeError) as raised:
+                run.command('hung-tests', [sys.executable, '-c', script], timeout=1, ceiling=40, stall_seconds=2)
+            self.assertLess(time.monotonic() - started, 15)
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['exit_code'], 124)
+            self.assertTrue(step['interrupted'])
+            self.assertIn('printed nothing for', step['errors'][1])
+            self.assertTrue(step['errors'][0].startswith('Process exit 124'))
+            self.assertIn('Process exit 124', str(raised.exception))
+
+    def test_a_step_that_never_stops_printing_is_stopped_at_the_ceiling(self):
+        script = 'import time\nwhile True:\n    print("Test Case passed", flush=True)\n    time.sleep(0.1)\n'
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'test')
+            started = time.monotonic()
+            with self.assertRaises(RuntimeError):
+                run.command('runaway', [sys.executable, '-c', script], timeout=1, ceiling=3, stall_seconds=2)
+            self.assertLess(time.monotonic() - started, 10)
+            step = run.manifest['steps'][-1]
+            self.assertEqual(step['exit_code'], 124)
+            self.assertIn('ceiling', step['errors'][1])
+
+    def test_the_timeout_report_says_how_far_the_tests_got_and_that_the_slot_wait_is_not_counted(self):
+        # #1767: the lane report carries the step's errors, so the next timeout explains itself.
+        script = ('import time\nfor i in range(3):\n    print("Test Case \'-[X.Y t%d]\' passed (0.1 seconds)." % i, flush=True)\n'
+                  'time.sleep(60)\n')
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+            run.manifest['host_test_slot'] = {'slot': 0, 'waited_seconds': 840}
+            with self.assertRaises(RuntimeError):
+                run.command('package', [sys.executable, '-c', script], timeout=3)
+            note = run.manifest['steps'][-1]['errors'][1]
+            self.assertIn('3 test results in the log', note)
+            self.assertIn('waited 840s for the host-test slot before the steps, not counted', note)
+            self.assertIn('ran out of its 3s limit', note)
+            self.assertIsNotNone(run.manifest['steps'][-1]['load_average_start'])
+
+    def test_the_wait_for_the_host_test_slot_is_outside_every_steps_clock(self):
+        # #1767 suspected that a step's limit also covered its wait for a host-test slot. fast() takes the slot first
+        # and hands it to the step's children (SM_LANE_HOST_SLOT), so a slow wait leaves the step's whole budget.
+        @contextlib.contextmanager
+        def slow_slot(label, out=None, max_wait=None):
+            time.sleep(2.5)
+            verification.os.environ['SM_LANE_HOST_SLOT'] = label
+            try:
+                yield {'slot': 0, 'waited_seconds': 2.5}
+            finally:
+                verification.os.environ.pop('SM_LANE_HOST_SLOT', None)
+
+        seen = {}
+        with tempfile.TemporaryDirectory() as temporary:
+            run = verification.Run(Path(temporary) / 'run', 'fast')
+
+            def steps():
+                run.command('package', [sys.executable, '-c', 'import os, time; time.sleep(0.5); '
+                                        'print(os.environ.get("SM_LANE_HOST_SLOT", "none"))'], timeout=2)
+                seen['child'] = (run.output / 'package.log').read_text().strip()
+
+            with patch.object(verification, 'host_test_slot', slow_slot), patch.object(run, 'host_steps', steps):
+                run.fast()
+            step = run.manifest['steps'][-1]
+        self.assertEqual(step['exit_code'], 0)
+        self.assertLess(step['seconds'], 2)  # the 2.5 s wait is not in it
+        self.assertEqual(run.manifest['host_test_slot']['waited_seconds'], 2.5)
+        self.assertTrue(seen['child'].startswith('verify-tests fast'))
+
     def test_runner_tests_have_their_own_limit_with_room_over_their_measured_time(self):
         # #1110: the runner's own suite takes 164.5 to 172.3 s on a quiet Mac, and the 180 s command default
         # killed it (exit 124, "executed zero tests") on PR #1103's head twice, beside a simulator job.
