@@ -1648,6 +1648,75 @@ final class SourceLinkImportTests: XCTestCase {
         XCTAssertNil(model.feedbackEvent?.retry, "a transcribed Margin leaves no Retry offer behind")
     }
 
+    /// A Margin whose first transcription failed, with the Retry the failure offered captured as the banner holds it.
+    private func modelWithAFailedMarginTranscription() async throws -> (model: Gate1AppModel, margin: Interjection, staleRetry: @MainActor () -> Void) {
+        let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
+            requestId: "ignored",
+            status: .playable,
+            originalLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "discovery"),
+            selectedCandidate: LinkResolutionCandidate(
+                sourceLink: SourceLink(url: "https://example.com/episode", provider: "direct_audio", role: "audio_file"),
+                title: "Deleted Margin Episode",
+                durationMs: 300_000,
+                audioURL: "https://cdn.example.com/deleted-margin.mp3",
+                confidence: 1
+            )
+        ))
+        let transcriber = GatedInterjectionTranscriber()
+        let model = Gate1AppModel(
+            sourceLinkResolver: resolver,
+            audioPlaybackClient: WindowContextAudioClient(),
+            recordingClient: NoopRecordingClient(),
+            sourceTranscriptionClient: ThrowingSourceTranscriptionClient(),
+            interjectionTranscriptionHandler: { audioPath in
+                try await transcriber.transcribe(audioPath: audioPath)
+            }
+        )
+        model.resetAndSeed()
+        XCTAssertTrue(model.importSourceLink(urlString: "https://example.com/episode", sourceSurface: "paste"))
+        model.dispatchGate2CompactCommand(.beginInterjection)
+        model.dispatchGate2CompactCommand(.finishInterjection)
+        let requested = await transcriber.waitUntilRequested(1)
+        XCTAssertTrue(requested, "the first transcription never started")
+        await transcriber.settleNext(.failure(SessionKitError.persistenceFailed("scripted_failure")))
+        try await waitFor("failed transcription offers Retry") { model.feedbackEvent?.retry != nil }
+        let failure = try XCTUnwrap(model.feedbackEvent)
+        let margin = try XCTUnwrap(model.selectedItem.interjections.first)
+        XCTAssertEqual(failure.retry?.key, Gate1AppModel.transcriptionRetryKey(margin))
+        return (model, margin, try XCTUnwrap(failure.retry).action)
+    }
+
+    /// #430, audit on 29cb964: a deleted Margin must not keep a working Retry, and its confirmation must show.
+    func testDeletingAMarginWhoseTranscriptionFailedWithdrawsItsRetryAndShowsTheConfirmation() async throws {
+        let (model, margin, staleRetry) = try await modelWithAFailedMarginTranscription()
+
+        model.deleteInterjection(margin)
+
+        XCTAssertNil(model.feedbackEvent?.retry, "the deleted Margin's Retry must go with it")
+        XCTAssertEqual(model.feedbackEvent?.message, "Deleted Margin.", "the confirmation must not be held back behind a stale Retry")
+
+        // A Retry captured before the delete (an old banner, an accessibility action) reads the Margin as stored now.
+        staleRetry()
+        XCTAssertTrue(model.retryingInterjectionTranscriptionIds.isEmpty, "a deleted Margin must not be transcribed again")
+        XCTAssertEqual(model.feedbackEvent?.kind, .error)
+        XCTAssertEqual(model.feedbackEvent?.message, "That Margin was deleted, so there is nothing to retranscribe.")
+        XCTAssertNil(model.feedbackEvent?.retry)
+    }
+
+    /// The same class: the item holding the Margin goes to Recently Deleted while its failure is up.
+    func testMovingAnItemToRecentlyDeletedWithdrawsItsMarginRetry() async throws {
+        let (model, margin, staleRetry) = try await modelWithAFailedMarginTranscription()
+
+        model.moveItemToTrash(id: margin.itemId)
+
+        XCTAssertNil(model.feedbackEvent?.retry, "a trashed item's Margin keeps no Retry")
+        XCTAssertEqual(model.feedbackEvent?.kind, .success, "the move's confirmation must not be held back behind a stale Retry")
+
+        staleRetry()
+        XCTAssertTrue(model.retryingInterjectionTranscriptionIds.isEmpty, "a Margin in Recently Deleted must not be transcribed again")
+        XCTAssertEqual(model.feedbackEvent?.message, "That Margin was deleted, so there is nothing to retranscribe.")
+    }
+
     func testUnavailablePodcastContextKeepsTimestampAndPersistedRetryState() async throws {
         let resolver = StaticAppLinkResolver(result: LinkResolutionResult(
             requestId: "ignored",

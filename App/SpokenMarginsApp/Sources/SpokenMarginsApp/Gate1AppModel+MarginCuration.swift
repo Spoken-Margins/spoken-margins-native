@@ -57,20 +57,36 @@ extension Gate1AppModel {
         }
     }
 
+    /// The Margin as stored now, with the verdict on retranscribing it. A Retry offer holds the Margin as it
+    /// was when the failure was posted, so deleting the Margin or its item must not leave that copy usable (#430).
+    private func currentMargin(matching interjection: Interjection) -> (margin: Interjection?, verdict: MarginTranscriptionRetry.Verdict) {
+        let store = try? requireStore()
+        let current = (try? store?.loadInterjections(sessionId: interjection.sessionId))?.first { $0.id == interjection.id }
+        let itemDeletedAt = (try? store?.loadItem(id: interjection.itemId))?.deletedAt
+        return (current, MarginTranscriptionRetry.verdict(current: current, itemDeletedAt: itemDeletedAt))
+    }
+
     func retryInterjectionTranscription(_ interjection: Interjection) {
         withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
-        guard interjection.captureKind != .written, interjection.audioPath != nil else {
+        let (current, verdict) = currentMargin(matching: interjection)
+        guard verdict != .gone, let current else {
+            reportFailure("That Margin was deleted, so there is nothing to retranscribe.")
+            return
+        }
+        guard verdict == .retry else {
             reportFailure("The saved Margin audio is unavailable.")
             return
         }
-        guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(interjection)).inserted else { return }
-        scheduleRetriedTranscription(for: interjection)
+        guard retryingInterjectionTranscriptionIds.insert(Self.marginIdentity(current)).inserted else { return }
+        scheduleRetriedTranscription(for: current)
         reportConfirmation("Retranscribing the saved Margin audio.")
     }
 
     /// A transcription failure is about the Margin's own listen, so on the Now screen it is the tag under the
-    /// title, with Retry, and the full message stays on the item (#430).
+    /// title, with Retry, and the full message stays on the item (#430). A Margin deleted while it was
+    /// transcribing gets no notice at all: there is nothing left to retry or to tell the listener about.
     func presentTranscriptionFailure(_ notice: TranscriptionFailureWording.Notice, for interjection: Interjection) {
+        guard currentMargin(matching: interjection).verdict != .gone else { return }
         let origin = FeedbackOrigin(itemId: interjection.itemId, sessionId: interjection.sessionId, work: .marginTranscription)
         notice.present(
             warning: { reportWarning($0, origin: origin) },
@@ -98,6 +114,9 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
+            // Its failed-transcription Retry would otherwise outlive it, and the error that offers Retry
+            // also keeps this confirmation from replacing it (#430).
+            withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
             reportSuccess("Deleted Margin.")
         }
         refreshMarginRows()

@@ -53,6 +53,16 @@ extension Gate1AppModel {
         feedbackEvent = event
     }
 
+    /// Drops the current event when it is about this item's own listen (a summary or a Margin transcription),
+    /// so its Retry can't outlive the item when it moves to Recently Deleted or is deleted for good (#430).
+    func withdrawFeedback(aboutItem itemId: String) {
+        withdrawFeedback(aboutItems: [itemId])
+    }
+
+    func withdrawFeedback(aboutItems itemIds: [String]) {
+        if let origin = feedbackEvent?.origin, itemIds.contains(origin.itemId) { feedbackEvent = nil }
+    }
+
     /// The current event as the playback screen's one-line tag, or nil when it belongs in the top banner (#430).
     var playbackFeedbackTag: (event: UserFeedbackEvent, tag: PlaybackFeedbackTag)? {
         guard let event = feedbackEvent,
