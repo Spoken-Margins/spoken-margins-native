@@ -1631,9 +1631,12 @@ class WarmBuildTests(unittest.TestCase):
         self.assertEqual(len(self.caches()), 1)  # this key's
 
     def test_the_floor_that_clears_idle_caches_sits_above_the_finisher_pause(self):
-        # The Mac finisher pauses below 20 GiB (ops/claude/sm_claude_worker.py MIN_FREE_GIB), the build runner
-        # waits below 20 GB. Caches must go before either, not after (#1775).
-        self.assertGreater(lane.WARM_FREE_FLOOR, 20 * 2**30)
+        # The Mac finisher pauses below MIN_FREE_GIB (ops/claude/sm_claude_worker.py), the build runner
+        # waits below 20 GB. Caches must go before either, not after (#1775). Read the worker's own line, not a copy.
+        worker_spec = importlib.util.spec_from_file_location('sm_claude_worker_for_floor', SCRIPTS.parent / 'ops' / 'claude' / 'sm_claude_worker.py')
+        worker = importlib.util.module_from_spec(worker_spec)
+        worker_spec.loader.exec_module(worker)
+        self.assertGreater(lane.WARM_FREE_FLOOR, worker.MIN_FREE_GIB * 2**30)
         self.assertGreater(lane.WARM_FREE_FLOOR, lane.BUILD_RUNNER_FREE_DISK)
 
     def test_a_cache_in_use_by_another_runner_job_is_left_alone(self):
