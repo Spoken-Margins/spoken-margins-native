@@ -12,7 +12,10 @@ import XCTest
 /// The fixtures are small sources shaped like the ones the app receives (an encyclopedia page, a
 /// paper, a blog post with bold lead-ins, docs, pasted text with bold or underlined headings, an
 /// anthology, the phone test plan from #1435), written for the repository. Real captures of public
-/// pages go in the same folder, the same way.
+/// pages go in the same folder, the same way. A source with a substantial preamble before its first
+/// heading starts with a chapter named by the item's title, which here is the source's file name
+/// (`journal-footnotes-block`, #796: the capture of a journal page, essay first and footnotes after,
+/// with Category and Subject labels and the byline as lower headings that are not chapters).
 final class ChapterCorpusScorerTests: XCTestCase {
     struct Score {
         let source: String

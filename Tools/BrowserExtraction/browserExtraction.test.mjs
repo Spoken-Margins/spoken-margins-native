@@ -17,6 +17,7 @@ import {
 } from "./popupCore.mjs";
 import { BUNDLES, esbuildOptions } from "./bundleConfig.mjs";
 import { browserLikePage } from "./testDocument.mjs";
+import { JOURNAL_BYLINE, JOURNAL_SECTIONS, journalArticleBody } from "./journalArticleFixture.mjs";
 
 function articleDocument() {
   const body = "<p>" + "Useful article prose. ".repeat(80) + "</p>";
@@ -1027,6 +1028,111 @@ test("#271: the abort timeout is cancelled once the PDF has arrived", async () =
   assert.equal(Buffer.from(payload.pdfBase64, "base64").toString("latin1"), "%PDF-1.7 small");
   assert.equal(timers.length, 1);
   assert.equal(timers[0].cleared, true);
+});
+
+function captureJournalPage(options) {
+  const document = browserLikePage({
+    url: "https://example.com/series/1/essay",
+    head: "<title>A Placeholder Essay</title>",
+    body: journalArticleBody(options)
+  });
+  const payload = withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+  return { document, payload };
+}
+
+// #796: e-flux keeps the essay in "article__body article__body--with-ad". Defuddle
+// strips any element whose class ends in "-ad" as an advertisement, so the essay
+// went and the capture began at "Notes" with the footnotes.
+test("readable capture of a journal page whose body class ends in -ad starts with the essay and keeps its section headings in order", () => {
+  const { payload } = captureJournalPage();
+
+  assert.equal(payload.metadata.extractor, "defuddle");
+  assert.match(payload.text, /^This is sentence 1 of a paragraph about the opening argument/);
+  const headings = payload.text.split("\n").filter(line => /^## /.test(line)).map(line => line.slice(3));
+  assert.deepEqual(headings, JOURNAL_SECTIONS);
+  // The footnotes follow the body; they do not replace it.
+  const notes = payload.text.indexOf("\nNotes\n");
+  assert.ok(notes > payload.text.lastIndexOf(`## ${JOURNAL_SECTIONS.at(-1)}`), "the notes come after the last section");
+  assert.ok(!payload.text.split("\n").some(line => /^#+\s*Notes\s*$/.test(line)));
+  assert.ok(!payload.text.split("\n").some(line => line.includes(JOURNAL_BYLINE) && /^#/.test(line)), "the byline is not a heading");
+  // The Category and Subject labels are lower-level headings the chapter step ignores
+  // (ChapterCorpusScorerTests, journal-footnotes-block); none is a section heading.
+  assert.deepEqual(payload.text.split("\n").filter(line => /^#{1,3}\s/.test(line)).length, JOURNAL_SECTIONS.length);
+  assert.ok(payload.text.length > 8000, `the whole essay is there (${payload.text.length} characters)`);
+});
+
+test("the journal fixture's capture is the Markdown the chapter corpus checks (Contracts/fixtures/chapters)", () => {
+  const { payload } = captureJournalPage();
+  const committed = fs.readFileSync(
+    new URL("../../Contracts/fixtures/chapters/journal-footnotes-block.md", import.meta.url), "utf8"
+  );
+  assert.equal(payload.text + "\n", committed, "regenerate the fixture if the capture changed on purpose");
+});
+
+test("capturing a page leaves its class and id names as the publisher wrote them", () => {
+  const body = `<article id="story-ad"><div class="ad-body wide"><h2>Heading</h2>${articleProse}${articleProse}${articleProse}</div></article>`;
+  const document = browserLikePage({ head: "<title>Names</title>", body });
+  const before = document.documentElement.outerHTML;
+  withGlobalDocument(document, () =>
+    captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+  );
+  assert.equal(document.documentElement.outerHTML, before);
+});
+
+test("ad-looking names on article bodies are neighbours of the e-flux case; real ad blocks still go", () => {
+  const advertisement = "<aside class=\"%CLASS%\"><p>Buy a placeholder subscription today and save on placeholder offers.</p></aside>";
+  const wide = `<h2>Section</h2>${articleProse}${articleProse}${articleProse}`;
+  const contains = (payload, text) => payload.text.includes(text);
+  // Something has to be left when the wrapper is dropped, or Defuddle gives up and the
+  // semantic fallback reads the essay anyway and hides the bug.
+  const capture = (wrapper) => {
+    const document = browserLikePage({
+      head: "<title>Names</title>",
+      body: `<article><h1>Title</h1>${wrapper}<div class="footnotes"><p>Placeholder footnote text, long enough to be kept.</p></div></article>`
+    });
+    const payload = withGlobalDocument(document, () =>
+      captureReadablePage({ crypto: { randomUUID: () => "test-id" }, navigator: {} }, document)
+    );
+    assert.equal(payload.metadata.extractor, "defuddle");
+    return payload;
+  };
+  const essay = "Useful article prose.";
+
+  // Essay containers named like an ad: the essay stays.
+  for (const attributes of [
+    'class="article__body article__body--with-ad"',   // e-flux
+    'class="body-ad"',                                // the whole name ends in -ad
+    'class="ad-body"',                                // starts with ad-
+    'class="AD-BODY"',                                // case does not matter
+    'class="story Story--With-AD"',
+    'id="story-ad"',                                  // ids are tested the same way
+    'id="ad-story"',
+    'class="x-ad" id="y-ad"',                         // both attributes at once
+    'class="ad-story-ad"'                             // starts and ends like an ad
+  ]) {
+    const payload = capture(`<div ${attributes}>${wide}</div>`);
+    assert.ok(contains(payload, essay), `${attributes} keeps the essay`);
+    assert.ok(contains(payload, "## Section"), `${attributes} keeps the heading`);
+  }
+
+  // Names that only look similar were never touched.
+  for (const attributes of ['class="bread"', 'class="reader"', 'class="download-area"', 'class="headline-body"']) {
+    const payload = capture(`<div ${attributes}>${wide}</div>`);
+    assert.ok(contains(payload, essay), `${attributes} is plain content`);
+  }
+
+  // A real ad block, however it is named, is short and has no body paragraphs: still removed.
+  for (const name of ["ad-slot", "sidebar-ad", "top-AD", "ad-"]) {
+    const payload = capture(`${advertisement.replace("%CLASS%", name)}${articleProse}${articleProse}`);
+    assert.ok(!contains(payload, "Buy a placeholder subscription"), `${name} is still dropped`);
+    assert.ok(contains(payload, essay), `${name} leaves the essay`);
+  }
+
+  // A long text with few paragraphs is not prose enough to protect: a promo that rambles stays dropped.
+  const promo = `<div class="promo-ad"><p>${"Sponsored placeholder words. ".repeat(60)}</p></div>`;
+  assert.ok(!contains(capture(`${promo}${articleProse}${articleProse}`), "Sponsored placeholder words."));
 });
 
 // The app ships the built scripts, and the tests above that import the
