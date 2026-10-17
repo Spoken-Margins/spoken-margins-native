@@ -170,6 +170,7 @@ Each step is its own PR or owner action. Nothing in steps 1 to 4 deletes a file 
 1. **Retire the dead jobs** (no move needed): unload and delete `codex-worker` and `release-cut`. Owner unloads the launchd jobs; a PR deletes the files.
 2. **Make the private scripts location-independent while they are still here:** `SM_REPO` and `SM_OPS_HOME`, plist templates and `install-launchd.py`. Behaviour stays the same, so the 10-minute pull keeps working.
    - Done (#1844): `scripts/sm_paths.py` (and `sm_paths.sh` for shell scripts) gives `repo()` and `ops_home()`. The scripts in `ops/` (except the retired Codex worker and release cut, and the public audio loopback), `phone-build`, `daily-phone-plan` and `sm_status.py` use it; `sm_sweep.py` reaches the checkout through `sm_status`. `scripts/tests/test_sm_paths.py` pins both the defaults and the settings.
+   - Limits: `ops/power/amph` (AppleScript, untested off the Mac) still writes its hold file under `~/SpokenMarginsOps`, and the integration run's evidence still lands in `artifacts/` of the checkout, so they ignore `SM_OPS_HOME`.
    - Still open: plist templates and `install-launchd.py` (#1843).
 3. **Add the author filters** in section 3 (PR #1797 for the lane; one PR each for the audit, Dial, integration run, phone build and worker). The routine changes are the owner's or the coordinator's.
 4. **Create `spoken-margins-ops`** (owner's account, owner's tap), carry history over with `git filter-repo`, clone it to `~/SpokenMarginsOps/ops`, and extend the existing 10-minute pull to it.

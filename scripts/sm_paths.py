@@ -84,8 +84,11 @@ def repo(anchor: str | os.PathLike, default: str | os.PathLike | None = None,
         return Path(default)
     root = own_root(anchor)
     sibling = root.parent / SIBLING_REPO_FOLDER
-    if sibling != root and (sibling / '.git').exists():
-        return sibling
+    try:
+        if sibling != root and (sibling / '.git').exists():
+            return sibling
+    except OSError:  # a launchd job without folder access: the script's own checkout is the answer it had before
+        pass
     return root
 
 
