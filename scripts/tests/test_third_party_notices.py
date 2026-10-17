@@ -106,9 +106,10 @@ class ThirdPartyNoticesTests(unittest.TestCase):
 
     def test_a_dependency_manifest_nobody_claims_fails(self):
         root = self.tree()
-        (root / 'tools').mkdir()
-        (root / 'tools/package.json').write_text('{}')
-        self.assertProblem(root, 'tools/package.json')
+        # A name no real folder shares, even on a case-insensitive disk (the Mac has Tools/ and the copy makes it).
+        (root / 'extra-vendored').mkdir()
+        (root / 'extra-vendored/package.json').write_text('{}')
+        self.assertProblem(root, 'extra-vendored/package.json')
 
     def test_the_go_server_may_not_pick_up_an_outside_module_unnoticed(self):
         root = self.tree()
