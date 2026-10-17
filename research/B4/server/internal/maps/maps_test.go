@@ -1,10 +1,12 @@
 package maps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -102,11 +104,27 @@ func TestCheckAnswer(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	// Nine words in a row is allowed.
-	nine := strings.Join(words(tr.Segments[7].Text)[2:11], " ")
-	ok := answerJSON([3]string{"s0", "A", "B"}, [3]string{"s7", "C", nine}, [3]string{"s14", "E", "F"})
-	if _, err := CheckAnswer(tr, ok); err != nil {
-		t.Errorf("nine copied words refused: %v", err)
+	// Eight words in a row is refused in a summary or a title; seven is allowed.
+	for name, scene := range map[string]func(string) [3]string{
+		"summary": func(run string) [3]string { return [3]string{"s7", "C", run} },
+		"title":   func(run string) [3]string { return [3]string{"s7", run, "D"} },
+	} {
+		eight := strings.Join(words(tr.Segments[7].Text)[2:10], " ")
+		if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", "B"}, scene(eight), [3]string{"s14", "E", "F"})); err == nil {
+			t.Errorf("%s: eight copied words accepted", name)
+		}
+		seven := strings.Join(words(tr.Segments[7].Text)[2:9], " ")
+		if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", "B"}, scene(seven), [3]string{"s14", "E", "F"})); err != nil {
+			t.Errorf("%s: seven copied words refused: %v", name, err)
+		}
+	}
+	// A description is at most 25 words: a line, not a retelling.
+	line := func(n int) string { return strings.TrimSpace(strings.Repeat("word ", n)) }
+	if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", line(25)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"})); err != nil {
+		t.Errorf("25 words refused: %v", err)
+	}
+	if _, err := CheckAnswer(tr, answerJSON([3]string{"s0", "A", line(26)}, [3]string{"s7", "C", "D"}, [3]string{"s14", "E", "F"})); err == nil {
+		t.Error("26 words accepted")
 	}
 }
 
@@ -265,20 +283,18 @@ func TestLedgerSurvivesRestart(t *testing.T) {
 	}
 }
 
-func TestSweepDeletesOldTranscripts(t *testing.T) {
+func TestSweepDropsOldTranscripts(t *testing.T) {
 	store, _ := OpenStore(t.TempDir())
 	t0 := time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 	store.PutTranscript(testTranscript(), t0)
-	if n, _ := store.Sweep(t0.Add(22*time.Hour), TranscriptMaxAge); n != 0 || !store.HasTranscript(testKey) {
-		t.Fatalf("swept a 22-hour-old transcript (%d)", n)
+	if n, _ := store.Sweep(t0.Add(TranscriptMaxAge-time.Minute), TranscriptMaxAge); n != 0 || !store.HasTranscript(testKey) {
+		t.Fatalf("swept a young transcript (%d)", n)
 	}
-	if n, _ := store.Sweep(t0.Add(24*time.Hour), TranscriptMaxAge); n != 1 || store.HasTranscript(testKey) {
-		t.Fatalf("kept a 24-hour-old transcript (%d)", n)
+	if n, _ := store.Sweep(t0.Add(TranscriptMaxAge), TranscriptMaxAge); n != 1 || store.HasTranscript(testKey) {
+		t.Fatalf("kept an old transcript (%d)", n)
 	}
-	// One that can't be read goes at once.
-	os.WriteFile(store.transcriptPath(testKey), []byte("junk"), 0o600)
-	if n, _ := store.Sweep(t0, TranscriptMaxAge); n != 1 {
-		t.Fatalf("kept an unreadable transcript (%d)", n)
+	if keys, _ := store.WaitingKeys(); len(keys) != 0 {
+		t.Fatalf("the order still lists %v", keys)
 	}
 }
 
@@ -426,16 +442,81 @@ func TestLogsNeverNameAPath(t *testing.T) {
 func TestWaitingKeysOldestFirst(t *testing.T) {
 	store, _ := OpenStore(t.TempDir())
 	keys := []string{strings.Repeat("b", 64), strings.Repeat("a", 64), strings.Repeat("c", 64)}
-	base := time.Now().Add(-time.Hour)
-	for i, key := range keys {
+	for _, key := range keys {
 		tr := testTranscript()
 		tr.EpisodeKey = key
-		store.PutTranscript(tr, base)
-		os.Chtimes(store.transcriptPath(key), base.Add(time.Duration(i)*time.Minute), base.Add(time.Duration(i)*time.Minute))
+		store.PutTranscript(tr, time.Now())
 	}
 	got, err := store.WaitingKeys()
 	if err != nil || strings.Join(got, ",") != strings.Join(keys, ",") {
 		t.Fatalf("WaitingKeys = %v, %v", got, err)
+	}
+	store.DeleteTranscript(keys[1])
+	if got, _ := store.WaitingKeys(); strings.Join(got, ",") != keys[0]+","+keys[2] {
+		t.Fatalf("after a delete, WaitingKeys = %v", got)
+	}
+}
+
+// Nothing of a transcript is ever written to disk (#1730): not on upload, not
+// while it waits, not while it is mapped, and not after.
+func TestNoTranscriptTextIsEverWrittenToDisk(t *testing.T) {
+	api := newFakeAPI(t, goodAnswer)
+	svc, _, _ := newService(t, api, 10)
+	dir := svc.Store.dir
+	tr := testTranscript()
+	if out, err := svc.Submit(tr); out != Accepted || err != nil {
+		t.Fatalf("Submit: %v %v", out, err)
+	}
+	needle := []byte(tr.Segments[0].Text)
+	scan := func(stage string) {
+		t.Helper()
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return rerr
+			}
+			if bytes.Contains(data, needle) {
+				t.Errorf("%s: transcript text found in %s", stage, path)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "transcripts")); err == nil {
+			t.Errorf("%s: a transcripts directory exists", stage)
+		}
+	}
+	scan("waiting")
+	svc.ProcessWaiting(context.Background())
+	if !svc.Store.HasMap(testKey) || svc.Store.HasTranscript(testKey) {
+		t.Fatalf("map %v, transcript kept %v", svc.Store.HasMap(testKey), svc.Store.HasTranscript(testKey))
+	}
+	scan("mapped")
+}
+
+// A transcript file left by the earlier file-backed queue is removed on open.
+func TestOpenStoreRemovesTranscriptsLeftOnDisk(t *testing.T) {
+	dir := t.TempDir()
+	old := filepath.Join(dir, "transcripts")
+	if err := os.MkdirAll(old, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(old, testKey+".json"), []byte(`{"transcript":"left"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("the old transcripts directory survived: %v", err)
+	}
+	if store.HasTranscript(testKey) {
+		t.Fatal("an old file came back as a waiting transcript")
 	}
 }
 
