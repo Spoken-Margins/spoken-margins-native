@@ -350,13 +350,14 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
     return failed, counted == 0
 
 
-STALL_ISSUE = 705  # the open regression for the app test host that launches and never reaches XCTest
+STALL_ISSUE = 1802  # the evidence log for app startup stalls and simulator boot stalls (#705 is closed)
+BOOT_STALLS = 'boot-stalls.json'  # a T3 boot's stalls (boot_t3_device), for log_recovered_stalls
 
 
 def recovered_startup_stalls(manifest: dict) -> list[dict]:
     """The steps of a verify-tests.py manifest that stalled once at startup, recovered on the first retry and passed.
 
-    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on #705. Two or more stalls
+    Owner's call 2026-10-11: such a step counts as a PASS, and each stall is logged on the evidence log (STALL_ISSUE). Two or more stalls
     before a pass stay a step error, so they never show up here.
     """
     return [{'step': step.get('name'), 'stall': step['startup_stalls'][0],
@@ -365,12 +366,43 @@ def recovered_startup_stalls(manifest: dict) -> list[dict]:
             if step.get('startup_recovered') and len(step.get('startup_stalls') or []) == 1 and not step.get('errors')]
 
 
-def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post) -> int:
-    """Post each recovered startup stall in the verify-* manifests under <evidence> on #705 with post(body).
+def boot_stall_note(evidence: Path, pr: int, head: str, report_url: str, verdict: str) -> str | None:
+    """The evidence-log comment for the T3 boot's stalls (<evidence>/boot-stalls.json), in the startup stalls' format."""
+    try:
+        found = json.loads((evidence / BOOT_STALLS).read_text())
+        stalls, outcome = found['stalls'], found['outcome']
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not stalls:
+        return None
+    if outcome.startswith('recovered'):
+        title = f'Boot stall recovered on a fresh device; the run then ended {verdict}'
+    else:
+        title = f'Boot stall, {outcome}'
+    lines = [f'{title}: the T3 run for PR #{pr} at `{head[:7]}` ({report_url}).']
+    lines += [f'- Boot {number}, clone `{stall.get("udid")}` (memory pressure {stall.get("pressure", "unknown")}): '
+              f'{stall.get("error")}' for number, stall in enumerate(stalls, 1)]
+    lines.append(f'- Outcome: {outcome}.')
+    lines.append(f'- Evidence on the Mac: `{evidence}/first-boot.log` and the boot log '
+                 '`~/Library/Caches/SpokenMarginsLane/boot-events.log`.')
+    lines.append('_Posted by the lane runner (scripts/lane-runner.py)._')
+    return '\n'.join(lines)
+
+
+def log_recovered_stalls(evidence: Path, pr: int, head: str, report_url: str, post, verdict: str = '') -> int:
+    """Post the T3 boot's stalls, and each recovered startup stall in the verify-* manifests under <evidence>,
+    on the evidence log (STALL_ISSUE) with post(body).
 
     Best effort: the report is already posted, and nothing here can fail the job. Returns how many were posted.
     """
     posted = 0
+    booted = boot_stall_note(evidence, pr, head, report_url, verdict)
+    if booted:
+        try:
+            post(booted)
+            posted += 1
+        except Exception as error:  # noqa: BLE001 - the report already says the stall happened
+            print(f'Could not log the boot stall on #{STALL_ISSUE}: {error!r}', flush=True)
     for output in sorted(evidence.glob('verify-*')):
         plan = output.name.removeprefix('verify-')
         for found in recovered_startup_stalls(_read_manifest(output)):
@@ -1865,18 +1897,28 @@ def run_plans(grouped: dict[str, list[str]], run_plan, evidence: Path,
     return summaries, statuses, ran, details
 
 
-def boot_t3_device(udid: str, log) -> tuple:
+def boot_t3_device(udid: str, log, replace=None, evidence: Path | None = None, info: dict | None = None) -> tuple:
     """Boot the clone under the lane's boot rules (scripts/lane_sim.py).
 
     A clone has never booted as itself, so it gets the first-boot tolerance (one SpringBoard change in the
     first 30 s, #184). Without it every clone boot stopped on that change from 06:00 UTC on 2026-10-11 (#1359).
+    At a boot stall, replace(old) gives one fresh clone to boot instead (#1802); each stall goes to
+    <evidence>/boot-stalls.json, which log_recovered_stalls posts on #1802 with the report's link and verdict.
 
-    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot).
+    Returns (None when ready or the reason it isn't, details such as the memory pressure at boot). info['udid']
+    is the device the run holds now, ready or not; pass info to read it even if the boot raises.
     """
     import lane_sim
-    info = {}
+    info = {} if info is None else info
+
+    def note(label, stalls, outcome):
+        if evidence is not None:
+            (evidence / BOOT_STALLS).write_text(json.dumps({'label': label, 'stalls': stalls, 'outcome': outcome},
+                                                           indent=2) + '\n')
+
     try:
-        lane_sim.boot(udid, f'runner boot {udid}', out=log, info=info, first_boot=True)
+        lane_sim.boot_with_retry(udid, f'runner boot {udid}', replace, out=log, info=info, first_boot=True,
+                                 log_stall=note)
     except lane_sim.BootError as error:
         return str(error), info
     return None, info
@@ -1990,10 +2032,19 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
                                  '(build and tests) ran out; interrupted'}
         return _read_manifest(output) or {'status': 'missing', 'error': 'verify-tests.py wrote no manifest'}
 
+    def replace(stalled):
+        lane_sim.release(stalled)
+        with (evidence / 'simulator-clone.log').open('a') as log:
+            return lane_sim.clone_temporary(RUNNER_SIMULATOR_PREFIX + request_id, runtime, out=log)
+
     try:
         boot_started = time.monotonic()
+        boot_info = {}
         with (evidence / 'first-boot.log').open('w') as log:
-            problem, boot_info = boot_t3_device(udid, log)
+            try:
+                problem, boot_info = boot_t3_device(udid, log, replace, evidence, boot_info)
+            finally:
+                udid = boot_info.get('udid', udid)  # after a stall, the fresh clone is the one to release
         boot_seconds = time.monotonic() - boot_started  # the boot alone, before any build or test
         if problem:
             details = [f'The cloned simulator did not boot: {problem} evidence: {evidence}/first-boot.log']
@@ -2009,6 +2060,10 @@ def _t3_on_claimed_device(grouped, request_id, evidence, runtime):
         details.insert(0, f'boot of the cloned simulator took {duration(boot_seconds)} (memory pressure at boot: '
                           f'{boot_info.get("pressure", "unknown")}, after waiting {boot_info.get("pressure_waited", 0)}s; '
                           f'{boot_info.get("period", "one-simulator")} period)')
+        if boot_info.get('boot_retry'):
+            retry = boot_info['boot_retry']
+            details.insert(1, f'boot stall on the first clone ({retry["stalled"]}), so it was deleted and one fresh clone '
+                              f'({retry["fresh"]}) booted in {retry["seconds"]}s instead, before any app install or test (#1802); the stall is logged on #1802')
         if boot_info.get('tolerated'):
             details.insert(1, f'tolerated one SpringBoard change in the first 30 s of the first boot (owner\'s rule, '
                               f'#184): {boot_info["tolerated"]}')
@@ -2711,7 +2766,8 @@ def main(argv=None) -> int:
     print(body)
     t3_url = github.comment(body)  # if this fails, the job fails and the tidy step says so on the PR
     if request['tier'] == 'T3':
-        log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text))
+        log_recovered_stalls(evidence, args.pr, head, t3_url, lambda text: Repo(repo).comment(STALL_ISSUE, text),
+                             verdict)
     record_outcome(verdict)
     _, desk_waiting = pending_requests(github.comments())
     if explicit:
