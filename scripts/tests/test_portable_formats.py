@@ -66,7 +66,7 @@ class ShippedPacketTests(unittest.TestCase):
         for name, expected in expectations.items():
             with self.subTest(name):
                 self.assertEqual(verdict((EXAMPLES / name).read_bytes()), expected['reference'])
-                self.assertEqual(expected['swift'] == 'imports', expected['reference'] == 'valid')
+                self.assertEqual(expected['swift'].startswith('imports'), expected['reference'] == 'valid')
 
     def test_the_committed_corpus_is_what_the_generator_writes(self):
         self.assertEqual(contracts.portable_format_problems(), [])
@@ -315,6 +315,125 @@ class RefusalTests(unittest.TestCase):
                 manifest, artifacts, assets = json.loads(json.dumps(base[0])), dict(base[1]), dict(base[2])
                 change(manifest, artifacts)
                 self.assertEqual(verdict(fmt.write_packet(manifest, artifacts, assets)), expected)
+
+
+class ListeningMapProposalTests(unittest.TestCase):
+    """Claude audit on f529489: the reader passes proposals through PortableListeningMapContract.forSharing before
+    it checks them, so a proposal that breaks a scene rule is left out, not a reason to refuse the Margins."""
+
+    QUOTE = 'the quick brown fox jumps over the lazy dog every single morning before breakfast'
+
+    def setUp(self):
+        self.manifest, self.artifacts, self.assets = example('podcast-reference.spokenmargins')
+
+    @staticmethod
+    def media(ms, **extra):
+        return {'anchorType': 'media', 'mediaTimeMs': ms, 'machineEvidenceAssetIds': [], **extra}
+
+    def scenes(self):
+        return [
+            {'id': 's0', 'order': 0, 'eligibility': 'excluded', 'startAnchor': self.media(0),
+             'endAnchor': self.media(60_000)},
+            {'id': 's1', 'order': 1, 'eligibility': 'eligible', 'summaryText': 'A summary written for this test.',
+             'summaryProvenance': 'sender_authored', 'startAnchor': self.media(60_000),
+             'endAnchor': self.media(600_000)},
+        ]
+
+    def read(self, scenes, assets=()):
+        manifest = json.loads(json.dumps(self.manifest))
+        manifest['assets'] += list(assets)
+        manifest['artifacts'].append({'id': 'map', 'kind': 'listening_map_proposal', 'path': 'artifacts/map.json',
+                                      'required': False, 'schemaVersion': fmt.LISTENING_MAP_PROPOSAL_VERSION})
+        proposal = {'id': 'map', 'schemaVersion': fmt.LISTENING_MAP_PROPOSAL_VERSION,
+                    'createdAt': '2026-10-17T12:00:00Z', 'generator': 'test', 'scenes': scenes}
+        artifacts = {**self.artifacts, 'artifacts/map.json': fmt.encode_manifest(proposal)}
+        assets_bytes = {**self.assets, **{a['path']: b'\0\0\0\x18ftypM4A ' + b'\0' * 64 for a in assets}}
+        return fmt.read_packet(fmt.write_packet(manifest, artifacts, assets_bytes))
+
+    def outcome(self, scenes, assets=()):
+        report = self.read(scenes, assets)
+        if report.errors:
+            return report.errors[0].code
+        return ' '.join(['valid'] + sorted({w.code for w in report.warnings}))
+
+    def test_scene_rules_table(self):
+        summary_voice = {'id': 'voice-summary', 'role': 'summary_voice', 'path': 'assets/audio/summary.m4a',
+                         'mimeType': 'audio/mp4', 'provenance': 'sender_approved_summary'}
+        original_voice = {**summary_voice, 'role': 'original_voice'}
+        cases = [
+            ('a clean proposal', lambda s: None, (), 'valid'),
+            ('excluded scene names a missing summary asset', lambda s: s[0].update(summaryAssetId='nope'), (),
+             'valid older-reader-refuses'),
+            ('excluded scene names an original-voice asset', lambda s: s[0].update(summaryAssetId='voice-summary'),
+             (original_voice,), 'valid older-reader-refuses'),
+            ('excluded scene carries summary text', lambda s: s[0].update(summaryText='A note.',
+                                                                         summaryProvenance='deterministic'), (), 'valid'),
+            # The stand-in audio has an ftyp box, which is all this reader checks; the Swift reader decodes it.
+            ('eligible scene names a summary voice', lambda s: s[1].update(summaryAssetId='voice-summary'),
+             (summary_voice,), 'valid'),
+            ('eligible scene names a missing summary asset', lambda s: s[1].update(summaryAssetId='nope'), (),
+             'invalid-manifest'),
+            ('eligible scene names an original-voice asset', lambda s: s[1].update(summaryAssetId='voice-summary'),
+             (original_voice,), 'invalid-manifest'),
+            ('eligible scene lacks summary text, order reversed',
+             lambda s: (s[1].pop('summaryText'), s[0].update(order=1), s[1].update(order=0)), (),
+             'valid older-reader-refuses proposal-dropped'),
+            ('eligible scene has an empty summary', lambda s: s[1].update(summaryText=''), (),
+             'valid older-reader-refuses proposal-dropped'),
+            ('eligible scene lacks summary provenance', lambda s: s[1].pop('summaryProvenance'), (),
+             'valid older-reader-refuses proposal-dropped'),
+            ('order reversed, every scene rule kept', lambda s: (s[0].update(order=1), s[1].update(order=0)), (),
+             'invalid-manifest'),
+            ('orders start at 1', lambda s: (s[0].update(order=1), s[1].update(order=2)), (), 'invalid-manifest'),
+            ('the same scene id twice', lambda s: s[1].update(id='s0'), (), 'invalid-manifest'),
+            ('a title over 500 characters', lambda s: s[1].update(title='t' * 501), (), 'invalid-manifest'),
+            ('a scene ends before it starts', lambda s: s[1].update(endAnchor=self.media(30_000)), (),
+             'valid proposal-dropped'),
+            ('scenes overlap', lambda s: s[1].update(startAnchor=self.media(30_000)), (), 'valid proposal-dropped'),
+            ('a scene starts before an earlier one', lambda s: s[0].update(startAnchor=self.media(90_000),
+                                                                          endAnchor=self.media(95_000)), (),
+             'valid proposal-dropped'),
+            ('scenes placed by rough percent only', lambda s: [x.update(startAnchor={'anchorType': 'media',
+                                                                                      'roughPercent': 50,
+                                                                                      'machineEvidenceAssetIds': []})
+                                                               for x in s], (), 'valid'),
+            ('a summary quoting its anchor', lambda s: s[1].update(summaryText=self.QUOTE, startAnchor=self.media(
+                60_000, exactText=self.QUOTE)), (), 'valid proposal-dropped'),
+            ('a summary quoting nine words', lambda s: s[1].update(summaryText=' '.join(self.QUOTE.split()[:9]),
+                                                                    startAnchor=self.media(60_000, exactText=self.QUOTE)),
+             (), 'valid'),
+            ('a quoting title is dropped, a long one with it', lambda s: s[1].update(
+                title=self.QUOTE + ' ' + 'x' * 501, startAnchor=self.media(60_000, exactText=self.QUOTE)), (),
+             'valid older-reader-refuses'),
+            ('a summary quoting non-ASCII text', lambda s: s[1].update(
+                summaryText='caf\u00e9 ' + self.QUOTE, startAnchor=self.media(60_000, exactText='caf\u00e9 ' + self.QUOTE)),
+             (), 'valid not-checked'),
+            ('a scene that does not decode', lambda s: s[1].update(eligibility='maybe'), (), 'invalid-manifest'),
+            ('a scene that is not an object', lambda s: s.append('scene'), (), 'invalid-manifest'),
+        ]
+        for label, change, assets, expected in cases:
+            with self.subTest(label):
+                scenes = self.scenes()
+                change(scenes)
+                self.assertEqual(self.outcome(scenes, assets), expected)
+
+    def test_an_embedded_text_quotation_drops_the_proposal(self):
+        base = fmt.unpack((EXAMPLES / 'article-embedded-text.spokenmargins').read_bytes())
+        text = json.loads(base[1]['artifacts/embedded-item.json'])['text']
+        self.manifest, self.artifacts, self.assets = json.loads(json.dumps(base[0])), dict(base[1]), dict(base[2])
+        words = text.split()
+        for label, summary, start, end, expected in [
+            ('quotes its span', ' '.join(words[:12]), 0, len(text), 'valid proposal-dropped'),
+            ('quotes outside its span', ' '.join(words[-12:]), 0, 40, 'valid'),
+            ('span does not fit the text, so all of it counts', ' '.join(words[-12:]), 0, len(text) + 1,
+             'valid proposal-dropped'),
+        ]:
+            with self.subTest(label):
+                scenes = [{'id': 's0', 'order': 0, 'eligibility': 'eligible', 'summaryText': summary,
+                           'summaryProvenance': 'sender_authored',
+                           'startAnchor': {'anchorType': 'text', 'startChar': start, 'machineEvidenceAssetIds': []},
+                           'endAnchor': {'anchorType': 'text', 'endChar': end, 'machineEvidenceAssetIds': []}}]
+                self.assertEqual(self.outcome(scenes), expected)
 
 
 class LinkTests(unittest.TestCase):

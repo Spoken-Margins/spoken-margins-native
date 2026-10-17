@@ -49,10 +49,12 @@ A packet is a zip holding `manifest.json`, `preview.md`, `artifacts/<name>.json`
 The Swift reader in `Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift` stays the authority. This reader leaves to it:
 
 - decoding voice audio (it only looks for an MPEG-4 `ftyp` box) and parsing acoustic signatures;
-- the Listening Map scene rules (`PortableListeningMapContract`) and the bounds inside fingerprint spines and phrase sketches;
+- the Listening Map quotation rule (`PortableListeningMapContract`) on non-ASCII text, where Python splits words and counts characters differently (it warns `not-checked` instead), and the bounds inside fingerprint spines and phrase sketches;
 - the normalized-content hash of non-ASCII text, which depends on Foundation's case and diacritic folding (it warns instead).
 
 It counts characters as grapheme clusters only approximately, which matters only for limits and the preview of unusual text.
+
+Listening Map proposals pass through `PortableListeningMapContract.forSharing` first, as in the Swift reader: summaries on excluded and unknown scenes are stripped, and a proposal that still breaks a scene rule is left out while its Margins import (warning `proposal-dropped`). Only a proposal that survives meets the order, bounds and summary-asset checks that refuse a packet. Build 29 has no `forSharing` step and refuses some packets that Build 30 and later import; the reader reports those as `older-reader-refuses`, so `--strict` fails them.
 
 ## Compatibility policy
 

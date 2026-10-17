@@ -14,8 +14,8 @@ Exit codes: 0 every file is valid, 1 a file is invalid, 2 the command line is wr
 
 The rules mirror `SpokenMarginsPackageArchive.read` in
 `Packages/SessionKit/Sources/SessionKitSharing/InterjectionPackageArchive.swift`. That Swift reader is the
-authority. This one covers the container, the manifest, the descriptors, the digest, the preview and the
-commentary layer; it does not repeat the Listening Map scene rules or decode audio (see Contracts/README.md,
+authority. This one covers the container, the manifest, the descriptors, the digest, the preview, the
+commentary layer and the Listening Map scene rules; it does not decode audio (see Contracts/README.md,
 "What the reference reader does not check").
 """
 from __future__ import annotations
@@ -675,8 +675,9 @@ def _check_boundary(report, manifest, decoded):
 
     assets_by_id = {a['id']: a for a in manifest['assets']}
     _check_layer(report, layers[0][1], assets_by_id)
+    item_text = embedded[0][1].get('text') if embedded else None
     for descriptor, proposal in decoded['listening_map_proposal']:
-        _check_proposal(report, proposal, assets_by_id, descriptor['path'])
+        _check_proposal(report, proposal, assets_by_id, descriptor['path'], item_text)
     for descriptor, spine in decoded['edition_fingerprint_spine']:
         guid = spine.get('episodeGUID')
         if item.get('episodeGUID') is not None and guid is not None and guid != item['episodeGUID']:
@@ -767,16 +768,208 @@ def _check_layer(report, layer, assets_by_id):
                 _refuse(report, 'invalid-manifest', 'an audio representation names no voice asset', at)
 
 
-def _check_proposal(report, proposal, assets_by_id, where):
+SCENE_ELIGIBILITY = frozenset({'eligible', 'excluded', 'unknown'})
+SUMMARY_PROVENANCE = frozenset({'publisher_supplied', 'sender_authored', 'deterministic', 'model_generated'})
+VERBATIM_RUN_WORDS = 10          # PortableListeningMapContract.verbatimRunWords
+SUMMARY_FIELDS = ('summaryText', 'summaryAssetId', 'summaryProvenance')
+
+
+def _decodes_as_anchor(anchor):
+    """What decoding PortableAnchorEvidence needs."""
+    return (isinstance(anchor, dict) and anchor.get('anchorType') in ANCHOR_TYPES
+            and isinstance(anchor.get('machineEvidenceAssetIds'), list)
+            and all(isinstance(e, str) for e in anchor['machineEvidenceAssetIds'])
+            and all(anchor.get(k) is None or _is_int(anchor[k])
+                    for k in ('startChar', 'endChar', 'mediaTimeMs', 'roughPercent'))
+            and all(anchor.get(k) is None or isinstance(anchor[k], str)
+                    for k in ('exactText', 'prefix', 'suffix', 'transcriptSegmentId', 'chapterTitle')))
+
+
+def _decodes_as_proposal(proposal):
+    """What decoding PortableListeningMapProposalArtifact needs (its id and schemaVersion are checked already)."""
     scenes = proposal.get('scenes')
-    if (not isinstance(scenes, list) or not scenes or not isinstance(proposal.get('generator'), str)
-            or len(proposal['generator']) > 200 or len({s.get('id') for s in scenes}) != len(scenes)
-            or [s.get('order') for s in scenes] != list(range(len(scenes)))):
-        _refuse(report, 'invalid-manifest', 'Listening Map proposal order is invalid', where)
+    return (isinstance(proposal.get('generator'), str) and isinstance(proposal.get('createdAt'), str)
+            and (proposal.get('languageCode') is None or isinstance(proposal['languageCode'], str))
+            and isinstance(scenes, list)
+            and all(isinstance(scene, dict) and isinstance(scene.get('id'), str) and _is_int(scene.get('order'))
+                    and scene.get('eligibility') in SCENE_ELIGIBILITY
+                    and scene.get('summaryProvenance') in SUMMARY_PROVENANCE | {None}
+                    and all(scene.get(k) is None or isinstance(scene[k], str)
+                            for k in ('title', 'summaryText', 'summaryAssetId', 'eligibilityReason'))
+                    and _decodes_as_anchor(scene.get('startAnchor')) and _decodes_as_anchor(scene.get('endAnchor'))
+                    for scene in scenes))
+
+
+def _words(text):
+    """PortableListeningMapContract.words: lowercased runs of letters and digits (exact for ASCII text)."""
+    return re.findall(r'[^\W_]+', text.lower())
+
+
+def _runs(words, length=VERBATIM_RUN_WORDS):
+    if len(words) < length:
+        return set()
+    return {' '.join(words[i:i + length]) for i in range(len(words) - length + 1)}
+
+
+def _shares_run(text_words, source_runs, length=VERBATIM_RUN_WORDS):
+    return bool(source_runs) and len(text_words) >= length and any(
+        ' '.join(text_words[i:i + length]) in source_runs for i in range(len(text_words) - length + 1))
+
+
+def _anchor_quote(anchor):
+    return ' '.join(anchor[k] for k in ('prefix', 'exactText', 'suffix') if anchor.get(k) is not None)
+
+
+def _quotes_source(text, scene, item_text):
+    """PortableListeningMapContract.quotesSource: the text repeats 10 words of the scene's anchors or of its span of
+    the packet's embedded text (all of that text when the span doesn't fit)."""
+    text_words = _words(text)
+    if len(text_words) < VERBATIM_RUN_WORDS:
+        return False
+    if any(_shares_run(text_words, _runs(_words(_anchor_quote(scene[a])))) for a in ('startAnchor', 'endAnchor')):
+        return True
+    if not item_text:
+        return False
+    start, end = scene['startAnchor'], scene['endAnchor']
+    lower = start.get('startChar') if start.get('startChar') is not None else start.get('endChar')
+    upper = end.get('endChar') if end.get('endChar') is not None else end.get('startChar')
+    if lower is not None and upper is not None and 0 <= lower < upper <= len(item_text):
+        return _shares_run(text_words, _runs(_words(item_text[lower:upper])))
+    return _shares_run(text_words, _runs(_words(item_text)))
+
+
+def _position(anchor, is_end):
+    first, second = ('endChar', 'startChar') if is_end else ('startChar', 'endChar')
+    character = anchor.get(first) if anchor.get(first) is not None else anchor.get(second)
+    if anchor.get('mediaTimeMs') is None and character is None:
+        return None
+    return anchor.get('mediaTimeMs'), character
+
+
+def _is_past(reached, start):
+    return any(left is not None and right is not None and left > right for left, right in zip(reached, start))
+
+
+def _furthest(reached, position):
+    if position is None:
+        return reached
+    return tuple(max((v for v in pair if v is not None), default=None) for pair in zip(reached, position))
+
+
+def listening_map_violations(proposal, item_text=None):
+    """PortableListeningMapContract.violations: (scene id, rule) for each scene rule the proposal breaks."""
+    found = []
+    reached_start = reached_end = (None, None)
+    for scene in proposal['scenes']:
+        scene_id = scene['id']
+        has_summary = bool(scene.get('summaryText')) or scene.get('summaryAssetId') is not None
+        if scene['eligibility'] == 'eligible':
+            if not scene.get('summaryText') or scene.get('summaryProvenance') is None:
+                found.append((scene_id, 'an eligible scene lacks a grounded summary'))
+        elif has_summary:
+            found.append((scene_id, 'an excluded or unknown scene carries a summary'))
+        start, end = _position(scene['startAnchor'], False), _position(scene['endAnchor'], True)
+        if start is not None and end is not None and _is_past(start, end):
+            found.append((scene_id, 'the scene ends before it starts'))
+        if start is not None:
+            if _is_past(reached_start, start):
+                found.append((scene_id, 'the scene starts before an earlier scene'))
+            elif _is_past(reached_end, start):
+                found.append((scene_id, 'the scene overlaps an earlier scene'))
+        if scene.get('summaryText') and _quotes_source(scene['summaryText'], scene, item_text):
+            found.append((scene_id, f'the summary quotes {VERBATIM_RUN_WORDS} or more words of its source'))
+        notes = [scene.get('title'), scene.get('eligibilityReason'), scene['startAnchor'].get('chapterTitle'),
+                 scene['endAnchor'].get('chapterTitle')]
+        if any(note is not None and _quotes_source(note, scene, item_text) for note in notes):
+            found.append((scene_id, f'a title or eligibility reason quotes {VERBATIM_RUN_WORDS} or more words'))
+        reached_start, reached_end = _furthest(reached_start, start), _furthest(reached_end, end)
+    return found
+
+
+def for_sharing(proposal, item_text=None):
+    """PortableListeningMapContract.forSharing for one proposal: summaries stripped from excluded and unknown scenes,
+    quoting titles, eligibility reasons and chapter titles dropped. Returns (proposal, []) when it survives, and
+    (None, the rules it still breaks) when the shipped reader leaves it out and imports the Margins."""
+    scenes = []
+    for scene in proposal['scenes']:
+        scene = json.loads(json.dumps(scene))
+        if scene['eligibility'] != 'eligible':
+            for key in SUMMARY_FIELDS:
+                scene.pop(key, None)
+        for key in ('title', 'eligibilityReason'):
+            if scene.get(key) is not None and _quotes_source(scene[key], scene, item_text):
+                scene.pop(key)
+        for anchor in ('startAnchor', 'endAnchor'):
+            title = scene[anchor].get('chapterTitle')
+            if title is not None and _quotes_source(title, scene, item_text):
+                scene[anchor].pop('chapterTitle')
+        scenes.append(scene)
+    kept = {**proposal, 'scenes': scenes}
+    violations = listening_map_violations(kept, item_text)
+    return (None, violations) if violations else (kept, [])
+
+
+def _matches_swift_words(proposal, item_text):
+    """True when every text the quotation rule reads is ASCII (and the item text has no CRLF, one Swift character),
+    so this module splits words and counts characters exactly as Swift does."""
+    texts = [item_text or '']
+    for scene in proposal['scenes']:
+        texts += [scene.get(k) or '' for k in ('title', 'summaryText', 'eligibilityReason')]
+        for anchor in (scene['startAnchor'], scene['endAnchor']):
+            texts += [_anchor_quote(anchor), anchor.get('chapterTitle') or '']
+    return all(t.isascii() for t in texts) and '\r\n' not in (item_text or '')
+
+
+def _proposal_bounds_problem(proposal, assets_by_id, eligible_needs_summary=False):
+    """SpokenMarginsPackageArchive.validate(proposal): the first bound the proposal breaks, or None. Build 29's
+    frozen reader (Packages/SessionKit/Tests/ShippedReader) runs it, with the eligible-summary rule, on every
+    proposal as decoded; later readers run it only on what survives forSharing."""
+    scenes = proposal['scenes']
+    if (not scenes or character_count(proposal['generator']) > 200 or len({s['id'] for s in scenes}) != len(scenes)
+            or [s['order'] for s in scenes] != list(range(len(scenes)))):
+        return 'Listening Map proposal order is invalid'
     for scene in scenes:
-        summary = scene.get('summaryAssetId')
-        if summary is not None and (assets_by_id.get(summary) or {}).get('role') != ROLE_SUMMARY_VOICE:
-            _refuse(report, 'invalid-manifest', 'scene summary asset is absent or has the wrong role', where)
+        if (not _length_ok(scene.get('title'), 500) or not _length_ok(scene.get('summaryText'), 10_000)
+                or not _length_ok(scene.get('eligibilityReason'), 500)):
+            return 'Listening Map scene is out of bounds'
+        if eligible_needs_summary and scene['eligibility'] == 'eligible' and (
+                not scene.get('summaryText') or scene.get('summaryProvenance') is None):
+            return 'eligible scene lacks a grounded summary'
+        if scene.get('summaryAssetId') is not None and (
+                assets_by_id.get(scene['summaryAssetId']) or {}).get('role') != ROLE_SUMMARY_VOICE:
+            return 'scene summary asset is absent or has the wrong role'
+    return None
+
+
+def _check_proposal(report, proposal, assets_by_id, where, item_text=None):
+    """SpokenMarginsPackageArchive.read: a proposal that breaks a scene rule after forSharing is left out (#480), and
+    only a proposal that survives meets validate(proposal), where a broken bound refuses the packet. Build 29 has
+    no forSharing step and refuses the packet instead, which is a warning here: Build 30 and later import it."""
+    if not _decodes_as_proposal(proposal):
+        _refuse(report, 'invalid-manifest', 'the Listening Map proposal does not decode', where)
+    exact = _matches_swift_words(proposal, item_text)
+    kept, broken = for_sharing(proposal, item_text)
+    if kept is None:
+        # Python splits words and counts characters as Swift does only for ASCII text, so a quotation found in other
+        # text is a guess; the structural rules are exact.
+        sure = [(i, r) for i, r in broken if exact or not r.startswith(('the summary quotes', 'a title'))]
+        if sure:
+            note = ('proposal-dropped', f'scene {sure[0][0]!r}: {sure[0][1]}; the app leaves this Listening Map '
+                    'proposal out on import and keeps the Margins')
+        else:
+            note = ('not-checked', 'the Listening Map quotation rule on non-ASCII text is left to the Swift reader')
+    else:
+        problem = _proposal_bounds_problem(kept, assets_by_id)
+        if problem is not None and exact:
+            _refuse(report, 'invalid-manifest', problem, where)
+        note = problem and ('not-checked', f'{problem}, unless the Swift reader finds a quotation in non-ASCII text '
+                            'and leaves the proposal out')
+    older = _proposal_bounds_problem(proposal, assets_by_id, eligible_needs_summary=True)
+    if older:
+        report.warn('older-reader-refuses', f'Build 29 refuses this packet ({older}); Build 30 and later read the '
+                    'Listening Map proposal through forSharing', where)
+    if note:
+        report.warn(*note, where)
 
 
 def _check_asset_bytes(report, manifest, entries):
@@ -1073,6 +1266,34 @@ def corpus(sources=EXAMPLES):
     manifest, artifacts, assets = copy(podcast)
     manifest['redactions']['rawAudioOmitted'] = False
     out['invalid-redaction-disabled.spokenmargins'] = write_packet(manifest, artifacts, assets)
+
+    # Listening Map proposals pass through PortableListeningMapContract.forSharing before the reader checks them.
+    def media(ms):
+        return {'anchorType': 'media', 'mediaTimeMs': ms, 'machineEvidenceAssetIds': []}
+
+    def with_proposal(edit):
+        manifest, artifacts, assets = copy(podcast)
+        scenes = [
+            {'id': 'scene-intro', 'order': 0, 'eligibility': 'excluded', 'eligibilityReason': 'the show opens',
+             'startAnchor': media(0), 'endAnchor': media(60_000)},
+            {'id': 'scene-main', 'order': 1, 'eligibility': 'eligible', 'title': 'The main conversation',
+             'summaryText': 'A summary written for this example.', 'summaryProvenance': 'sender_authored',
+             'startAnchor': media(60_000), 'endAnchor': media(600_000)},
+        ]
+        edit(scenes)
+        proposal = {'id': 'map-1', 'schemaVersion': LISTENING_MAP_PROPOSAL_VERSION, 'createdAt': '2026-10-16T12:00:00Z',
+                    'generator': 'spoken_margins_format.py corpus', 'scenes': scenes}
+        manifest['artifacts'].append({'id': 'map-1', 'kind': 'listening_map_proposal', 'path': 'artifacts/map-1.json',
+                                      'required': False, 'schemaVersion': LISTENING_MAP_PROPOSAL_VERSION})
+        artifacts['artifacts/map-1.json'] = encode_manifest(proposal)
+        return write_packet(manifest, artifacts, assets)
+
+    out['proposal-excluded-scene-summary.spokenmargins'] = with_proposal(
+        lambda scenes: scenes[0].update(summaryAssetId='asset-not-in-packet'))
+    out['proposal-dropped.spokenmargins'] = with_proposal(
+        lambda scenes: (scenes[1].pop('summaryText'), scenes[0].update(order=1), scenes[1].update(order=0)))
+    out['invalid-proposal-order.spokenmargins'] = with_proposal(
+        lambda scenes: (scenes[0].update(order=1), scenes[1].update(order=0)))
     return out
 
 
