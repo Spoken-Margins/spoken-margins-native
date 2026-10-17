@@ -63,7 +63,7 @@ elif args[0] == "boot":
     world["devices"][args[1]]["state"] = "Booted"
     save()
 elif args[0] == "bootstatus":
-    time.sleep(0.1)
+    time.sleep(60 if args[1] in os.environ.get("FAKE_STALL", "").split(",") else 0.1)  # a stall never gets ready
 elif args[0] == "shutdown":
     log({"shutdown": args[1]})
     if args[1] in world["devices"]:
@@ -341,6 +341,44 @@ class PoolDeviceTests(unittest.TestCase):
         self.assertEqual([r['boot'] for r in self.records() if 'boot' in r], [bad, replacement])
         self.assertFalse([r for r in self.records() if r.get('erase') == bad])
         self.assertEqual(self.run_helper('--done', replacement).returncode, 0)
+
+    def stalled_helper(self, *arguments, stalls=()):
+        """run_helper with the listed devices' SpringBoard restarting twice while they boot (#705)."""
+        calls = {}
+
+        def processes(udid):
+            calls[udid] = calls.get(udid, 0) + 1
+            return (10, 20 + min(calls[udid] - 1, 2)) if udid in stalls else (10, 20)
+
+        with mock.patch.object(lane_sim, 'device_processes', processes), \
+                mock.patch.object(lane_sim, 'post_stall') as posted, mock.patch.object(lane_sim, 'LATE_REPORT_WAIT', 0):
+            return self.run_helper(*arguments, FAKE_STALL=','.join(stalls)), posted
+
+    def test_a_pool_boot_stall_retires_the_device_and_boots_one_fresh_pool_device(self):
+        booted, posted = self.stalled_helper('--pool', stalls=('NEW-0001',))
+        self.assertEqual((booted.returncode, booted.stdout), (0, 'NEW-0002\n'), booted.stderr)
+        self.assertNotIn('NEW-0001', self.devices())  # deleted, never booted again
+        self.assertEqual([r['boot'] for r in self.records() if 'boot' in r], ['NEW-0001', 'NEW-0002'])
+        self.assertEqual(list(pool.load()), ['NEW-0002'])
+        self.assertNotIn('claimed', pool.load()['NEW-0002'])
+        self.assertIn('recovered', posted.call_args.args[2])
+        self.assertEqual(self.run_helper('--done', 'NEW-0002').returncode, 0)
+
+    def test_a_fresh_device_that_stalls_twice_stops_and_leaves_no_device_behind(self):
+        booted, posted = self.stalled_helper('--fresh', 'SM Lane Desk intrun', stalls=('NEW-0001', 'NEW-0002'))
+        self.assertEqual(booted.returncode, 3)
+        self.assertIn('STOP', booted.stderr)
+        self.assertEqual(booted.stdout, '')
+        self.assertEqual(self.devices(), {})  # the stalled one and its fresh replacement are both deleted
+        self.assertEqual([r['boot'] for r in self.records() if 'boot' in r], ['NEW-0001', 'NEW-0002'])
+        self.assertIn('not recovered (two in a row)', posted.call_args.args[2])
+
+    def test_a_named_device_that_stalls_gets_no_retry(self):
+        self.seed('PLAIN-01', 'Some other phone', pooled=False)
+        booted, posted = self.stalled_helper('PLAIN-01', stalls=('PLAIN-01',))
+        self.assertEqual(booted.returncode, 3)
+        self.assertEqual([r['boot'] for r in self.records() if 'boot' in r], ['PLAIN-01'])
+        posted.assert_not_called()
 
     def test_done_on_a_pool_device_marked_unsafe_deletes_it_and_drops_it_from_the_pool(self):
         self.seed('BAD-0001', 'SM Lane Desk pool 1')
