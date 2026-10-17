@@ -15,7 +15,6 @@ without a value; no job uses it yet. Any other `@NAME@` left in a template is an
 inside launchd. The rendered text is the template with only those substitutions (XML-escaped), so comments and layout
 stay as written. A job is named by its label without the `com.spokenmargins.` prefix.
 
-The retired Codex worker and release-cut plists are not templates and are not handled here.
 """
 import argparse
 import os

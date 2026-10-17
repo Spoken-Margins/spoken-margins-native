@@ -208,9 +208,9 @@ class ReportTextTests(unittest.TestCase):
     def test_the_candidate_line_says_what_a_pass_covers(self):
         """#1465: an app-test PASS must not read as a full candidate when journeys failed or didn't run."""
         base = dict(run.settle(run.summarize(manifest({TEST: 'passed'})), []), reruns=0)
-        for journeys, words in (({'J1Tests/testOpen': 'passed'}, 'scripted journeys passed'),
+        for journeys, words in (({'J1Tests/testOpen': 'passed'}, 'scripted journeys passed (1 of 1)'),
                                 ({'J1Tests/testOpen': 'failed', 'J4Tests/testPlay': 'passed'},
-                                 'scripted journeys failed (testOpen)'),
+                                 'scripted journeys 1 passed, 1 failed, 0 skipped, 0 not run (failed: testOpen)'),
                                 ({'J1Tests/testOpen': 'not_run'}, 'scripted journeys not run'),
                                 ({}, 'scripted journeys not run')):
             with self.subTest(journeys=journeys):
@@ -223,6 +223,19 @@ class ReportTextTests(unittest.TestCase):
                 self.assertEqual(kinds['Scripted journeys'], 'fail' if 'failed' in words else
                                  'pass' if 'passed' in words else 'not run')
                 self.assertEqual(kinds['Attended journeys'], 'not run')
+
+    def test_the_candidate_line_never_calls_journeys_passed_when_some_did_not_run(self):
+        """#1901: one passing script among skipped and unrun ones used to read "scripted journeys passed"."""
+        base = dict(run.settle(run.summarize(manifest({TEST: 'passed'})), []), reruns=0)
+        mixed = {'J1Tests/a': 'passed', 'J2Tests/b': 'skipped', 'J3Tests/c': 'not_run', 'J7Tests/d': 'passed'}
+        body = self.text(dict(base, journeys=mixed))
+        self.assertIn('app tests passed; scripted journeys 2 passed, 0 failed, 1 skipped, 1 not run; attended', body)
+        self.assertNotIn('scripted journeys passed', body)
+        for journeys in ({'a/b': 'passed', 'c/d': 'skipped'}, {'a/b': 'passed', 'c/d': 'not_run'},
+                         {'a/b': 'passed', 'c/d': 'missing'}):
+            with self.subTest(journeys=journeys):
+                self.assertNotIn('scripted journeys passed', self.text(dict(base, journeys=journeys)))
+        self.assertIn('scripted journeys passed (2 of 2)', self.text(dict(base, journeys={'a/b': 'passed', 'c/d': 'passed'})))
 
     def test_fail_report_lists_failures_flakes_and_suspect_merges(self):
         first = run.summarize(manifest({TEST: 'failed', OTHER: 'failed'}))
@@ -310,12 +323,74 @@ class DiagnosisTests(unittest.TestCase):
                 self.assertIn('Unconfirmed', groups[0]['root_cause'])
 
 
+class FindDuplicateTests(unittest.TestCase):
+    """#1871: a diagnosis went onto a design issue that only cited the failing test as an example."""
+    TEST = 'SpokenMarginsAppTests/RealPlaybackMarginCaptureTests/testStreamedMarginStoresPreAndPostEvidence'
+
+    def issue(self, number, body='', labels=(), title='', comments=()):
+        return {'number': number, 'title': title, 'body': body, 'labels': [{'name': name} for name in labels],
+                'comments': [{'body': c} for c in comments]}
+
+    def duplicate(self, *issues, tests=None):
+        return run.find_duplicate(list(issues), tests or [self.TEST])
+
+    def test_a_design_issue_that_cites_the_test_is_not_a_duplicate(self):
+        design = self.issue(864, f'Batching idea. Example: `{self.TEST}` runs long.', labels=['enhancement', 'deferred'])
+        self.assertIsNone(self.duplicate(design))
+        # Naming it as the example of a bug does not make a report either, without the regression label.
+        self.assertIsNone(self.duplicate(self.issue(865, 'testStreamedMarginStoresPreAndPostEvidence is slow', labels=['bug'])))
+
+    def test_table_of_neighbouring_issues(self):
+        name = 'testStreamedMarginStoresPreAndPostEvidence'
+        for label, issue, expected in [
+            ('regression issue naming the test', self.issue(1872, f'It fails: {name}', labels=['bug', 'regression']), 1872),
+            ('run-filed issue with a Failing tests line', self.issue(1873, f'Failing tests: `{self.TEST}`\n\n## Steps'), 1873),
+            ('earlier run comment with a Failing tests line',
+             self.issue(900, 'Open bug about playback', comments=[f'Failing tests: `{self.TEST}`\n## Steps']), 900),
+            ('regression label but no mention of the test', self.issue(901, 'Another test fails', labels=['regression']), None),
+            ('the test only inside a Steps line', self.issue(902, f'## Steps\nRun {name}\nFailing tests: `Other/testOther`'), None),
+            ('lookalike test name with a regression label',
+             self.issue(903, f'{name}2 fails', labels=['regression']), None),
+            ('lookalike test name on a Failing tests line',
+             self.issue(904, f'Failing tests: `X/Y/pre_{name}`'), None),
+            ('report issue #184', self.issue(run.REPORT_ISSUE, f'Failing tests: `{self.TEST}`', labels=['regression']), None),
+        ]:
+            with self.subTest(label):
+                self.assertEqual(self.duplicate(issue), expected)
+
+    def test_the_search_asks_for_open_issues_and_their_labels(self):
+        # A closed issue is never listed (`--state open`), and the rule reads labels, so the list must carry them.
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [])
+            asked = []
+            ops.gh_json = lambda args: asked.append(args) or []
+            ops.must = lambda cmd, *a, **k: run.Result(0, 'https://github.com/uncomposed/spoken-margins-native/issues/1900\n')
+            group = run.fallback_groups([self.TEST])
+            run.Ops.file_failures(ops, group, SHA, 'report', Path(tmp), None)
+        self.assertIn('--state', asked[0])
+        self.assertIn('open', asked[0])
+        self.assertIn('number,title,body,comments,labels', asked[0])
+
+    def test_the_first_real_duplicate_wins_over_a_citing_design_issue(self):
+        design = self.issue(864, f'Example: {self.TEST}')
+        real = self.issue(1872, f'Failing tests: `{self.TEST}`', labels=['bug', 'regression'])
+        self.assertEqual(self.duplicate(design, real), 1872)
+
+    def test_a_failure_report_hidden_in_a_long_comment_thread_is_found(self):
+        long_thread = self.issue(950, 'Open bug', comments=['x'] * run.LISTED_COMMENTS)
+        found = run.find_duplicate([long_thread], [self.TEST],
+                                   lambda number: f'chatter\nFailing tests: `{self.TEST}`\n')
+        self.assertEqual(found, 950)
+        self.assertIsNone(run.find_duplicate([long_thread], [self.TEST], lambda number: f'only mentions {self.TEST}'))
+
+
 class FakeOps(run.Ops):
     """Real tick, fake boundaries: git, GitHub, the simulator and Claude."""
 
-    def __init__(self, tmp, plans, bodies=(), waiting=()):
+    def __init__(self, tmp, plans, bodies=(), waiting=(), listing=None):
         super().__init__(home=Path(tmp) / 'home', repo_root=Path(tmp) / 'repo', run=self.fake_run, echo=False)
         (Path(tmp) / 'repo').mkdir()
+        self.sha, self.listing = SHA, listing or {'gating': [], 'probation': []}
         self.waiting = list(waiting)
         self.plans, self.bodies, self.calls, self.posted, self.filed, self.diagnosed = list(plans), list(bodies), [], [], [], []
 
@@ -323,11 +398,11 @@ class FakeOps(run.Ops):
         cmd = [str(c) for c in cmd]
         self.calls.append(cmd)
         if cmd[:2] == ['git', 'rev-parse']:
-            return run.Result(0, SHA + '\n')
+            return run.Result(0, self.sha + '\n')
         if cmd[:3] == ['git', 'worktree', 'add']:
             wt = Path(cmd[-2])
-            (wt / 'TestPlans').mkdir(parents=True)
-            (wt / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps({'gating': [], 'probation': []}))
+            (wt / 'TestPlans').mkdir(parents=True, exist_ok=True)
+            (wt / 'TestPlans' / 'scripted-journeys.json').write_text(json.dumps(self.listing))
         if cmd[:2] == ['git', 'log']:
             return run.Result(0, 'Merge pull request #1170 from uncomposed/ws/1170-x\n')
         return run.Result(0, '')
@@ -395,6 +470,25 @@ class TickTests(unittest.TestCase):
         self.assertNotIn('in_progress', state['results'][SHA])
         self.assertEqual(ops.diagnosed, [])
         self.assertTrue(any(c[:3] == ['git', 'worktree', 'remove'] for c in ops.calls))
+
+    def test_two_passing_tips_name_the_probation_script_that_earned_gating(self):
+        # #1901: nothing counted a script's passes, so nothing was ever promoted.
+        listing = {'gating': [], 'probation': [{'test': JOURNEY, 'journey': 'J1'}]}
+        passing = manifest({}, probation={f'{JOURNEY}/testOpen': 'passed'})
+        passing['status'] = 'verified'
+        plans = [manifest({TEST: 'passed'}), passing, manifest({TEST: 'passed'}), passing]
+        with tempfile.TemporaryDirectory() as tmp, mac_with_room():
+            ops = FakeOps(tmp, plans, bodies=[report_comment(OLD[:7], 'PASS')], listing=listing)
+            self.assertEqual(run.tick(ops), 'PASS')
+            self.assertEqual(json.loads((ops.home / 'state.json').read_text())['journeys'][JOURNEY],
+                             {'passes': 1, 'bad': 0})
+            ops.sha = 'c' * 40
+            self.assertEqual(run.tick(ops), 'PASS')
+            streaks = json.loads((ops.home / 'state.json').read_text())['journeys']
+        self.assertEqual(streaks[JOURNEY], {'passes': 2, 'bad': 0})
+        self.assertNotIn('journeys due to move', ops.posted[0])
+        self.assertIn('journeys due to move: J1ListenToAnArticleJourneyUITests passed twice running, move to gating',
+                      ops.posted[1])
 
     def test_flaky_failure_is_rerun_twice_and_reported_as_pass_without_claude(self):
         plans = [manifest({TEST: 'failed'}), manifest({TEST: 'passed'}), manifest({TEST: 'passed'})]

@@ -15,8 +15,6 @@ spec = importlib.util.spec_from_file_location('install_launchd', OPS / 'install-
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
-# Retired jobs: still plain plists with the old home path, deleted in a separate owner-gated change.
-RETIRED = {'ops/codex/com.spokenmargins.codex-worker.plist', 'ops/release/com.spokenmargins.release-cut.plist'}
 HOME = '/Users/someone'
 CHECKOUTS = ('SpokenMarginsOps/repo/', 'Documents/GitHub/spoken-margins-native/')
 
@@ -59,9 +57,7 @@ class TemplateTests(unittest.TestCase):
     def test_no_other_plist_in_the_repository_carries_the_owners_home(self):
         found = {str(p.relative_to(ROOT)) for folder in ('ops', 'scripts') for p in (ROOT / folder).rglob('*.plist')
                  if '/Users/colemiller' in p.read_text(errors='replace')}
-        self.assertEqual(found, RETIRED)
-        for relative in RETIRED:
-            self.assertTrue((ROOT / relative).is_file(), f'{relative} is gone: delete it from RETIRED')
+        self.assertEqual(found, set())
 
 
 class RenderTests(unittest.TestCase):
