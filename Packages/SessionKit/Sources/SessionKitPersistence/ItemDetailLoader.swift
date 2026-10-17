@@ -1,6 +1,5 @@
 import Foundation
 import SessionKit
-import SessionKitPersistence
 
 /// Loads item presentation while retaining the store's existing read and write policies.
 public struct ItemDetailLoader {
