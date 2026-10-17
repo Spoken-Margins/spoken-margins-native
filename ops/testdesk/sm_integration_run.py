@@ -260,10 +260,24 @@ LISTED_COMMENTS = 100  # `gh issue list --json comments` returns at most this ma
 
 def find_duplicate(issues: list[dict], tests: list[str],
                    all_comments: Optional[Callable[[int], str]] = None) -> Optional[int]:
-    """The first open issue naming one of the tests (the report issue itself never counts)."""
+    """The first open issue that is a failure report for one of the tests (the report issue never counts).
+
+    Naming a test is not enough: a design issue can cite one as an example, and a comment posted there files
+    nothing (#1871). An issue is a failure report when it carries `regression` (part of FAIL_LABELS, which
+    every filed failure gets) and names the test, or when a "Failing tests:" line in its body or comments
+    names the test, as the runs' own issues and an earlier run's comment do. The `regression` label alone is
+    not enough, because a regression about something else may still mention the test in passing."""
+    names = [t.rsplit('/', 1)[-1].removesuffix('()') for t in tests]
+
     def names_a_test(text: str) -> bool:
-        return any(re.search(r'(?<!\w)' + re.escape(t.rsplit('/', 1)[-1].removesuffix('()')) + r'(?!\w)', text)
-                   for t in tests)
+        return any(re.search(r'(?<!\w)' + re.escape(name) + r'(?!\w)', text) for name in names)
+
+    def lists_a_failing_test(text: str) -> bool:
+        return any(line.startswith('Failing tests:') and names_a_test(line) for line in text.splitlines())
+
+    def is_failure_report(issue: dict, text: str) -> bool:
+        labels = {(label.get('name') if isinstance(label, dict) else label) for label in issue.get('labels') or []}
+        return lists_a_failing_test(text) or ('regression' in labels and names_a_test(text))
 
     for issue in issues:
         if issue['number'] == REPORT_ISSUE:
@@ -271,10 +285,11 @@ def find_duplicate(issues: list[dict], tests: list[str],
         comments = issue.get('comments') or []
         text = '\n'.join([issue.get('title') or '', issue.get('body') or '']
                          + [c.get('body') or '' for c in comments])
-        if names_a_test(text):
+        if is_failure_report(issue, text):
             return issue['number']
-        if all_comments is not None and len(comments) >= LISTED_COMMENTS and names_a_test(all_comments(issue['number'])):
-            return issue['number']
+        if all_comments is not None and len(comments) >= LISTED_COMMENTS:
+            if is_failure_report(issue, text + '\n' + all_comments(issue['number'])):
+                return issue['number']
     return None
 
 
@@ -626,7 +641,7 @@ class Ops:
             for test in group['tests']:
                 issues = self.gh_json(['issue', 'list', '-R', REPO, '--state', 'open',
                                        '--search', dedupe_query(test), '--limit', '100',
-                                       '--json', 'number,title,body,comments'])
+                                       '--json', 'number,title,body,comments,labels'])
                 duplicate = find_duplicate(issues, [test], self.issue_comments)
                 if duplicate is not None:
                     break
