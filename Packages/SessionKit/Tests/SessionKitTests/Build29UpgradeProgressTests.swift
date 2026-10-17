@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 
 /// New code acting on a Library Build 29 left behind must keep each item's completion
 /// and progress (#352). Build29DatabaseFixtureTests and PriorBuildPersistenceTests prove
@@ -124,17 +125,12 @@ final class Build29UpgradeProgressTests: XCTestCase {
     }
 
     private func copyOfBuild29Library() throws -> String {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw NSError(domain: "Build29Library", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository root unavailable"]) }
-            root = parent
-        }
+        let fixture = try TestInputs.url(.contracts, "fixtures/persistence/build29.sqlite")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("build29-upgrade-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
         let copy = directory.appendingPathComponent("library.sqlite")
-        try FileManager.default.copyItem(at: root.appendingPathComponent("Contracts/fixtures/persistence/build29.sqlite"), to: copy)
+        try FileManager.default.copyItem(at: fixture, to: copy)
         return copy.path
     }
 }

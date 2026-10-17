@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class TraceReplayTests: XCTestCase {
     func testOriginalPlaybackFiveInterjections() throws { try TraceHarness(traceName: "original-playback-five-interjections").replay() }
@@ -58,8 +59,7 @@ final class TraceHarness {
     private var spokenUnitCounts: [String: Int] = [:]
 
     init(traceName: String) throws {
-        let root = try RepoPaths.root()
-        let traceURL = root.appending(path: "Contracts/traces/\(traceName).json")
+        let traceURL = try TestInputs.url(.contracts, "traces/\(traceName).json")
         self.trace = try JSON.object(at: traceURL)
         let runtimeProfile = trace["runtimeProfile"] as? String ?? "phone-tablet-online"
         let repo = InMemorySessionRepository()

@@ -4,6 +4,7 @@ import SessionKitSharing
 import ShippedPacketReader
 import XCTest
 import ZIPFoundation
+import SessionKitTestInputs
 
 /// Listening Map proposals inside `.spokenmargins` packets (#480): the fixture matrix travels and
 /// Build 29 imports it, packet validation enforces the scene rules, and no transcript leaks.
@@ -393,9 +394,7 @@ final class ListeningMapPacketTests: XCTestCase {
     private var fixedDate: Date { Date(timeIntervalSince1970: 1_777_000_000) }
 
     private var sharingFixtures: URL {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        return root.appending(path: "Contracts/fixtures/sharing")
+        get throws { try TestInputs.url(.contracts, "fixtures/sharing") }
     }
 
     private var articleItem: SharedItemIdentity {

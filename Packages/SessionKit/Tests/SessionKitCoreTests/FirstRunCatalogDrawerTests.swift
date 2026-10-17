@@ -1,19 +1,16 @@
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// B1 M1: a fresh install offers at least 100 popular podcasts with artwork, filterable by at
 /// least 8 subjects, and works offline from the bundled snapshot.
 final class FirstRunCatalogDrawerTests: XCTestCase {
-    private static let bundledSnapshot = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent() // SessionKitCoreTests
-        .deletingLastPathComponent() // Tests
-        .deletingLastPathComponent() // SessionKit
-        .deletingLastPathComponent() // Packages
-        .deletingLastPathComponent() // repo
-        .appending(path: "Site/onboarding/catalog/v1/catalog.json")
+    private static func bundledSnapshot() throws -> URL {
+        try TestInputs.url(.site, "onboarding/catalog/v1/catalog.json")
+    }
 
     func testBundledSnapshotOffersAHundredPodcastsWithArtworkAcrossEightSubjects() throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot()))
         let followable = catalog.entries(forSubject: nil)
         XCTAssertGreaterThanOrEqual(followable.count, 100)
         XCTAssertTrue(followable.allSatisfy { $0.artworkURL?.hasPrefix("https://") == true }, "every entry shows artwork")
@@ -27,7 +24,7 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
 
     /// #470: a short hand-picked "Writers" row of Substack publications, followed as article feeds.
     func testWritersSubjectOffersExactlyItsHandPickedStarterRowOfNewsletters() throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot()))
         XCTAssertTrue(catalog.visibleSubjects.contains { $0.id == "writers" && $0.title == "Writers" })
         let starterRow = try XCTUnwrap(catalog.starterRows?.first { $0.subjectId == "writers" })
         let writers = catalog.entries(forSubject: "writers")
@@ -45,7 +42,7 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
     /// #224 lane: after a relaunch, a show whose feed settled on another URL once followed showed
     /// "Follow" again in the drawer although Following listed it.
     func testAShowWhoseFeedMovedStaysFollowedAfterARelaunch() throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot()))
         let entry = try XCTUnwrap(catalog.entries(forSubject: nil).first)
         let moved = FeedSubscription(
             id: "subscription-moved",
@@ -68,7 +65,7 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
     /// per-row answer for each entry: recorded follows, URL matches, and a recorded follow that
     /// was since unfollowed.
     func testOnePassFollowedIdsMatchThePerRowAnswer() throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot()))
         let entries = catalog.entries(forSubject: nil)
         XCTAssertGreaterThanOrEqual(entries.count, 6)
         let moved = FeedSubscription(
@@ -134,7 +131,7 @@ final class FirstRunCatalogDrawerTests: XCTestCase {
     /// #661 (Test Desk): following One Useful Thing from the Writers row said "Following 1 show".
     /// A newsletter isn't a show.
     func testFooterCountsNewslettersAsNewslettersNotShows() throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot))
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.bundledSnapshot()))
         let newsletter = try XCTUnwrap(catalog.entries(forSubject: "writers").first)
         let show = try XCTUnwrap(catalog.entries(forSubject: nil).first { $0.contentKind == .podcast })
 

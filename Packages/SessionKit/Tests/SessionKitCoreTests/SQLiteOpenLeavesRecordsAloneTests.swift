@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 
 /// Opening, reading and saving something unrelated must not touch the bytes of any other
 /// row. A build that normalizes records on open (decode, then encode) would drop every key
@@ -69,7 +70,7 @@ final class SQLiteOpenLeavesRecordsAloneTests: XCTestCase {
     }
 
     func testTheRealBuild29LibraryIsNotRewrittenByOpeningIt() throws {
-        let fixture = try repositoryRoot().appending(path: "Contracts/fixtures/persistence/build29.sqlite")
+        let fixture = try TestInputs.url(.contracts, "fixtures/persistence/build29.sqlite")
         try FileManager.default.copyItem(at: fixture, to: URL(fileURLWithPath: path))
         let before = try snapshot()
         XCTAssertEqual(before.records.count, 15)
@@ -113,15 +114,5 @@ final class SQLiteOpenLeavesRecordsAloneTests: XCTestCase {
             try StoreRawSQL.execute("INSERT INTO records(kind,id,session_id,item_id,payload,updated_at) VALUES(?,?,?,?,?,?);",
                                     bindings: [row.0, row.1, row.2, row.3, row.4, row.5], at: path)
         }
-    }
-
-    private func repositoryRoot() throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw StoreRawSQL.Failure(description: "Repository root unavailable") }
-            root = parent
-        }
-        return root
     }
 }

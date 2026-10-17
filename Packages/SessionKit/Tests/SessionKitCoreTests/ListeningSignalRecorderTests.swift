@@ -1,9 +1,12 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class ListeningSignalRecorderTests: XCTestCase {
-    private static let fixture = "Contracts/fixtures/listening-signals/i4-engagement-sample.jsonl"
+    private static func fixture() throws -> URL {
+        try TestInputs.url(.contracts, "fixtures/listening-signals/i4-engagement-sample.jsonl")
+    }
     private var temporary: URL!
 
     override func setUpWithError() throws {
@@ -48,11 +51,11 @@ final class ListeningSignalRecorderTests: XCTestCase {
         recorder.flush()
         let written = try String(contentsOf: log, encoding: .utf8)
         if ProcessInfo.processInfo.environment["UPDATE_I4_FIXTURE"] == "1" {
-            try written.write(to: Self.path(Self.fixture), atomically: true, encoding: .utf8)
+            try written.write(to: Self.fixture(), atomically: true, encoding: .utf8)
         }
-        let published = try String(contentsOf: Self.path(Self.fixture), encoding: .utf8)
+        let published = try String(contentsOf: Self.fixture(), encoding: .utf8)
         XCTAssertEqual(written, published, "the recorder's output changed; rerun with UPDATE_I4_FIXTURE=1 and update the I4 schema to match")
-        XCTAssertEqual(try ListeningSignalRecorder.read(Self.path(Self.fixture)).count, published.split(separator: "\n").count)
+        XCTAssertEqual(try ListeningSignalRecorder.read(Self.fixture()).count, published.split(separator: "\n").count)
     }
 
     // MARK: Listening intervals
@@ -579,16 +582,6 @@ final class ListeningSignalRecorderTests: XCTestCase {
 
     static func time(_ value: String) -> Date {
         ISO8601DateFormatter().date(from: value)!
-    }
-
-    static func path(_ relative: String) throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent.path != root.path else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return root.appendingPathComponent(relative)
     }
 }
 

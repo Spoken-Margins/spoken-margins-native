@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// The portable Listening Map contract (#480, #88): one fixture per kind of source, the scene rules,
 /// and v1 maps keeping their meaning next to v2 proposals.
@@ -98,7 +99,7 @@ final class ListeningMapContractTests: XCTestCase {
                 chapters: [Chapter(id: "ch-bad", title: "Invented anchor", startChar: 0, endChar: 0, percent: 0)]
             ),
         ]
-        let mapsFolder = contractsRoot.appending(path: "fixtures/maps")
+        let mapsFolder = try TestInputs.url(.contracts, "fixtures/maps")
         let files = try FileManager.default.contentsOfDirectory(atPath: mapsFolder.path).filter { $0.hasSuffix(".json") }
         XCTAssertEqual(Set(files), Set(expected.keys), "a new v1 fixture needs its expected map here")
 
@@ -397,13 +398,9 @@ final class ListeningMapContractTests: XCTestCase {
 
     // MARK: Helpers
 
-    private var contractsRoot: URL {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        return root.appending(path: "Contracts")
+    private var sharingFixtures: URL {
+        get throws { try TestInputs.url(.contracts, "fixtures/sharing") }
     }
-
-    private var sharingFixtures: URL { contractsRoot.appending(path: "fixtures/sharing") }
 
     private func fixture(_ name: String) throws -> PortableListeningMapProposalArtifact {
         let decoder = JSONDecoder()
