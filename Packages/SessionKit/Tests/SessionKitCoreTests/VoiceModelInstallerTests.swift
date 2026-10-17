@@ -57,10 +57,12 @@ final class VoiceModelInstallerTests: XCTestCase {
     private func installer(
         marginBytes: Int64 = 0,
         attemptsPerSource: Int = 3,
+        transport: VoiceModelTransport = URLSessionVoiceModelTransport(),
         availableCapacity: @escaping @Sendable (URL) -> Int64? = { _ in nil }
     ) -> VoiceModelInstaller {
         VoiceModelInstaller(
             root: root,
+            transport: transport,
             configuration: .init(marginBytes: marginBytes, attemptsPerSource: attemptsPerSource, retryDelay: .zero, availableCapacity: availableCapacity)
         )
     }
@@ -114,7 +116,31 @@ final class VoiceModelInstallerTests: XCTestCase {
 
     // MARK: Interrupted transfers
 
+    // The tests below that need an exact number of bytes to have arrived before the cut use
+    // `CuttingTransport`: it drops the connection from this side after that many bytes, so the
+    // partial file is the same size on every machine. When the *server* drops a connection, how much
+    // of the body URLSession hands over first is up to the system and varies from run to run on a Mac
+    // (#1949), so `testResumesAfterTheServerDropsTheConnectionOnTheRealWire` makes no claim about it.
+
     func testResumesATransferTheConnectionCutHalfway() async throws {
+        let model = payload(400_000, seed: 5)
+        let server = try fileServer(["/m": model])
+        let cutting = CuttingTransport(cutFirstRequestAfter: 150_000)
+
+        let folder = try await installer(transport: cutting).install(voiceId: "v", version: "1", files: [
+            installFile("model.onnx", model, sources: [server.url("/m")]),
+        ])
+
+        XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
+        XCTAssertEqual(cutting.cutsMade, 1)
+        let requests = server.requests(for: "/m")
+        XCTAssertEqual(requests.count, 2)
+        guard requests.count == 2 else { return }
+        XCTAssertNil(requests[0].headers["range"])
+        XCTAssertEqual(requests[1].headers["range"], "bytes=150000-", "the second request continues exactly where the cut left off")
+    }
+
+    func testResumesAfterTheServerDropsTheConnectionOnTheRealWire() async throws {
         let model = payload(400_000, seed: 5)
         let server = try startServer { request, index in
             var reply = LocalHTTPServer.file(model, for: request)
@@ -128,25 +154,25 @@ final class VoiceModelInstallerTests: XCTestCase {
 
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
         let requests = server.requests(for: "/m")
-        XCTAssertEqual(requests.count, 2)
-        XCTAssertNil(requests[0].headers["range"])
-        let resumedAt = try XCTUnwrap(requests[1].headers["range"].flatMap { Int($0.dropFirst("bytes=".count).dropLast()) })
-        XCTAssertGreaterThan(resumedAt, 0, "the second request continues instead of starting over")
-        XCTAssertLessThanOrEqual(resumedAt, 150_000)
+        XCTAssertEqual(requests.count, 2, "the dropped connection is retried once")
+        guard requests.count == 2 else { return }
+        // The system may or may not have handed over any of the first 150,000 bytes before it reported
+        // the drop. Either the retry starts over, or it continues from somewhere inside them.
+        if let range = requests[1].headers["range"] {
+            let resumedAt = try XCTUnwrap(Int(range.dropFirst("bytes=".count).dropLast()))
+            XCTAssertGreaterThan(resumedAt, 0)
+            XCTAssertLessThanOrEqual(resumedAt, 150_000)
+        }
     }
 
     func testAnEarlierFailedInstallLeavesAPartialFileThatALaterInstallResumes() async throws {
         let model = payload(300_000, seed: 6)
-        let server = try startServer { request, index in
-            var reply = LocalHTTPServer.file(model, for: request)
-            if index == 0 { reply.cutAfter = 100_000 }
-            return reply
-        }
+        let server = try fileServer(["/m": model])
         let files = [installFile("model.onnx", model, sources: [server.url("/m")])]
 
         // One attempt per source: the cut connection fails this install.
         do {
-            try await installer(attemptsPerSource: 1).install(voiceId: "v", version: "1", files: files)
+            try await installer(attemptsPerSource: 1, transport: CuttingTransport(cutFirstRequestAfter: 100_000)).install(voiceId: "v", version: "1", files: files)
             XCTFail("a cut transfer with no retries should fail")
         } catch let error as VoiceModelInstallError {
             guard case .downloadFailed(let path, _) = error else { return XCTFail("unexpected \(error)") }
@@ -158,23 +184,19 @@ final class VoiceModelInstallerTests: XCTestCase {
         let folder = try await installer().install(voiceId: "v", version: "1", files: files)
 
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
-        let range = try XCTUnwrap(server.requests(for: "/m").last?.headers["range"])
-        XCTAssertTrue(range.hasPrefix("bytes=") && range != "bytes=0-", "the second install asked only for the rest: \(range)")
+        XCTAssertEqual(server.requests(for: "/m").last?.headers["range"], "bytes=100000-", "the second install asked only for the rest")
     }
 
     func testAServerThatIgnoresRangeRestartsTheFileFromTheStart() async throws {
         let model = payload(250_000, seed: 7)
-        let server = try startServer { request, index in
-            var reply = LocalHTTPServer.file(model, for: request, honoringRange: false)
-            if index == 0 { reply.cutAfter = 90_000 }
-            return reply
-        }
+        let server = try startServer { request, _ in LocalHTTPServer.file(model, for: request, honoringRange: false) }
 
-        let folder = try await installer().install(voiceId: "v", version: "1", files: [
+        let folder = try await installer(transport: CuttingTransport(cutFirstRequestAfter: 90_000)).install(voiceId: "v", version: "1", files: [
             installFile("model.onnx", model, sources: [server.url("/m")]),
         ])
 
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model, "bytes from the cut transfer aren't kept in front of a full copy")
+        XCTAssertEqual(server.requests(for: "/m").last?.headers["range"], "bytes=90000-", "the retry did ask to continue, and was answered with the whole file")
     }
 
     // MARK: Bad bytes and bad sources
@@ -436,32 +458,32 @@ final class VoiceModelInstallerTests: XCTestCase {
         let different = staleBytes
         // The first request is cut after bytes that don't belong to the file the catalog describes.
         let server = try startServer { request, index in
-            var reply = LocalHTTPServer.file(index == 0 ? different : model, for: request)
-            if index == 0 { reply.cutAfter = 40_000 }
-            return reply
+            LocalHTTPServer.file(index == 0 ? different : model, for: request)
         }
 
-        let folder = try await installer().install(voiceId: "v", version: "1", files: [installFile("m.bin", model, sources: [server.url("/m")])])
+        let folder = try await installer(transport: CuttingTransport(cutFirstRequestAfter: 40_000)).install(voiceId: "v", version: "1", files: [installFile("m.bin", model, sources: [server.url("/m")])])
 
         XCTAssertEqual(try read(folder.appendingPathComponent("m.bin")), model)
-        XCTAssertNil(server.requests(for: "/m").last?.headers["range"], "the retry started from byte zero")
+        let requests = server.requests(for: "/m")
+        XCTAssertEqual(requests.count, 3, "cut, a resume that failed the checksum, then one clean start")
+        guard requests.count == 3 else { return }
+        XCTAssertEqual(requests[1].headers["range"], "bytes=40000-")
+        XCTAssertNil(requests[2].headers["range"], "the last try started from byte zero")
     }
 
     func testAPartialFromAnEarlierSourceIsContinuedByTheNextOne() async throws {
         let model = payload(200_000, seed: 29)
         let server = try startServer { request, index in
             if request.path == "/down" { return .init(status: 404) }
-            var reply = LocalHTTPServer.file(model, for: request)
-            if index == 0 { reply.cutAfter = 80_000 }
-            return reply
+            return LocalHTTPServer.file(model, for: request)
         }
         let files = [installFile("m.bin", model, sources: [server.url("/down"), server.url("/up")])]
-        _ = try? await installer(attemptsPerSource: 1).install(voiceId: "v", version: "1", files: files)
+        _ = try? await installer(attemptsPerSource: 1, transport: CuttingTransport(cutFirstRequestAfter: 80_000, onlyPath: "/up")).install(voiceId: "v", version: "1", files: files)
 
         let folder = try await installer().install(voiceId: "v", version: "1", files: files)
 
         XCTAssertEqual(try read(folder.appendingPathComponent("m.bin")), model)
-        XCTAssertNotNil(server.requests(for: "/up").last?.headers["range"], "the first source being down doesn't throw the partial away")
+        XCTAssertEqual(server.requests(for: "/up").last?.headers["range"], "bytes=80000-", "the first source being down doesn't throw the partial away")
     }
 
     func testAnInstalledVersionSetAsideByAnInterruptedReinstallComesBack() async throws {
@@ -501,11 +523,7 @@ final class VoiceModelInstallerTests: XCTestCase {
 
     func testTheMarginCountsAgainstFreeSpaceAndAlreadyStagedBytesDoNot() async throws {
         let model = payload(200_000, seed: 22)
-        let server = try startServer { request, index in
-            var reply = LocalHTTPServer.file(model, for: request)
-            if index == 0 { reply.cutAfter = 120_000 }
-            return reply
-        }
+        let server = try fileServer(["/m": model])
         let files = [installFile("model.onnx", model, sources: [server.url("/m")])]
         // 100_000 free: too little for 200_000 + margin 50_000, so it refuses.
         do {
@@ -518,7 +536,7 @@ final class VoiceModelInstallerTests: XCTestCase {
 
         // Leave about 120_000 bytes staged, then ask again with room for only the rest plus the margin.
         do {
-            try await installer(attemptsPerSource: 1).install(voiceId: "v", version: "1", files: files)
+            try await installer(attemptsPerSource: 1, transport: CuttingTransport(cutFirstRequestAfter: 120_000)).install(voiceId: "v", version: "1", files: files)
             XCTFail("the first request is cut")
         } catch is VoiceModelInstallError {}
         let folder = try await installer(marginBytes: 50_000, availableCapacity: { _ in 150_000 }).install(voiceId: "v", version: "1", files: files)
@@ -809,5 +827,90 @@ private final class SizeWatchingTransport: VoiceModelTransport, @unchecked Senda
                 start = end
             }
         }
+    }
+}
+
+/// The real transport, except that the first request (to `onlyPath`, when given) is dropped from this
+/// side after exactly `cutFirstRequestAfter` bytes of body, reported as a lost connection. Later requests
+/// pass straight through. See the note above `testResumesATransferTheConnectionCutHalfway`.
+private final class CuttingTransport: VoiceModelTransport, @unchecked Sendable {
+    private struct Cut: Error {}
+
+    private let lock = NSLock()
+    private let inner = URLSessionVoiceModelTransport()
+    private let limit: Int
+    private let onlyPath: String?
+    private var armed = true
+    private var cuts = 0
+
+    init(cutFirstRequestAfter limit: Int, onlyPath: String? = nil) {
+        self.limit = limit
+        self.onlyPath = onlyPath
+    }
+
+    var cutsMade: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return cuts
+    }
+
+    private func shouldCut(_ url: URL) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard armed, onlyPath == nil || url.path == onlyPath else { return false }
+        armed = false
+        return true
+    }
+
+    private func recordCut() {
+        lock.lock()
+        cuts += 1
+        lock.unlock()
+    }
+
+    func fetch(
+        _ url: URL,
+        from offset: Int,
+        onHead: @escaping @Sendable (VoiceModelResponseHead) throws -> Bool,
+        onChunk: @escaping @Sendable (Data) throws -> Void
+    ) async throws {
+        guard shouldCut(url) else {
+            try await inner.fetch(url, from: offset, onHead: onHead, onChunk: onChunk)
+            return
+        }
+        let delivered = CutCounter()
+        do {
+            try await inner.fetch(url, from: offset, onHead: onHead) { data in
+                let room = self.limit - delivered.value
+                if data.count < room {
+                    delivered.add(data.count)
+                    try onChunk(data)
+                } else {
+                    if room > 0 { try onChunk(data.prefix(room)) }
+                    delivered.add(room)
+                    throw Cut()
+                }
+            }
+        } catch is Cut {
+            recordCut()
+            throw URLError(.networkConnectionLost)
+        }
+    }
+}
+
+private final class CutCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    var value: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return count
+    }
+
+    func add(_ bytes: Int) {
+        lock.lock()
+        count += bytes
+        lock.unlock()
     }
 }
