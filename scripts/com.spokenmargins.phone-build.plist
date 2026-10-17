@@ -7,10 +7,10 @@
   one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
 
   Install (once, from the main checkout):
-    /usr/bin/python3 ops/install-launchd.py --install phone-build
-    (this file holds @HOME@; copying it into ~/Library/LaunchAgents/ as is would load a broken job)
+    run ops/install-launchd.py with its install option and the job name phone-build (this file holds
+    a home-folder placeholder; copying it into ~/Library/LaunchAgents/ as is would load a broken job)
   Remove:
-    /usr/bin/python3 ops/install-launchd.py --remove phone-build
+    the same script with its remove option (see docs/scheduled-jobs.md)
 
   It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next. A
   LaunchAgent runs in the owner's login session, so signing can use his login keychain.
