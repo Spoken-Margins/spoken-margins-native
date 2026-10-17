@@ -942,7 +942,9 @@ class BootRetryTests(unittest.TestCase):
         real_sleep = time.sleep
 
         def report_arrives(seconds):
-            stamp = time.strftime('%Y-%m-%d %H:%M:%S.00 +0000', time.gmtime(time.time() - 0.5))
+            # Whole seconds: now minus half a second, cut down to the second, could fall over a second before a
+            # boot that began a few milliseconds ago, and the report would miss the window (1 run in 5).
+            stamp = time.strftime('%Y-%m-%d %H:%M:%S.00 +0000', time.gmtime(time.time()))
             (Path(self.env['SM_LANE_CRASH_REPORTS']) / 'SpringBoard-late.ips').write_text(
                 '{"timestamp":"x"}\n{"captureTime" : "%s"} com.apple.CoreSimulator.SimDevice.%s' % (stamp, UDID))
             real_sleep(min(seconds, 0.01))
