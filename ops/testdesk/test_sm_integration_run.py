@@ -310,6 +310,67 @@ class DiagnosisTests(unittest.TestCase):
                 self.assertIn('Unconfirmed', groups[0]['root_cause'])
 
 
+class FindDuplicateTests(unittest.TestCase):
+    """#1871: a diagnosis went onto a design issue that only cited the failing test as an example."""
+    TEST = 'SpokenMarginsAppTests/RealPlaybackMarginCaptureTests/testStreamedMarginStoresPreAndPostEvidence'
+
+    def issue(self, number, body='', labels=(), title='', comments=()):
+        return {'number': number, 'title': title, 'body': body, 'labels': [{'name': name} for name in labels],
+                'comments': [{'body': c} for c in comments]}
+
+    def duplicate(self, *issues, tests=None):
+        return run.find_duplicate(list(issues), tests or [self.TEST])
+
+    def test_a_design_issue_that_cites_the_test_is_not_a_duplicate(self):
+        design = self.issue(864, f'Batching idea. Example: `{self.TEST}` runs long.', labels=['enhancement', 'deferred'])
+        self.assertIsNone(self.duplicate(design))
+        # Naming it as the example of a bug does not make a report either, without the regression label.
+        self.assertIsNone(self.duplicate(self.issue(865, 'testStreamedMarginStoresPreAndPostEvidence is slow', labels=['bug'])))
+
+    def test_table_of_neighbouring_issues(self):
+        name = 'testStreamedMarginStoresPreAndPostEvidence'
+        for label, issue, expected in [
+            ('regression issue naming the test', self.issue(1872, f'It fails: {name}', labels=['bug', 'regression']), 1872),
+            ('run-filed issue with a Failing tests line', self.issue(1873, f'Failing tests: `{self.TEST}`\n\n## Steps'), 1873),
+            ('earlier run comment with a Failing tests line',
+             self.issue(900, 'Open bug about playback', comments=[f'Failing tests: `{self.TEST}`\n## Steps']), 900),
+            ('regression label but no mention of the test', self.issue(901, 'Another test fails', labels=['regression']), None),
+            ('the test only inside a Steps line', self.issue(902, f'## Steps\nRun {name}\nFailing tests: `Other/testOther`'), None),
+            ('lookalike test name with a regression label',
+             self.issue(903, f'{name}2 fails', labels=['regression']), None),
+            ('lookalike test name on a Failing tests line',
+             self.issue(904, f'Failing tests: `X/Y/pre_{name}`'), None),
+            ('report issue #184', self.issue(run.REPORT_ISSUE, f'Failing tests: `{self.TEST}`', labels=['regression']), None),
+        ]:
+            with self.subTest(label):
+                self.assertEqual(self.duplicate(issue), expected)
+
+    def test_the_search_asks_for_open_issues_and_their_labels(self):
+        # A closed issue is never listed (`--state open`), and the rule reads labels, so the list must carry them.
+        with tempfile.TemporaryDirectory() as tmp:
+            ops = FakeOps(tmp, [])
+            asked = []
+            ops.gh_json = lambda args: asked.append(args) or []
+            ops.must = lambda cmd, *a, **k: run.Result(0, 'https://github.com/uncomposed/spoken-margins-native/issues/1900\n')
+            group = run.fallback_groups([self.TEST])
+            run.Ops.file_failures(ops, group, SHA, 'report', Path(tmp), None)
+        self.assertIn('--state', asked[0])
+        self.assertIn('open', asked[0])
+        self.assertIn('number,title,body,comments,labels', asked[0])
+
+    def test_the_first_real_duplicate_wins_over_a_citing_design_issue(self):
+        design = self.issue(864, f'Example: {self.TEST}')
+        real = self.issue(1872, f'Failing tests: `{self.TEST}`', labels=['bug', 'regression'])
+        self.assertEqual(self.duplicate(design, real), 1872)
+
+    def test_a_failure_report_hidden_in_a_long_comment_thread_is_found(self):
+        long_thread = self.issue(950, 'Open bug', comments=['x'] * run.LISTED_COMMENTS)
+        found = run.find_duplicate([long_thread], [self.TEST],
+                                   lambda number: f'chatter\nFailing tests: `{self.TEST}`\n')
+        self.assertEqual(found, 950)
+        self.assertIsNone(run.find_duplicate([long_thread], [self.TEST], lambda number: f'only mentions {self.TEST}'))
+
+
 class FakeOps(run.Ops):
     """Real tick, fake boundaries: git, GitHub, the simulator and Claude."""
 
