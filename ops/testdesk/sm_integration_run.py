@@ -51,6 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments and issues the desk believes)
 import integration_revert as revert  # noqa: E402
+import journey_promotion  # noqa: E402
 import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
 from lane_xcresult_attachments import report_lines  # noqa: E402
@@ -200,6 +201,31 @@ def script_results(listing: dict, records: dict) -> dict:
     return results
 
 
+def scripted_summary(journeys: dict) -> str:
+    """The candidate line's words on scripted journeys. "Passed" is only said when every listed script passed;
+    otherwise each outcome is counted, so a skipped or unrun script is never rolled into a pass (#1901)."""
+    if not journeys:
+        return 'scripted journeys not run'
+    counts = {'passed': 0, 'failed': 0, 'skipped': 0, 'not run': 0}
+    failing = []
+    for test, status in sorted(journeys.items()):
+        if status == 'passed':
+            counts['passed'] += 1
+        elif status in ('failed', 'missing'):
+            counts['failed'] += 1
+            failing.append(test.rsplit('/', 1)[-1])
+        elif status == 'skipped':
+            counts['skipped'] += 1
+        else:
+            counts['not run'] += 1
+    if counts['passed'] == len(journeys):
+        return f"scripted journeys passed ({counts['passed']} of {len(journeys)})"
+    if counts['not run'] == len(journeys):
+        return 'scripted journeys not run'
+    words = ', '.join(f'{n} {name}' for name, n in counts.items())
+    return f"scripted journeys {words}" + (f" (failed: {', '.join(failing)})" if failing else '')
+
+
 def clock(ts: float) -> str:
     return dt.datetime.fromtimestamp(ts).strftime('%H:%M')
 
@@ -222,8 +248,10 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     if result.get('reruns'):
         lines.append(f"  2. failing tests re-run {result['reruns']} times on the same build")
     if result.get('journeys'):
-        lines.append('  scripted journeys (probation, not verdict input): '
+        lines.append('  scripted journeys (only those on gating are verdict input): '
                      + ', '.join(f'{t.rsplit("/", 1)[-1]} {s}' for t, s in sorted(result['journeys'].items())))
+        if result.get('journeys_due'):
+            lines.append('  ' + result['journeys_due'])
     if result['failed']:
         lines.append('failing: ' + ', '.join(result['failed']))
     notes = result.get('flaky_notes', {})
@@ -241,9 +269,7 @@ def report_text(sha: str, result: dict, *, started: float, finished: float, prev
     if result['verdict'] == 'PASS':
         # Say what the pass covers: app tests alone are not a full candidate (#1465).
         journeys = result.get('journeys') or {}
-        failed = sorted(t.rsplit('/', 1)[-1] for t, status in journeys.items() if status in ('failed', 'missing'))
-        scripted = (f"scripted journeys failed ({', '.join(failed)})" if failed else
-                    'scripted journeys passed' if 'passed' in journeys.values() else 'scripted journeys not run')
+        scripted = scripted_summary(journeys)
         lines += ['', f'{sha[:7]} is the current phone candidate: app tests passed; {scripted}; '
                       'attended journeys not run.']
     return '\n'.join(lines) + '\n'
@@ -819,6 +845,14 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         finally:
             stack.close()  # the simulator is free before GitHub and Claude work
         suspects = ops.suspects(sha, green) if result['verdict'] == 'FAIL' else []
+        if result.get('journeys'):  # streaks toward gating, and the scripts due to move (#1901); never blocks the report
+            try:
+                state['journeys'] = journey_promotion.update(state.get('journeys', {}), result['journeys'])
+                listing = json.loads((wt / 'TestPlans' / 'scripted-journeys.json').read_text())
+                result['journeys_due'] = journey_promotion.report_line(
+                    journey_promotion.due(listing, state['journeys']))
+            except Exception as error:  # noqa: BLE001
+                ops.log('journey streaks failed: ' + str(error)[:300])
         state['results'][sha] = {'verdict': result['verdict'], 'started': now, 'evidence': str(evidence),
                                  'failed': result['failed'], 'flaky': result.get('flaky', [])}
         save_state(path, state)

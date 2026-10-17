@@ -883,7 +883,9 @@ class PrRunTests(unittest.TestCase):
         self.h.gh.add_pr('ws/50-x', labels=('needs-mac', 'automerge', 'lane:queued'), number=50, head=self.head,
                          body='Closes #7', comments=[c('Handing to the Mac finisher: lane FAIL', ago(hours=3))])
 
-    def test_disarms_before_work_and_re_arms_after_a_push(self):
+    def agent_pushes_a_fix(self, *, re_arms):
+        """An ops whose agent commits and pushes a fix to the PR, then arms it (`re_arms`) or does not.
+        The wrapper never arms a PR itself: the label is the agent's last step, so the harness plays it here."""
         self.h.plan({'files': {'fix.txt': 'fix'}, 'commit': False})
         ops = self.h.ops()
         seen = {}
@@ -898,16 +900,28 @@ class PrRunTests(unittest.TestCase):
             subprocess.run(['git', 'push', '-q', 'origin', 'HEAD:refs/heads/ws/50-x'], cwd=wt, env=dict(os.environ, **GIT_ENV))
             new = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=wt, capture_output=True, text=True).stdout.strip()
             self.h.gh.items[50]['headRefOid'] = new
-            for n in ('automerge',):   # what the agent does last
-                self.h.gh.items[50]['labels'].append({'name': n})
+            if re_arms:
+                self.h.gh.items[50]['labels'].append({'name': 'automerge'})
             return res
         ops.claude = claude
+        return ops, seen
+
+    def test_the_wrapper_disarms_before_the_agent_works_and_reports_armed_when_the_agent_re_arms(self):
+        ops, seen = self.agent_pushes_a_fix(re_arms=True)
         self.assertEqual(w.run_pr(ops, 1, 50), 'finished')
         self.assertNotIn('automerge', seen['labels_during'])
         self.assertEqual(self.h.gh.comments(50)[1], f'{w.OWN_FINISHER_CLAIM}\n\nThread "Claude Mac worker 1" finishing #50')
         self.assertNotIn('needs-mac', self.h.gh.names(50))
         self.assertIn('automerge', self.h.gh.names(50))
         self.assertEqual(self.h.gh.comments(50)[-1], 'Thread "Claude Mac worker 1" stopping: PR #50 armed · done')
+
+    def test_a_push_the_agent_did_not_arm_is_reported_unarmed_and_never_armed_by_the_wrapper(self):
+        ops, seen = self.agent_pushes_a_fix(re_arms=False)
+        self.assertEqual(w.run_pr(ops, 1, 50), 'pushed-unarmed')
+        self.assertNotIn('automerge', seen['labels_during'])
+        self.assertNotIn('automerge', self.h.gh.names(50))
+        self.assertIn('did not re-arm', self.h.gh.comments(50)[-1])
+        self.assertNotIn('PR #50 armed', self.h.gh.comments(50)[-1])
 
     def test_no_push_leaves_the_labels_as_found_except_automerge(self):
         self.h.plan({'handoff': 'The audit finding is wrong: see line 3.'})

@@ -219,7 +219,7 @@ class CandidateFilter(unittest.TestCase):
             self.assertEqual(A.risky_areas([p]), ["lane"], f"{p} is held for an audit by the runner but not risky here")
         # and the other way round, on the paths named in these tests: the audit adds no lane path of its own
         for p in self.LANE_PATHS + ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
-                                    "scripts/phone-build", "ops/codex/sm_codex_worker.py"]:
+                                    "scripts/phone-build", "ops/claude/sm_claude_worker.py"]:
             self.assertEqual("lane" in A.risky_areas([p]), scope.is_lane_path(p), p)
 
     def test_ordinary_paths_stay_off_the_lane(self):
@@ -228,7 +228,7 @@ class CandidateFilter(unittest.TestCase):
         for p in ["scripts/tests/test_lane_runner.py", "TestPlans/scripted-journeys.json",
                   "TestPlans/Release.xctestplan", "scripts/phone-build", "scripts/validate-contracts.py",
                   "scripts/setup-worktree.sh", "docs/workstreams/test-lane.md", ".claude/skills/lane-request/SKILL.md",
-                  ".github/ISSUE_TEMPLATE/bug.yml", "ops/codex/sm_codex_worker.py",
+                  ".github/ISSUE_TEMPLATE/bug.yml", "ops/claude/sm_claude_worker.py",
                   "App/SpokenMarginsApp/Sources/SpokenMarginsApp/LaneView.swift"]:
             self.assertEqual(A.risky_areas([p]), [], p)
 

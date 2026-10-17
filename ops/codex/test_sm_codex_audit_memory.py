@@ -8,8 +8,9 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'claude'))
 import sm_codex_audit as audit
-import sm_codex_worker as worker
+import sm_claude_worker as worker
 
 FILE = 'App/SpokenMarginsApp/Sources/SpokenMarginsApp/PlaybackStartCue.swift'
 TITLE = 'Slow synchronous startup still misses the one-second feedback requirement'
