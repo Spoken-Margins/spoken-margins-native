@@ -3242,5 +3242,73 @@ class RecoveredStallTests(unittest.TestCase):
         self.assertIn('(https://example.test/', logged[0][1])  # links the report it was found in
 
 
+
+class BootStallRetryTests(unittest.TestCase):
+    """A T3 clone whose boot stalls gets one fresh clone; every stall is logged on #705 (owner's call 2026-10-11)."""
+
+    def run_t3(self, stalls):
+        import lane_sim
+        clones, released = iter(['U1', 'U2']), []
+
+        def boot(udid, label, **kw):
+            kw['info'].update(pressure='normal', pressure_waited=0, boot_window=(0.0, 1.0))
+            if udid in stalls:
+                raise lane_sim.BootError(f'SpringBoard restarted (pid 1 -> 2) while booting {udid}.', stall=True)
+            return 40.0
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        evidence = Path(temporary.name)
+        with mock.patch.object(lane_sim, 'clone_temporary', side_effect=lambda *a, **k: next(clones)), \
+                mock.patch.object(lane_sim, 'boot', side_effect=boot), \
+                mock.patch.object(lane_sim, 'start_watcher'), \
+                mock.patch.object(lane_sim, 'release', side_effect=lambda udid, *a, **k: released.append(udid)), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim, 'post_stall') as posted, \
+                mock.patch.object(lane, 'run_plans', return_value=([lane.summarize_manifest({'steps': []})],
+                                                                   ['verified'], ['A (1 passed)'], [])):
+            result = lane._t3_on_claimed_device({'app': ['T/A']}, 'r9', evidence,
+                                                'com.apple.CoreSimulator.SimRuntime.iOS-26-5')
+        posted.assert_not_called()  # the runner logs its own, with the report's link, after reporting
+        return result, released, evidence
+
+    def test_one_stall_then_a_good_fresh_clone_runs_the_tests_and_releases_both(self):
+        (verdict, _, _, details, _, _), released, evidence = self.run_t3({'U1'})
+        self.assertEqual(verdict, 'PASS')
+        self.assertEqual(released, ['U1', 'U2'])  # the stalled clone, then the fresh one after the run
+        self.assertTrue(any('boot stall on the first clone (U1)' in line and '(U2)' in line for line in details))
+        self.assertTrue(json.loads((evidence / lane.BOOT_STALLS).read_text())['outcome'].startswith('recovered'))
+
+    def test_two_stalls_stay_inconclusive_and_release_the_fresh_clone(self):
+        (verdict, _, ran, details, _, _), released, evidence = self.run_t3({'U1', 'U2'})
+        self.assertEqual((verdict, ran), ('INCONCLUSIVE', 'nothing'))
+        self.assertEqual(released, ['U1', 'U2'])
+        self.assertIn('failed too', details[0])
+        saved = json.loads((evidence / lane.BOOT_STALLS).read_text())
+        self.assertEqual([s['udid'] for s in saved['stalls']], ['U1', 'U2'])
+
+    def test_the_boot_stalls_are_posted_on_705_with_the_report_and_verdict(self):
+        for outcome, verdict, expected in (
+                ('recovered on a fresh device (`U2`, ready after 40s)', 'PASS',
+                 "Boot stall recovered on a fresh device, counted as a PASS (owner's call 2026-10-11)"),
+                ('recovered on a fresh device (`U2`, ready after 40s)', 'FAIL',
+                 'Boot stall recovered on a fresh device; the run then ended FAIL'),
+                ('not recovered (two in a row), so the run stays INCONCLUSIVE', 'INCONCLUSIVE',
+                 'Boot stall, not recovered (two in a row)')):
+            with self.subTest(verdict=verdict), tempfile.TemporaryDirectory() as folder:
+                (Path(folder) / lane.BOOT_STALLS).write_text(json.dumps({'label': 'runner boot U1', 'outcome': outcome,
+                    'stalls': [{'udid': 'U1', 'error': 'SpringBoard restarted', 'pressure': 'normal'}]}))
+                posted = []
+                self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'https://example.test/r',
+                                                           posted.append, verdict), 1)
+                self.assertTrue(posted[0].startswith(expected), posted[0])
+                self.assertIn('T3 run for PR #5 at `aaaaaaa` (https://example.test/r)', posted[0])
+                self.assertIn('clone `U1` (memory pressure normal): SpringBoard restarted', posted[0])
+
+    def test_no_boot_stall_file_posts_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(lane.log_recovered_stalls(Path(folder), 5, HEAD, 'u', self.fail, 'PASS'), 0)
+
+
 if __name__ == '__main__':
     unittest.main()

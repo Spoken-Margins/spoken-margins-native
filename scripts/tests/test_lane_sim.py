@@ -29,7 +29,13 @@ elif args[:2] == ["list", "runtimes"]:
                                     "identifier": "com.apple.CoreSimulator.SimRuntime.iOS-26-5"}]}))
 elif args[0] == "create":
     log({"create": args[1]})
-    print("FRESH-0000-0000")
+    counter = os.environ.get("FAKE_CREATE_COUNTER")
+    if counter:  # each new device gets its own UDID: FRESH-0001, FRESH-0002, ...
+        made = (int(open(counter).read()) if os.path.exists(counter) else 0) + 1
+        open(counter, "w").write(str(made))
+        print("FRESH-%04d" % made)
+    else:
+        print("FRESH-0000-0000")
 elif args[0] == "boot":
     start = time.time()
     gate = os.environ.get("FAKE_BOOT_GATE")
@@ -44,6 +50,8 @@ elif args[0] == "boot":
         sys.stderr.write("Unable to boot device in current state: Shutdown\nInvalid argument\n")
         sys.exit(149)
 elif args[0] == "bootstatus":
+    if args[1] in os.environ.get("FAKE_STALL", "").split(","):  # a boot stall: never ready (stalling() below)
+        time.sleep(60)
     if os.environ.get("FAKE_CRASH"):
         time.sleep(0.2)
         with open(os.path.join(os.environ["SM_LANE_CRASH_REPORTS"], "SpringBoard-2026-09-29-095801.ips"), "w") as handle:
@@ -69,6 +77,18 @@ def sequence(*states):
     return lambda udid: states.pop(0) if len(states) > 1 else states[0]
 
 UDID = '11111111-2222-3333-4444-555555555555'
+
+
+def stalling(*udids):
+    """A device_processes() stand-in: the listed devices' SpringBoard restarts twice while they boot (a stall that
+    even a first boot's tolerance of one change doesn't cover), every other device stays steady. Pair it with
+    FAKE_STALL, so the fake simctl's bootstatus never reports those devices ready."""
+    calls = {}
+
+    def processes(udid):
+        calls[udid] = calls.get(udid, 0) + 1
+        return (10, 20 + min(calls[udid] - 1, 2)) if udid in udids else (10, 20)
+    return processes
 
 
 class TemplateTests(unittest.TestCase):
@@ -102,6 +122,50 @@ class TemplateTests(unittest.TestCase):
                 guarded.assert_called_once()
                 release.assert_called_once_with('T', keep=False)
         self.assertFalse(any('clone' in args for args in commands))
+
+    def test_a_template_boot_stall_gets_one_fresh_template_and_the_clone_comes_from_it(self):
+        runtime, devices, cloned, released = 'runtime', {}, [], []
+
+        def command(args, **kw):
+            if args == ['xcodebuild', '-version']:
+                return 'Xcode test'
+            if args[2] == 'list':
+                return json.dumps({'devices': {runtime: list(devices.values())}})
+            if args[2] == 'create':
+                udid = f'T{len(released) + len(devices) + 1}'
+                devices[udid] = {'udid': udid, 'name': args[3], 'state': 'Shutdown',
+                                 'deviceTypeIdentifier': lane_sim.DEVICE_TYPE}
+                return udid
+            cloned.append(args[3])
+            return 'CLONE'
+
+        def boot(udid, label, **kw):
+            if udid == 'T1':
+                raise lane_sim.BootError('SpringBoard restarted (pid 1 -> 2) while booting.', stall=True)
+            kw['info']['boot_window'] = (1, 2)
+            return 30.0
+
+        def release(udid, **kw):
+            released.append(udid)
+            if not kw.get('keep'):
+                devices.pop(udid, None)
+
+        with tempfile.TemporaryDirectory() as temporary, \
+                mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': temporary}), \
+                mock.patch.object(lane_sim.subprocess, 'check_output', side_effect=command), \
+                mock.patch.object(lane_sim, 'boot', side_effect=boot), \
+                mock.patch.object(lane_sim, 'start_watcher'), \
+                mock.patch.object(lane_sim, 'release', side_effect=release), \
+                mock.patch.object(lane_sim, 'post_stall') as posted, \
+                mock.patch.object(lane_sim, 'late_report', return_value=None), \
+                mock.patch.object(lane_sim, 'unsafe_devices', return_value={}), \
+                mock.patch.object(lane_sim.time, 'sleep'):
+            self.assertEqual(lane_sim.clone_temporary('job', runtime), 'CLONE')
+            self.assertEqual(json.loads((Path(temporary) / 't3-template.json').read_text())['udid'], 'T2')
+        self.assertEqual(cloned, ['T2'])
+        self.assertEqual(released, ['T1', 'T2'])  # the stalled one deleted; the fresh one shut down and kept
+        self.assertEqual(list(devices), ['T2'])
+        self.assertIn('recovered', posted.call_args.args[2])
 
     def test_unsafe_missing_or_incompatible_templates_are_never_cloned(self):
         runtime = 'runtime'
@@ -790,6 +854,107 @@ class LaneSimTests(unittest.TestCase):
             problem, _ = runner.boot_t3_device(UDID, self.quiet)
         self.assertIn('the lane stayed busy', problem)
         self.assertEqual(self.records(), [])
+
+
+class BootRetryTests(unittest.TestCase):
+    """A boot stall gets one fresh device; a second stall, or any other failure, stays a stop (#705)."""
+    end_watchers, records, timed = LaneSimTests.end_watchers, LaneSimTests.records, LaneSimTests.timed
+
+    def setUp(self):
+        LaneSimTests.setUp(self)
+        counter = Path(self.temporary.name) / 'created'
+        patch = mock.patch.dict(os.environ, {'FAKE_CREATE_COUNTER': str(counter)})
+        patch.start()
+        self.addCleanup(patch.stop)
+        self.logged = []
+        self.replaced = []
+
+    def replace(self, stalled):
+        self.replaced.append(stalled)
+        lane_sim.release(stalled, wait=0)
+        return lane_sim.create_temporary('SM Lane retry')
+
+    def boot(self, *stalls, replace=True, first_boot=True, **env):
+        info = {}
+        with mock.patch.dict(os.environ, {'FAKE_STALL': ','.join(stalls), **env}), \
+                mock.patch.object(lane_sim, 'device_processes', stalling(*stalls)):
+            try:
+                result = lane_sim.boot_with_retry(UDID, 'test boot', self.replace if replace else None, out=self.quiet,
+                                                  info=info, first_boot=first_boot,
+                                                  log_stall=lambda *args: self.logged.append(args))
+            except lane_sim.BootError as error:
+                return error, info
+        return result, info
+
+    def booted(self):
+        return [r['boot'] for r in self.records() if 'boot' in r]
+
+    def test_a_healthy_boot_needs_no_retry_and_logs_nothing(self):
+        (udid, _), info = self.boot()
+        self.assertEqual((udid, info['udid'], info['boot_stalls']), (UDID, UDID, []))
+        self.assertEqual((self.replaced, self.logged, self.booted()), ([], [], [UDID]))
+
+    def test_a_stall_then_a_good_boot_on_a_fresh_device_recovers(self):
+        (udid, seconds), info = self.boot(UDID)
+        self.assertEqual(udid, 'FRESH-0001')
+        self.assertEqual(info['udid'], 'FRESH-0001')
+        self.assertEqual(self.booted(), [UDID, 'FRESH-0001'])  # the stalled device is never booted again
+        self.assertIn({'delete': UDID}, self.records())
+        self.assertIn('SpringBoard restarted', lane_sim.unsafe_devices()[UDID]['reason'])
+        self.assertNotIn('FRESH-0001', lane_sim.unsafe_devices())
+        self.assertEqual(info['boot_retry']['stalled'], UDID)
+        (label, stalls, outcome), = self.logged
+        self.assertEqual((label, [s['udid'] for s in stalls]), ('test boot', [UDID]))
+        self.assertTrue(outcome.startswith('recovered on a fresh device'), outcome)
+
+    def test_two_stalls_in_a_row_stop_and_name_the_device_to_release(self):
+        error, info = self.boot(UDID, 'FRESH-0001')
+        self.assertIsInstance(error, lane_sim.BootError)
+        self.assertTrue(error.stall)
+        self.assertIn('the one retry on a fresh device (FRESH-0001) failed too', str(error))
+        self.assertEqual(info['udid'], 'FRESH-0001')  # the caller's to release
+        self.assertEqual(self.booted(), [UDID, 'FRESH-0001'])  # no third boot
+        self.assertEqual(set(lane_sim.unsafe_devices()), {UDID, 'FRESH-0001'})
+        (_, stalls, outcome), = self.logged
+        self.assertEqual(len(stalls), 2)
+        self.assertIn('not recovered (two in a row)', outcome)
+
+    def test_without_a_way_to_make_a_fresh_device_a_stall_stops_as_before(self):
+        error, info = self.boot(UDID, replace=False)
+        self.assertIsInstance(error, lane_sim.BootError)
+        self.assertEqual((self.booted(), self.logged, info['udid']), ([UDID], [], UDID))
+
+    def test_a_failed_simctl_boot_is_never_retried_on_any_device(self):
+        error, _ = self.boot(FAKE_BOOT='invalid')
+        self.assertFalse(error.stall)
+        self.assertEqual((self.booted(), self.replaced, self.logged), ([UDID], [], []))
+
+    def test_a_crash_report_during_boot_is_not_a_stall_and_gets_no_retry(self):
+        error, _ = self.boot(FAKE_CRASH='1')
+        self.assertIn('SpringBoard-2026-09-29-095801.ips', str(error))
+        self.assertFalse(error.stall)
+        self.assertEqual((self.booted(), self.replaced), ([UDID], []))
+
+    def test_a_fresh_device_that_cannot_be_made_is_logged_and_stops(self):
+        def broken(stalled):
+            raise subprocess.CalledProcessError(1, ['simctl', 'create'])
+        self.replace = broken
+        error, info = self.boot(UDID)
+        self.assertIn('could not be made', str(error))
+        self.assertEqual(info['udid'], UDID)
+        (_, _, outcome), = self.logged
+        self.assertIn('not retried', outcome)
+
+    def test_the_default_log_posts_each_stall_on_705(self):
+        with mock.patch.dict(os.environ, {'FAKE_STALL': UDID}), \
+                mock.patch.object(lane_sim, 'device_processes', stalling(UDID)):
+            lane_sim.boot_with_retry(UDID, 'verify-tests --plan app boot at abc1234', self.replace, out=self.quiet,
+                                     first_boot=True)
+        posted = self.comments.read_text()
+        self.assertIn('issue comment 705', posted)
+        self.assertIn('Boot stall recovered on a fresh device', posted)
+        self.assertIn('verify-tests --plan app boot at abc1234', posted)
+        self.assertIn(UDID, posted)
 
 
 if __name__ == '__main__':

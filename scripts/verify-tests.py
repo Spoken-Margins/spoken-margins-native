@@ -1073,17 +1073,38 @@ class Run:
             if booted_here:
                 # Lane boot rules (scripts/lane_sim.py): one boot at a time, no builds meanwhile, no retry
                 # after a failed boot, stop at the first crash. Two crash floods followed boots (#184).
-                entry = {'name': 'simulator-boot', 'command': ['lane_sim.boot', chosen['udid']]}
+                # At a boot stall, our own Test Runner is deleted and one fresh one booted instead (#705); a device
+                # given with --device is the caller's, so it gets no retry.
+                entry = {'name': 'simulator-boot', 'command': ['lane_sim.boot_with_retry', chosen['udid']]}
                 self.manifest['steps'].append(entry)
                 self.save()
+
+                def replace(stalled):
+                    nonlocal chosen
+                    subprocess.run(['xcrun', 'simctl', 'shutdown', stalled], cwd=ROOT, capture_output=True, timeout=60)
+                    self.command('simulator-retire', ['xcrun', 'simctl', 'delete', stalled], timeout=120)
+                    chosen, _ = self.simulator(None, ios)
+                    return chosen['udid']
+
+                info = {}
                 try:
-                    entry.update(seconds=round(lane_sim.boot(chosen['udid'], f'verify-tests {plan} boot', out=sys.stdout,
-                                                             first_boot=created), 3),
-                                 exit_code=0, errors=[])
+                    head = capture(['git', 'rev-parse', '--short', 'HEAD'])
+                except (OSError, subprocess.SubprocessError):
+                    head = 'unknown commit'
+                try:
+                    _, seconds = lane_sim.boot_with_retry(
+                        chosen['udid'], f'verify-tests --plan {plan} boot at {head} (evidence: {self.output})',
+                        replace if not device and chosen.get('name') == TEST_RUNNER_NAME else None,
+                        out=sys.stdout, info=info, first_boot=created)
+                    entry.update(seconds=round(seconds, 3), exit_code=0, errors=[])
                 except lane_sim.BootError as error:
                     entry.update(exit_code=1, errors=[str(error)])
                     raise RuntimeError(f'simulator-boot: {error}')
                 finally:
+                    if info.get('boot_stalls'):
+                        entry['boot_stalls'] = info['boot_stalls']
+                    self.manifest['destination'] = chosen
+                    base[base.index('-destination') + 1] = f'id={chosen["udid"]}'
                     self.save()
             self.command('simulator-ready', ['xcrun', 'simctl', 'bootstatus', chosen['udid'], '-b'], timeout=180)
             if chosen.get('name') == TEST_RUNNER_NAME:

@@ -3,6 +3,7 @@ import importlib.util
 import inspect
 import io
 import json
+import plistlib
 import os
 import shutil
 import subprocess
@@ -1489,6 +1490,64 @@ class VerificationTests(unittest.TestCase):
                     patch.object(run, 'command', return_value=''):
                 run.xcode('adapters', None, rebuild=True, only=['SpeechTests'])
             self.assertEqual([kw.get('first_boot') for kw in boots], [True])
+
+    def stalled_test_runner(self, device=None):
+        """run.xcode() where the Test Runner's boot stalls once (#705); returns (boots, commands, manifest, posted)."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / 'repo'
+            self.app_test_root(root)
+            (root / '.build/verification/SpokenMarginsAppBehavior').mkdir(parents=True)
+            app = root / '.build/verification/SpokenMarginsAppBehavior/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
+            app.mkdir(parents=True)
+            (app / 'Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'test.app'}))
+            run = verification.Run(Path(temporary) / 'run', 'adapters')
+            run.manifest['input_sha256'] = 'inputs'
+            runners = iter([{'udid': 'old', 'state': 'Shutdown', 'runtime': 'iOS-26', 'name': verification.TEST_RUNNER_NAME},
+                            {'udid': 'new', 'state': 'Shutdown', 'runtime': 'iOS-26', 'name': verification.TEST_RUNNER_NAME}])
+            boots, commands = [], []
+
+            def boot(udid, label, **kw):
+                boots.append(udid)
+                if udid == 'old':
+                    raise verification.lane_sim.BootError('SpringBoard restarted (pid 1 -> 2) while booting.', stall=True)
+                return 30.0
+
+            with patch.object(verification, 'ROOT', root), \
+                    patch.object(verification, 'input_identity', return_value='inputs'), \
+                    patch.object(verification, 'capture', return_value='stub'), \
+                    patch.object(run, 'simulator', side_effect=lambda *a: (next(runners), True)), \
+                    patch.object(verification, 'refuse_unsafe'), \
+                    patch.object(verification.lane_sim, 'unsafe_devices', return_value={}), \
+                    patch.object(verification.lane_sim, 'boot', side_effect=boot), \
+                    patch.object(verification.lane_sim, 'post_stall') as posted, \
+                    patch.object(verification, 'acquire_simulator_slot', return_value=None), \
+                    patch.object(verification.subprocess, 'run'), \
+                    patch.object(run, 'command', side_effect=lambda name, args, **_: commands.append((name, args)) or ''), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                try:
+                    run.xcode('adapters', device, rebuild=True, only=['SpeechTests'])
+                except RuntimeError:
+                    pass
+            return boots, commands, run.manifest, posted
+
+    def test_a_test_runner_boot_stall_gets_one_fresh_test_runner(self):
+        # #705: 26 of 45 INCONCLUSIVE integration runs from 10-09 to 10-16 were boot stalls.
+        boots, commands, manifest, posted = self.stalled_test_runner()
+        self.assertEqual(boots, ['old', 'new'])
+        self.assertIn(('simulator-retire', ['xcrun', 'simctl', 'delete', 'old']), commands)
+        self.assertEqual(manifest['destination']['udid'], 'new')
+        tests = next(args for name, args in commands if name == 'xcode-tests')
+        self.assertIn('id=new', tests)
+        self.assertNotIn('id=old', tests)
+        step = next(s for s in manifest['steps'] if s['name'] == 'simulator-boot')
+        self.assertEqual((step['exit_code'], [s['udid'] for s in step['boot_stalls']]), (0, ['old']))
+        self.assertIn('recovered', posted.call_args.args[2])
+
+    def test_a_given_device_that_stalls_gets_no_retry(self):
+        boots, commands, manifest, posted = self.stalled_test_runner(device='old')
+        self.assertEqual(boots, ['old'])
+        self.assertFalse(any(name == 'simulator-retire' for name, _ in commands))
+        posted.assert_not_called()
 
     def run_xcode_plan(self, plan, order, fail_tests=False):
         """run.xcode(plan) with every boundary stubbed; `order` collects settle, tests and marker calls in sequence."""
