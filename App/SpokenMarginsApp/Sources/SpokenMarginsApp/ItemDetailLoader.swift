@@ -99,6 +99,8 @@ struct ItemDetailLoader {
             status: item.status,
             text: item.text ?? "",
             externalReference: item.externalReference ?? "",
+            publishedDateText: ItemMetadata.publishedDateText(item.publishedAt),
+            descriptionText: item.descriptionText,
             externalReferenceType: item.externalReferenceType ?? "",
             overview: map?.overview ?? "",
             navigation: canonicalSource?.navigation ?? [],

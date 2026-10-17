@@ -644,6 +644,11 @@ public struct Item: Codable, Equatable, Sendable {
     public var episodeGUID: String? = nil
     public var showTitle: String? = nil
     public var publishedAt: String? = nil
+    /// The publisher's description of an episode or post, as plain text (at most about 2,000 characters),
+    /// kept when the item is added from a followed feed so the Item screen can show its opening (#1322).
+    /// Optional and additive: Build 29 and 30 decode an item that carries it and ignore it. Never packed
+    /// into a packet, an export or a log.
+    public var descriptionText: String? = nil
     /// The podcast episode the listener said an imported audio file is (#755). Only an audio file the
     /// listener imported carries it, and only because they chose it, so a link-shared packet for that
     /// episode can land on the file. Kept apart from `episodeGUID` so nothing that treats a GUID as
