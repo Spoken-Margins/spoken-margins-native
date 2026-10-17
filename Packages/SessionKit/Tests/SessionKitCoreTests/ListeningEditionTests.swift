@@ -1,5 +1,6 @@
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 #if canImport(FoundationNetworking)
 import FoundationNetworking
 #endif
@@ -8,9 +9,7 @@ final class ListeningEditionTests: XCTestCase {
     func testShortcutImportAcceptsAFileOrJSONTextThroughOneDecodePath() throws {
         // #574: Import Listening Edition stopped at a file picker on every run. A file (Assemble's output
         // or a saved one) and the JSON as text must reach the same decoder.
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        let data = try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/listening-editions/article.json"))
+        let data = try TestInputs.data(.contracts, "fixtures/listening-editions/article.json")
         let text = try XCTUnwrap(String(data: data, encoding: .utf8))
         let expected = try ListeningEdition.decode(data)
         for (name, file, json) in [("file", data as Data?, nil as String?), ("text", nil, text),
@@ -37,9 +36,7 @@ final class ListeningEditionTests: XCTestCase {
     }
 
     func testPublishedFixtureDecodesThroughRuntimeContract() throws {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        let data = try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/listening-editions/article.json"))
+        let data = try TestInputs.data(.contracts, "fixtures/listening-editions/article.json")
         let edition = try ListeningEdition.decode(data)
         XCTAssertEqual(edition.scenes.count, 2)
         XCTAssertEqual(edition.listeningMap().chapters.count, 2)

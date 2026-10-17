@@ -5,7 +5,8 @@ These are the checks that decide whether a build works. Unit tests protect the p
 **How to run them**
 
 - **Agent in the simulator.**
-  - Build the current commit and install it on one simulator. Drive it with computer use: real taps and screenshots, with no injected state or test-only launch arguments.
+  - Build the current commit and install it on one simulator. Drive it with the iOS simulator tool (never computer use or Device Hub): real taps and screenshots, with no injected state or test-only launch arguments.
+  - The Test Desk gives each journey to a helper agent of its own and keeps screenshots at half scale, about 15 per journey ([journey skill](../.claude/skills/journey/SKILL.md), Driving and Screenshot budget).
   - For each step, record what you observed: the screen, which item or Margin is playing, and whether its clock advanced.
   - Stop at the first failure, then report the step, expected and observed behavior, and a screenshot.
   - You cannot hear audio. A clock that advances shows the app believes it is playing, not that the right words are audible, so mark audible content "owner to confirm".
@@ -30,6 +31,8 @@ Steps are written in terms of what the listener wants, not exact button labels, 
    - Pass: speech starts within a few seconds and the position advances.
 3. Pause, lock the phone, then resume from the Lock Screen (owner step).
    - Pass: it resumes from the same sentence.
+4. Read the article's text from More, step to another chapter and back without leaving the reader (#1579).
+   - Pass: the chapter title changes and returns, a way back to the playing chapter shows while away, and playback is unchanged.
 
 ## J2 — Podcast playback survives relaunch
 

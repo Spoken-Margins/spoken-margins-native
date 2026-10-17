@@ -12,6 +12,9 @@ extension Gate1AppModel {
         batchExportFilter = .withInterjections
         selectedBatchExportSessionIds = []
         batchExportResult = nil
+        // A share whose sheet was torn down with the screen: remove its files and let Export work again.
+        batchExportShare?.discard()
+        batchExportShare = nil
         do {
             let store = try requireStore()
             try refreshBatchExportRows(store: store)

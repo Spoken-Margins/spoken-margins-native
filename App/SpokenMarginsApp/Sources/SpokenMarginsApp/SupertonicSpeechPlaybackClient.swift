@@ -2529,6 +2529,33 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         playRenderedAudio(url, duration: duration, request: request)
     }
 
+    /// The system's reason when a player's start is turned down (`AVPlayerRateDidChangeReasonSetRateFailed`).
+    private static let refusedStartReason = "SetRateFailed"
+    /// How long a refused start gets to clear by itself before the player is recovered (#1763).
+    private static let refusedStartGrace: Duration = .seconds(1)
+
+    /// A new player the system would not start with the app in the background: it sits at time 0 with rate 0, and
+    /// the watchdog needed `stallThreshold` of silence to notice, then as long again before handing over, so the
+    /// listener with the phone locked heard nothing for 10 s or more (#1763). A refusal that is still standing a
+    /// moment later is a stall now: the first one re-seats the player, and one that comes within the cooldown, from
+    /// the re-seated player, goes the way a re-seat that did not help always has, to the iOS voice. Not in front
+    /// of the listener, who can tap, and not once the system's interruption has paused us. The app's state is read
+    /// after the grace, so a refusal that came as the phone was locking (still inactive) is caught.
+    @MainActor
+    private func recoverFromRefusedStart(of refused: AVPlayer) async {
+        try? await Task.sleep(for: Self.refusedStartGrace)
+        guard applicationIsInBackground?() == true, refused.rate == 0,
+              lock.withLock({ !fallbackIsActive && handOverAwaitingStart == nil }),
+              isStillPlaying(WatchedPlayback(player: ObjectIdentifier(refused))) else { return }
+        var fields = AudioSessionDiagnostics.fields().merging(AudioSessionDiagnostics.fields(for: refused)) { first, _ in first }
+            .merging(stallContextFields(player: refused)) { first, _ in first }
+        fields["cause"] = "set_rate_failed"
+        guard claimStallRecovery() else { return pauseStalledPlayback(fields) }
+        fields["recovery"] = "reseat_player"
+        onStall?("supertonic.stall", fields)
+        reseatStalledPlayer()
+    }
+
     /// The re-seat didn't bring the sound back. Reading on in the iOS voice from the listener's place needs no
     /// tap, so it works with the phone locked in a pocket, where "paused, tap to play" is silence with nothing on
     /// screen to tap (#540). The chosen voice gets another try at the next play. Returns false, leaving the pause
@@ -3109,6 +3136,12 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 .replacingOccurrences(of: "AVPlayerRateDidChangeReason", with: "")
             let rate = changed.rate
             self.rateChangeLock.withLock { self.lastRateChange = (reason, rate, ContinuousClock.now) }
+            if reason == Self.refusedStartReason, rate == 0 {
+                Task { @MainActor [weak self, weak changed] in
+                    guard let changed else { return }
+                    await self?.recoverFromRefusedStart(of: changed)
+                }
+            }
         }
         playbackEndObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
@@ -3258,8 +3291,10 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
         guard let applicationIsActive, observesPlayerLifecycle else { return }
         let appIsActive = applicationIsActive()
         lock.withLock {
+            // `playing` is the last item on the queue: either the one it is on, or the one it is about to move on
+            // to, when the end of the chunk before it was heard first (#1762).
             guard !appIsActive, let queue = player as? AVQueuePlayer, let playing = activeItem,
-                  queue.currentItem === playing else { return }
+                  queue.items().last === playing else { return }
             let nextOffset = currentStartOffset + max(1, currentChunkLength)
             let nextCached = renderedCache[nextOffset]
             let facts = BackgroundChunkSeam.Facts(
@@ -3308,13 +3343,23 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
             guard let queued = queuedChunk, player === queued.player, activeItem !== queued.item else { return false }
             let current = queued.player.currentItem
             if finished != nil, finished === activeItem, current === activeItem {
-                // The end of the playing chunk was heard but the queue has not moved on (it is paused at the end,
-                // or has not got to the next item yet): the queued chunk is not playing. Take it off and let the
-                // seam go through the app, which still has its audio in the cache.
-                queued.player.remove(queued.item)
-                queued.player.actionAtItemEnd = .pause
-                queuedChunk = nil
-                return false
+                // The end of the playing chunk was heard while the player still names it. With the queued chunk
+                // still on a player that advances, the queue is moving on to it: the end notification reaches the
+                // main thread before `currentItem` does, late when the app is away. Taking it off to start it again
+                // through the app played its first words twice at every seam (#1762). Only when it is no longer
+                // there, or the player stops at the end, is it not playing: take it off and let the seam go through
+                // the app, which still has its audio in the cache.
+                let queueMovesOn = BackgroundChunkSeam.queueMovesOnAtEnd(
+                    queuedChunkIsOnThePlayer: queued.player.items().contains(queued.item),
+                    playerAdvancesAtItemEnd: queued.player.actionAtItemEnd == .advance,
+                    playerIsPlaying: queued.player.rate != 0
+                )
+                if !queueMovesOn {
+                    queued.player.remove(queued.item)
+                    queued.player.actionAtItemEnd = .pause
+                    queuedChunk = nil
+                    return false
+                }
             }
             let endHeard = finished != nil && (finished === activeItem || finished === queued.item)
             guard endHeard || current === queued.item else { return false }
@@ -3341,8 +3386,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 voiceChangeCueDecider = NarrationVoiceChangeCue()
             }
             _ = voiceChangeCueDecider.leadIn(forStandIn: false)
-            // Back to a player that stays on its item at the end, until another chunk is queued behind this one.
-            queued.player.actionAtItemEnd = .pause
+            // Back to a player that stays on its item at the end, until another chunk is queued behind this one. Not
+            // while the player still names the chunk before: it may be about to move on, and `.pause` would stop it.
+            if current === queued.item { queued.player.actionAtItemEnd = .pause }
             // The queued chunk's end observer and failure watch take over from the finished chunk's.
             replacedObservers = (playbackEndObserver, playerItemStatusObservation)
             playbackEndObserver = queuedEndObserver

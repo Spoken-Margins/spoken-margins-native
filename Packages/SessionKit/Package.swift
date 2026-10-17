@@ -121,6 +121,8 @@ let package = Package(
             dependencies: ["SessionKit", "SessionKitAudio", "SessionKitPersistence", "SessionKitSharing", "ShippedPacketReader"],
             exclude: ["README.md"]
         ),
+        // Every file a test reads from outside the package, by name (#1387). Not a product: only the tests link it.
+        .target(name: "SessionKitTestInputs", path: "Tests/TestInputs"),
         // Tests of the Foundation-only modules. Also runs on Linux (see the end of this file).
         .testTarget(
             name: "SessionKitCoreTests",
@@ -131,6 +133,7 @@ let package = Package(
                 "SessionKitEPUB",
                 "SessionKitFeeds",
                 "SessionKitSpeechFrontEnd",
+                "SessionKitTestInputs",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ]
         ),
@@ -150,6 +153,7 @@ let package = Package(
                 "ShippedPacketReader",
                 "ShippedSessionKit",
                 "CoopPacket",
+                "SessionKitTestInputs",
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],
             // Test fixtures read by path (#filePath), not bundled resources.
@@ -157,7 +161,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SessionKitTraceTests",
-            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAI"]
+            dependencies: ["SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitTestInputs"]
         )
     ]
 )
@@ -170,7 +174,7 @@ let package = Package(
 // module `Crypto`), and SQLite3 from a system-library module over libsqlite3.
 let linuxTargets: Set<String> = [
     "SessionKit", "SessionKitPersistence", "SessionKitAI", "SessionKitEPUB", "SessionKitFeeds",
-    "SessionKitSpeechFrontEnd", "SessionKitCoreTests",
+    "SessionKitSpeechFrontEnd", "SessionKitTestInputs", "SessionKitCoreTests",
 ]
 package.targets.removeAll { !linuxTargets.contains($0.name) }
 package.products.removeAll { !linuxTargets.contains($0.name) }

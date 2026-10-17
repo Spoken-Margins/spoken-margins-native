@@ -49,6 +49,20 @@ public enum BackgroundChunkSeam {
             && !facts.alreadyQueued
     }
 
+    /// Whether the end of the playing chunk means the queue is moving on to the chunk queued behind it (#1762).
+    ///
+    /// The system posts a chunk's end notification and moves the queue on in one step, but the app hears the
+    /// notification late with the app away, and the player's `currentItem` can still name the chunk that ended. A
+    /// queued chunk that is still on a player that advances at an item's end is the one playing next, so the
+    /// bookkeeping follows it. Taking it off to start it again through the app played its first words twice at every
+    /// seam. Only a chunk that is no longer on the player, a player set to stop at the end, or one that is resting
+    /// at the end of the chunk before (rate 0, so it will not play a chunk inserted behind it) goes through the app.
+    public static func queueMovesOnAtEnd(
+        queuedChunkIsOnThePlayer: Bool, playerAdvancesAtItemEnd: Bool, playerIsPlaying: Bool
+    ) -> Bool {
+        queuedChunkIsOnThePlayer && playerAdvancesAtItemEnd && playerIsPlaying
+    }
+
     /// How a seam went while the app was away, for the export.
     public enum Outcome: String, CaseIterable, Sendable {
         /// The next chunk was already on the player and started without the app.

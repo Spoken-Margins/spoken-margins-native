@@ -1,12 +1,13 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class SourceCatalogTests: XCTestCase {
-    private static let fixture = "Contracts/fixtures/source-catalog/top-podcasts-small.json"
-    private static let fixtureManifest = "Contracts/fixtures/source-catalog-manifest/top-podcasts-small.json"
-    private static let publishedCatalog = "Site/onboarding/catalog/v1/catalog.json"
-    private static let publishedManifest = "Site/onboarding/catalog/v1/manifest.json"
+    private static func fixture() throws -> URL { try TestInputs.url(.contracts, "fixtures/source-catalog/top-podcasts-small.json") }
+    private static func fixtureManifest() throws -> URL { try TestInputs.url(.contracts, "fixtures/source-catalog-manifest/top-podcasts-small.json") }
+    private static func publishedCatalog() throws -> URL { try TestInputs.url(.site, "onboarding/catalog/v1/catalog.json") }
+    private static func publishedManifest() throws -> URL { try TestInputs.url(.site, "onboarding/catalog/v1/manifest.json") }
 
     private var temporary: URL!
 
@@ -22,9 +23,9 @@ final class SourceCatalogTests: XCTestCase {
     // MARK: The published snapshot meets the M1 bar
 
     func testPublishedSnapshotHasAHundredPodcastsAcrossEightSubjectsWithArtwork() throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.path(Self.publishedCatalog)))
+        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: Self.publishedCatalog()))
         let followable = catalog.entries.filter(\.isFollowable)
-        let raw = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: Self.path(Self.publishedCatalog)))
+        let raw = try JSONDecoder().decode(SourceCatalog.self, from: Data(contentsOf: Self.publishedCatalog()))
         XCTAssertEqual(catalog.entries.count, raw.entries.count, "validation must not drop any published entry")
         XCTAssertGreaterThanOrEqual(followable.filter { $0.kind == .podcastFeed }.count, 100)
         XCTAssertGreaterThanOrEqual(catalog.visibleSubjects.count, 8)
@@ -42,8 +43,8 @@ final class SourceCatalogTests: XCTestCase {
     }
 
     func testPublishedManifestVerifiesThePublishedCatalog() throws {
-        let manifest = try SourceCatalogVerifier.manifest(from: Data(contentsOf: Self.path(Self.publishedManifest)), policy: .production)
-        let catalog = try SourceCatalogVerifier.catalog(from: Data(contentsOf: Self.path(Self.publishedCatalog)), manifest: manifest, policy: .production)
+        let manifest = try SourceCatalogVerifier.manifest(from: Data(contentsOf: Self.publishedManifest()), policy: .production)
+        let catalog = try SourceCatalogVerifier.catalog(from: Data(contentsOf: Self.publishedCatalog()), manifest: manifest, policy: .production)
         XCTAssertEqual(catalog.catalogId, SourceCatalogPolicy.production.catalogId)
     }
 
@@ -67,11 +68,11 @@ final class SourceCatalogTests: XCTestCase {
     /// App Store age rating. Loads the bundled catalog through the drawer's path (store, then
     /// `entries(forSubject:)`) and counts the shows against the raw file.
     func testStarterListFromTheBundledCatalogHidesShowsMarkedExplicit() async throws {
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.publishedCatalog), cacheDirectory: temporary, policy: .production) { _, _ in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.publishedCatalog(), cacheDirectory: temporary, policy: .production) { _, _ in
             throw URLError(.notConnectedToInternet)
         }
         let catalog = try await store.current()
-        let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.path(Self.publishedCatalog))) as! [String: Any]
+        let raw = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.publishedCatalog())) as! [String: Any]
         let rawEntries = raw["entries"] as! [[String: Any]]
         let rawExplicit = rawEntries.filter { $0["explicit"] as? Bool == true }
         XCTAssertFalse(rawExplicit.isEmpty, "the bundled catalog marks some shows explicit")
@@ -107,7 +108,7 @@ final class SourceCatalogTests: XCTestCase {
 
     func testStarterListFromARefreshedCatalogHidesShowsMarkedExplicit() async throws {
         let (manifestData, catalogData) = try Self.remote(contentVersion: 2)
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, maximumBytes in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, maximumBytes in
             url.lastPathComponent == "manifest.json" ? (200, manifestData) : (200, catalogData.prefix(maximumBytes))
         }
         let outcome = await store.refresh()
@@ -183,7 +184,7 @@ final class SourceCatalogTests: XCTestCase {
     }
 
     func testUnknownKindsAndFieldsDecodeSoANewerRemoteCatalogDoesNotBreakAnOlderApp() throws {
-        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.path(Self.fixture))) as! [String: Any]
+        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: Self.fixture())) as! [String: Any]
         var entries = object["entries"] as! [[String: Any]]
         entries[0]["kind"] = "some_future_kind"
         entries[0]["contentKind"] = "audiobook"
@@ -199,7 +200,7 @@ final class SourceCatalogTests: XCTestCase {
     // MARK: Store: bundled snapshot offline, remote refresh when newer
 
     func testStoreServesTheBundledSnapshotWhenOffline() async throws {
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in
             throw URLError(.notConnectedToInternet)
         }
         let catalog = try await store.current()
@@ -213,7 +214,7 @@ final class SourceCatalogTests: XCTestCase {
     func testStoreTakesANewerVerifiedCatalogAndKeepsItAcrossLaunches() async throws {
         let (manifestData, catalogData) = try Self.remote(contentVersion: 2)
         let requested = RequestLog()
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, maximumBytes in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, maximumBytes in
             await requested.append(url.lastPathComponent)
             return url.lastPathComponent == "manifest.json" ? (200, manifestData) : (200, catalogData.prefix(maximumBytes))
         }
@@ -224,7 +225,7 @@ final class SourceCatalogTests: XCTestCase {
         let current = try await store.current()
         XCTAssertEqual(current.contentVersion, 2)
 
-        let relaunched = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in
+        let relaunched = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in
             throw URLError(.notConnectedToInternet)
         }
         let cached = try await relaunched.current()
@@ -234,7 +235,7 @@ final class SourceCatalogTests: XCTestCase {
     func testStoreDoesNotDownloadTheCatalogWhenTheManifestIsNotNewer() async throws {
         let (manifestData, _) = try Self.remote(contentVersion: 1)
         let requested = RequestLog()
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
             await requested.append(url.lastPathComponent)
             return (200, manifestData)
         }
@@ -249,7 +250,7 @@ final class SourceCatalogTests: XCTestCase {
         var tampered = catalogData
         tampered[tampered.index(tampered.startIndex, offsetBy: 40)] ^= 0x01
         let tamperedBody = tampered
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
             url.lastPathComponent == "manifest.json" ? (200, manifestData) : (200, tamperedBody)
         }
         let outcome = await store.refresh()
@@ -261,7 +262,7 @@ final class SourceCatalogTests: XCTestCase {
 
     func testStoreRefusesACatalogURLOffTheTrustedHost() async throws {
         let (manifestData, _) = try Self.remote(contentVersion: 2, catalogURL: "https://evil.example/catalog.json")
-        let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in
+        let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in
             (200, manifestData)
         }
         let outcome = await store.refresh()
@@ -284,7 +285,7 @@ final class SourceCatalogTests: XCTestCase {
         for catalogURL in lookAlikes {
             let (manifestData, _) = try Self.remote(contentVersion: 2, catalogURL: catalogURL)
             let requested = RequestLog()
-            let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
+            let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { url, _ in
                 await requested.append(url.absoluteString)
                 return (200, manifestData)
             }
@@ -315,7 +316,7 @@ final class SourceCatalogTests: XCTestCase {
             let policy = SourceCatalogPolicy(manifestURL: try XCTUnwrap(URL(string: manifestURL)), trustedHost: "spokenmargins.proximitytoprogress.com", catalogId: "fixture-top-podcasts")
             let (manifestData, _) = try Self.remote(contentVersion: 2)
             let requested = RequestLog()
-            let store = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: policy) { url, _ in
+            let store = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: policy) { url, _ in
                 await requested.append(url.absoluteString)
                 return (200, manifestData)
             }
@@ -328,17 +329,17 @@ final class SourceCatalogTests: XCTestCase {
 
     func testStoreRejectsAnOversizedManifestAndHTTPErrors() async throws {
         let big = Data(repeating: 0x20, count: Self.fixturePolicy.maximumManifestBytes + 1)
-        let oversized = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in (200, big) }
+        let oversized = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in (200, big) }
         let oversizedOutcome = await oversized.refresh()
         XCTAssertEqual(oversizedOutcome, .failed(.oversizedManifest))
-        let missing = try SourceCatalogStore(bundledCatalogURL: Self.path(Self.fixture), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in (404, Data()) }
+        let missing = try SourceCatalogStore(bundledCatalogURL: Self.fixture(), cacheDirectory: temporary, policy: Self.fixturePolicy) { _, _ in (404, Data()) }
         let missingOutcome = await missing.refresh()
         XCTAssertEqual(missingOutcome, .failed(.httpStatus(404)))
     }
 
     func testFixtureManifestMatchesFixtureCatalog() throws {
-        let manifest = try SourceCatalogVerifier.manifest(from: Data(contentsOf: Self.path(Self.fixtureManifest)), policy: Self.fixturePolicy)
-        XCTAssertNoThrow(try SourceCatalogVerifier.catalog(from: Data(contentsOf: Self.path(Self.fixture)), manifest: manifest, policy: Self.fixturePolicy))
+        let manifest = try SourceCatalogVerifier.manifest(from: Data(contentsOf: Self.fixtureManifest()), policy: Self.fixturePolicy)
+        XCTAssertNoThrow(try SourceCatalogVerifier.catalog(from: Data(contentsOf: Self.fixture()), manifest: manifest, policy: Self.fixturePolicy))
     }
 
     // MARK: Helpers
@@ -355,7 +356,7 @@ final class SourceCatalogTests: XCTestCase {
     )
 
     private static func fixtureCatalog() throws -> SourceCatalog {
-        try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: path(fixture)))
+        try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: fixture()))
     }
 
     /// A remote manifest and catalog one content version on from the fixture.
@@ -374,19 +375,5 @@ final class SourceCatalogTests: XCTestCase {
             entryCount: catalog.entries.count
         )
         return (try JSONEncoder().encode(manifest), catalogData)
-    }
-
-    static func path(_ relative: String) throws -> URL {
-        try repositoryRoot().appendingPathComponent(relative)
-    }
-
-    private static func repositoryRoot() throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return root
     }
 }

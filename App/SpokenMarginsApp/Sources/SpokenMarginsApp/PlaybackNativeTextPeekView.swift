@@ -3,21 +3,47 @@ import SessionKit
 import UIKit
 
 /// The existing source reader sheet, with one selectable chapter and an initial sentence scroll.
+///
+/// The listener can step to the previous or next chapter and back without leaving the sheet (#1579). Stepping is
+/// reading only: it never moves playback, and the playing chapter's lit sentence returns when they step back.
 struct NativeTextPeekView: View {
     @Environment(\.dismiss) private var dismiss
     let title: String
-    /// Chosen by `PlaybackTextReaderTarget.resolve`, the same rule as the More sheet's Text button (#1547).
-    let target: PlaybackTextReaderTarget
+    @State private var browser: PlaybackTextReaderBrowser
 
     static let sheetIdentifier = "nativeText.peek.sheet"
     static let textIdentifier = "nativeText.peek.text"
+    static let chapterIdentifier = "nativeText.peek.chapter"
+    static let previousIdentifier = "nativeText.peek.previous"
+    static let nextIdentifier = "nativeText.peek.next"
+    static let playingIdentifier = "nativeText.peek.playing"
 
-    private var reader: PlaybackLivePassage.Reader { target.reader }
+    /// - Parameters:
+    ///   - target: Chosen by `PlaybackTextReaderTarget.resolve`, the same rule as the More sheet's Text button (#1547).
+    ///   - text: The item's stored text and its chapters, which the controls step through. Without chapters there are
+    ///     no controls.
+    init(title: String, target: PlaybackTextReaderTarget, text: String = "", chapters: [Chapter] = []) {
+        self.title = title
+        _browser = State(initialValue: PlaybackTextReaderBrowser(text: text, chapters: chapters, opening: target))
+    }
+
+    private var reader: PlaybackLivePassage.Reader { browser.current.reader }
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 8) {
-                Text(reader.chapterTitle ?? "Full Text").font(.headline)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(reader.chapterTitle ?? "Full Text").font(.headline)
+                        .accessibilityIdentifier(NativeTextPeekView.chapterIdentifier)
+                    if let position = browser.position, position.count > 1 {
+                        Spacer(minLength: 8)
+                        Text("\(position.number) of \(position.count)")
+                            .font(.subheadline)
+                            .foregroundStyle(AppColors.secondaryText)
+                            .fixedSize()
+                            .accessibilityLabel("Chapter \(position.number) of \(position.count)")
+                    }
+                }
                 if !reader.text.isEmpty {
                     NativeTextReader(reader: reader)
                         // Set at the SwiftUI layer too: an identifier on an ancestor replaces the
@@ -27,6 +53,7 @@ struct NativeTextPeekView: View {
                     Text("No native text is available.")
                     Spacer()
                 }
+                if let position = browser.position, position.count > 1 { chapterControls }
             }
             .padding(16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -45,6 +72,33 @@ struct NativeTextPeekView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(NativeTextPeekView.sheetIdentifier)
         }
+    }
+}
+
+extension NativeTextPeekView {
+    private var chapterControls: some View {
+        HStack(spacing: 12) {
+            Button { browser.step(.previous) } label: {
+                Label("Previous chapter", systemImage: "chevron.left").labelStyle(.iconOnly)
+            }
+            .disabled(!browser.canStep(.previous))
+            .accessibilityIdentifier(NativeTextPeekView.previousIdentifier)
+            Spacer(minLength: 0)
+            if !browser.isAtOpening {
+                Button("Playing chapter") { browser.returnToOpening() }
+                    .lineLimit(2)
+                    .accessibilityIdentifier(NativeTextPeekView.playingIdentifier)
+                Spacer(minLength: 0)
+            }
+            Button { browser.step(.next) } label: {
+                Label("Next chapter", systemImage: "chevron.right").labelStyle(.iconOnly)
+            }
+            .disabled(!browser.canStep(.next))
+            .accessibilityIdentifier(NativeTextPeekView.nextIdentifier)
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.large)
+        .padding(.top, 4)
     }
 }
 

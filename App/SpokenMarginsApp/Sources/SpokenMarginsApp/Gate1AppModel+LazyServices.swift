@@ -1,4 +1,5 @@
 import Foundation
+import SessionKit
 import SessionKitFeeds
 import SessionKitPersistence
 

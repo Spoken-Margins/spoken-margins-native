@@ -1,6 +1,7 @@
 import AVFoundation
 import CryptoKit
 import Foundation
+import SessionKit
 
 /// The rendered-speech files Supertonic keeps between plays, named by a digest of what was rendered and
 /// trimmed least-recently-used to a byte limit.
@@ -117,9 +118,7 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
 
     /// The same, for a cache directory no instance has open.
     public static func removeAll(in directory: URL, fileManager: FileManager = .default) -> Int64 {
-        entries(in: directory, fileManager: fileManager).reduce(Int64(0)) { freed, entry in
-            (try? fileManager.removeItem(at: entry.url)) == nil ? freed : freed + Int64(entry.size)
-        }
+        RenderedSpeechCacheFiles.removeAll(in: directory, fileManager: fileManager)
     }
 
     private func cacheURL(
@@ -152,22 +151,9 @@ public final class RenderedSpeechDiskCache: @unchecked Sendable {
         }
     }
 
-    private func cacheEntries() -> [(url: URL, size: Int, modifiedAt: Date)] {
-        Self.entries(in: directory, fileManager: fileManager)
-    }
-
-    private static func entries(in directory: URL, fileManager: FileManager) -> [(url: URL, size: Int, modifiedAt: Date)] {
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
-        let urls = (try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: Array(keys),
-            options: [.skipsHiddenFiles]
-        )) ?? []
-        return urls.compactMap { url in
-            guard url.pathExtension.lowercased() == "wav",
-                  let values = try? url.resourceValues(forKeys: keys),
-                  values.isRegularFile == true else { return nil }
-            return (url, values.fileSize ?? 0, values.contentModificationDate ?? .distantPast)
-        }
+    private func cacheEntries() -> [RenderedSpeechCacheFiles.Entry] {
+        RenderedSpeechCacheFiles.entries(in: directory, fileManager: fileManager)
     }
 }
+
+extension RenderedSpeechDiskCache: RenderedSpeechCacheClearing {}

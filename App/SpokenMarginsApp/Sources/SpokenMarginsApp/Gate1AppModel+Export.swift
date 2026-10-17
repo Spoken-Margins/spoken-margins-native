@@ -70,13 +70,13 @@ extension Gate1AppModel {
         reportFailure(error, context: "Export folder selection failed")
     }
 
-    func exportSelectedSessionsToFolder() {
+    /// Builds one Markdown file per selected session in a temporary folder and hands them to the system share
+    /// sheet (#1528). Nothing is written to a remembered folder, and nothing is called "shared" until the
+    /// sheet reports a completed share.
+    func prepareSelectedSessionsForSharing() {
+        guard batchExportShare == nil else { return }
         guard !selectedBatchExportSessionIds.isEmpty else {
             reportFailure("Choose at least one session to export.")
-            return
-        }
-        guard let folderURL = resolvedFolderURL(.sessionExport) else {
-            reportFailure("Choose an export folder first.")
             return
         }
         do {
@@ -88,58 +88,53 @@ extension Gate1AppModel {
                 reportFailure("Session export is unavailable.")
                 return
             }
-
             persistExportSettings()
-            isWritingBatchExport = true
-            defer { isWritingBatchExport = false }
-
-            let didAccess = folderURL.startAccessingSecurityScopedResource()
-            defer {
-                if didAccess {
-                    folderURL.stopAccessingSecurityScopedResource()
-                }
+            let sources = batchExportRows.filter { selectedBatchExportSessionIds.contains($0.id) }.map {
+                SessionShareFiles.Source(sessionId: $0.id, itemTitle: $0.itemTitle,
+                                         sessionDate: $0.session.createdAt ?? $0.session.updatedAt)
             }
-
-            let writer = SessionMarkdownFileWriter()
-            let selectedRows = batchExportRows.filter { selectedBatchExportSessionIds.contains($0.id) }
-            var exportedFileNames: [String] = []
-            var failures: [String] = []
-            for row in selectedRows {
-                do {
-                    let export = try engine.buildExport(options: currentExportOptions(sessionId: row.id))
-                    let markdown = SessionExportMarkdownRenderer.render(export)
-                    let fileURL = try writer.write(
-                        markdown: markdown,
-                        itemTitle: row.itemTitle,
-                        sessionDate: row.session.createdAt ?? row.session.updatedAt,
-                        sessionId: row.id,
-                        to: folderURL
-                    )
-                    exportedFileNames.append(fileURL.lastPathComponent)
-                } catch {
-                    failures.append("\(row.itemTitle): \(error.localizedDescription)")
-                }
+            let files = SessionShareFiles.build(sources, root: SessionShareFiles.shareRoot()) { source in
+                SessionExportMarkdownRenderer.render(try engine.buildExport(options: currentExportOptions(sessionId: source.sessionId)))
             }
-
-            batchExportResult = BatchSessionExportResult(
-                exportedFileNames: exportedFileNames,
-                failures: failures,
-                destinationName: folderURL.lastPathComponent
-            )
-            if !exportedFileNames.isEmpty {
-                markOnboardingSteps([.exportedSession])
+            batchExportResult = files.failures.isEmpty ? nil
+                : BatchSessionExportResult(sharedFileNames: [], failures: files.failures, activityType: nil)
+            diagnostics["batchExportLastResult"] = "prepared=\(files.fileURLs.count);failed=\(files.failures.count)"
+            guard !files.fileURLs.isEmpty else {
+                reportFailure("No sessions could be prepared. Review the export result for details.")
+                return
             }
-            diagnostics["batchExportLastResult"] = "exported=\(exportedFileNames.count);failed=\(failures.count)"
-            if failures.isEmpty {
-                reportConfirmation("Exported \(exportedFileNames.count) Markdown file\(exportedFileNames.count == 1 ? "" : "s") to \(folderURL.lastPathComponent).")
-            } else if exportedFileNames.isEmpty {
-                reportFailure("No sessions were exported. Review the export result for details.")
-            } else {
-                reportFailure("Exported \(exportedFileNames.count) session\(exportedFileNames.count == 1 ? "" : "s"); \(failures.count) failed.")
-            }
+            batchExportShare = files
         } catch {
-            isWritingBatchExport = false
             reportFailure(error, context: "Batch export failed")
+        }
+    }
+
+    /// The share sheet reported its outcome (`completed` is false when the listener cancelled). Removes the
+    /// temporary files either way; only a completed share is reported and marks the onboarding step.
+    func batchShareSheetFinished(completed: Bool, activityType: String?) {
+        guard let files = batchExportShare else { return }
+        batchExportShare = nil
+        files.discard()
+        guard completed else {
+            diagnostics["batchExportLastResult"] = "share_cancelled;prepared=\(files.fileURLs.count)"
+            return
+        }
+        batchExportResult = BatchSessionExportResult(sharedFileNames: files.fileURLs.map(\.lastPathComponent),
+                                                     failures: files.failures, activityType: activityType)
+        markOnboardingSteps([.exportedSession])
+        diagnostics["batchExportLastResult"] = "shared=\(files.fileURLs.count);failed=\(files.failures.count)"
+        reportConfirmation(SessionShareFiles.sharedSummary(count: files.fileURLs.count, activityType: activityType))
+    }
+
+    /// The sheet closed. iOS may report the outcome just after the close, so give it a moment before
+    /// treating the sheet as cancelled.
+    func batchShareSheetDismissed() {
+        // Only the share that was open when the sheet closed: a newer share must not be cleared by this one.
+        guard let closing = batchExportShare?.directory else { return }
+        Task { @MainActor [self] in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard batchExportShare?.directory == closing else { return }
+            batchShareSheetFinished(completed: false, activityType: nil)
         }
     }
 

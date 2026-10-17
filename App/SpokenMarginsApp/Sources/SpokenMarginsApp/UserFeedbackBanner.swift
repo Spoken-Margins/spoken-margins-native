@@ -107,8 +107,7 @@ struct UserFeedbackBanner: View {
                 Button {
                     model.dismissFeedback(id: feedback.id)
                 } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: 32, height: 32)
+                    TapTargetIcon(systemName: "xmark")
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Dismiss")
@@ -166,8 +165,7 @@ struct ItemLastFailureCard: View {
                 Button {
                     model.clearLastFailure(itemId: itemId)
                 } label: {
-                    Image(systemName: "xmark")
-                        .frame(width: 32, height: 32)
+                    TapTargetIcon(systemName: "xmark")
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Clear last problem")

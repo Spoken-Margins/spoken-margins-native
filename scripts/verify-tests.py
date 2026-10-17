@@ -185,19 +185,47 @@ def inherited_simulator_slot(fd):
     raise ValueError('inherited simulator descriptor must name a held Mac-wide simulator slot')
 
 
-def input_identity():
+INPUT_ROOTS = ('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
+               'scripts/', 'validation/', 'Tools/', 'schemas/', 'ops/')
+INPUT_FILES = ('project.yml', 'package.json', 'package-lock.json')
+
+
+def input_digests():
+    """The hash of every file the verification depends on, by path (tracked and untracked, not ignored)."""
     paths = capture(['git', 'ls-files', '--cached', '--others', '--exclude-standard']).splitlines()
-    digest = hashlib.sha256()
+    digests = {}
     for relative in sorted(set(paths)):
-        if not (relative.startswith(('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/',
-                                     'SpokenMarginsNative.xcodeproj/', 'scripts/', 'validation/',
-                                     'Tools/', 'schemas/', 'ops/'))
-                or relative in ('project.yml', 'package.json', 'package-lock.json')):
+        if not (relative.startswith(INPUT_ROOTS) or relative in INPUT_FILES):
             continue
         path = ROOT / relative
-        digest.update(relative.encode() + b'\0')
-        digest.update(path.read_bytes() if path.is_file() else b'<deleted>')
+        digests[relative] = hashlib.sha256(path.read_bytes() if path.is_file() else b'<deleted>').hexdigest()
+    return digests
+
+
+def input_identity(digests=None):
+    digest = hashlib.sha256()
+    for relative, file_digest in (input_digests() if digests is None else digests).items():
+        digest.update(relative.encode() + b'\0' + file_digest.encode())
     return digest.hexdigest()
+
+
+def inputs_changed_message(prefix, before, limit=5):
+    """`prefix`, then the first few paths whose hash differs from `before` (#1773), so a lane report names the file.
+
+    SwiftPM rewrites Packages/SessionKit/Package.resolved when the committed copy doesn't match Package.swift (a
+    branch that committed the Linux-resolved copy did exactly that), so that case says how to fix it."""
+    after = input_digests()
+    paths = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+    if not paths:
+        return prefix + ' (no file hash differs now: it changed and changed back)'
+    shown = ', '.join(paths[:limit]) + (f' and {len(paths) - limit} more' if len(paths) > limit else '')
+    message = f'{prefix}: {shown}'
+    if 'Packages/SessionKit/Package.resolved' in paths:
+        message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
+                    'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
+                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push; if this branch '
+                    'changes dependencies on purpose, run `swift package resolve` on a Mac instead')
+    return message
 
 
 def test_records(log):
@@ -376,7 +404,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
-                       'test_sessionkit_pass', 'test_mini_player_keep_out')
+                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
@@ -463,6 +491,14 @@ def process_group_alive(pgid):
     return True
 
 
+def load_average():
+    """The 1, 5 and 15 minute load averages, or None where the system doesn't report them."""
+    try:
+        return [round(value, 1) for value in os.getloadavg()]
+    except OSError:
+        return None
+
+
 def stop_process_group(process, grace=10):
     # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
     # must not replace the error that brought us here.
@@ -484,9 +520,24 @@ def stop_process_group(process, grace=10):
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+# #1767: on a busy Mac the same tests run two to three times slower than the 230 s they take on a quiet one, and
+# three PRs were failed ("Process exit 124", hundreds of tests missing, no failing test) while the suite was still
+# working through its classes. The limit above stays the budget; a step that is still printing results when it
+# runs out may go on until the ceiling, and one that has printed nothing for the stall time is a hang and stops.
+PACKAGE_TEST_CEILING = 1500
+PACKAGE_STALL_SECONDS = 240
+# The lane (scripts/lane-runner.py FAST_TIMEOUT, 2400 s) starts its clock before this process, so the plan's wait for
+# a host-test slot counts there. A step's ceiling is cut to fit what is left of it, so the step ends itself with its
+# own note instead of the lane interrupting the whole plan without one.
+FAST_PLAN_SECONDS = 2340
 # SessionKitCoreTests run in parallel (#1328); the other two targets hold the real-time AVFoundation tests and
 # stay serial. A parallel run that fails for any reason is run again serially, and that result decides.
 PARALLEL_CORE_TIMEOUT = 300
+# #1767: on the three timed-out runs this step was killed at 62-76% done, its results (written at the end) were lost, and
+# the serial rerun took another 364-379 s. Its progress lines stream as it goes, so it gets the same rule as the
+# serial steps: a run still printing at 300 s goes on, one silent for the stall time is a hang and is rerun serially.
+PARALLEL_CORE_CEILING = 900
+PARALLEL_CORE_STALL_SECONDS = 120
 PACKAGE_RUNNER = ['bash', 'scripts/run-sessionkit-tests.sh']
 # The runner's own 631 tests took 164.5 s on a quiet Mac (PR #1103's 0c940ba, 2026-10-08) and 172.3 s in a
 # detached checkout of it, so the 180 s command default left no room: built beside a simulator job, the step
@@ -526,6 +577,9 @@ def settle_before_tests(udid, sleep=time.sleep):
 # test command once more inside the same budget. The retry runs the same real tests; nothing is skipped or widened.
 STARTUP_STALL_SECONDS = 90
 STARTUP_RETRIES = 1
+# A simulator wedged at launch can leave `simctl terminate` hanging too (#1807). It normally returns at once,
+# so a short wait keeps the retry inside the step's budget.
+TERMINATE_TIMEOUT_SECONDS = 20
 TESTS_STARTED = re.compile(r"^Test (?:Suite|Case) '", re.M)
 
 
@@ -639,11 +693,13 @@ class Run:
         self.output = output
         self.changed = changed  # the PR's changed paths in a lane run; None runs every step (#862)
         self.output.mkdir(parents=True, exist_ok=False)
+        self.input_files = input_digests()  # what the manifest's hash is made of, to name what changed (#1773)
         self.manifest = {'plan': plan, 'head': capture(['git', 'rev-parse', 'HEAD']),
                          'branch': capture(['git', 'branch', '--show-current']),
-                         'input_sha256': input_identity(), 'status': 'running', 'steps': []}
+                         'input_sha256': input_identity(self.input_files), 'status': 'running', 'steps': []}
         self.crash_baseline = None
         self.crash_times = {}
+        self.started = time.monotonic()
         self.save()
 
     def save(self):
@@ -671,9 +727,14 @@ class Run:
         return False
 
     def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
-                startup=None, record_source=None):
+                startup=None, record_source=None, ceiling=None, stall_seconds=None):
+        """Run one step. `timeout` is its time budget. With `ceiling` and `stall_seconds`, a step that has written to
+        its log within the last `stall_seconds` when the budget runs out goes on, until `ceiling` seconds in all (#1767)."""
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
+        if ceiling:
+            entry['ceiling_seconds'], entry['stall_seconds'] = ceiling, stall_seconds
+        entry['load_average_start'] = load_average()
         self.manifest['steps'].append(entry)
         self.save()
         print(f'{name} …', flush=True)
@@ -689,7 +750,11 @@ class Run:
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
-            start = attempt_start = time.monotonic()
+            start = attempt_start = last_output = time.monotonic()
+            if ceiling and self.manifest['plan'] == 'fast':
+                ceiling = max(timeout, min(ceiling, FAST_PLAN_SECONDS - (start - self.started)))
+                entry['ceiling_seconds'] = round(ceiling)
+            log_size = 0
             attempt = 1
             watching = startup is not None
             scan_from = 0  # each launch is judged by its own part of the shared log
@@ -700,11 +765,18 @@ class Run:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
                         if self.note_crash(entry, report):
                             raise InterruptedError('Repeated simulator process crashes')
-                    remaining = timeout - (time.monotonic() - start)
-                    if remaining <= 0:
-                        raise subprocess.TimeoutExpired(args, timeout)
+                    now = time.monotonic()
+                    if ceiling and (size := os.fstat(log.fileno()).st_size) != log_size:
+                        log_size, last_output = size, now
+                    elapsed = now - start
+                    if elapsed >= timeout:
+                        if not ceiling or elapsed >= ceiling or now - last_output >= stall_seconds:
+                            entry['timeout_note'] = self.timeout_note(
+                                name, elapsed, timeout, ceiling, stall_seconds, now - last_output)
+                            raise subprocess.TimeoutExpired(args, timeout)
+                        entry['ran_past_its_limit'] = True
                     try:
-                        result = process.wait(timeout=min(0.25, remaining))
+                        result = process.wait(timeout=0.25)
                         break
                     except subprocess.TimeoutExpired:
                         pass
@@ -730,7 +802,14 @@ class Run:
                         stop_process_group(process)
                         if attempt > startup['retries']:
                             raise StartupStall()
-                        startup['reset'](attempt)
+                        # The hook is the runner's own housekeeping, not the step: whatever it raises (a hung
+                        # simctl is a TimeoutExpired) is recorded and the retry still goes ahead (#1807).
+                        try:
+                            relaunched = startup['reset'](attempt)
+                        except (OSError, subprocess.SubprocessError) as error:
+                            relaunched = {'error': repr(error)}
+                        if relaunched:
+                            stall['relaunch'] = relaunched
                         attempt += 1
                         log.write(f'\n--- {name}: no test output after {stall["after_seconds"]}s; launching attempt {attempt} ---\n')
                         log.flush()
@@ -754,7 +833,7 @@ class Run:
                 # The runner itself failed: don't leave xcodebuild running orphaned (#767).
                 stop_process_group(process)
                 raise
-        entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
+        entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3), load_average_end=load_average())
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
         if entry.get('startup_stalls'):
@@ -828,12 +907,29 @@ class Run:
             if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
                 errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
+            if entry.get('timeout_note'):
+                errors.insert(1, entry['timeout_note'])
         entry['errors'] = errors
         self.save()
         print(f'{name}: {entry["seconds"]}s — {"FAILED" if errors else "passed"}', flush=True)
         if errors:
             raise RuntimeError('; '.join(errors) + f' (see {self.output / (name + ".log")})')
         return text
+
+    def timeout_note(self, name, elapsed, timeout, ceiling, stall_seconds, silent):
+        """Why a step was stopped, for the lane's report: how long it ran, how far its tests got, how busy the Mac was,
+        and how long the plan waited for its host-test slot (before any step's clock starts; #1767)."""
+        results = len(re.findall(r"^Test Case '.*' (?:passed|failed)", (self.output / f'{name}.log').read_text(errors='replace'), re.M))
+        if ceiling and elapsed >= ceiling:
+            why = f'still running at its {ceiling}s ceiling'
+        elif ceiling and silent >= stall_seconds:
+            why = f'ran past its {timeout}s budget, then printed nothing for {silent:.0f}s (a hang)'
+        else:
+            why = f'ran out of its {timeout}s limit'
+        waited = self.manifest.get('host_test_slot', {}).get('waited_seconds')
+        slot = '' if waited is None else f'; waited {waited:.0f}s for the host-test slot before the steps, not counted'
+        load = load_average()
+        return (f'{name} {why}: {results} test results in the log, load average {load[0] if load else "unknown"}{slot}')
 
     def fast(self):
         # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
@@ -898,7 +994,7 @@ class Run:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
 
         if input_identity() != self.manifest['input_sha256']:
-            raise RuntimeError('Inputs changed during fast verification')
+            raise RuntimeError(inputs_changed_message('Inputs changed during fast verification', self.input_files))
 
     def package_steps(self, expected):
         """Build SessionKit and run its tests: SessionKitCoreTests in parallel (#1328), the rest serially."""
@@ -914,7 +1010,7 @@ class Run:
             if split:
                 self.package_core(core)
             self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
-                         timeout=PACKAGE_TEST_TIMEOUT,
+                         timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
                                         *POCKET_WEIGHT_TESTS},
@@ -940,7 +1036,8 @@ class Run:
         xunit = self.output / 'package-core.xunit.xml'
         try:
             self.command('package-core', [*PACKAGE_RUNNER, '--core-parallel', str(xunit)],
-                         timeout=PARALLEL_CORE_TIMEOUT, expected=expected, tests=True,
+                         timeout=PARALLEL_CORE_TIMEOUT, ceiling=PARALLEL_CORE_CEILING,
+                         stall_seconds=PARALLEL_CORE_STALL_SECONDS, expected=expected, tests=True,
                          record_source=lambda: xunit_records(xunit))
             return
         except RuntimeError as error:
@@ -953,7 +1050,8 @@ class Run:
             self.save()
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
         self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
-                     timeout=PACKAGE_TEST_TIMEOUT, expected=expected, tests=True)
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     expected=expected, tests=True)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
@@ -1101,10 +1199,16 @@ class Run:
                 # The stalled attempt's app may still be up, and xcodebuild refuses an existing result bundle.
                 app = derived / 'Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app'
                 bundle_id = plistlib.loads((app / 'Info.plist').read_bytes())['CFBundleIdentifier']
-                subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
-                               cwd=ROOT, capture_output=True, timeout=60)
+                # A hung terminate must not use up the retry (#1807): note it and launch again regardless.
+                note = {}
+                try:
+                    subprocess.run(['xcrun', 'simctl', 'terminate', chosen['udid'], bundle_id],
+                                   cwd=ROOT, capture_output=True, timeout=TERMINATE_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    note['terminate'] = f'timed out after {TERMINATE_TIMEOUT_SECONDS}s'
                 if result_bundle.exists():
                     result_bundle.rename(self.output / f'tests-stalled-{attempt}.xcresult')
+                return note
 
             # Only the app-hosted unit tests (app, adapters): the UI plans launch a separate runner app.
             startup = {'seconds': STARTUP_STALL_SECONDS, 'retries': STARTUP_RETRIES,

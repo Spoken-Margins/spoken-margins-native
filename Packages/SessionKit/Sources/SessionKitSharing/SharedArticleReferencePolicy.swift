@@ -15,17 +15,47 @@ public enum SharedArticleReferencePolicy {
 
     /// Whether the page the reader landed on is the packet's article. A redirect to a consent wall, a sign-in
     /// page or another site returns text with no error, and Margins attached to it would never play (#916).
-    /// The address the reader ended on has to be the packet's, or the text has to be the packet's text.
+    /// The page is judged the way the import will judge it afterwards: as the item the import would store (its
+    /// cleaned text and the address it would keep), through `ImportedItemResolver.canRepresentSameWork`. A
+    /// separate rule here let a page through that the import then marked as the wrong source (#1259).
+    /// `fetchedText` is what the import is handed, after the app's HTML stripping.
     public static func fetchedPageIsTheSharedArticle(
         _ item: SharedItemIdentity,
         fetchedURL: String,
-        fetchedText: String
+        fetchedText: String,
+        contentFormat: BrowserTextContentFormat?
     ) -> Bool {
-        if let expected = SharedItemIdentityBuilder.normalizedSharingURL(item.canonicalURL),
-           SharedItemIdentityBuilder.normalizedSharingURL(fetchedURL) == expected {
-            return true
+        guard let imported = importedIdentity(fetchedURL: fetchedURL, fetchedText: fetchedText, contentFormat: contentFormat) else {
+            return false
         }
-        guard let expectedHash = item.normalizedContentSHA256 else { return false }
-        return PortableArticleAnchorResolver.normalizedContentSHA256(fetchedText) == expectedHash
+        return ImportedItemResolver.canRepresentSameWork(item, imported)
+    }
+
+    /// The identity the import gives a fetched page: its cleaned text, hashed as the sender's was, and the
+    /// address it keeps (a front-matter `source:` line wins over the address the reader ended on). Mirrors the
+    /// text and reference steps of `SessionEngine.browserTextImportOutcome`; a test imports the same page and
+    /// compares, so the two cannot drift apart. Nil when the page has no text.
+    static func importedIdentity(
+        fetchedURL: String,
+        fetchedText: String,
+        contentFormat: BrowserTextContentFormat?
+    ) -> SharedItemIdentity? {
+        let rawText = fetchedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rawText.isEmpty else { return nil }
+        let parsed = contentFormat == .markdown
+            ? try? ObsidianMarkdownParser.parse(fileName: "Article", contents: rawText, fallbackTitle: "Article")
+            : nil
+        let text = (parsed?.text ?? rawText).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return nil }
+        let stored = Item(
+            id: "fetched-shared-article",
+            title: "Article",
+            mediaType: "text",
+            text: text,
+            externalReference: parsed?.source ?? fetchedURL,
+            status: "ready",
+            externalReferenceType: "url"
+        )
+        return SharedItemIdentityBuilder.localIdentity(for: stored)
     }
 }

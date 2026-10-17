@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// #1468: the chapters of a text item are the source's own headings. `Contracts/fixtures/chapters/`
 /// holds one source per file with the chapters a listener would pick by hand (`<name>.chapters.txt`,
@@ -12,7 +13,10 @@ import XCTest
 /// The fixtures are small sources shaped like the ones the app receives (an encyclopedia page, a
 /// paper, a blog post with bold lead-ins, docs, pasted text with bold or underlined headings, an
 /// anthology, the phone test plan from #1435), written for the repository. Real captures of public
-/// pages go in the same folder, the same way.
+/// pages go in the same folder, the same way. A source with a substantial preamble before its first
+/// heading starts with a chapter named by the item's title, which here is the source's file name
+/// (`journal-footnotes-block`, #796: the capture of a journal page, essay first and footnotes after,
+/// with Category and Subject labels and the byline as lower headings that are not chapters).
 final class ChapterCorpusScorerTests: XCTestCase {
     struct Score {
         let source: String
@@ -40,17 +44,13 @@ final class ChapterCorpusScorerTests: XCTestCase {
         }
     }
 
-    private func chaptersFolder() -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            root.deleteLastPathComponent()
-        }
-        return root.appending(path: "Contracts/fixtures")
+    private func chaptersFolder() throws -> URL {
+        try TestInputs.url(.contracts, "fixtures")
     }
 
     /// (name, source text, expected chapter titles), from the fixture folder.
     private func corpus() throws -> [(name: String, text: String, expected: [String])] {
-        let folder = chaptersFolder()
+        let folder = try chaptersFolder()
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "chapters").path)
             .filter { $0.hasSuffix(".chapters.txt") }
             .map { String($0.dropLast(".chapters.txt".count)) }

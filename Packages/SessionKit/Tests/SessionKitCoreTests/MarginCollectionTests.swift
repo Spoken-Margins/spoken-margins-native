@@ -1,5 +1,6 @@
 import XCTest
 import SessionKit
+import SessionKitTestInputs
 
 final class MarginCollectionTests: XCTestCase {
     func testDeletedItemsAndMissingItemsHidePrivateAndSharedMargins() throws {
@@ -177,8 +178,6 @@ final class MarginCollectionTests: XCTestCase {
     }
 
     private func appSource(_ name: String) throws -> String {
-        var root = URL(fileURLWithPath: #filePath)
-        for _ in 0..<5 { root.deleteLastPathComponent() }
-        return try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/" + name), encoding: .utf8)
+        try TestInputs.text(.appSources, name)
     }
 }

@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 
 /// #1435: the owner imported the phone test plan (`Test plan 744242e.md`) and its chapters were not
 /// its `##` sections: the adaptive map merged the short closing "If something is wrong" section into
@@ -13,14 +14,6 @@ import SessionKitPersistence
 final class MarkdownHeadingChapterTests: XCTestCase {
     private func words(_ count: Int, _ word: String = "word") -> String {
         Array(repeating: word, count: count).joined(separator: " ") + "."
-    }
-
-    private func repositoryRoot() -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            root.deleteLastPathComponent()
-        }
-        return root
     }
 
     private func titles(
@@ -57,7 +50,7 @@ final class MarkdownHeadingChapterTests: XCTestCase {
 
     func testPhoneTestPlanChaptersAreItsSectionHeadings() throws {
         let contents = try String(
-            contentsOf: repositoryRoot().appending(path: "Contracts/fixtures/markdown/test-plan-744242e.md"),
+            contentsOf: TestInputs.url(.contracts, "fixtures/markdown/test-plan-744242e.md"),
             encoding: .utf8
         )
         let parsed = try ObsidianMarkdownParser.parse(fileName: "Test plan 744242e.md", contents: contents)
@@ -72,7 +65,7 @@ final class MarkdownHeadingChapterTests: XCTestCase {
     /// the first `##`. Each chapter starts at its own heading line, the first at 0.
     func testPhoneTestPlanC9f8bbcHasSixChaptersAtTheirHeadings() throws {
         let contents = try String(
-            contentsOf: repositoryRoot().appending(path: "Contracts/fixtures/markdown/test-plan-c9f8bbc.md"),
+            contentsOf: TestInputs.url(.contracts, "fixtures/markdown/test-plan-c9f8bbc.md"),
             encoding: .utf8
         )
         let parsed = try ObsidianMarkdownParser.parse(fileName: "Test plan c9f8bbc.md", contents: contents)
@@ -115,7 +108,7 @@ final class MarkdownHeadingChapterTests: XCTestCase {
 
     func testImportedFileBecomesTheSameChapters() throws {
         let contents = try String(
-            contentsOf: repositoryRoot().appending(path: "Contracts/fixtures/markdown/test-plan-744242e.md"),
+            contentsOf: TestInputs.url(.contracts, "fixtures/markdown/test-plan-744242e.md"),
             encoding: .utf8
         )
         let prepared = try SourceFileItemBuilder.prepare(

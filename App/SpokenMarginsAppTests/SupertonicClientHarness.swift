@@ -10,6 +10,8 @@ import XCTest
 /// listener's phone takes, and the audit blockers on #301 and #346 lived exactly there.
 ///
 /// - Each chunk is long, silent audio, so no player ends on its own during a test.
+/// - With `distinctTones`, each chunk is a tone of its own pitch instead, so a repeated or skipped chunk could be
+///   told apart; a short `chunkSeconds` then lets the real queue play through several seams (#1762).
 /// - A render can be held until the test releases it (`heldRenders`, counted in render order from 1).
 /// - `finishPlayingChunk()` ends the playing chunk by posting the player item's own
 ///   `AVPlayerItemDidPlayToEndTime`, the notification the client observes on a real device.
@@ -40,6 +42,8 @@ final class SupertonicClientHarness {
     let systemVoice = RecordingFallbackAudioClient()
     /// The reasons the client gave when it told the app the voice changed.
     let fallbackReasons = HarnessFallbackLog()
+    /// The stall events the client logged, in order (`supertonic.stall`, `supertonic.stall_handover`, ...).
+    let stallEvents = HarnessFallbackLog()
     private let players = HarnessPlayerLog()
     private let root: URL
 
@@ -49,6 +53,7 @@ final class SupertonicClientHarness {
         chunkSeconds: Double = 30,
         stallRecoveryCooldown: Duration = .seconds(30),
         standInRenders: Set<Int> = [],
+        distinctTones: Bool = false,
         applicationIsActive: (@Sendable () -> Bool)? = nil,
         applicationIsInBackground: (@Sendable () -> Bool)? = nil,
         notificationCenter: NotificationCenter = .default
@@ -60,10 +65,12 @@ final class SupertonicClientHarness {
         self.text = text
         chunkStarts = RenderedSpeechChunker.sourceSlices(from: SpeechTextNormalizer.normalize(text)).map(\.startOffset)
         renderer = ScriptedSupertonicRenderer(
-            template: template, duration: chunkSeconds, heldRenders: heldRenders, standIns: standInRenders
+            template: template, duration: chunkSeconds, heldRenders: heldRenders, standIns: standInRenders,
+            distinctTones: distinctTones
         )
         let players = players
         let fallbackReasons = fallbackReasons
+        let stallEvents = stallEvents
         client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionNotificationCenter: notificationCenter,
@@ -76,6 +83,7 @@ final class SupertonicClientHarness {
             observesPlayerLifecycle: true,
             fallbackClient: systemVoice,
             onFallback: { reason, _, _ in fallbackReasons.add(reason) },
+            onStall: { kind, _ in stallEvents.add(kind) },
             stallRecoveryCooldown: stallRecoveryCooldown,
             applicationIsActive: applicationIsActive,
             applicationIsInBackground: applicationIsInBackground
@@ -135,6 +143,23 @@ final class SupertonicClientHarness {
         }.value
     }
 
+    /// The system turns down the newest player's start, as it did for a new player started with the app away
+    /// (#1763): the player is at rate 0 and says why.
+    func refuseTheNewestPlayersStart() {
+        guard let player = players.newest else {
+            XCTFail("no player has started")
+            return
+        }
+        player.pause()
+        NotificationCenter.default.post(
+            name: AVPlayer.rateDidChangeNotification, object: player,
+            userInfo: [AVPlayer.rateDidChangeReasonKey: AVPlayer.RateDidChangeReason.setRateFailed.rawValue]
+        )
+    }
+
+    /// The newest player, when the client plays on a queue.
+    var newestQueuePlayer: AVQueuePlayer? { players.newest as? AVQueuePlayer }
+
     /// How many items the newest player holds: the playing chunk, and the one queued behind it (#538).
     var itemsOnThePlayer: Int { (players.newest as? AVQueuePlayer)?.items().count ?? 0 }
 
@@ -145,8 +170,8 @@ final class SupertonicClientHarness {
     }
 
     /// Waits until the client is playing the chunk that starts at `start`; true when it is.
-    func waitForPlayingChunk(_ start: Int) async -> Bool {
-        for _ in 0..<150 where playingChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
+    func waitForPlayingChunk(_ start: Int, seconds: Double = 3) async -> Bool {
+        for _ in 0..<Int(seconds * 50) where playingChunkStart != start { try? await Task.sleep(for: .milliseconds(20)) }
         return playingChunkStart == start
     }
 
@@ -206,16 +231,20 @@ final class ScriptedSupertonicRenderer: SupertonicRendering, @unchecked Sendable
     private let template: URL
     private let duration: TimeInterval
     private let standIns: Set<Int>
+    private let distinctTones: Bool
     private let lock = NSLock()
     private var held: Set<Int>
     private var waiting: [Int: CheckedContinuation<Void, Never>] = [:]
     private var started = 0
     private var finished = 0
 
-    init(template: URL, duration: TimeInterval, heldRenders: Set<Int>, standIns: Set<Int> = []) {
+    init(
+        template: URL, duration: TimeInterval, heldRenders: Set<Int>, standIns: Set<Int> = [], distinctTones: Bool = false
+    ) {
         self.template = template
         self.duration = duration
         self.standIns = standIns
+        self.distinctTones = distinctTones
         held = heldRenders
     }
 
@@ -258,7 +287,11 @@ final class ScriptedSupertonicRenderer: SupertonicRendering, @unchecked Sendable
             }
         }
         let url = FileManager.default.temporaryDirectory.appending(path: "scripted-\(UUID().uuidString).wav")
-        try FileManager.default.copyItem(at: template, to: url)
+        if distinctTones {
+            try Self.writeTone(to: url, seconds: duration, frequency: 300 + 100 * Double(index))
+        } else {
+            try FileManager.default.copyItem(at: template, to: url)
+        }
         lock.withLock { finished += 1 }
         return SupertonicNarrationResult(
             audioURL: url, duration: duration, sampleRate: 8_000, renderDuration: 0.01, sessionLoadCount: 1,
@@ -268,6 +301,25 @@ final class ScriptedSupertonicRenderer: SupertonicRendering, @unchecked Sendable
     }
 
     func discardGeneratedAudio(at url: URL) async { try? FileManager.default.removeItem(at: url) }
+
+    /// 8 kHz mono sine tone: each render gets its own pitch, so a chunk played twice or out of order is audible
+    /// in the player's output.
+    private static func writeTone(to url: URL, seconds: Double, frequency: Double) throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: 8_000, channels: 1) else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        let frames = AVAudioFrameCount(8_000 * seconds)
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let samples = buffer.floatChannelData?[0] else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        buffer.frameLength = frames
+        for frame in 0..<Int(frames) {
+            samples[frame] = 0.5 * Float(sin(2 * Double.pi * frequency * Double(frame) / 8_000))
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
+    }
 }
 
 private final class HarnessPlayerLog: @unchecked Sendable {

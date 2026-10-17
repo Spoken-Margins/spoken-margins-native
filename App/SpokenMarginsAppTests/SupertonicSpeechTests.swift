@@ -2206,10 +2206,10 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "stand_in_voice 1")
     }
 
-    // The end of A is heard while the queue has not moved on (paused at the end, or not there yet) and B is queued
-    // behind it. B is not playing, so the seam must go through the app, which still has B's audio. Treating B as
-    // playing would leave the player silent until the stall watchdog fired.
-    func testAChunkEndHeardBeforeTheQueueMovedOnIsHandledThroughTheApp() async throws {
+    // #1762: the end of A reaches the app while the player still names A as current, with B queued behind it. The
+    // queue is moving on to B, which is playing from its start. The app must follow it, not take B off and start it
+    // again on a new player, which played B's first words twice at every seam on the owner's phone.
+    func testAChunkEndHeardBeforeTheQueueMovedOnFollowsTheQueueToTheNextChunk() async throws {
         let harness = try SupertonicClientHarness(applicationIsActive: { false })
         defer { harness.tearDown() }
         let chunk = harness.chunkStarts
@@ -2218,12 +2218,131 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertTrue(queued)
         let before = harness.playerStarts
 
-        await harness.finishPlayingChunk()                          // the end notification; the queue stays on A
+        await harness.finishPlayingChunk()                          // the end notification; the queue is still on A
+        let caughtUp = await harness.waitForPlayingChunk(chunk[1])
+        XCTAssertTrue(caughtUp, "the client's place moved on to B")
+        harness.advanceTheQueueWithoutTellingTheApp()               // the player gets to B a moment later
+
+        let next = await harness.waitForQueuedChunk(chunk[2])
+        XCTAssertTrue(next, "C is queued behind B")
+        XCTAssertEqual(harness.playerStarts, before, "B was not started again on a new player")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 1")
+    }
+
+    // The player stops at the end of an item (nothing will move on to B): B is not playing, so the seam goes
+    // through the app, which still has B's audio. Treating B as playing would leave the player silent until the
+    // stall watchdog fired.
+    func testAChunkEndHeardOnAPlayerThatStopsAtTheEndIsHandledThroughTheApp() async throws {
+        let harness = try SupertonicClientHarness(applicationIsActive: { false })
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 3)
+        let queued = await harness.waitForQueuedChunk(chunk[1])
+        XCTAssertTrue(queued)
+        let before = harness.playerStarts
+        let queue = try XCTUnwrap(harness.newestQueuePlayer)
+        queue.actionAtItemEnd = .pause
+
+        await harness.finishPlayingChunk()
 
         let next = await harness.waitForPlayerStarts(before + 1)
         XCTAssertTrue(next, "B was started through the app")
         XCTAssertEqual(harness.playingChunkStart, chunk[1])
         XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "rendered_not_queued 1")
+    }
+
+    // #1762: the real queue, with nothing driving it. Each chunk is two seconds of its own tone; the app is away
+    // through four of them. Every seam must be the queue's own: no new player, one `queued_ahead` per seam.
+    func testTheRealQueuePlaysThroughSeveralSeamsWithTheAppAwayAndNoNewPlayer() async throws {
+        let harness = try SupertonicClientHarness(
+            chunkSeconds: 2, distinctTones: true, applicationIsActive: { false }
+        )
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        XCTAssertGreaterThanOrEqual(chunk.count, 4)
+        try await harness.start(waitingForRenders: 3)
+        let starts = harness.playerStarts
+
+        let reached = await harness.waitForPlayingChunk(chunk[3], seconds: 15)
+
+        XCTAssertTrue(reached, "the real queue played on to the fourth chunk by itself")
+        XCTAssertEqual(harness.playerStarts, starts, "no seam started a new player")
+        XCTAssertEqual(harness.client.debugBackgroundSeamSummary, "queued_ahead 3")
+    }
+
+    // #1763: a new player the system would not start with the phone locked sat at time 0 with rate 0 ("SetRateFailed")
+    // for 5 s before the watchdog noticed, re-seated it, and then nothing brought the sound back before the
+    // listener opened the app. A refusal still standing a second later is a stall at once: one re-seat, and a
+    // second refusal from the re-seated player hands over to the iOS voice, with no tap.
+    func testARefusedStartWithTheAppInTheBackgroundIsReseatedAtOnce() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated, "a new player was started well inside the watchdog's 5 s")
+        XCTAssertEqual(harness.stallEvents.values, ["supertonic.stall"])
+        XCTAssertEqual(harness.fallbackReasons.values, [], "still the chosen voice")
+    }
+
+    func testARefusedStartThatTheReseatDoesNotFixHandsOverToTheIOSVoice() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+        harness.refuseTheNewestPlayersStart()
+        let reseated = await harness.waitForPlayerStarts(starts + 1)
+        XCTAssertTrue(reseated)
+
+        harness.refuseTheNewestPlayersStart()                       // the new player is turned down too
+
+        for _ in 0..<150 where !harness.stallEvents.values.contains("supertonic.stall_handover") {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(harness.stallEvents.values.prefix(2), ["supertonic.stall", "supertonic.stall_handover"])
+        XCTAssertFalse(harness.systemVoice.playedOffsets.isEmpty, "the iOS voice reads on")
+        XCTAssertEqual(harness.fallbackReasons.values, ["supertonic_player_stalled"])
+        XCTAssertFalse(harness.stallEvents.values.contains("supertonic.stall_paused"), "not left paused for a tap")
+    }
+
+    // The listener pauses within the second the refusal gets to clear: nothing is recovered.
+    func testARefusedStartIsLeftAloneWhenTheListenerPausesFirst() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { false }, applicationIsInBackground: { true }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try harness.client.pause()
+        try await Task.sleep(for: .milliseconds(1_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no re-seat of a player the listener paused")
+        XCTAssertEqual(harness.stallEvents.values, [])
+    }
+
+    // In front of the listener, who can tap, the watchdog's own timing stands.
+    func testARefusedStartWithTheAppInFrontIsLeftToTheWatchdog() async throws {
+        let harness = try SupertonicClientHarness(
+            applicationIsActive: { true }, applicationIsInBackground: { false }
+        )
+        defer { harness.tearDown() }
+        try await harness.start()
+        let starts = harness.playerStarts
+
+        harness.refuseTheNewestPlayersStart()
+        try await Task.sleep(for: .milliseconds(2_500))
+
+        XCTAssertEqual(harness.playerStarts, starts, "no early re-seat")
+        XCTAssertEqual(harness.stallEvents.values, [])
     }
 
     // The listener pauses with a chunk queued: nothing is lost. Playing again carries on, and the queued chunk
