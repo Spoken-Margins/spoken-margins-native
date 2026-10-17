@@ -40,7 +40,7 @@ Scripted journeys are UI tests in `App/SpokenMarginsAppUITests/` that each follo
 
 - **Where they run.** Only in the integration run on `next`'s merged tip, never as a per-PR gate. Per PR, a script only has to compile: `scripts/test-scope.py` puts `App/SpokenMarginsAppUITests/` at T2 and never adds its classes to a T3 request.
 - **Who writes them.** A thread that changes a listener's flow may add or update the script for the journey it affects, and names that journey in the PR.
-- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The Test Desk moves it to `gating` after seeing it pass twice on the simulator, and moves a gating script that flakes twice back to `probation`. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
+- **Probation.** `TestPlans/scripted-journeys.json` is the one list the integration run reads. A new or changed script goes under `probation` in the same PR. It runs and is reported, but can't turn the integration run red. The integration script counts each script's passes and bad runs in its state file and names the scripts that are due in its report (`journeys due to move:`); `ops/testdesk/journey_promotion.py --apply` then moves them in the listing, and the Test Desk opens that PR into next. A script moves to `gating` after two passing runs in a row, and back to `probation` after two bad runs in a row. `scripts/test_inventory.py` rejects an entry that names no real UI test or no journey.
 - **What they don't cover.** Audible content, the Lock Screen, Bluetooth, and anything that only looks wrong. Agent-driven journeys and the owner's phone keep those.
 - **How this differs from the retired plans.** `--plan ui`, `speech-canary` and `release` ran a broad route suite as a gate and stay retired (`AGENTS.md`). Scripted journeys are one short script per journey, each earning its place on probation.
 
@@ -158,7 +158,8 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    TestPlans/scripted-journeys.json (gating, then probation). They launch with --ui-testing,
    which resets the app's library, so they run before step 3 builds the journey library. A
    probation failure goes in the report but doesn't make it FAIL. Move a script to gating
-   after two passes, and back to probation after two flakes, in a PR into next. Run them
+   after two passes, and back to probation after two bad runs, in a PR into next
+   (ops/testdesk/journey_promotion.py). Run them
    with scripts/verify-tests.py --plan journeys --device <udid>; its manifest's gating and
    probation maps give each script's result.
 3. Then the journeys in docs/journeys.md. Finish the app tests' device with --done and take one
