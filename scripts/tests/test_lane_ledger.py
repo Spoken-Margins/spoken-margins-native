@@ -229,15 +229,18 @@ class RunnerStepTests(unittest.TestCase):
 
     def test_flush_never_fails_the_job(self):
         with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': state}), \
-                mock.patch('builtins.print'):
+                mock.patch('builtins.print') as printed:
             for _ in range(3):
                 lane.note_step('host tests', 'INCONCLUSIVE', 1)
                 lane.flush_ledger(1, HEAD, mock.Mock(side_effect=RuntimeError('gh: 502')))
-            (Path(state) / lane_ledger.LEDGER).write_text('{}')
-            (Path(state) / (lane_ledger.LEDGER + '.lock')).chmod(0)  # can't even lock
-            lane.note_step('host tests', 'PASS', 1)
-            self.assertEqual(lane.flush_ledger(1, HEAD, mock.Mock()), [])
-            (Path(state) / (lane_ledger.LEDGER + '.lock')).chmod(0o600)
+            # The ledger can't be written. chmod(0) would not do: root ignores it, so the failure branch never ran.
+            printed.reset_mock()
+            with mock.patch.object(lane_ledger, 'record_runs', side_effect=OSError('read-only file system')):
+                lane.note_step('host tests', 'PASS', 1)
+                self.assertEqual(lane.flush_ledger(1, HEAD, mock.Mock()), [])
+            self.assertEqual(lane.STEP_RUNS, [])
+        self.assertTrue(any('step ledger not updated' in str(call) and 'read-only file system' in str(call)
+                            for call in printed.call_args_list), printed.call_args_list)
 
 
 class MainPostsAlarmsTests(unittest.TestCase):
