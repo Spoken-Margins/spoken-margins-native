@@ -15,7 +15,10 @@ import sys
 import time
 import uuid
 
-DEFAULT_DIR = Path.home() / 'SpokenMarginsOps' / 'ledger'
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_paths  # noqa: E402
+
+DEFAULT_DIR = sm_paths.state_dir('ledger')
 TOKEN_FIELDS = ('input_tokens', 'cached_input_tokens', 'output_tokens')
 
 

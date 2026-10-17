@@ -30,6 +30,7 @@ loader = importlib.machinery.SourceFileLoader('phone_build', str(SCRIPTS / 'phon
 spec = importlib.util.spec_from_loader('phone_build', loader)
 phone = importlib.util.module_from_spec(spec)
 loader.exec_module(phone)
+sys.path.insert(0, str(phone.PUBLIC / 'scripts'))
 import lane_ledger
 
 
@@ -172,7 +173,7 @@ def propose(items, catalog, folder):
 
 def validate(request, plan_id):
     command = shlex.split(os.environ.get('SM_DAILY_VALIDATOR', str(
-        SCRIPTS.parent / 'Packages/SessionKit/.build/release/phone-plan')))
+        phone.PUBLIC / 'Packages/SessionKit/.build/release/phone-plan')))
     result = subprocess.run([*command, plan_id], input=json.dumps(request), text=True,
                             capture_output=True, timeout=30)
     if result.returncode:

@@ -25,9 +25,12 @@ import sys
 import time
 from typing import Callable, Optional
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
+import sm_paths  # noqa: E402
+
 REPO = os.environ.get('SM_INTEGRATION_REPO', 'uncomposed/spoken-margins-native')
-REPO_ROOT = Path(__file__).resolve().parents[2]          # ops/testdesk/ -> repo root
-HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME', Path.home() / 'SpokenMarginsOps' / 'integration-run'))
+REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it tests (SM_REPO)
+HOME_DIR = Path(os.environ.get('SM_INTEGRATION_HOME') or sm_paths.state_dir('integration-run'))
 BASE_BRANCH = 'next'
 REPORT_ISSUE = 184
 RUN_BY = 'integration script'

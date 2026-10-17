@@ -403,7 +403,7 @@ class TickTests(unittest.TestCase):
                 sent.append([str(x) for x in cmd])
                 return w.Result(0, json.dumps({'changes': [{}], 'unknown': [], 'api_calls': 12, 'writes': 3,
                                                'seconds': 4.2}))
-            ops = w.Ops(home=root / 'home', repo_root=root, run=run, echo=False)
+            ops = w.Ops(home=root / 'home', repo_root=root, own_root=root, run=run, echo=False)
             self.assertIn('skipped', ops.board_sync(7))   # not on this checkout yet: nothing runs
             self.assertEqual(sent, [])
             (root / 'scripts').mkdir()
