@@ -60,6 +60,11 @@ def load(root):
 def walk(root):
     """Every file the repository tracks, as posix paths relative to root. Without git: every file but build and tool folders."""
     try:
+        # Only when root is itself a checkout: a folder inside another repository (a test's temp copy under the
+        # lane's workspace) would list that repository's tracked files, not its own.
+        top = subprocess.run(['git', '-C', str(root), 'rev-parse', '--show-toplevel'], capture_output=True, check=True)
+        if Path(top.stdout.decode().strip()).resolve() != Path(root).resolve():
+            raise OSError('not the top of a checkout')
         listed = subprocess.run(['git', '-C', str(root), 'ls-files', '-z'], capture_output=True, check=True).stdout
         for name in listed.decode().split('\0'):
             if name and (root / name).is_file():
