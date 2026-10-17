@@ -15,7 +15,7 @@
 # when next moves, so a PR last pushed before this file reached next gets no run (#221) until it
 # merges next and pushes; a PR that conflicts with next gets no run either. The other triggers
 # don't help: comment events and pull_request_target always use the default branch's (main's)
-# copy of this file, and main doesn't carry it.
+# copy of this file, and main's copy is the old one from the last release, not next's.
 # The job checks out the PR head, takes lane-runner.py from the base branch, and lets it merge the
 # newest base in itself, so a report always tests the PR against the current next.
 #
@@ -24,7 +24,7 @@
 # Forks (#1719): every job that takes a pull_request event checks that the PR's head repository is this
 # one. `release` takes only workflow_dispatch, which needs write access, and lane-runner.py re-checks the
 # PR's head repository before it tests anything. pull_request_target is not used: it would run main's copy
-# of this file, which main doesn't carry, with a write token next to PR code. A fork's PR can still edit
+# of this file, which lags next's, with a write token next to PR code. A fork's PR can still edit
 # this file in its own merge ref, so the runners' own job-started hook (ops/runner-guard) is what actually
 # keeps fork code off the Mac and the VPS.
 #

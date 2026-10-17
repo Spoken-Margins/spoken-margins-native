@@ -14,7 +14,7 @@
 # The lane runner's own merges: it merges with the workflow token (decision 3), and pushes made with
 # that token start no workflow, so this file never sees them. lane-runner.py runs
 # `merge_audit.py --sweep-hours 2` itself after each merge it pushes. There is no schedule here:
-# GitHub runs scheduled workflows only from the default branch (main), which doesn't carry this file.
+# GitHub runs scheduled workflows only from the default branch (main), whose copy lags next's.
 name: merge-audit
 
 on:
