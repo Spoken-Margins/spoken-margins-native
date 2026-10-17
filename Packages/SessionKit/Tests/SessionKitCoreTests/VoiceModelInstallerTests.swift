@@ -766,6 +766,9 @@ private final class RecordingTransport: VoiceModelTransport, @unchecked Sendable
 }
 
 /// The real transport, plus a note of the biggest file under `root` after every piece of body.
+/// Each piece is handed on in slices of at most 16 KB, so the installer sees the same small writes
+/// on every machine. URLSession decides its own chunk size, and one chunk big enough to cross the
+/// limit is refused whole, which would leave the file empty and the watcher with nothing to measure.
 private final class SizeWatchingTransport: VoiceModelTransport, @unchecked Sendable {
     private let lock = NSLock()
     private let root: @Sendable () -> URL
@@ -798,8 +801,13 @@ private final class SizeWatchingTransport: VoiceModelTransport, @unchecked Senda
         onChunk: @escaping @Sendable (Data) throws -> Void
     ) async throws {
         try await inner.fetch(url, from: offset, onHead: onHead) { data in
-            defer { self.measure() }
-            try onChunk(data)
+            var start = data.startIndex
+            while start < data.endIndex {
+                let end = data.index(start, offsetBy: 16_384, limitedBy: data.endIndex) ?? data.endIndex
+                defer { self.measure() }
+                try onChunk(data[start..<end])
+                start = end
+            }
         }
     }
 }
