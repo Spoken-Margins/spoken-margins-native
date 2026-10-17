@@ -559,10 +559,12 @@ final class Gate1FlowUITests: XCTestCase {
         XCTAssertTrue(summarize.isEnabled)
         summarize.tap()
 
-        let failure = element("app.feedback.banner")
+        // A failure about the playing listen is the playback screen's one-line tag, not the top banner (#430).
+        let failure = element("playback.feedbackTag")
         XCTAssertTrue(failure.waitForExistence(timeout: 8))
-        XCTAssertTrue(failure.label.contains("Summary couldn’t finish."))
-        XCTAssertTrue(app.buttons["app.feedback.retry"].isEnabled)
+        XCTAssertTrue(failure.label.contains("Summary couldn’t finish"))
+        XCTAssertTrue(app.buttons["playback.feedbackTag.retry"].isEnabled)
+        XCTAssertFalse(element("app.feedback.banner").exists)
 
         XCTAssertTrue(summarize.waitForExistence(timeout: 4))
         XCTAssertTrue(summarize.label.contains("Retry summary"))

@@ -221,6 +221,51 @@ final class FeedbackBannerTests: XCTestCase {
         }
     }
 
+    /// #430: the summary failure names its listen. On the Timeline it is the banner; back on the Now screen
+    /// for that listen it is the tag under the title, still offering the same Retry.
+    func testFailedSummaryIsATagUnderTheTitleOnlyOnItsOwnNowScreen() async throws {
+        try await withPendingLocalSummary { model, summarizer in
+            let sessionId = try XCTUnwrap(model.snapshot.sessionId)
+            await summarizer.fail()
+            try await waitForSummaryFailure(model)
+
+            XCTAssertEqual(model.feedbackEvent?.origin, FeedbackOrigin(itemId: "item-pill", sessionId: sessionId, work: .summary))
+            XCTAssertEqual(model.screen, .timeline)
+            XCTAssertNil(model.playbackFeedbackTag, "Off the Now screen the failure keeps the banner")
+
+            model.openPlayback()
+            XCTAssertEqual(model.screen, .playback)
+            let shown = try XCTUnwrap(model.playbackFeedbackTag)
+            XCTAssertEqual(shown.event.id, model.feedbackEvent?.id)
+            XCTAssertEqual(shown.tag.text, "Summary couldn’t finish")
+            XCTAssertTrue(shown.tag.offersRetry)
+            XCTAssertEqual(shown.event.retry?.key, "summary")
+            XCTAssertEqual(model.itemFailures.lastFailure(itemId: "item-pill")?.message, model.lastError,
+                           "The full message stays on the item")
+        }
+    }
+
+    /// Only the summary and transcription failure paths set an origin; every other event keeps the banner.
+    func testAFailureWithoutOriginKeepsTheBannerOnTheNowScreen() {
+        // A James or Lily choice left pending on the Terms holds the start, so nothing plays and the
+        // Now screen never opens. Choose the iPhone voice, as the other playback tests here do, and put
+        // the shared voice preferences back afterwards (#1448).
+        let preferences = VoicePreferencesSnapshot.capture()
+        defer { preferences.restore() }
+        let model = Gate1AppModel(audioPlaybackClient: NoopAudioPlaybackClient())
+        model.resetAndSeed()
+        model.declineCurrentTerms()
+        model.startItem(id: "item-pill")
+        XCTAssertTrue(model.hasActiveSession, "The item must be playing before the Now screen can open")
+        model.openPlayback()
+        XCTAssertEqual(model.screen, .playback)
+
+        model.reportFailure("Clipboard does not contain text.")
+
+        XCTAssertNil(model.feedbackEvent?.origin)
+        XCTAssertNil(model.playbackFeedbackTag)
+    }
+
     private func withPendingLocalSummary(
         _ check: (Gate1AppModel, PendingFailingSummaryClient) async throws -> Void
     ) async throws {
