@@ -185,19 +185,46 @@ def inherited_simulator_slot(fd):
     raise ValueError('inherited simulator descriptor must name a held Mac-wide simulator slot')
 
 
-def input_identity():
+INPUT_ROOTS = ('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/', 'SpokenMarginsNative.xcodeproj/',
+               'scripts/', 'validation/', 'Tools/', 'schemas/', 'ops/')
+INPUT_FILES = ('project.yml', 'package.json', 'package-lock.json')
+
+
+def input_digests():
+    """The hash of every file the verification depends on, by path (tracked and untracked, not ignored)."""
     paths = capture(['git', 'ls-files', '--cached', '--others', '--exclude-standard']).splitlines()
-    digest = hashlib.sha256()
+    digests = {}
     for relative in sorted(set(paths)):
-        if not (relative.startswith(('App/', 'Packages/', 'Contracts/', 'Config/', 'TestPlans/',
-                                     'SpokenMarginsNative.xcodeproj/', 'scripts/', 'validation/',
-                                     'Tools/', 'schemas/', 'ops/'))
-                or relative in ('project.yml', 'package.json', 'package-lock.json')):
+        if not (relative.startswith(INPUT_ROOTS) or relative in INPUT_FILES):
             continue
         path = ROOT / relative
-        digest.update(relative.encode() + b'\0')
-        digest.update(path.read_bytes() if path.is_file() else b'<deleted>')
+        digests[relative] = hashlib.sha256(path.read_bytes() if path.is_file() else b'<deleted>').hexdigest()
+    return digests
+
+
+def input_identity():
+    digest = hashlib.sha256()
+    for relative, file_digest in input_digests().items():
+        digest.update(relative.encode() + b'\0' + file_digest.encode())
     return digest.hexdigest()
+
+
+def inputs_changed_message(prefix, before, limit=5):
+    """`prefix`, then the first few paths whose hash differs from `before` (#1773), so a lane report names the file.
+
+    SwiftPM rewrites Packages/SessionKit/Package.resolved when the committed copy doesn't match Package.swift (a
+    branch that committed the Linux-resolved copy did exactly that), so that case says how to fix it."""
+    after = input_digests()
+    paths = sorted(path for path in before.keys() | after.keys() if before.get(path) != after.get(path))
+    if not paths:
+        return prefix + ' (no file hash differs now: it changed and changed back)'
+    shown = ', '.join(paths[:limit]) + (f' and {len(paths) - limit} more' if len(paths) > limit else '')
+    message = f'{prefix}: {shown}'
+    if 'Packages/SessionKit/Package.resolved' in paths:
+        message += ('. SwiftPM rewrote Package.resolved during the build, so the copy committed on this branch does not '
+                    'match Package.swift on the Mac (a Linux `swift test` rewrites it). Restore it with '
+                    '`git checkout origin/next -- Packages/SessionKit/Package.resolved` and push')
+    return message
 
 
 def test_records(log):
@@ -376,7 +403,7 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
-                       'test_sessionkit_pass', 'test_mini_player_keep_out')
+                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
                       'docs/sharing-test-kit/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
@@ -642,6 +669,7 @@ class Run:
         self.manifest = {'plan': plan, 'head': capture(['git', 'rev-parse', 'HEAD']),
                          'branch': capture(['git', 'branch', '--show-current']),
                          'input_sha256': input_identity(), 'status': 'running', 'steps': []}
+        self.input_files = input_digests()  # what the manifest's hash was made of, to name what changed (#1773)
         self.crash_baseline = None
         self.crash_times = {}
         self.save()
@@ -898,7 +926,7 @@ class Run:
                 sessionkit_pass.record(state_dir(), pass_key, head=self.manifest['head'], tests=len(expected))
 
         if input_identity() != self.manifest['input_sha256']:
-            raise RuntimeError('Inputs changed during fast verification')
+            raise RuntimeError(inputs_changed_message('Inputs changed during fast verification', self.input_files))
 
     def package_steps(self, expected):
         """Build SessionKit and run its tests: SessionKitCoreTests in parallel (#1328), the rest serially."""
