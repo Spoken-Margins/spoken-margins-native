@@ -308,7 +308,7 @@ class CatchClassTests(unittest.TestCase):
         bad = self.repo.git('rev-parse', 'HEAD')
         lane_ledger.record(self.ledger, 'app tests', 'fail', 90.0, pr, bad, BASE, tests, self.repo.root, sink)
         good = fix()
-        lane_ledger.record(self.ledger, 'app tests', 'pass', 80.0, pr, good, BASE, (), self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 80.0, pr, good, BASE, (), self.repo.root, sink, ran=tests)
         return sink
 
     def test_product_code_change_is_a_catch(self):
@@ -347,7 +347,7 @@ class CatchClassTests(unittest.TestCase):
         good = git('rev-parse', 'HEAD')
         sink = []
         lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, bad, BASE, ['T/t'], self.repo.root, sink)
-        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, BASE, (), self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, BASE, (), self.repo.root, sink, ran=['T/t'])
         self.assertEqual(sink[0]['class'], 'flake')  # a plain two-head diff would say catch
 
     def test_same_head_passing_on_a_newer_next_is_not_a_flake(self):
@@ -355,7 +355,8 @@ class CatchClassTests(unittest.TestCase):
         # PR head. Calling that a flake would mark a test that caught a regression on next as noise.
         sink, head = [], self.repo.git('rev-parse', 'HEAD')
         lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['T/t'], self.repo.root, sink)
-        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, head, OTHER_BASE, (), self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, head, OTHER_BASE, (), self.repo.root, sink,
+                           ran=['T/t'])
         self.assertEqual([(l['test'], l['class']) for l in sink], [('T/t', 'next-moved')])
 
     def test_next_merged_into_the_pr_on_a_newer_next_is_not_a_flake(self):
@@ -369,14 +370,16 @@ class CatchClassTests(unittest.TestCase):
         good = git('rev-parse', 'HEAD')
         sink = []
         lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, bad, BASE, ['T/t'], self.repo.root, sink)
-        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, OTHER_BASE, (), self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, OTHER_BASE, (), self.repo.root, sink,
+                           ran=['T/t'])
         self.assertEqual(sink[0]['class'], 'next-moved')
 
     def test_a_test_that_passes_on_a_rerun_of_the_same_head_is_a_flake_not_dropped(self):
         # Audit on f5d113b, finding 2: A and B fail at H, the re-run at H fails only B. A must be recorded.
         sink, head = [], self.repo.git('rev-parse', 'HEAD')
         lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['A/a', 'B/b'], self.repo.root, sink)
-        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['B/b'], self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['B/b'], self.repo.root, sink,
+                           ran=['A/a', 'B/b'])
         self.assertEqual([(l['test'], l['class']) for l in sink], [('A/a', 'flake')])
 
     def test_a_test_that_stops_failing_while_another_still_fails_is_closed_then(self):
@@ -385,11 +388,63 @@ class CatchClassTests(unittest.TestCase):
         first = r.git('rev-parse', 'HEAD')
         lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, first, BASE, ['A/a', 'B/b'], r.root, sink)
         second = r.commit('App/A.swift')
-        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, second, BASE, ['B/b'], r.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, second, BASE, ['B/b'], r.root, sink, ran=['A/a', 'B/b'])
         self.assertEqual([(l['test'], l['class']) for l in sink], [('A/a', 'catch')])
         third = r.commit('App/B.swift')
-        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, third, BASE, (), r.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, third, BASE, (), r.root, sink, ran=['A/a', 'B/b'])
         self.assertEqual([(l['test'], l['from'][:7]) for l in sink[1:]], [('B/b', second[:7])])
+
+    def test_a_test_the_passing_run_did_not_run_stays_open(self):
+        # Audit on 4dc582d, scenario A: the lane lists only failing tests, so a test missing from a PASS may not
+        # have run. FooTests and BarTests fail at H1; H2 fixes Foo and the PASS runs FooTests only.
+        sink, r = [], self.repo
+        first = r.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, first, BASE, ['Foo/a', 'Bar/b'], r.root, sink)
+        second = r.commit('App/Foo.swift')
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, second, BASE, (), r.root, sink, ran=['Foo/a'])
+        self.assertEqual([(l['test'], l['class']) for l in sink], [('Foo/a', 'catch')])
+        third = r.commit('App/Bar.swift')  # a later PASS that does run Bar closes it, from the head it failed at
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, third, BASE, (), r.root, sink,
+                           ran=['Foo/a', 'Bar/b'])
+        self.assertEqual([(l['test'], l['class'], l['from']) for l in sink[1:]], [('Bar/b', 'catch', first)])
+
+    def test_a_test_a_failing_rerun_did_not_run_is_not_a_flake(self):
+        # Audit on 4dc582d, scenario B: A and B fail at H; the same H re-run with tests: B fails B again. A didn't
+        # run, so it is still open, not a flake; when a later run fails it again it is still one episode.
+        sink, head = [], self.repo.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['A/a', 'B/b'], self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['B/b'], self.repo.root, sink,
+                           ran=['B/b'])
+        self.assertEqual(sink, [])
+        fixed = self.repo.commit('App/A.swift')
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, fixed, BASE, (), self.repo.root, sink,
+                           ran=['A/a', 'B/b'])
+        self.assertEqual(sorted((l['test'], l['class']) for l in sink), [('A/a', 'catch'), ('B/b', 'catch')])
+
+    def test_without_the_list_of_tests_run_named_tests_stay_open(self):
+        # The lane runner passes no list of the tests it ran yet, so a PASS can't close a named test; the step-level
+        # catch count still works, and a step failure without names still closes.
+        sink, r = [], self.repo
+        first = r.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, first, BASE, ['A/a'], r.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, r.commit('App/A.swift'), BASE, (), r.root, sink)
+        self.assertEqual(sink, [])
+        self.assertEqual(self.ledger['steps']['app tests']['catches'], 1)
+        lane_ledger.record(self.ledger, 'host tests', 'fail', 9, 7, first, BASE, (), r.root, sink)
+        lane_ledger.record(self.ledger, 'host tests', 'pass', 9, 7, r.commit('App/B.swift'), BASE, (), r.root, sink)
+        self.assertEqual([(l['test'], l['class']) for l in sink], [('step:host tests', 'catch')])
+
+    def test_record_runs_passes_the_tests_each_run_ran(self):
+        state = Path(self.tmp.name) / 'state'
+        r = self.repo
+        first = r.git('rev-parse', 'HEAD')
+        lane_ledger.record_runs(state, [{'step': 'app tests', 'result': 'fail', 'seconds': 9, 'base': BASE,
+                                         'failed': ['A/a', 'B/b']}], 7, first, r.root)
+        second = r.commit('App/A.swift')
+        lane_ledger.record_runs(state, [{'step': 'app tests', 'result': 'pass', 'seconds': 9, 'base': BASE,
+                                         'failed': [], 'ran': ['A/a']}], 7, second, r.root)
+        written = [json.loads(x) for x in (state / lane_ledger.CATCHES).read_text().splitlines()]
+        self.assertEqual([(w['test'], w['class']) for w in written], [('A/a', 'catch')])
 
     def test_a_step_failure_without_test_names_is_recorded_under_the_step(self):
         lines = self.fail_then_pass(lambda: self.repo.commit('App/A.swift'), tests=())

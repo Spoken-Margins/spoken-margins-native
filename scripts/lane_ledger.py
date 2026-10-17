@@ -31,8 +31,16 @@ head and the passing one (first-parent only, so next merged into the PR does not
   flake; the ledger can't tell which, so it doesn't count it as either;
 - other: only files outside those (docs, scripts), or the diff could not be read.
 
-`python3 scripts/lane_ledger.py report` prints the totals per test. The lane reports list failing tests only, so
-"episodes" counts failures that were later closed, not every run of the test.
+A test closes only on a run that ran it. The lane reports list failing tests only, and T3 runs a different set
+of tests on each request, so a test missing from a run's failures may simply not have run. Each step run can carry
+'ran', the tests it executed; a named test closes only when it is in that list and not among the failures, and
+otherwise stays open (step['open_tests']) with the head it last failed at. The lane runner does not pass 'ran' yet,
+so until it does, the lane's named test failures stay open and only a step failure that named no test
+(step:<name>) closes on the step's PASS. The integration run (record_tip) always runs the full app plan, so a
+PASS there closes every open test.
+
+`python3 scripts/lane_ledger.py report` prints the totals per test. "Episodes" counts failures that were later
+closed, not every run of the test.
 
 Stdlib only, Python 3.9-compatible: lane-runner.py runs under /usr/bin/python3.
 """
@@ -125,19 +133,28 @@ def classify(repo, old: str, new: str, merges: bool = False) -> str:
     return 'other'
 
 
-def close_tests(sink: list, open_fail: dict, step: str, key: str, new: str, repo, merges: bool,
-                tests=None, base: str = '') -> None:
-    """Classify the tests in <open_fail> (all, or just <tests>) as fixed at <new>, adding a line each to <sink>.
+def _close(sink: list, step: str, key: str, test: str, origin: dict, new: str, repo, merges: bool, base: str,
+           kinds: dict) -> None:
+    """Add one line to <sink>: <test>, failing since <origin> ({'head', 'base', 'seconds'}), fixed at <new>.
     base: the next commit the closing run tested against. When the PR's own code is unchanged but next moved since
     the failing run, the class is next-moved, not flake. An unknown base (an older ledger) keeps flake."""
-    old, found = open_fail['head'], open_fail.get('tests') or [f'step:{step}']
-    kind = classify(repo, old, new, merges)
-    if kind == 'flake' and base and open_fail.get('base') and open_fail['base'] != base:
+    old = origin['head']
+    if old not in kinds:
+        kinds[old] = classify(repo, old, new, merges)
+    kind = kinds[old]
+    if kind == 'flake' and base and origin.get('base') and origin['base'] != base:
         kind = 'next-moved'
-    for test in found:
+    sink.append({'step': step, 'test': test, 'key': key, 'from': old, 'to': new, 'class': kind,
+                 'seconds': round(origin.get('seconds', 0.0), 1)})
+
+
+def close_tests(sink: list, open_fail: dict, step: str, key: str, new: str, repo, merges: bool,
+                tests=None, base: str = '') -> None:
+    """Classify the tests in <open_fail> (all, or just <tests>) as fixed at <new>, adding a line each to <sink>."""
+    kinds: dict = {}
+    for test in open_fail.get('tests') or [f'step:{step}']:
         if tests is None or test in tests:
-            sink.append({'step': step, 'test': test, 'key': key, 'from': old, 'to': new, 'class': kind,
-                         'seconds': round(open_fail.get('seconds', 0.0), 1)})
+            _close(sink, step, key, test, open_fail, new, repo, merges, base, kinds)
 
 
 def _open(value) -> dict:
@@ -145,13 +162,47 @@ def _open(value) -> dict:
     return value if isinstance(value, dict) else {'head': value, 'tests': [], 'seconds': 0.0}
 
 
+def _settle_tests(step: dict, pr_key: str, before, failing: list, ran, passed: bool, name: str, head: str,
+                  base: str, repo, sink) -> None:
+    """Close the PR's open test failures that this run shows fixed, and keep the rest open.
+
+    The lane reports list failing tests only, so a test missing from <failing> may not have run: T3 runs the
+    request's tests: line plus the classes test-scope picks, a different set each time (audit on 4dc582d). A named
+    test closes only when <ran> (the tests this run executed) includes it; with ran None nobody knows, so it stays
+    open in step['open_tests'] with the head it last failed at, until a run that ran it passes it. A test still in
+    <failing> is reopened at this head by the caller. A failure that named no test (step:<name>) closes when the
+    step passes, since the whole step ran; a later FAIL that names tests replaces it."""
+    pending = dict(step.get('open_tests', {}).get(pr_key, {}))
+    kinds, kept, key = {}, {}, f'pr:{pr_key}'
+    ran = None if ran is None else set(ran)
+    if before is not None:
+        origin = {'head': before['head'], 'base': before.get('base', ''), 'seconds': before.get('seconds', 0.0)}
+        for test in before.get('tests') or []:
+            pending[test] = origin
+        if passed and not before.get('tests') and sink is not None:
+            _close(sink, name, key, f'step:{name}', origin, head, repo, False, base, kinds)
+    for test, origin in pending.items():
+        if test in failing:
+            continue
+        if ran is not None and test in ran:
+            if sink is not None:
+                _close(sink, name, key, test, origin, head, repo, False, base, kinds)
+        else:
+            kept[test] = origin
+    if kept:
+        step.setdefault('open_tests', {})[pr_key] = kept
+    else:
+        step.get('open_tests', {}).pop(pr_key, None)
+
+
 def record(ledger: dict, name: str, result: str, seconds: float, pr: int, head: str, base: str,
-           failed=(), repo=None, sink=None) -> list[str]:
+           failed=(), repo=None, sink=None, ran=None) -> list[str]:
     """Add one run of step <name> to <ledger> and return the alarms it raises, newly, as comment bodies.
 
     result: pass, fail or fault (outcome()). failed: the tests or parts that failed, for the shared-failure rule
     and the per-test catch lines. repo: the git checkout holding the PR's heads; sink: a list that gets one dict
-    per closed test failure (record_runs writes them to test-catches.jsonl).
+    per closed test failure (record_runs writes them to test-catches.jsonl). ran: the tests this run executed, or
+    None when the caller can't say; only a test that ran and didn't fail is closed (_settle_tests).
     """
     if result not in VERDICTS:
         raise ValueError(f'unknown step result {result!r}')
@@ -164,21 +215,18 @@ def record(ledger: dict, name: str, result: str, seconds: float, pr: int, head: 
         step['since_fail_runs'], step['since_fail_seconds'] = 0, 0.0
         tests = list(dict.fromkeys(failed))
         before = step['open_fails'].get(pr_key)
-        if before is not None and sink is not None:  # tests that failed before and pass now were fixed here
-            before = _open(before)
-            gone = [t for t in (before.get('tests') or []) if t not in tests]
-            if gone:  # at the same head too: same code, different outcome is a flake (or next-moved)
-                close_tests(sink, before, name, f'pr:{pr}', head, repo, False, gone, base)
+        _settle_tests(step, pr_key, before and _open(before), tests, ran, False, name, head, base, repo, sink)
         step['open_fails'][pr_key] = {'head': head, 'tests': tests, 'seconds': seconds, 'base': base}
     else:
         step['since_fail_runs'] += 1
         step['since_fail_seconds'] += seconds
-    if result == 'pass' and pr_key in step['open_fails']:
-        before = _open(step['open_fails'].pop(pr_key))
-        if before['head'] != head:  # a later commit fixed what the step caught
-            step['catches'] += 1
-        if sink is not None:
-            close_tests(sink, before, name, f'pr:{pr}', head, repo, False, base=base)
+    if result == 'pass' and (pr_key in step['open_fails'] or pr_key in step.get('open_tests', {})):
+        before = step['open_fails'].pop(pr_key, None)
+        if before is not None:
+            before = _open(before)
+            if before['head'] != head:  # a later commit fixed what the step caught
+                step['catches'] += 1
+        _settle_tests(step, pr_key, before, (), ran, True, name, head, base, repo, sink)
     step['faults_in_a_row'] = step['faults_in_a_row'] + 1 if result == 'fault' else 0
 
     waste = f'waste:{name}'
@@ -276,7 +324,7 @@ def record_runs(state: Path, runs: list[dict], pr: int, head: str, repo=None) ->
     with opened(state) as ledger:
         for run in runs:
             raised += record(ledger, run['step'], run['result'], run['seconds'], pr, head, run.get('base') or '',
-                             run.get('failed') or (), repo, lines)
+                             run.get('failed') or (), repo, lines, run.get('ran'))
         _append_catches(state, lines)
     return raised
 
