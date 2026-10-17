@@ -81,14 +81,8 @@ final class AppColorContrastCoverageTests: XCTestCase {
 
         // A token is covered when some pair uses its exact values as foreground or background.
         let used = AppColorContrastAudit.allPairs.flatMap { [$0.foreground, $0.background] }
-        let exempt: Set<String> = [
-            "listeningBackground", "captureBackground", // backgrounds are covered through their text pairs
-        ]
-        for token in AppSemanticColorRGB.all where !exempt.contains(token.name) {
+        for token in AppSemanticColorRGB.all {
             XCTAssertTrue(used.contains(token.color), "\(token.name) has no pair in the contrast audit")
-        }
-        for token in exempt {
-            XCTAssertTrue(listed.contains(token))
         }
     }
 
