@@ -65,6 +65,42 @@ final class BrowserTextHandoffStoreTests: XCTestCase {
         XCTAssertEqual(try store.pendingPayloadIDs(), ["payload-1"])
     }
 
+    func testAFullyPopulatedHandoffReadsBackWithEveryFieldTheStoreCarries() throws {
+        let original = BrowserTextHandoff(
+            itemId: "item-7",
+            captureMode: .selectedText,
+            source: BrowserTextSource(url: "https://example.com/full", title: "Full"),
+            text: "Body text.",
+            contentFormat: .markdown,
+            selection: BrowserTextSelection(textStart: 4, textEnd: 9, prefix: "before ", suffix: " after"),
+            requestedContinuation: BrowserTextContinuation(startSession: true, preferredPlaybackOwner: "watch")
+        )
+
+        try store.save(original, payloadID: "full")
+
+        XCTAssertEqual(try store.handoff(payloadID: "full"), original)
+        let read = try store.handoff(payloadID: "full")
+        XCTAssertEqual(read.itemId, "item-7")
+        XCTAssertEqual(read.contentFormat, .markdown)
+        XCTAssertEqual(read.selection, BrowserTextSelection(textStart: 4, textEnd: 9, prefix: "before ", suffix: " after"))
+        XCTAssertEqual(read.requestedContinuation, BrowserTextContinuation(startSession: true, preferredPlaybackOwner: "watch"))
+    }
+
+    func testTheStoreDropsTheDocumentStructureOnPurposeBecauseOnlyTheSafariAndShortcutsPayloadsUseIt() throws {
+        // PDF structure travels with the in-process import (`importBrowserTextInBackground(_:structuredDocument:)`), never
+        // through this store, whose writers are the Safari extension and the Add Article shortcut. If a writer
+        // ever needs it here, `BrowserTextPayload` must carry it and this test changes with it.
+        let structure = PDFDocumentStructure(
+            extractionEngine: .pdfKit, analysisStatus: .complete, pageCount: 3, analyzedPageCount: 3
+        )
+        var original = handoff()
+        original.documentStructure = structure
+
+        try store.save(original, payloadID: "pdf")
+
+        XCTAssertNil(try store.handoff(payloadID: "pdf").documentStructure)
+    }
+
     func testAPayloadIDIsTrimmedWhereverItIsGiven() throws {
         try store.save(handoff(), payloadID: "  padded \n")
 

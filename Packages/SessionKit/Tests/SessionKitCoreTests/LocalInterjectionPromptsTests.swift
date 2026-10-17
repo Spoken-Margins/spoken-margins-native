@@ -157,6 +157,54 @@ final class LocalInterjectionPromptsTests: XCTestCase {
         )
     }
 
+    /// Every spoken term the model must not see, what it is swapped for, and what `restoreSafetyTerms` puts back.
+    /// The restore is lossy on purpose: several spoken forms share one safe stand-in, so the listener's own
+    /// wording comes back as the canonical term ("misaligned" returns as "misalignment").
+    func testEverySafetyTermIsHiddenFromTheModelAndComesBackAsItsCanonicalForm() {
+        let table: [(spoken: String, hiddenTerm: String, restored: String)] = [
+            ("zero-day", "zero", "zero-day"),
+            ("zero day", "zero", "zero-day"),
+            ("0 day", "0", "zero-day"),
+            ("security vulnerability", "vulnerab", "security vulnerability"),
+            ("break the law", "law", "break the law"),
+            ("do anything illegal", "illegal", "break the law"),
+            ("illegal actions", "illegal", "break the law"),
+            ("illegal action", "illegal", "break the law"),
+            ("cheating", "cheat", "cheating"),
+            ("cheat", "cheat", "cheat"),
+            ("misalignment", "misalign", "misalignment"),
+            ("misaligned", "misalign", "misalignment"),
+            ("mislined", "mislined", "misalignment"),
+            ("malicious", "malicious", "malicious"),
+            ("super malicious", "malicious", "malicious")
+        ]
+
+        for row in table {
+            let sentence = "The note says \(row.spoken) here."
+            let safe = LocalInterjectionSafetyTerms.modelSafeInterjectionText(sentence)
+            XCTAssertFalse(safe.lowercased().contains(row.hiddenTerm), "\(row.spoken) reached the model as: \(safe)")
+            XCTAssertNotEqual(safe, sentence, "\(row.spoken) was not replaced")
+            XCTAssertEqual(
+                LocalInterjectionSafetyTerms.restoreSafetyTerms(in: safe),
+                "The note says \(row.restored) here.",
+                "\(row.spoken) did not restore to \(row.restored)"
+            )
+        }
+    }
+
+    func testTheSafetyStandInsForSeveralSpokenFormsAreRestoredToOneCanonicalTerm() {
+        XCTAssertEqual(
+            LocalInterjectionSafetyTerms.modelSafeInterjectionText("misaligned"),
+            LocalInterjectionSafetyTerms.modelSafeInterjectionText("misalignment"),
+            "both spoken forms reach the model as the same stand-in"
+        )
+        XCTAssertEqual(
+            LocalInterjectionSafetyTerms.restoreSafetyTerms(in: LocalInterjectionSafetyTerms.modelSafeInterjectionText("misaligned")),
+            "misalignment",
+            "the restore is lossy: the original wording is not kept"
+        )
+    }
+
     func testPartialSummaryReductionProducesStructuredListenerOnlyPayload() throws {
         let payload = try XCTUnwrap(LocalInterjectionDecoder.summaryPayload(from: """
         PARTIAL 1:
