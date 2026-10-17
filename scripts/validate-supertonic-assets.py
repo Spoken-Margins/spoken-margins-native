@@ -22,7 +22,23 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+LFS_HEADER = b"version https://git-lfs.github.com/spec/v1\n"
+
+
+def lfs_pointer(path: Path) -> dict[str, str] | None:
+    """The fields of a Git LFS pointer file (a small text file standing in for the real one), else None."""
+    if path.stat().st_size > 1024:
+        return None
+    data = path.read_bytes()
+    if not data.startswith(LFS_HEADER):
+        return None
+    fields = (line.partition(" ") for line in data.decode("utf-8", "replace").splitlines())
+    return {key: value for key, _, value in fields}
+
+
 def main() -> int:
+    allow_pointers = "--allow-lfs-pointers" in sys.argv[1:]
+    pointers = 0
     manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     expected = {entry["path"]: entry for entry in manifest["files"]}
     provenance = manifest.get("provenance", {})
@@ -43,6 +59,16 @@ def main() -> int:
         path = ASSET_ROOT / relative_path
         if not path.is_file():
             failures.append(f"missing: {relative_path}")
+            continue
+        pointer = lfs_pointer(path) if allow_pointers else None
+        if pointer is not None:
+            # No LFS download here. The pointer records the real file's size and SHA-256, so it still has to agree
+            # with the manifest; a stale or edited pointer fails like a stale file.
+            pointers += 1
+            if pointer.get("size") != str(entry["bytes"]):
+                failures.append(f"pointer size: {relative_path} expected={entry['bytes']} pointer={pointer.get('size')}")
+            elif pointer.get("oid") != f"sha256:{entry['sha256']}":
+                failures.append(f"pointer sha256: {relative_path} expected={entry['sha256']} pointer={pointer.get('oid')}")
             continue
         size = path.stat().st_size
         if size != entry["bytes"]:
@@ -68,7 +94,8 @@ def main() -> int:
             print(f"- {failure}", file=sys.stderr)
         return 1
 
-    print(f"Validated {len(expected)} Supertonic files.")
+    note = f" ({pointers} checked as Git LFS pointers, not downloaded)" if pointers else ""
+    print(f"Validated {len(expected)} Supertonic files{note}.")
     return 0
 
 

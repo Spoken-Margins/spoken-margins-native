@@ -136,6 +136,8 @@ class ResearchRunnerTests(unittest.TestCase):
             script = 'research/B4/deploy/test-edit-caddyfile.sh'
             self.write(temporary, script, 'echo "ok   one"\necho "8 checks passed"\n')
             self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 8)
+            self.write(temporary, script, 'echo "SKIPPED caddy validate"\necho "9 checks passed, but not the Caddy ones above"\n')
+            self.assertEqual(research_tests.caddy_suite(Path(temporary)).tests, 9)   # no Caddy installed: still counted
             self.write(temporary, script, 'echo "FAIL the guard" >&2\nexit 1\n')
             self.assertIn('FAIL the guard', research_tests.caddy_suite(Path(temporary)).error)
             self.write(temporary, script, 'echo "nothing ran"\n')
