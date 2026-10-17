@@ -10,6 +10,7 @@ from pathlib import Path
 from jsonschema import Draft202012Validator, FormatChecker
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import voice_catalog_site  # noqa: E402
 import voice_catalog_tools  # noqa: E402
 
 
@@ -244,6 +245,7 @@ def main() -> int:
         errors.extend(validate_source_catalog_pair(manifest_path, catalog_path))
 
     errors.extend(validate_voice_catalogs())
+    errors.extend(voice_catalog_site.validate_sources_in_repo(voice_catalog_site.Paths(CONTRACTS.parent)))
 
     for pattern, schema_name in NEGATIVE_PATH_SCHEMA_RULES:
         schema_path = SCHEMAS / schema_name

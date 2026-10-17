@@ -51,12 +51,34 @@ ssh "${ssh_master_arguments[@]}" -fnNT "${vps_remote}"
 echo "Preparing ${web_root}."
 ssh -S "${control_socket}" "${vps_remote}" "install -d -m 0755 '${web_root}'"
 
+# The voice mirror (#1818) is not in Site/: scripts/voice-catalog publish stages it and names it here.
+# Files only ever arrive; nothing in voices/files/ is deleted by this script.
+if [[ -n "${SPOKEN_MARGINS_MIRROR_STAGE:-}" ]]; then
+  if [[ ! -d "${SPOKEN_MARGINS_MIRROR_STAGE}" ]]; then
+    echo "Mirror stage not found: ${SPOKEN_MARGINS_MIRROR_STAGE}" >&2
+    exit 1
+  fi
+  echo "Uploading the voice mirror from ${SPOKEN_MARGINS_MIRROR_STAGE}/."
+  ssh -S "${control_socket}" "${vps_remote}" "install -d -m 0755 '${web_root}/voices/files'"
+  rsync \
+    --archive \
+    --compress \
+    --copy-links \
+    --partial \
+    -e "ssh -S ${control_socket}" \
+    "${SPOKEN_MARGINS_MIRROR_STAGE}/" \
+    "${vps_remote}:${web_root}/voices/files/"
+fi
+
 echo "Uploading ${site_directory}/."
+# The protect rule keeps --delete away from the mirror, which lives beside the pages but not in Site/.
 rsync \
   --archive \
   --compress \
   --delete \
   --exclude '.DS_Store' \
+  --filter 'protect /voices/files/' \
+  --filter 'protect /voices/files/**' \
   -e "ssh -S ${control_socket}" \
   "${site_directory}/" \
   "${vps_remote}:${web_root}/"
@@ -99,7 +121,11 @@ systemctl is-active --quiet caddy
 REMOTE_SCRIPT
 
 echo "Verifying public HTTPS pages."
-for route in / /privacy/ /support/ /terms/; do
+routes=(/ /privacy/ /support/ /terms/)
+if [[ -f "${site_directory}/voices/index.html" ]]; then
+  routes+=(/voices/ /voices/v1/catalog.json /voices/v1/manifest.json)
+fi
+for route in "${routes[@]}"; do
   if ! status_code="$(curl --silent --location --output /dev/null --write-out '%{http_code}' --max-time 30 --retry 5 --retry-delay 2 --retry-all-errors "https://${site_host}${route}")"; then
     echo "Verification failed: could not reach https://${site_host}${route}." >&2
     exit 1

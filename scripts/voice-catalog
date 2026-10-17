@@ -1,0 +1,9 @@
+#!/usr/bin/env python3
+"""Publish the voice catalog on the site and keep it honest (#1818). The work is in voice_catalog_site.py."""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import voice_catalog_site  # noqa: E402
+
+sys.exit(voice_catalog_site.main())
