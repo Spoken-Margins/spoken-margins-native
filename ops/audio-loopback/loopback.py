@@ -372,14 +372,14 @@ def transcribe(path, locale='en-US'):
 
 # --- Checks -----------------------------------------------------------------------------------------------
 
-def verdict(report, max_stall=None, allow_repeats=False, max_wer=None, min_sound=None):
+def verdict(report, max_stall=None, allow_repeats=False, max_wer=None, min_sound=None, allow_trailing=False):
     """[reason] for each failed expectation; empty means pass."""
     problems = []
     if min_sound is not None and report['sound_seconds'] < min_sound:
         problems.append(f"only {report['sound_seconds']} s of sound (wanted at least {min_sound} s)")
     if max_stall is not None:
         for gap in report['stalls']:
-            if gap['seconds'] > max_stall and gap['where'] != 'leading':
+            if gap['seconds'] > max_stall and gap['where'] != 'leading' and not (allow_trailing and gap['where'] == 'trailing'):
                 problems.append(f"{gap['seconds']} s of silence from {gap['start']} s ({gap['where']})")
     if not allow_repeats:
         for r in report['repeats']:
@@ -400,6 +400,8 @@ def main(argv=None):
     check.add_argument('--silence-db', type=float, default=-45.0)
     check.add_argument('--stall', type=float, default=2.0, help='report gaps longer than this (s)')
     check.add_argument('--max-stall', type=float, help='fail on a gap (not leading silence) longer than this (s)')
+    check.add_argument('--allow-trailing', action='store_true',
+                       help="don't fail on silence after the last sound (a fixed window longer than the audio)")
     check.add_argument('--allow-repeats', action='store_true', help="don't fail on repeated audio")
     check.add_argument('--min-sound', type=float, help='fail with less sound than this (s)')
     check.add_argument('--transcribe', action='store_true', help='transcribe on-device (macOS) and include it')
@@ -436,7 +438,7 @@ def main(argv=None):
             report['transcript_error'] = str(error)
         if args.expected and 'transcript' in report:
             report['score'] = score(report['transcript']['text'], Path(args.expected).read_text())
-    report['problems'] = verdict(report, args.max_stall, args.allow_repeats, args.max_wer, args.min_sound)
+    report['problems'] = verdict(report, args.max_stall, args.allow_repeats, args.max_wer, args.min_sound, args.allow_trailing)
     if args.expected and 'transcript_error' in report:
         # A check that couldn't run is not a pass.
         report['problems'].append('could not check the words: ' + report['transcript_error'])

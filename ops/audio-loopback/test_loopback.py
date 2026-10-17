@@ -82,6 +82,7 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(report['stalls'][-1]['where'], 'trailing')
         self.assertAlmostEqual(report['stalls'][-1]['seconds'], 6.0, delta=0.5)
         self.assertTrue(any('trailing' in p for p in loopback.verdict(report, max_stall=2.0)))
+        self.assertEqual(loopback.verdict(report, max_stall=2.0, allow_trailing=True), [])
 
     def test_leading_silence_alone_does_not_fail(self):
         report = self.analyse(silence(3) + speech(5, 3))

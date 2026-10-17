@@ -63,6 +63,7 @@ A device can be named by UID, by exact name, or by the start of its name (`Black
 
 - **The default output always comes back.** `route` writes the previous device to `~/SpokenMarginsOps/audio-loopback/previous-default-output.txt` before switching, and restores it when the command ends, fails, or gets Ctrl-C, TERM, HUP, QUIT or ALRM. Only `kill -9` or a power cut can skip that, and then the next `route`, or `loopback restore`, puts the saved device back first.
 - **Inputs are never changed.** `record` points only its own audio engine at BlackHole; the Mac's default input (the owner's microphone) stays as it is. The system alert sound device is never touched.
+- **When BlackHole is already the default output, don't route.** Use `capture --no-route`; there's nothing to switch.
 - **Prefer no switching at all.** When the source can play to BlackHole itself (`loopback play --device`, `say -a "BlackHole 2ch"`, or a Simulator set to BlackHole in its menu), use `capture --no-route`.
 
 ### Routing only the Simulator
@@ -125,7 +126,22 @@ The window is: start recording, do the thing, stop. For the Simulator through th
 
 1. Start `loopback.py capture --seconds <window> --out artifacts/loopback/<name>.wav` in the background.
 2. Drive the journey (play an item, lock the Simulator, wait).
-3. Run `loopback.py check` on the wav with the expectations for that journey. For #1763: `--max-stall 3` over a 60-second window after locking. For #1762: the default repeat check, and `--expected` with the passage text.
+3. Run `loopback.py check` on the wav with the expectations for that journey. For #1763: `--max-stall 3` over a 60-second window after locking, without `--allow-trailing`, because audio that stops early *is* trailing silence. For #1762: the default repeat check, and `--expected` with the passage text.
+
+`--allow-trailing` is for windows that are longer than the audio on purpose, like the host proof, where `say` takes a few seconds to start.
+
+## Live proof, 2026-10-16
+
+Through BlackHole 2ch on the owner's Mac, recorded with `record` while `play` or `say` sent audio to BlackHole:
+
+| Input | Sound recorded | Result |
+| --- | --- | --- |
+| `prove-host.sh --no-words` (a 5.2 s `say` phrase) | 5.16 s; peak −1.9 dBFS and RMS −18.2 dBFS, the same as the source file | PASS |
+| Two `say` phrases, back to back | 9.38 s | PASS, no repeats, no stalls |
+| The second phrase restarting after 1.3 s (the #1762 shape) | 10.34 s | FAIL: "audio at 8.0 s replays 6.7 s for 1.21 s", correlation 1.0 |
+| One phrase, then nothing (the #1763 shape) | 5.17 s | FAIL with `--max-stall 3`: 11.05 s of trailing silence |
+
+Transcription wasn't part of it: it ran from a Claude Code session, which macOS doesn't allow (see Permissions).
 
 ## How the analysis works
 
