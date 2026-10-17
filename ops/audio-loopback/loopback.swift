@@ -270,7 +270,13 @@ func play(file path: String, device query: String) throws {
 
 // MARK: - Transcribe
 
-/// On-device transcription with macOS Speech. Prints JSON: text, and each word with its start and length.
+/// On-device transcription with macOS Speech. Prints JSON: text, each word with its start and length, and
+/// `empty_reason` when no words came back.
+///
+/// The on-device recogniser forgets what it heard when a pause of more than about a second follows it: the
+/// final result keeps only the speech after the last long pause, or nothing when the file ends in silence
+/// (#1790). This transcribes one file as it is; `loopback.py transcribe` splits a recording at pauses first.
+/// Partial results are watched only to tell that case apart from hearing nothing.
 func transcribe(file path: String, locale: String) throws -> [String: Any] {
     let status: SFSpeechRecognizerAuthorizationStatus = {
         let current = SFSpeechRecognizer.authorizationStatus()
@@ -286,21 +292,28 @@ func transcribe(file path: String, locale: String) throws -> [String: Any] {
     }
     guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: locale)) else { throw ToolError("no recognizer for \(locale)") }
     guard recognizer.supportsOnDeviceRecognition else { throw ToolError("on-device recognition is not available for \(locale)") }
+    guard recognizer.isAvailable else { throw ToolError("the \(locale) recognizer is not available right now") }
     let request = SFSpeechURLRecognitionRequest(url: URL(fileURLWithPath: path))
     request.requiresOnDeviceRecognition = true
-    request.shouldReportPartialResults = false
+    request.shouldReportPartialResults = true
     request.addsPunctuation = false
     var failure: Error?
     var finished = false
-    // Long files come back as several final results; keep every segment.
     var words: [[String: Any]] = []
     var texts: [String] = []
+    var lastPartial = ""
     let task = recognizer.recognitionTask(with: request) { result, error in
-        if let result, result.isFinal {
-            texts.append(result.bestTranscription.formattedString)
-            words += result.bestTranscription.segments.map {
-                ["word": $0.substring, "start": $0.timestamp, "duration": $0.duration, "confidence": $0.confidence]
+        if let result {
+            let transcription = result.bestTranscription
+            if !result.isFinal {
+                if !transcription.formattedString.isEmpty { lastPartial = transcription.formattedString }
+            } else if !transcription.formattedString.isEmpty {
+                texts.append(transcription.formattedString)
+                words += transcription.segments.map {
+                    ["word": $0.substring, "start": $0.timestamp, "duration": $0.duration, "confidence": $0.confidence]
+                }
             }
+            if result.isFinal { finished = true }
         }
         if let error { failure = error; finished = true }
     }
@@ -309,12 +322,22 @@ func transcribe(file path: String, locale: String) throws -> [String: Any] {
     while task.state != .completed && task.state != .canceling && !finished && Date() < deadline {
         RunLoop.current.run(until: Date().addingTimeInterval(0.1))
     }
-    if let failure, texts.isEmpty {
+    var output: [String: Any] = ["text": texts.joined(separator: " "), "words": words, "locale": locale, "on_device": true]
+    guard texts.isEmpty else { return output }
+    if let failure {
         let code = (failure as NSError).code
         // 1110 is "no speech detected": an honest empty transcript, not a tool failure.
         if code != 1110 { throw ToolError("transcription failed: \(failure.localizedDescription) (\(code))") }
+        output["empty_reason"] = "no speech detected"
+    } else if !finished && Date() >= deadline {
+        throw ToolError("transcription timed out after 600 s")
+    } else if !lastPartial.isEmpty {
+        output["empty_reason"] = "the recogniser heard \"\(lastPartial)\" and then dropped it at a pause longer than "
+            + "about a second; use loopback.py transcribe, which splits at pauses"
+    } else {
+        output["empty_reason"] = "the recogniser returned an empty result"
     }
-    return ["text": texts.joined(separator: " "), "words": words, "locale": locale, "on_device": true]
+    return output
 }
 
 // MARK: - Command line
@@ -339,7 +362,7 @@ usage: loopback devices [--json]
        loopback restore [--state <file>]
        loopback record --device <input device> --seconds <s> --out <file.wav> [--rate 16000]
        loopback play --device <output device> <file>
-       loopback transcribe <file.wav> [--locale en-US]
+       loopback transcribe <file.wav> [--locale en-US]   (one file as is; loopback.py transcribe splits at pauses)
 """
 
 var arguments = Array(CommandLine.arguments.dropFirst())
