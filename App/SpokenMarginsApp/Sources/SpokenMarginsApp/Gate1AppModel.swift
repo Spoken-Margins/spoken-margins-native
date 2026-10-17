@@ -472,7 +472,7 @@ final class Gate1AppModel: ObservableObject {
     private let featureFlags: SpokenMarginsFeatureFlags
     let localFoundationModelClient: any LocalFoundationModelClient
     let openAIResponsesClient = OpenAIResponsesClient()
-    let streamingSpeechQueue = StreamingSpeechQueue()
+    let streamingSpeechQueue = StreamingSpeechQueue(speech: SystemSpeechPlaybackClient())
     var speechPlaybackClient: AudioPlaybackClient?
     var sessionAudioPlaybackClient: AudioPlaybackClient?
     var supertonicRenderer: SupertonicNarrationRenderer?
