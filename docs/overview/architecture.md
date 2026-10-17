@@ -20,7 +20,7 @@ flowchart TD
     App --> Kit
     Kit --> DB
     Contracts -. "tests and bundled fixtures" .-> Kit
-    App -. "opt-in features only" .-> Server
+    App -. "tour, catalog, share links, opt-in maps" .-> Server
 ```
 
 ## The app
@@ -48,7 +48,7 @@ The Xcode project is generated from `project.yml` with XcodeGen, and both are co
 | `SessionKitSharing` | exporting and importing `.spokenmargins` packets |
 | `SessionKitAudio` | playback adapters and podcast anchor evidence |
 | `SessionKitFeeds`, `SessionKitEPUB` | podcast and article feeds, followed sources, EPUB reading |
-| `SessionKitSpeechFrontEnd`, `SessionKitSupertonic`, `SessionKitPocket` | the text front end and the neural voice runtimes |
+| `SessionKitSpeechFrontEnd`, `SessionKitSupertonic` | the text front end and the on-device neural voice runtime. `SessionKitPocket`, an experimental second runtime, is in the package but the app does not link it |
 | `SessionKitAI` | descriptions of the optional AI providers |
 
 Some of these build on Linux as well as macOS. The list is at the bottom of `Packages/SessionKit/Package.swift`, and [the package README](../../Packages/SessionKit/README.md) says what each module does and how its tests run. The package also builds three Mac-only developer tools (`coop-packet`, `speech-bench`, `phone-plan`) that the app never links.
@@ -63,7 +63,7 @@ The Library is one SQLite file in the app's Application Support folder, written 
 
 ## The optional product server
 
-`research/B4/server/` is a small Go server that backs the features that need one: share links, community Listening Maps and the app's remote configuration. The app works without it. Core listening, import, recording and packet files are all local, and each server feature is opt-in on the phone and off on the server until it is switched on; [offline and privacy](offline-and-privacy.md) lists exactly which features reach it and what they send. Its deploy files are in `research/B4/deploy/`, and `Site/` holds the static pages and the starter podcast catalog it serves.
+`research/B4/server/` is a small Go server that backs the features that need one: share links, community Listening Maps and a small configuration file that can switch features off. The app works without it. Core listening, import, recording and packet files are all local. The community map features are opt-in on the phone; the first-run tour, the starter catalog and opening a share link also contact it. [Offline and privacy](offline-and-privacy.md) lists exactly what reaches it and what is sent. Its deploy files are in `research/B4/deploy/`, and `Site/` holds the static pages and the starter podcast catalog it serves.
 
 ## Tests
 
