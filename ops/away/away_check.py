@@ -41,7 +41,8 @@ STATUS_ISSUE = dial_gate.STATUS_ISSUE
 ISSUES_PER_THREAD_HOUR = 1.0
 AUDIT_LABELS = ('found-by-audit', 'review-finding')
 OWNER_MERGE_PATHS = ('scripts/lane-runner.py', '.github/')
-MAX_LISTED = 3      # items per list in the report; the rest are counted
+HOLDS_LISTED = 5    # holds to check, listed in the report; the rest are counted
+OWNER_LISTED = 2    # items per owner-only list
 TITLE_WIDTH = 60
 
 # ---------- 1. queue (pure) ----------
@@ -75,14 +76,27 @@ HOLD_RE = re.compile(
     r"no `ready`|planning only|\bstays? off\b|\bonly (?:after|when|once|until)\b|"
     r"\bonly\b[^.]*\b(?:issues?|work|threads?)\b",
     re.IGNORECASE)
+# A hold on work names the work: a hold on how the player behaves isn't one.
+WORK_RE = re.compile(
+    r"\b(?:work|issues?|threads?|`?ready`?|dispatch|milestone|co-op|open source|solid ground|"
+    r"`?later`?|planning|prs?|starts?|beta|code|slices?)\b",
+    re.IGNORECASE)
+# The wording that stopped Co-op on 10-16 and its kin; these are listed first.
+STRONG_HOLD_RE = re.compile(r"no `ready`|planning only|\bstays? off\b|\bon hold\b|\bwaits? (?:until|for)\b|"
+                            r"\buntil (?:then|after)\b", re.IGNORECASE)
 # A sentence that ends or denies a hold doesn't make work wait.
 NEGATED_RE = re.compile(
     r"not a hold|never a hold|no longer|nothing waits|waits? (?:on|behind) nothing|ended|"
-    r"\bgone\b|doesn't wait|don't wait|never waits|is lifted|lifts|\bwork until\b",
+    r"\bgone\b|doesn't wait|don't wait|never waits|is lifted|lifts|\bnever stop\b|could wait",
     re.IGNORECASE)
 DATE_RE = re.compile(r'\b20\d\d-\d\d-\d\d\b')
 QUOTE_RE = re.compile(r'"[^"]*\w+\s+\w+[^"]*"|“[^”]*\w+\s+\w+[^”]*”')
 OWNER_RE = re.compile(r"\bowner\b|\bowner's\b|\bhe (?:said|picked|added|chose)\b", re.IGNORECASE)
+
+
+# Words in his quote that ask for a wait. "I am giving you the go" does not.
+WAIT_WORD_RE = re.compile(r"hold|wait|paus|until|after|\bonly\b|\bstop|\boff\b|later|before|"
+                          r"not yet|don't|shouldn't|no more", re.IGNORECASE)
 
 
 def is_owner_quoted(text: str) -> bool:
@@ -90,15 +104,33 @@ def is_owner_quoted(text: str) -> bool:
     return bool(DATE_RE.search(text)) and bool(QUOTE_RE.search(text) or OWNER_RE.search(text))
 
 
+def quotes_a_wait(text: str) -> bool:
+    return any(WAIT_WORD_RE.search(m.group(0)) for m in QUOTE_RE.finditer(text))
+
+
+def hold_backing(chain: list[str]) -> str:
+    """Who stands behind a hold, from its line and the bullets and lead-in above it.
+
+    'owner': a date, and his quoted words ask for a wait.
+    'unbacked': a dated owner call, but his quoted words don't ask for this wait. The
+        10-16 "Co-op is planning only" hold sat under "I am giving you the go." like this.
+    'suspect': no dated owner call at all."""
+    text = '\n'.join(chain)
+    if not DATE_RE.search(text) or not any(is_owner_quoted(t) for t in chain):
+        return 'suspect'
+    return 'owner' if quotes_a_wait(text) else 'unbacked'
+
+
 def sentences(text: str) -> list[str]:
-    return [s for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+    """Split after . ! or ? even when bold or a closing quote follows (`go."`, `Co-op.**`)."""
+    return [s for s in re.sub(r'([.!?][*"\u201d)\']*)\s+', '\\1\n', text).split('\n') if s.strip()]
 
 
 def scan_holds(agents_md: str) -> list[dict]:
     """Every line of AGENTS.md with a sentence that makes work wait.
 
-    A line counts as quoting the owner when it, a bullet it sits under, or the `##` section
-    it is in carries a dated owner call. Fenced code is skipped."""
+    Each is marked by `hold_backing` from the line, the bullets it sits under and the
+    paragraph leading into them, and the `##` section. Fenced code is skipped."""
     out = []
     parents: list[tuple[int, str]] = []   # (indent, text) of enclosing bullets
     section = ''
@@ -122,11 +154,11 @@ def scan_holds(agents_md: str) -> list[dict]:
         if bullet:
             parents.append((indent, raw))
         holds = [s for s in sentences(raw.strip())
-                 if HOLD_RE.search(s) and not NEGATED_RE.search(s)]
+                 if HOLD_RE.search(s) and WORK_RE.search(s) and not NEGATED_RE.search(s)]
         if not holds:
             continue
-        quoted = any(is_owner_quoted(t) for t in chain + [raw])
-        out.append({'line': n, 'text': holds[0].strip(' -*'), 'quoted': quoted})
+        text = next((h for h in holds if STRONG_HOLD_RE.search(h)), holds[0])
+        out.append({'line': n, 'text': text.strip(' -*'), 'backing': hold_backing(chain + [raw])})
     return out
 
 
@@ -184,10 +216,10 @@ def short(title: str, width: int = TITLE_WIDTH) -> str:
     return title if len(title) <= width else title[:width - 1].rstrip() + '…'
 
 
-def listed(items: list[dict], width: int = TITLE_WIDTH) -> list[str]:
-    lines = [f'   - #{i["number"]} {short(i["title"], width)}' for i in items[:MAX_LISTED]]
-    if len(items) > MAX_LISTED:
-        lines.append(f'   - and {len(items) - MAX_LISTED} more')
+def listed(items: list[dict], width: int = TITLE_WIDTH, most: int = OWNER_LISTED) -> list[str]:
+    lines = [f'   - #{i["number"]} {short(i["title"], width)}' for i in items[:most]]
+    if len(items) > most:
+        lines.append(f'   - and {len(items) - most} more')
     return lines
 
 
@@ -213,17 +245,22 @@ def report(now: dt.datetime, hours: float, dial: dict, q: dict, holds: list[dict
             line += f' Short by {q["short"]}: label more ready issues or open standing audits.'
         out.append(line)
 
-    suspect = [h for h in holds if not h['quoted']]
+    suspect = [h for h in holds if h['backing'] == 'suspect']
+    unbacked = [h for h in holds if h['backing'] == 'unbacked']
+    owned = len(holds) - len(suspect) - len(unbacked)
     line = (f'2. Holds in AGENTS.md: {plural(len(holds), "line")} make work wait; '
-            f'{len(holds) - len(suspect)} quote the owner with a date.')
-    if suspect:
-        line += f' {plural(len(suspect), "suspect hold")} with no dated owner quote:'
-        out.append(line)
-        out += [f'   - line {h["line"]}: {short(h["text"], 70)}' for h in suspect[:MAX_LISTED]]
-        if len(suspect) > MAX_LISTED:
-            out.append(f'   - and {len(suspect) - MAX_LISTED} more')
+            f'{owned} quote the owner asking for it, with a date.')
+    if suspect or unbacked:
+        out.append(line + f' Check {len(suspect)} with no dated owner call and {len(unbacked)} '
+                   'that cite him but quote no wait:')
+        shown = sorted(suspect + unbacked,
+                       key=lambda h: (not STRONG_HOLD_RE.search(h['text']), h['line']))[:HOLDS_LISTED]
+        out += [f'   - line {h["line"]}{" (cites him)" if h["backing"] == "unbacked" else ""}: '
+                f'{short(h["text"], 70)}' for h in shown]
+        if len(suspect) + len(unbacked) > len(shown):
+            out.append(f'   - and {len(suspect) + len(unbacked) - len(shown)} more')
     else:
-        out.append(line + ' None is suspect.')
+        out.append(line + ' None to check.')
 
     total = len(owner_prs) + len(needs_owner) + len(run_asks)
     if not total:
