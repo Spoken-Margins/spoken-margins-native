@@ -7,11 +7,10 @@
   one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
 
   Install (once, from the main checkout):
-    cp scripts/com.spokenmargins.phone-build.plist ~/Library/LaunchAgents/
-    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.phone-build.plist
+    /usr/bin/python3 ops/install-launchd.py --install phone-build
+    (this file holds @HOME@; copying it into ~/Library/LaunchAgents/ as is would load a broken job)
   Remove:
-    launchctl bootout gui/$(id -u)/com.spokenmargins.phone-build
-    rm ~/Library/LaunchAgents/com.spokenmargins.phone-build.plist
+    /usr/bin/python3 ops/install-launchd.py --remove phone-build
 
   It runs the main checkout's copy, which the hourly Mac tick fast-forwards to origin/next. A
   LaunchAgent runs in the owner's login session, so signing can use his login keychain.
