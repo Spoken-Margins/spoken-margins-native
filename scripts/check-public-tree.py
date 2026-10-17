@@ -32,11 +32,11 @@ FORBIDDEN_EXTENSIONS = {
     '.pfx': 'signing identity',
 }
 SECRET_PATTERNS = (
-    ('private key block', re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----')),
+    ('private key block', re.compile(r'-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----')),
     ('Anthropic key', re.compile(r'sk-ant-[A-Za-z0-9_-]{8,}')),
     ('GitHub token', re.compile(r'gh[pousr]_[A-Za-z0-9]{36,}')),
     ('GitHub token', re.compile(r'github_pat_[A-Za-z0-9_]{22,}')),
-    ('AWS access key', re.compile(r'AKIA[0-9A-Z]{16}')),
+    ('AWS access key', re.compile(r'A(?:KIA|SIA)[0-9A-Z]{16}')),
 )
 BINARY_SNIFF_BYTES = 8192
 MAX_SCAN_BYTES = 20 * 1024 * 1024
@@ -67,13 +67,13 @@ def parse_allowlist(text: str) -> tuple[dict[str, str], list[str]]:
 
 
 def path_problem(name: str) -> str | None:
-    parts = name.split('/')
+    parts = name.lower().split('/')
     base = parts[-1]
-    if parts[0] == 'artifacts':
+    if 'artifacts' in parts[:-1]:
         return 'build or test output under artifacts/'
     if any(part.endswith('.xcarchive') for part in parts):
         return 'Xcode archive'
-    if base == '.env' or (base.startswith('.env.') and not base.endswith(('.example', '.sample', '.template'))):
+    if base.endswith('.env') or (base.startswith('.env.') and not base.endswith(('.example', '.sample', '.template'))):
         return 'environment file'
     return FORBIDDEN_EXTENSIONS.get(Path(base).suffix.lower())
 
@@ -90,7 +90,7 @@ def content_problems(path: Path) -> list[tuple[int, str]]:
     except OSError:
         return []
     found: list[tuple[int, str]] = []
-    for number, line in enumerate(data.decode('utf-8', 'replace').splitlines(), 1):
+    for number, line in enumerate(data.decode('utf-8', 'replace').split('\n'), 1):
         for kind, pattern in SECRET_PATTERNS:
             if pattern.search(line):
                 found.append((number, kind))

@@ -19,6 +19,8 @@ ANTHROPIC = "sk-ant-" + "test-0123456789-SECRET"
 GITHUB = "ghp_" + "A" * 36
 GITHUB_PAT = "github_pat_" + "B" * 30
 AWS = "AKIA" + "ABCDEFGHIJKLMNOP"
+AWS_TEMPORARY = "ASIA" + "ABCDEFGHIJKLMNOP"
+PGP_HEADER = "-----BEGIN " + "PGP PRIVATE KEY BLOCK-----"
 
 
 class TempRepo:
@@ -55,6 +57,10 @@ class PublicTreeTests(unittest.TestCase):
             "keys/AuthKey_ABC.p8": "signing key",
             "keys/server.PEM": "key or certificate file",
             "server/.env": "environment file",
+            "config/staging.env": "environment file",
+            "Prod.ENV": "environment file",
+            "sub/dir/artifacts/o.txt": "build or test output under artifacts/",
+            "Build/K.XCARCHIVE/Info.plist": "Xcode archive",
             "server/.env.production": "environment file",
         }
         for name, kind in cases.items():
@@ -64,7 +70,7 @@ class PublicTreeTests(unittest.TestCase):
                 self.assertEqual(repo.check(), [f"{name}: {kind}"])
 
     def test_example_env_file_and_lookalike_paths_pass(self):
-        for name in (".env.example", "docs/artifacts/notes.md", "my.pem.md", "Sources/envfile", "pem"):
+        for name in (".env.example", "docs/artifacts-notes/notes.md", "artifacts.md", "my.pem.md", "Sources/envfile", "pem"):
             with self.subTest(name=name):
                 repo = TempRepo(self)
                 repo.add(name, "x")
@@ -77,6 +83,8 @@ class PublicTreeTests(unittest.TestCase):
             GITHUB: "GitHub token",
             GITHUB_PAT: "GitHub token",
             AWS: "AWS access key",
+            AWS_TEMPORARY: "AWS access key",
+            PGP_HEADER: "private key block",
         }
         for secret, kind in cases.items():
             with self.subTest(kind=kind):
@@ -107,6 +115,11 @@ class PublicTreeTests(unittest.TestCase):
         self.assertEqual(repo.check(), [])
         repo.add("long2.txt", ("x" * 2_000_000 + " " + AWS).encode())
         self.assertEqual(repo.check(), ["long2.txt:1: AWS access key"])
+
+    def test_line_numbers_count_newlines_only(self):
+        repo = TempRepo(self)
+        repo.add("odd.txt", "a\x0cb\u2028c\x85d\r\n" + AWS + "\n")
+        self.assertEqual(repo.check(), ["odd.txt:2: AWS access key"])
 
     def test_non_utf8_text_is_scanned(self):
         repo = TempRepo(self)
