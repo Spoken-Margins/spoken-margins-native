@@ -60,7 +60,7 @@ A week after the first script gates, the desk's daily hand-off on #184 counts tw
 - **Order.** Gate streams (A2 `seams`, anything blocking others) first, then oldest request first.
 - **Evidence stays local.** Screenshots and logs go under `artifacts/lane/<request-id>/` (git-ignored). The request id is `pr<PR>-r<run id>`, plus `-a<N>` when a job is re-run, so a re-run never reuses a folder. The PR comment carries the observations and file paths, not images.
 
-Note for whoever builds the Test Desk: Claude Desktop's iOS Simulator pane currently doesn't work with Xcode 27 ([docs](https://code.claude.com/docs/en/desktop-ios-simulator)). This repo builds with Xcode 27, so drive the simulator through computer use from the CLI, as the journeys do today, until the pane supports Xcode 27.
+The Test Desk drives the simulator with the iOS simulator tool (`mcp__Claude_Code_iOS_Simulator__control`), never with computer use, Device Hub or Simulator.app; it works with this repo's Xcode 27 (Build 34 baseline, 2026-10-16). Each journey runs in a helper agent of its own: see the journey skill, Driving.
 
 ## Guard rails (deterministic, not advisory)
 
@@ -124,7 +124,10 @@ ran: J1 (pass), J7 (fail at step 1)
 J7 step 1 — expected: "Downloaded on…" stamp not read. observed: transcript shows it in paragraph 1 of page 2. evidence: artifacts/lane/<id>/j7-step1.png
 crashes: none | 1 isolated SpringBoard crash (noted, continued)
 not verified: audible content (owner), Lock Screen (owner)
+tokens: J1 41k (9 screenshots), J7 38k (12) · desk 95k at the end
 ```
+
+The `tokens:` line gives each journey's helper `subagent_tokens` (from the Agent tool's usage line) and its screenshot count, and the lead desk's context when it posts, so the cost per journey can be compared across desks.
 
 `INCONCLUSIVE` is not a pass: no simulator available, XCTest never connected, a flood stopped the run. Say which.
 
@@ -162,6 +165,13 @@ When next's tip has no integration report on #184, run one job on that tip, in t
    again first (it comes back erased, because the app tests wrote to its app data), and build a library shaped like the owner's and upgraded
    from Build 29 (lane-build29) before installing the candidate over it. Post
    "Lane report journeys-<sha7> — …" on #184.
+How to run journeys: you are the lead. Build or reuse the app once, take the pool device and
+install once, then give each journey to one helper agent (Agent tool, one at a time) with its
+steps, the UDID and the app path; it answers in about 150 words. Drive with the iOS simulator
+tool only, never computer use, Device Hub or Simulator.app. Screenshots at half scale, zoom
+only for small text, full size only as FAIL evidence, about 15 per journey. The brief and the
+budget are in the journey skill (Driving, Screenshot budget). Send verify-tests.py and
+desk-batch.py output to files and read back only counts. Each report carries a tokens: line.
 A tip that lands mid-job waits for the next job. If the understudy has already posted the
 integration report for a tip, start that tip at step 2.
 
@@ -296,7 +306,7 @@ going. Stop only for owner data, the phone, money, anything public, main or rele
 
 ## Batching T4 requests
 
-`scripts/desk-batch.py` (#1557) turns the unanswered `/lane T4` requests into work lists sized for one desk session. Each desk of 2026-10-13 got through one to three checks before the 250k-token line, mostly because a screenshot costs about 2.5k tokens and the simulator lags enough to need two a step. A desk that starts from a sized list on one build spends its context on checks, not on choosing them.
+`scripts/desk-batch.py` (#1557) turns the unanswered `/lane T4` requests into work lists sized for one desk session. Each desk of 2026-10-13 got through one to three checks before the 250k-token line, mostly because a screenshot costs about 2.5k tokens and the simulator lags enough to need two a step. A desk that starts from a sized list on one build spends its context on checks, not on choosing them. Since 2026-10-16 each check's journeys run in helper agents (journey skill, Driving), so the screenshots no longer pile up in the desk's own context; batch sizes were set before that and may be raised once desks report their `tokens:` lines.
 
 ```bash
 scripts/desk-batch.py            # prints GO or STOP; on GO writes the first batch to ~/SpokenMarginsOps/desk-batches/
@@ -317,7 +327,7 @@ scripts/desk-batch.py --json     # the whole plan, writes nothing
   - During a HALT (usage breaker: Claude) the GO line is information only: start nothing until RESUMED.
   ```
 
-  The tick reports; it doesn't start a desk. The desk drives the simulator with computer use from the desktop app, which a scheduled task can't open. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.
+  The tick reports; it doesn't start a desk. The desk drives the simulator with the desktop app's iOS simulator tool, which a scheduled task can't use. The open step is who turns a GO line into a running desk: the coordinator's hourly dispatch (a managed desk, as on 2026-10-13) is the natural fit, and needs a line in the project instructions that only the owner can change. Until then the owner starts a desk from `latest.md` in `~/SpokenMarginsOps/desk-batches/`.
 - **After the batch.** The desk posts one report per check on its PR, which takes it off the list. When its context runs short it stops between checks and posts a hand-off on #184; the next run of the script lists what is left, so nothing is passed along by hand.
 - **Cost.** No model tokens, and no state. About 60 `gh api` reads for the ten-day window. If a batch keeps going with one check, or desks still run out before finishing a batch, change the step budget.
 

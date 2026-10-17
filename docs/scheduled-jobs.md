@@ -140,7 +140,7 @@ Whether GitHub's free hosted runners for public repos include enough macOS capac
 | `linux-t1` (VPS), `merge-audit`, `route`, `lane-open-*` | Replaced with no loss. These are plain Linux jobs that moved to the VPS only because the free minutes ran out on 2026-10-07 (#1023). |
 | Host tests (`--plan fast`) and the app build for the simulator and device | Likely, on a hosted macOS runner: no simulator audio, no owner machine. Slower than the Mac and with no warm build cache. |
 | T3 app-hosted tests and the integration run (`--plan app`) | Possible on a hosted macOS runner's simulator, but the lane's one-simulator rules and its audio-device handling (#1556) were built around the owner's Mac. |
-| T4 and T5 journeys (computer use), the phone build, the owner's phone check, signing, TestFlight upload | Not replaceable. They need the owner's Mac, his login keychain and his phone. |
+| T4 and T5 journeys (iOS simulator tool), the phone build, the owner's phone check, signing, TestFlight upload | Not replaceable. They need the owner's Mac, his login keychain and his phone. |
 | The usage breaker, the Dial, the Mac tick, disk relief, keep-awake | Not Actions jobs at all. Unaffected. |
 
 ### The owner's answer (2026-10-14)

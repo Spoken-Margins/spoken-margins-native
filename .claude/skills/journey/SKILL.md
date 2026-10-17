@@ -20,7 +20,7 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 
 1. **Worktree at the requested commit.** Never test in a stream's worktree or the owner's checkout:
    `git worktree add --detach .claude/worktrees/lane-<id> <sha>`
-2. **Build** there with the wrapper, which queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
+2. **Build** there with the wrapper, unless a kept desk build of the same commit exists (Driving, step 1). The wrapper queues for a Mac-wide build slot and uses `.build/dd` in that worktree:
    `scripts/xcodebuild-lane -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build`
    The app is then at `.build/dd/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`.
 3. **Simulator: a pool device, erased for every request.**
@@ -40,24 +40,68 @@ The Test Desk takes **T4 and T5** requests. T2 and T3 go to the self-hosted runn
 4. **Install the build.** An erased device starts with an empty Library, so a lane journey builds the history it needs within the job (J2, J3 and J5 do this). J4 installs the previous shipped build first. Journeys over real long-lived history belong to the owner's device pass.
 5. Evidence goes in `artifacts/lane/<id>/` in the main checkout. It is git-ignored, so the PR gets paths, not images.
 
-## Driving
+## Driving: the desk leads, one helper agent per journey
 
-- Drive with computer use: real taps and screenshots. Claude Desktop's simulator pane doesn't support Xcode 27 yet. Don't inject state or use test-only launch arguments.
-- Follow docs/journeys.md step by step. After each step, record what the screen shows, which item or Margin is playing, and whether its clock advanced.
-- **After each step, check for new crash reports**, so a flood is caught at its first step: `find ~/Library/Logs/DiagnosticReports -name '*.ips' -newer <marker file touched before the step>`. Record any you find.
-- **Stop at the first failure.** Record the step, the expected and the observed behavior, and a screenshot path.
-- You can't hear audio. A moving clock shows the app thinks it's playing. Mark audible content "owner to confirm".
+The desk session stays a lean lead. It finds the build, holds the device and writes the report; each journey is driven by a helper agent (the Agent tool) in a context of its own. Why: on 2026-10-16 the Build 34 baseline desk reached the 250k-token line after two steps of J1 plus the scripted journeys (#184). Every screenshot (about 2.5k tokens at full size) stays in the context that took it and is read again on every later turn, so one long run of journeys in one context costs far more than the same screenshots spread over short ones. The lead keeps only each helper's short answer. The target is about 10 journeys per desk session.
 
-Simulator pitfalls (from docs/journeys.md, which wins if they differ):
+**The simulator tool, never computer use or Device Hub.** Lead and helpers drive the simulator with the iOS simulator tool (`mcp__Claude_Code_iOS_Simulator__control`), passing the pool device's UDID as `device`. Never use computer use for the simulator, and never open Device Hub or Simulator.app: on 2026-10-16 opening Device Hub booted a pool device outside the lane (no watcher, no slot), held up `--pool` for about 15 minutes, and quitting it shut down another pool device. Don't inject state or use test-only launch arguments in an agent-driven journey.
 
+**What the lead does**
+
+1. **Build once.** Reuse a kept desk build of the same commit if one exists: a `.claude/worktrees/lane-*` worktree whose `git -C <worktree> rev-parse HEAD` is the commit and which holds `.build/dd*/Build/Products/Debug-iphonesimulator/SpokenMarginsApp.app`. Otherwise build as in Setup step 2. (The integration script in `ops/testdesk/` removes its worktree after each run, so today it leaves no app to reuse.)
+2. **Take the device and install once** (Setup steps 3 and 4). Only the lead runs `scripts/lane-sim-boot`, installs and gives the device back; helpers never boot, erase, install or `--done`.
+3. **Hand out journeys one at a time.** One helper per journey, in order, with `run_in_background: false`: there is one device, so two helpers never drive it at once. Journeys share the install, so J2, J3 and J5 build their history as they go; when a journey needs a clean start, the lead reinstalls between helpers. Use the brief below.
+4. **After each helper:** note its verdict, its screenshot path and its `subagent_tokens` (the Agent tool's usage line), and run one crash check. A FAIL stops that journey, not the batch: go on to the next journey unless the app no longer launches or a crash flood stopped the run.
+5. **If a helper reports its simulator call was blocked by the lane guard**, drive that journey yourself under the same screenshot budget, and say so on #184. (Checked 2026-10-16: helpers see the simulator tool, and the guard trusts them through the session's `CLAUDE_PROJECT_DIR`, which a helper shares with the desk. Its fallback, the transcript folder, would not match a helper's `…/subagents/` transcript, so a desk without `CLAUDE_PROJECT_DIR` would be blocked; widening that is the owner's call, in `scripts/lane_guard.py`.)
+
+**Brief for a helper** (fill in the angle brackets; paste the journey's steps from docs/journeys.md, or the request's numbered `scenario:`):
+
+```text
+You are a Test Desk helper for Spoken Margins. Drive one journey on one simulator and report.
+Device UDID: <udid> (already booted, app installed: <app path>). Evidence folder: <artifacts/lane/<id>/<journey>/>.
+Use only mcp__Claude_Code_iOS_Simulator__control with device=<udid>, plus Bash for the crash check.
+Never use computer use, Device Hub or Simulator.app; never boot, erase, install, shut down or
+run scripts/lane-sim-boot. If a simulator call is blocked, stop and say "blocked by the lane guard".
+Rules: .claude/skills/journey/SKILL.md, "Screenshot budget" and "Simulator pitfalls".
+Crash check after each step: find ~/Library/Logs/DiagnosticReports -name '*.ips' -newer <marker>.
+Stop at the first failed step. You cannot hear audio: mark audible content "owner to confirm".
+Journey <Jn>: <steps>
+Reply in at most 150 words: PASS | FAIL | INCONCLUSIVE; the failing step with expected and observed;
+what each step showed, one line each; crashes; one screenshot path; screenshots used.
+```
+
+## Screenshot budget
+
+A screenshot is the main cost of a journey. Each helper (and the lead, if it drives) keeps to this:
+
+- **Half scale by default:** `scale: 0.5` on every `screenshot`. It costs about a quarter of a full one and is enough to find controls and read normal text.
+- **Zoom only to read small text** (a clock, a timestamp, a badge): `zoom` on that region, at `scale: 0.5` unless the text is still unreadable.
+- **Full size only as evidence for a FAIL:** one full screenshot of the failing state, saved under the evidence folder.
+- **About 15 screenshots per journey**, counting zooms. At the budget, stop and report INCONCLUSIVE ("screenshot budget") with the step reached, rather than going on. A journey that keeps hitting the budget gets split into two helper runs next time; say so in the report.
+- **Don't screenshot to confirm a tap** that has no visible doubt; screenshot after the step, when its result should show.
+- **Keep the mis-tap rule.** Before tapping near the bottom edge (keyboard tips, the tab bar), take a screenshot first, half scale; it counts toward the budget.
+
+## Simulator pitfalls
+
+From docs/journeys.md, which wins if they differ:
+
+- After each step, record what the screen shows, which item or Margin is playing, and whether its clock advanced.
 - After typing, take a screenshot and confirm the whole value arrived before tapping submit. Keystrokes and taps travel separately, and a truncated URL looks like a 404 or `-1011`, not a real bug.
 - The app's Paste button doesn't see `xcrun simctl pbcopy`. Type values instead.
 - Keyboard tips can swallow the next tap. Take a screenshot before tapping near the bottom of the screen.
 - A cold Debug launch can be blank for about 5 s. Wait before the first tap.
+- You can't hear audio. A moving clock shows the app thinks it's playing. Mark audible content "owner to confirm".
+
+## Keep bulk out of the lead's context
+
+- `scripts/desk-batch.py` without `--print` or `--json`: read its GO/STOP line, then the work list file it names.
+- Send `scripts/verify-tests.py` output to a file (`> artifacts/lane/<id>/verify.log 2>&1`) and read back only counts from its manifest:
+  `python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["status"]); [print(s.get("name"), s.get("counts"), {k: v for k, v in s.get("probation", {}).items() if v != "passed"}) for s in m["steps"] if "counts" in s]' <run>/manifest.json`
+- Never print an `.xcresult` summary or a build log into context; `grep` it for the first `error:` or failing test, or `tail -20`.
 
 ## Crash flood
 
-If one process crashes three or more times within a minute:
+If one process crashes three or more times within a minute (a helper that sees this stops and reports INCONCLUSIVE; the lead does the rest):
 
 1. Stop.
 2. `scripts/lane-sim-boot --retire <udid> "crash flood: <process>"`. It marks the device unsafe first, so the pool never erases and boots it again, then shuts it down at once (it doesn't wait for another run's erase), stops its watcher and deletes it. (A flood that `verify-tests.py` catches does the same for a pool device by itself.)
@@ -67,6 +111,6 @@ Don't reboot in a loop or switch devices. A single crash is noted in the report 
 
 ## Report and clean up
 
-1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified), then change the label from `lane:queued` to `lane:done`.
+1. Post the report on the PR in the test-lane.md format (PASS / FAIL / INCONCLUSIVE, per-step observations, evidence paths, crashes, what's not verified, and the `tokens:` line: each journey's helper `subagent_tokens` and the lead's context at the end), then change the label from `lane:queued` to `lane:done`.
 2. Give the pool device or devices back with `scripts/lane-sim-boot --done <udid>`, once each (not one marked unsafe: the next `--pool` retires it). Pool devices are reused, so a repeated `--done` on one that another run has since taken would shut that run down.
 3. Remove the worktree with `git worktree remove .claude/worktrees/lane-<id>`, which also deletes its DerivedData. Disk space on this Mac is tight.
