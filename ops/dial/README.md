@@ -8,7 +8,7 @@ The thresholds, the stop line and the trend rule are unchanged. Only the scope o
 
 1. **The decision** is made by the `SM Mac tick` scheduled task on the Mac (`~/.claude/scheduled-tasks/sm-mac-tick/SKILL.md`), outside this repository. It reads both providers' usage and posts the result on #337. The text below goes there.
 2. **Claude-side readers** act on a Claude halt only: the Dial gate (`dial_gate.py`, deployed on the VPS), the coordinator's dispatch rule, the Mac finisher and the SM integration run (their prompts and the project instructions, outside this repository).
-3. **Codex-side tasks** (`ops/codex/sm_codex_worker.py`, retired by #1195 and unloaded by the owner after 2026-10-15) never read the tick, so a Claude halt never stopped them. The worker holds on Codex's own stop line and trend. The audit (`sm_codex_audit.py`) is a Claude task since #1195, but it does not read the tick either: it is a merge gate and costs little, so a Claude halt does not pause it (a Default taken, veto on #1195).
+3. **Codex-side tasks** (the Codex worker, retired by #1195, unloaded by the owner on 2026-10-17 and deleted by #1853) never read the tick, so a Claude halt never stopped them. The worker holds on Codex's own stop line and trend. The audit (`sm_codex_audit.py`) is a Claude task since #1195, but it does not read the tick either: it is a merge gate and costs little, so a Claude halt does not pause it (a Default taken, veto on #1195).
 
 ## Marker format
 
