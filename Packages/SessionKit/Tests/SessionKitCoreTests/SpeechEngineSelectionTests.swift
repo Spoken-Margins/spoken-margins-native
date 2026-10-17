@@ -67,7 +67,8 @@ final class SpeechEngineSelectionTests: XCTestCase {
         )
         let line = SpeechFallbackReason.backgroundGap.listenerExplanation
         XCTAssertTrue(line.contains("background"), line)
-        XCTAssertTrue(line.contains("next time you press play"), line)
+        XCTAssertTrue(line.contains("next item"), "the stand-in keeps the item (#1786): \(line)")
+        XCTAssertFalse(line.contains("next time you press play"), line)
         XCTAssertFalse(line.contains("Retry"), "nothing for the listener to do")
         XCTAssertEqual(
             SpeechGenerationStopReason.listenerExplanation(stopReason: "background_gap", fallbackReason: nil), line
@@ -96,8 +97,10 @@ final class SpeechEngineSelectionTests: XCTestCase {
             let line = reason.bundledVoiceExplanation
             XCTAssertTrue(line.contains("backup voice"), line)
             XCTAssertFalse(line.contains("iOS voice"), line)
-            XCTAssertTrue(line.contains("next time you press play"), line)
+            XCTAssertTrue(line.contains("next item"), "the backup voice keeps the item (#1786): \(line)")
+            XCTAssertFalse(line.contains("next time you press play"), line)
         }
+        XCTAssertTrue(SpeechFallbackReason.deviceTooWarm.listenerExplanation.contains("next item"), "the iOS voice too")
         XCTAssertTrue(SpeechFallbackReason.deviceTooWarm.bundledVoiceExplanation.contains("too warm"))
         XCTAssertTrue(SpeechFallbackReason.memoryWarning.bundledVoiceExplanation.contains("memory warning"))
         XCTAssertFalse(SpeechFallbackReason.deviceTooWarm.bundledVoiceExplanation.contains("Low Power"))

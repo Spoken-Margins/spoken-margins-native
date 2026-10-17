@@ -38,14 +38,15 @@ final class SupertonicSpeechTests: XCTestCase {
 
     /// C2 M1 (#183, I14): after a heat or memory fallback, the chosen voice comes back at the
     /// next play once the condition clears, without the listener reselecting it.
-    func testResourceFallbackReturnsToSupertonicAtTheNextPlayOnceTheConditionClears() async throws {
+    /// #1786: the iOS voice standing in for heat keeps the item, cooled or not; the next item gets the chosen voice.
+    func testResourceFallbackKeepsTheIOSVoiceForTheItemAndTheNextItemGetsTheChosenVoice() async throws {
         let template = try makeTestWAV(duration: 0.2)
         defer { try? FileManager.default.removeItem(at: template) }
         let renderer = CountingAudioSupertonicRenderer(templateURL: template)
         let condition = ResourceConditionSwitch(allowed: false)
         let fallback = RecordingFallbackAudioClient()
         let fellBack = expectation(description: "resource fallback")
-        let restored = expectation(description: "chosen voice restored")
+        let restorations = KittenClientLog()
         let client = SupertonicSpeechPlaybackClient(
             renderer: renderer, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
             audioSessionActivator: {}, audioPlayerStarter: { _, _ in }, observesPlayerLifecycle: false,
@@ -55,12 +56,10 @@ final class SupertonicSpeechTests: XCTestCase {
                 XCTAssertEqual(reason, "supertonic_resource_pressure")
                 fellBack.fulfill()
             },
-            onRestore: { targetId in
-                XCTAssertEqual(targetId, "warm-phone")
-                restored.fulfill()
-            }
+            onRestore: { _ in restorations.recordRestore() },
+            onVoiceRestored: { restorations.recordVoiceRestored($0) }
         )
-        _ = try client.prepareSpeechText("The phone is warm, so the iOS voice reads this until it cools. Then the chosen voice returns.")
+        _ = try client.prepareSpeechText("The phone is warm, so the iOS voice reads this to its end. The next item gets the chosen voice.")
         try client.play(targetId: "warm-phone")
         await fulfillment(of: [fellBack], timeout: 2)
         XCTAssertEqual(fallback.playedOffsets, [0])
@@ -74,10 +73,17 @@ final class SupertonicSpeechTests: XCTestCase {
         try client.pause()
         condition.allowed = true
         try client.play(targetId: "warm-phone", from: 10)
-        await fulfillment(of: [restored], timeout: 2)
-        let rendersAfterCooling = await waitForRenderCount(renderer, minimum: 1)
-        XCTAssertGreaterThanOrEqual(rendersAfterCooling, 1, "Supertonic renders again")
-        XCTAssertEqual(fallback.playedOffsets, [0, 10], "the iOS voice isn't started again")
+        XCTAssertEqual(fallback.playedOffsets, [0, 10, 10], "cooled: the iOS voice still reads this item")
+        XCTAssertEqual(restorations.restores, 0)
+        let rendersAfterCooling = await renderer.renderCount
+        XCTAssertEqual(rendersAfterCooling, 0, "no bounce back to Supertonic inside the item")
+
+        try client.stop()
+        _ = try client.prepareSpeechText("The next item starts with the chosen voice.")
+        try client.play(targetId: "next-item")
+        let rendersForNextItem = await waitForRenderCount(renderer, minimum: 1)
+        XCTAssertGreaterThanOrEqual(rendersForNextItem, 1, "Supertonic reads the next item")
+        XCTAssertEqual(restorations.voiceRestorations, ["new_item"])
         try client.stop()
     }
 
@@ -2091,10 +2097,10 @@ final class SupertonicSpeechTests: XCTestCase {
         for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(starts.count, 1, "the first chunk plays")
 
-        // The first chunk ends after a second; the second is still rendering (gated) and the hand-over fails, so the
-        // seam waits for that render, which plays when it lands.
-        for _ in 0..<250 where fallback.stopCount == 0 { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertGreaterThan(fallback.stopCount, 0, "the seam tried the iOS voice")
+        // The first chunk ends after a second; the second is still rendering (gated). The bundled voice holds the
+        // item, so the seam waits for its render and never tries the iOS voice (#1786).
+        try await Task.sleep(for: .milliseconds(1500))
+        XCTAssertEqual(fallback.playedOffsets, [], "the seam waits for the bundled voice, not the iOS voice")
         XCTAssertEqual(starts.count, 1, "the second chunk is still rendering")
         openGate.finish()
         for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
@@ -2143,8 +2149,8 @@ final class SupertonicSpeechTests: XCTestCase {
 
         allowed.value = true                                   // the phone cooled; the bundled voice keeps the article
 
-        for _ in 0..<250 where fallback.stopCount == 0 { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertGreaterThan(fallback.stopCount, 0, "the seam tried the iOS voice")
+        try await Task.sleep(for: .milliseconds(1500))
+        XCTAssertEqual(fallback.playedOffsets, [], "the seam waits for the bundled voice, not the iOS voice (#1786)")
         openGate.finish()
         for _ in 0..<500 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertGreaterThanOrEqual(starts.count, 2, "the next chunk plays without a listener's play")
@@ -2571,7 +2577,7 @@ final class SupertonicSpeechTests: XCTestCase {
     /// #849 audit (I14): once the bundled voice takes a generation, it keeps it. Supertonic is allowed again while the
     /// chain renders (the phone cools), yet no later chunk switches to it mid-play: the split head ends at a comma,
     /// so before the fix the tail came back in Supertonic mid-sentence. The next play releases it.
-    func testTheBundledVoiceKeepsItsGenerationUntilThePlayAfterTheConditionClears() async throws {
+    func testTheBundledVoiceKeepsTheItemAfterTheConditionClearsAndTheNextItemGetsTheChosenVoice() async throws {
         let root = try XCTUnwrap(Bundle.main.resourceURL?.appending(path: "Kitten", directoryHint: .isDirectory))
         let output = FileManager.default.temporaryDirectory.appending(path: "kitten-hold-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: output) }
@@ -2623,30 +2629,36 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(fallback.playedOffsets, [])
         XCTAssertEqual(log.notices, ["bundled_voice"])
 
-        // A play releases the generation: the listener's notice is cleared and Supertonic renders what is left.
+        // A play of the same item keeps the bundled voice (#1786); a new item releases it: the listener's notice is
+        // cleared and Supertonic renders the new item.
         try client.pause()
         try client.play(targetId: "kitten-hold", from: client.currentCharOffset() ?? 0)
-        XCTAssertEqual(log.restores, 1, "the play after the condition cleared releases the bundled voice")
+        XCTAssertEqual(log.restores, 0, "a play inside the item doesn't release the bundled voice")
+        try client.stop()
+        _ = try client.prepareSpeechText("The next item. The phone is cool now, so the chosen voice reads it.")
+        try client.play(targetId: "kitten-next")
+        XCTAssertEqual(log.restores, 1, "the next item releases the bundled voice")
         let releaseDeadline = ContinuousClock.now + .seconds(30)
         var rendersAfterPlay = await supertonic.renderCount
         while rendersAfterPlay == 0, ContinuousClock.now < releaseDeadline {
             try await Task.sleep(for: .milliseconds(100))
             rendersAfterPlay = await supertonic.renderCount
         }
-        XCTAssertGreaterThan(rendersAfterPlay, 0, "Supertonic takes the chunks after the playhead again")
+        XCTAssertGreaterThan(rendersAfterPlay, 0, "Supertonic reads the next item")
         try client.stop()
         await kitten.unload()
     }
 
-    /// #849 audit (I14): a bundled-voice chunk still rendering when a play releases the voice finishes in that voice,
-    /// and must not tell the listener about the backup voice again, just after the notice was cleared, on a phone that
-    /// has cooled. Before the fix it announced a second time when it played. The test holds that render open, so the
-    /// chunk is in flight at the release every time.
-    func testABundledVoiceChunkRenderingAtTheReleaseDoesNotAnnounceTheBackupVoiceAgain() async throws {
+    /// #1786 (a): the bundled voice holds the item, the phone cools to `fair`, and an interruption ends with a play
+    /// (pause, then play from the same place). Before the fix that play released Kitten and the next chunk was
+    /// Supertonic. Now the held render finishes in the bundled voice, the rest of the item stays with it, the listener
+    /// isn't told about the backup voice again, and the item's end is the one release, logged as `voice.restored`.
+    func testAPlayAfterThePhoneCoolsKeepsTheBundledVoiceToTheEndOfTheItem() async throws {
         let template = try makeTestWAV(duration: 1)
         defer { try? FileManager.default.removeItem(at: template) }
         let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
         let (gate, openGate) = AsyncStream<Void>.makeStream()
+        defer { openGate.finish() }
         let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 2, gate: gate)
         let fallback = RecordingFallbackAudioClient()
         let log = KittenClientLog()
@@ -2669,13 +2681,12 @@ final class SupertonicSpeechTests: XCTestCase {
             onGenerationProgress: { log.record($0) },
             onFallback: { reason, _, _ in log.recordFallback(reason) },
             onRestore: { _ in log.recordRestore() },
+            onVoiceRestored: { log.recordVoiceRestored($0) },
             onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
         )
-        let text = (0..<4).map { _ in
-            "The committee met on Tuesday to discuss the proposal, which had been circulating among members for several weeks and had attracted a surprising amount of criticism from both sides. Most of the objections concerned cost."
-        }.joined(separator: " ")
-        _ = try client.prepareSpeechText(text)
-        try client.play(targetId: "bundled-release")
+        defer { try? client.stop() }
+        _ = try client.prepareSpeechText(Self.pressureArticle(paragraphs: 4))
+        try client.play(targetId: "cooled-resume")
 
         // The first bundled passage plays and tells the listener, while the render after it is held open.
         await fulfillment(of: [started], timeout: 30)
@@ -2688,27 +2699,85 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertEqual(log.notices, ["bundled_voice"])
         XCTAssertGreaterThanOrEqual(rendersStarted, 2, "the render after the first passage is in flight")
 
-        // The phone cools; the listener pauses and plays inside the first passage, so the generation is released.
+        // The phone cools to fair; an interruption ends and the listener plays from the same place.
         allowed.value = true
-        let releaseOffset = try XCTUnwrap(client.currentCharOffset())
+        let resumeOffset = try XCTUnwrap(client.currentCharOffset())
         try client.pause()
-        try client.play(targetId: "bundled-release", from: releaseOffset)
-        XCTAssertEqual(log.restores, 1, "the play releases the bundled voice and clears the notice")
+        try client.play(targetId: "cooled-resume", from: resumeOffset)
+        XCTAssertEqual(log.restores, 0, "the play doesn't release the bundled voice")
+        XCTAssertEqual(log.voiceRestorations, [])
 
-        // The held render finishes in the bundled voice and plays; the rest of the item renders in Supertonic.
         openGate.finish()
         let doneDeadline = ContinuousClock.now + .seconds(60)
-        while client.playbackTransportState(targetId: "bundled-release") != .stopped, ContinuousClock.now < doneDeadline {
+        while client.playbackTransportState(targetId: "cooled-resume") != .stopped, ContinuousClock.now < doneDeadline {
             try await Task.sleep(for: .milliseconds(100))
         }
-        XCTAssertEqual(client.playbackTransportState(targetId: "bundled-release"), .stopped, "the item played to its end")
+        XCTAssertEqual(client.playbackTransportState(targetId: "cooled-resume"), .stopped, "the item played to its end")
         let supertonicRenders = await supertonic.renderCount
-        XCTAssertGreaterThan(supertonicRenders, 0, "Supertonic took the chunks after the held one")
-        XCTAssertEqual(log.notices, ["bundled_voice"], "the released voice is not announced again")
-        XCTAssertEqual(log.restores, 1)
+        XCTAssertEqual(supertonicRenders, 0, "no chunk after the play went back to Supertonic")
+        let bundledRenders = await bundled.renderCount
+        XCTAssertGreaterThan(bundledRenders, 2, "the bundled voice read the rest of the item")
+        XCTAssertEqual(log.notices, ["bundled_voice"], "the backup voice is announced once")
         XCTAssertEqual(log.fallbacks, [])
-        XCTAssertEqual(fallback.playedOffsets, [])
+        XCTAssertEqual(fallback.playedOffsets, [], "the iOS voice never spoke")
+        XCTAssertEqual(log.voiceRestorations, ["item_ended"], "the item's end lets the hold go, and says so")
+    }
+
+    /// #1786 (a, a stop in between): a stop and a play of the same item start a new generation; the bundled voice
+    /// holding the item reads it, on a cooled phone, and a new item gets the chosen voice again.
+    func testAStopAndPlayOfTheSameItemKeepsTheBundledVoiceAndANewItemGetsTheChosenVoice() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let supertonic = CountingAudioSupertonicRenderer(templateURL: template)
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        openGate.finish()
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 0, gate: gate)
+        let fallback = RecordingFallbackAudioClient()
+        let log = KittenClientLog()
+        let allowed = KittenAllowedFlag()
+        let starts = HarnessStartCounter()
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: supertonic, voice: .m2, speed: 1, fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {},
+            audioPlayerStarter: { player, rate in
+                player.volume = 0
+                player.playImmediately(atRate: rate)
+                starts.add()
+            },
+            observesPlayerLifecycle: true,
+            onDeviceRenderingAllowed: { allowed.value },
+            pressureRenderer: bundled,
+            fallbackClient: fallback,
+            onVoiceRestored: { log.recordVoiceRestored($0) },
+            onBundledVoice: { _, _, _ in log.recordNotice("bundled_voice") }
+        )
+        defer { try? client.stop() }
+        let article = Self.pressureArticle(paragraphs: 4)
+        _ = try client.prepareSpeechText(article)
+        try client.play(targetId: "stopped-hold")
+        for _ in 0..<250 where starts.count < 1 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(starts.count, 1, "the bundled voice plays the first chunk")
+
+        allowed.value = true
+        let offset = try XCTUnwrap(client.currentCharOffset())
         try client.stop()
+        _ = try client.prepareSpeechText(article)
+        try client.play(targetId: "stopped-hold", from: offset)
+        for _ in 0..<250 where starts.count < 2 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertGreaterThanOrEqual(starts.count, 2, "the same item plays again")
+        var supertonicRenders = await supertonic.renderCount
+        XCTAssertEqual(supertonicRenders, 0, "the stop and play kept the bundled voice on a cooled phone")
+        XCTAssertEqual(log.notices, ["bundled_voice"], "not announced again for the new generation")
+
+        try client.stop()
+        _ = try client.prepareSpeechText("A different article. It starts with the chosen voice, since the phone is cool.")
+        try client.play(targetId: "next-item")
+        for _ in 0..<250 where supertonicRenders == 0 {
+            try await Task.sleep(for: .milliseconds(20))
+            supertonicRenders = await supertonic.renderCount
+        }
+        XCTAssertGreaterThan(supertonicRenders, 0, "a new item starts with the chosen voice")
+        XCTAssertEqual(log.voiceRestorations, ["new_item"])
     }
 
     /// #1681: live narration rendered the whole rest of the item ahead, hot or in the background. With a limit, the
@@ -4947,6 +5016,9 @@ private final class KittenClientLog: @unchecked Sendable {
     func recordFallback(_ reason: String) { lock.withLock { fallbackReasons.append(reason) } }
     func recordNotice(_ reason: String) { lock.withLock { noticeReasons.append(reason) } }
     func recordRestore() { lock.withLock { restoreCount += 1 } }
+    private var voiceRestoredReasons: [String] = []
+    func recordVoiceRestored(_ fields: [String: String]) { lock.withLock { voiceRestoredReasons.append(fields["reason"] ?? "?") } }
+    var voiceRestorations: [String] { lock.withLock { voiceRestoredReasons } }
     var notices: [String] { lock.withLock { noticeReasons } }
     var restores: Int { lock.withLock { restoreCount } }
     var completedChunks: Int { lock.withLock { progress.completedChunks } }

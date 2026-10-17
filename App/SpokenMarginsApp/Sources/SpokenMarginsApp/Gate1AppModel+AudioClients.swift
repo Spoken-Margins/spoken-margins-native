@@ -168,6 +168,9 @@ extension Gate1AppModel {
                         self.diagnostics["supertonicFallbackRestored"] = itemId
                     }
                 },
+                onVoiceRestored: { [weak self] fields in
+                    Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic("voice.restored", fields) }
+                },
                 onBundledVoice: { [weak self] block, offset, _ in
                     Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(block: block, offset: offset) }
                 },
