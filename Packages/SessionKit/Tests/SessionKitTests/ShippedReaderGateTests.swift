@@ -3,6 +3,7 @@ import Foundation
 import SessionKitSharing
 import ShippedPacketReader
 import XCTest
+import SessionKitTestInputs
 
 /// The Build 29 compatibility gate is itself under test (PKT-01 of the #1039 audit). `exportPacket` is what every
 /// exporter test calls, and AGENTS.md's rule that a new build's packets must import into the last shipped build rests
@@ -93,7 +94,7 @@ final class ShippedReaderGateTests: XCTestCase {
     func testNoTestWritesAPacketAcrossTwoLinesToGetAroundTheGate() throws {
         // ShippedReaderRoundTripTests searches the sources line by line for the archive type's `write` call; a call split after the
         // type name (`SpokenMarginsPackageArchive` newline `.write(`) was invisible to it.
-        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let folder = TestInputs.packageURL("Tests/SessionKitTests")
         let pattern = try NSRegularExpression(pattern: #"SpokenMarginsPackageArchive\s*\n\s*\.write\("#)
         var split: [String] = []
         for file in try swiftFiles(under: folder) {
@@ -114,9 +115,7 @@ final class ShippedReaderGateTests: XCTestCase {
         // kind of linkless packet through exportPacket. This pins that list: a new
         // direct write fails here until someone either routes it through a packet the Mac package tests also read
         // with Build 29, or adds it below on purpose.
-        let tests = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        let appTests = tests.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("App/SpokenMarginsAppTests")
+        let appTests = try TestInputs.directory(.appTests)
         guard FileManager.default.fileExists(atPath: appTests.path) else {
             throw XCTSkip("the app tests are not in this checkout")
         }

@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 @testable import SessionKitFeeds
+import SessionKitTestInputs
 
 /// #810: a Substack post shared as a link imported as an article but never looked for the post's voiceover,
 /// which only followed posts did.
@@ -355,13 +356,7 @@ final class SharedLinkVoiceoverTests: XCTestCase {
     }
 
     private static func fixture(_ name: String) throws -> String {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return String(decoding: try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/feeds/\(name)")), as: UTF8.self)
+        String(decoding: try TestInputs.data(.contracts, "fixtures/feeds/\(name)"), as: UTF8.self)
     }
 
     /// The page's `window._preloads` as a dictionary.
@@ -414,14 +409,7 @@ final class SharedLinkVoiceoverTests: XCTestCase {
     }
 
     private static func page() throws -> String {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        let url = root.appendingPathComponent("Contracts/fixtures/feeds/substack-voiceover-page.html")
-        return String(decoding: try Data(contentsOf: url), as: UTF8.self)
+        String(decoding: try TestInputs.data(.contracts, "fixtures/feeds/substack-voiceover-page.html"), as: UTF8.self)
     }
 }
 

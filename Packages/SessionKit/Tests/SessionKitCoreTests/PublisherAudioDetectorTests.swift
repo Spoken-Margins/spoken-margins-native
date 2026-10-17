@@ -3,6 +3,7 @@ import XCTest
 @testable import SessionKit
 @testable import SessionKitFeeds
 @testable import SessionKitPersistence
+import SessionKitTestInputs
 
 /// #545: a followed post with both its full text and the publisher's own recording (a Substack
 /// voiceover) became a podcast episode with no text, because the parser folded the post's body
@@ -389,12 +390,6 @@ final class PublisherAudioDetectorTests: XCTestCase {
     }
 
     private static func fixture(_ name: String) throws -> Data {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/feeds/\(name)"))
+        try TestInputs.data(.contracts, "fixtures/feeds/\(name)")
     }
 }

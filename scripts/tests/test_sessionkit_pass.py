@@ -179,10 +179,20 @@ class ReaderGuardTests(unittest.TestCase):
         folders = set(subprocess.check_output(['git', 'ls-tree', '-d', '--name-only', 'HEAD'], cwd=ROOT,
                                               text=True).split())
         uncovered = {}
+        # Reads through the TestInputs helper (#1387) name an input case and a path inside it, e.g.
+        # TestInputs.url(.research, "B2/fixtures"): resolve the case to its folder and check the joined path.
+        helper = ROOT / 'Packages/SessionKit/Tests/TestInputs/TestInputs.swift'
+        inputs = dict(re.findall(r'case (\w+) = "([^"]+)"', helper.read_text()))
         for path in sorted((ROOT / 'Packages/SessionKit').rglob('*.swift')):
-            if '.build' in path.parts:
+            if '.build' in path.parts or path == helper:  # the helper's own literals are the inputs' folders
                 continue
-            for literal in re.findall(r'"((?:[^"\\\n]|\\.)*)"', path.read_text(errors='replace')):
+            text = path.read_text(errors='replace')
+            for case, relative in re.findall(r'TestInputs\.\w+\(\.(\w+)(?:,\s*"([^"]*)")?', text):
+                self.assertIn(case, inputs, f'{path.name} names TestInputs.{case}, which TestInputs.swift does not define')
+                literal = inputs[case] + ('/' + relative if relative else '')
+                if not any((literal + '/').startswith(read) or literal.startswith(read) for read in sk.READS):
+                    uncovered.setdefault(literal, path.name)
+            for literal in re.findall(r'"((?:[^"\\\n]|\\.)*)"', text):
                 first = literal.split('/')[0]
                 if not (first in folders or literal in names) or literal in sk.READS:
                     continue

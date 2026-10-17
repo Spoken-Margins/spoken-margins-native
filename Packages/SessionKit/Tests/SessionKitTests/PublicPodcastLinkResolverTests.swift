@@ -1,14 +1,13 @@
 import XCTest
 import SessionKit
 import SessionKitFeeds
+import SessionKitTestInputs
 
 /// Host tests for the public podcast link resolver (moved from the app-hosted
 /// SourceLinkImportTests, #318). Network access is always injected.
 @MainActor
 final class PublicPodcastLinkResolverTests: XCTestCase {
-    private static let fixtures = URL(fileURLWithPath: #filePath)
-        .deletingLastPathComponent()
-        .appending(path: "Fixtures")
+    private static let fixtures = TestInputs.packageURL("Tests/SessionKitTests/Fixtures")
 
     func testDescriptionChaptersAcceptLinkedParenthesesAndPreserveTitleColons() throws {
         let chapters = try XCTUnwrap(TimestampedDescriptionChapterParser.parse("""
