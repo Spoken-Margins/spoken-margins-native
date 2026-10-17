@@ -6,12 +6,13 @@ import SessionKit
 struct AppFeedbackPresentation: ViewModifier {
     @EnvironmentObject private var model: Gate1AppModel
     @Environment(\.feedbackDeliveryEffects) private var effects
+    @State private var hold = FeedbackBannerHold()
 
     func body(content: Content) -> some View {
         let event = model.recordingNavigationIsLocked ? nil : model.feedbackEvent
         content
-            .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners() }
-            .overlay(alignment: .top) { FloatingFeedbackBanner() }
+            .safeAreaInset(edge: .top, spacing: 8) { StickyTopBanners().environment(\.feedbackBannerHold, hold) }
+            .overlay(alignment: .top) { FloatingFeedbackBanner().environment(\.feedbackBannerHold, hold) }
             .task(id: event?.id) { @MainActor in
                 guard let event else { return }
                 await deliver(event)
@@ -22,12 +23,16 @@ struct AppFeedbackPresentation: ViewModifier {
         // A VoiceOver listener hears that the banner holds a button, not only its message (#784).
         let announcement = event.action.map { "\(event.message) \($0.title) is available." } ?? event.message
         effects.announce(announcement)
+        hold.reset()
         guard let seconds = FeedbackBannerPolicy.autoDismissSeconds(
             for: event.kind,
-            offersAction: event.action != nil
+            offersAction: event.action != nil,
+            assistiveTechnologyRunning: effects.assistiveTechnologyRunning()
         ) else { return }
         do {
             try await effects.sleep(.seconds(seconds))
+            // A listener still touching the banner, or with VoiceOver on it, keeps it (#1927).
+            while hold.isHeld { try await effects.sleep(.seconds(1)) }
             try Task.checkCancellation()
             model.dismissFeedback(id: event.id)
         } catch {}
