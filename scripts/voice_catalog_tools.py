@@ -35,11 +35,14 @@ HF_BASE = "https://huggingface.co/Supertone/supertonic-3/resolve/"
 # The Terms of Use bind listeners to paragraph 5 and Attachment A of the Open RAIL-M licence.
 RAIL_SUMMARY = (
     "You may not use the voice, anything derived from it, or its output to: break the law; exploit or harm "
-    "children; deliberately spread harmful falsehoods or personal information; defame, harass, discriminate "
-    "against or impersonate someone without consent; make fully automated decisions that affect a person's "
-    "legal rights; give medical advice or interpret medical results; or for the justice, law-enforcement, "
-    "immigration and asylum uses listed in Attachment A. Machine-generated speech you share must be "
-    "disclosed as machine-generated."
+    "children; deliberately spread false information to hurt people, or personal information that can be used "
+    "to harm someone; defame, harass or impersonate someone without their consent; make fully automated "
+    "decisions that affect a person's legal rights; discriminate against or harm people or groups because of "
+    "their behaviour, personality or legally protected characteristics; exploit the vulnerabilities of a "
+    "group because of their age or their social, physical or mental characteristics so as to harm them; give "
+    "medical advice or interpret medical results; or support justice, law-enforcement, immigration or asylum "
+    "decisions about individuals (Attachment A has the exact wording). Anything the voice generates and you "
+    "share must be clearly labelled as machine-generated."
 )
 
 

@@ -212,6 +212,76 @@
    "value": "https://example.org/\u00e9",
    "valid": false,
    "why": "non-ASCII path"
+  },
+  {
+   "value": "https://example.org/a\"b",
+   "valid": false,
+   "why": "double quote in path"
+  },
+  {
+   "value": "https://example.org/<x>",
+   "valid": false,
+   "why": "angle brackets"
+  },
+  {
+   "value": "https://example.org/a|b",
+   "valid": false,
+   "why": "pipe"
+  },
+  {
+   "value": "https://example.org/%zz",
+   "valid": false,
+   "why": "bad percent escape"
+  },
+  {
+   "value": "https://example.org/%4",
+   "valid": false,
+   "why": "truncated percent escape"
+  },
+  {
+   "value": "https://example.org/a%20b",
+   "valid": true,
+   "why": "valid percent escape"
+  },
+  {
+   "value": "https://example.org:99999/a",
+   "valid": false,
+   "why": "port above 65535"
+  },
+  {
+   "value": "https://example.org:65535/a",
+   "valid": true,
+   "why": "highest port"
+  },
+  {
+   "value": "https://example.org:0/a",
+   "valid": false,
+   "why": "port zero"
+  },
+  {
+   "value": "https://example.org:080/a",
+   "valid": false,
+   "why": "port with leading zero"
+  },
+  {
+   "value": "https://example.org/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false,
+   "why": "over 2,048 characters"
+  },
+  {
+   "value": "https://example.org/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true,
+   "why": "under 2,048 characters"
+  },
+  {
+   "value": "https://example.org/a?x=1&y=2",
+   "valid": true,
+   "why": "query"
+  },
+  {
+   "value": "https://example.org?x=1",
+   "valid": false,
+   "why": "query with no path"
   }
  ],
  "filePath": [
@@ -294,6 +364,46 @@
    "value": "",
    "valid": false,
    "why": "empty"
+  },
+  {
+   "value": "a:b",
+   "valid": false,
+   "why": "colon"
+  },
+  {
+   "value": "a*b",
+   "valid": false,
+   "why": "asterisk"
+  },
+  {
+   "value": "a/b?c",
+   "valid": false,
+   "why": "question mark"
+  },
+  {
+   "value": "a\"b",
+   "valid": false,
+   "why": "quote"
+  },
+  {
+   "value": "a|b",
+   "valid": false,
+   "why": "pipe"
+  },
+  {
+   "value": "voice_styles/F1.json",
+   "valid": true,
+   "why": "underscore"
+  },
+  {
+   "value": "SHERPA_ONNX_APACHE-2.0.txt",
+   "valid": true,
+   "why": "upper case and hyphen"
+  },
+  {
+   "value": "caf\u00e9.json",
+   "valid": false,
+   "why": "non-ASCII"
   }
  ],
  "id": [
@@ -346,6 +456,90 @@
    "value": "",
    "valid": false,
    "why": "empty"
+  }
+ ],
+ "spdxId": [
+  {
+   "value": "Apache-2.0",
+   "valid": true,
+   "why": "typical"
+  },
+  {
+   "value": "MIT",
+   "valid": true,
+   "why": "short"
+  },
+  {
+   "value": "GPL-2.0-or-later",
+   "valid": true,
+   "why": "long"
+  },
+  {
+   "value": "LGPL-2.1+",
+   "valid": true,
+   "why": "plus"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
+  },
+  {
+   "value": "MIT ",
+   "valid": false,
+   "why": "trailing space"
+  },
+  {
+   "value": "MIT\n",
+   "valid": false,
+   "why": "trailing newline"
+  },
+  {
+   "value": "Apache 2.0",
+   "valid": false,
+   "why": "space"
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false,
+   "why": "65 characters"
+  }
+ ],
+ "runtimeName": [
+  {
+   "value": "onnxruntime",
+   "valid": true,
+   "why": "typical"
+  },
+  {
+   "value": "coreml",
+   "valid": true,
+   "why": "another"
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": true,
+   "why": "32 characters"
+  },
+  {
+   "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+   "valid": false,
+   "why": "33 characters"
+  },
+  {
+   "value": "ONNX",
+   "valid": false,
+   "why": "uppercase"
+  },
+  {
+   "value": "",
+   "valid": false,
+   "why": "empty"
+  },
+  {
+   "value": "onnx\n",
+   "valid": false,
+   "why": "trailing newline"
   }
  ]
 }

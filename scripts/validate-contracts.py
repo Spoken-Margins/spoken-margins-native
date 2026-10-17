@@ -2,6 +2,7 @@
 import base64
 import json
 import hashlib
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -97,6 +98,13 @@ def validate_file(path: Path, schema_path: Path, mode: str | None = None) -> lis
     return errors
 
 
+def check_issued_at(path: Path, catalog: dict) -> list[str]:
+    """jsonschema's FormatChecker skips date-time unless an optional package is installed, so check it here."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})", str(catalog.get("issuedAt", ""))):
+        return [f"{path}: issuedAt {catalog.get('issuedAt')!r} is not an RFC 3339 date-time"]
+    return []
+
+
 def validate_voice_catalogs() -> list[str]:
     """The signed voice catalog (#1816): each envelope's payload is a valid catalog, the field rules in
     the schema agree with the neighbouring-input table, and the Supertonic draft lists the bundled files."""
@@ -106,15 +114,27 @@ def validate_voice_catalogs() -> list[str]:
     for envelope_path in sorted(folder.glob("envelope-*.json")):
         payload = base64.b64decode(load_json(envelope_path)["payload"])
         validator = Draft202012Validator(catalog_schema, format_checker=FormatChecker())
-        for error in validator.iter_errors(json.loads(payload)):
+        catalog = json.loads(payload)
+        for error in validator.iter_errors(catalog):
             location = ".".join(str(part) for part in error.path) or "<root>"
             errors.append(f"{envelope_path}: payload: {location}: {error.message}")
+        errors += check_issued_at(envelope_path, catalog)
     table = load_json(folder / "neighbour-inputs.json")
-    for rule in ("sha256", "httpsURL", "filePath", "id"):
-        validator = Draft202012Validator(catalog_schema["$defs"][rule])
+    rule_schemas = {
+        "sha256": catalog_schema["$defs"]["sha256"],
+        "httpsURL": catalog_schema["$defs"]["httpsURL"],
+        "filePath": catalog_schema["$defs"]["filePath"],
+        "id": catalog_schema["$defs"]["id"],
+        "spdxId": catalog_schema["$defs"]["license"]["properties"]["spdxId"],
+        "runtimeName": catalog_schema["$defs"]["voice"]["properties"]["runtime"]["properties"]["name"],
+    }
+    for rule, rule_schema in rule_schemas.items():
+        validator = Draft202012Validator(rule_schema)
         for row in table[rule]:
             if validator.is_valid(row["value"]) != row["valid"]:
                 errors.append(f"{folder / 'neighbour-inputs.json'}: schema {rule} judges {row['value']!r} ({row['why']}) wrongly")
+    for draft_path in sorted(folder.glob("draft-*.catalog.json")):
+        errors += check_issued_at(draft_path, load_json(draft_path))
     errors += voice_catalog_tools.check_envelope_payloads()
     errors += voice_catalog_tools.check_draft_matches_manifest()
     return errors

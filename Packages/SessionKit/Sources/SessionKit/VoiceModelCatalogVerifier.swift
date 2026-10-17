@@ -155,6 +155,9 @@ public enum VoiceModelCatalogVerifier {
         keyId: String = "",
         supportedRuntimes: Set<String> = VoiceModelCatalogVerifier.supportedRuntimes
     ) throws -> VerifiedVoiceModelCatalog {
+        guard catalog.voices.count + catalog.rejected.count <= VoiceModelCatalogRules.maximumVoices else {
+            throw VoiceCatalogError.malformedPayload
+        }
         var seen = Set<String>()
         for id in catalog.voices.map(\.id) + catalog.rejected.compactMap(\.id) {
             // A repeated id makes "which one does the signature vouch for" ambiguous: reject the lot.
@@ -185,15 +188,19 @@ public enum VoiceModelCatalogVerifier {
         guard !isBlank(entry.publisher) else { return .invalidField("publisher") }
         guard !isBlank(entry.version) else { return .invalidField("version") }
         guard !isBlank(entry.runtime.version) else { return .invalidField("runtime.version") }
+        guard VoiceModelCatalogRules.isRuntimeName(entry.runtime.name) else { return .invalidField("runtime.name") }
         guard supportedRuntimes.contains(entry.runtime.name) else { return .unknownRuntime(entry.runtime.name) }
         guard VoiceModelCatalogRules.isIOSVersion(entry.minimumIOSVersion) else { return .invalidField("minimumIOSVersion") }
         guard entry.minimumMemoryMegabytes >= 1 else { return .invalidField("minimumMemoryMegabytes") }
-        if entry.status == .superseded {
-            guard let successor = entry.supersededBy, VoiceModelCatalogRules.isVoiceID(successor) else {
-                return .supersededWithoutSuccessor
-            }
+        if let successor = entry.supersededBy, !VoiceModelCatalogRules.isVoiceID(successor) {
+            return .invalidField("supersededBy")
         }
-        guard !entry.licenses.isEmpty else { return .invalidField("licenses") }
+        if entry.status == .superseded {
+            // Pointing at itself would leave the listener nowhere to go.
+            guard let successor = entry.supersededBy, successor != entry.id else { return .supersededWithoutSuccessor }
+        }
+        guard !entry.licenses.isEmpty, entry.licenses.count <= VoiceModelCatalogRules.maximumLicenses else { return .invalidField("licenses") }
+        guard entry.files.count <= VoiceModelCatalogRules.maximumFiles else { return .invalidField("files") }
         if !entry.bundled && entry.files.isEmpty { return .noFiles }
 
         var licenseIDs = Set<String>()
@@ -202,6 +209,10 @@ public enum VoiceModelCatalogVerifier {
                 return .invalidField("licenses.id")
             }
             guard !isBlank(license.name) else { return .invalidField("licenses.name") }
+            if let spdx = license.spdxId, !VoiceModelCatalogRules.isSPDXId(spdx) { return .invalidField("licenses.spdxId") }
+            if let summary = license.restrictionsSummary, summary.count > VoiceModelCatalogRules.maximumSummaryCharacters {
+                return .invalidField("licenses.restrictionsSummary")
+            }
             guard VoiceModelCatalogRules.isHTTPSURL(license.textURL) else { return .insecureSource(path: "licenses.\(license.id).textURL") }
             guard VoiceModelCatalogRules.isLowercaseSHA256(license.textSHA256) else { return .invalidHash(path: "licenses.\(license.id).textSHA256") }
             if license.requiresAcceptance, isBlank(license.restrictionsSummary ?? "") {
@@ -212,10 +223,12 @@ public enum VoiceModelCatalogVerifier {
         var paths = Set<String>()
         for file in entry.files {
             guard VoiceModelCatalogRules.isRelativeFilePath(file.path) else { return .invalidField("files.path") }
-            guard paths.insert(file.path).inserted else { return .duplicatePath(file.path) }
+            // Compared case-insensitively: Model.onnx and model.onnx are one file on a default iPhone volume.
+            guard paths.insert(file.path.lowercased()).inserted else { return .duplicatePath(file.path) }
             guard file.byteCount >= 1 else { return .invalidField("files.\(file.path).byteCount") }
             guard VoiceModelCatalogRules.isLowercaseSHA256(file.sha256) else { return .invalidHash(path: file.path) }
             guard !file.sources.isEmpty else { return .emptySources(path: file.path) }
+            guard file.sources.count <= VoiceModelCatalogRules.maximumSources else { return .invalidField("files.\(file.path).sources") }
             for source in file.sources where !VoiceModelCatalogRules.isHTTPSURL(source) {
                 return .insecureSource(path: file.path)
             }
@@ -223,6 +236,14 @@ public enum VoiceModelCatalogVerifier {
             if let origin = file.origin, !VoiceModelCatalogRules.isHTTPSURL(origin.url) {
                 return .insecureSource(path: "\(file.path).origin")
             }
+            if let note = file.origin?.note, note.count > VoiceModelCatalogRules.maximumNoteCharacters {
+                return .invalidField("files.\(file.path).origin.note")
+            }
+        }
+        // A path can't be both a file and the folder another file sits in.
+        let lowered = paths.sorted()
+        for path in lowered where lowered.contains(where: { $0.hasPrefix(path + "/") }) {
+            return .duplicatePath(path)
         }
         return nil
     }
@@ -244,11 +265,29 @@ public enum VoiceModelCatalogVerifier {
 /// same on every platform and a trailing newline can't slip past an end-of-line anchor. The schema
 /// states the same rules as patterns; the neighbouring-input table in the fixtures holds both to it.
 public enum VoiceModelCatalogRules {
+    public static let maximumVoices = 64
+    public static let maximumFiles = 256
+    public static let maximumSources = 8
+    public static let maximumLicenses = 16
+    public static let maximumURLCharacters = 2_048
+    public static let maximumSummaryCharacters = 1_500
+    public static let maximumNoteCharacters = 500
+
     /// `^[a-z0-9][a-z0-9-]{0,63}$`
     public static func isVoiceID(_ text: String) -> Bool {
         let bytes = Array(text.utf8)
         guard (1...64).contains(bytes.count), isLowerAlnum(bytes[0]) else { return false }
         return bytes.allSatisfy { isLowerAlnum($0) || $0 == UInt8(ascii: "-") }
+    }
+
+    /// `^[a-z0-9][a-z0-9-]{0,31}$`
+    public static func isRuntimeName(_ text: String) -> Bool {
+        isVoiceID(text) && text.utf8.count <= 32
+    }
+
+    /// `^[A-Za-z0-9.+-]+$`
+    public static func isSPDXId(_ text: String) -> Bool {
+        !text.isEmpty && text.utf8.count <= 64 && text.utf8.allSatisfy { isAlnum($0) || $0 == UInt8(ascii: ".") || $0 == UInt8(ascii: "+") || $0 == UInt8(ascii: "-") }
     }
 
     /// 64 lowercase hex characters.
@@ -257,16 +296,16 @@ public enum VoiceModelCatalogRules {
         return bytes.count == 64 && bytes.allSatisfy { ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x61 && $0 <= 0x66) }
     }
 
-    /// A plain `https://host[:port]/path?query` URL: lowercase scheme, printable ASCII only, a host,
-    /// no credentials, no fragment, no whitespace.
+    /// A plain `https://host[:port][/path][?query]` URL of at most 2,048 characters. Lowercase scheme, a
+    /// dotted ASCII host, a port from 1 to 65535, and a path of unreserved characters, sub-delimiters,
+    /// `:`, `@`, `/`, `?` and `%XX` escapes. No credentials, fragment, whitespace or other characters.
+    /// Hand-written so Foundation's URL parsing, which differs between platforms, never decides.
     public static func isHTTPSURL(_ text: String) -> Bool {
         let prefix = "https://"
-        guard text.hasPrefix(prefix) else { return false }
+        guard text.hasPrefix(prefix), text.utf8.count <= maximumURLCharacters else { return false }
         let rest = Array(text.utf8.dropFirst(prefix.utf8.count))
-        guard rest.allSatisfy({ $0 >= 0x21 && $0 <= 0x7E && $0 != UInt8(ascii: "#") }) else { return false }
         let authorityEnd = rest.firstIndex(of: UInt8(ascii: "/")) ?? rest.endIndex
         let authority = rest[..<authorityEnd]
-        guard !authority.contains(UInt8(ascii: "@")) else { return false }
         let hostAndPort = authority.split(separator: UInt8(ascii: ":"), maxSplits: 1, omittingEmptySubsequences: false)
         guard let host = hostAndPort.first, let first = host.first, let last = host.last,
               isAlnum(first), isAlnum(last),
@@ -275,23 +314,45 @@ public enum VoiceModelCatalogRules {
         }
         if hostAndPort.count == 2 {
             let port = hostAndPort[1]
-            guard (1...5).contains(port.count), port.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }) else { return false }
+            guard (1...5).contains(port.count), port.allSatisfy({ $0 >= 0x30 && $0 <= 0x39 }),
+                  let number = Int(String(decoding: port, as: UTF8.self)), (1...65_535).contains(number) else { return false }
+            guard port.first != UInt8(ascii: "0") else { return false }
         }
-        return URL(string: text) != nil
+        var index = authorityEnd
+        while index < rest.endIndex {
+            let byte = rest[index]
+            if byte == UInt8(ascii: "%") {
+                guard index + 2 < rest.count, isHexDigit(rest[index + 1]), isHexDigit(rest[index + 2]) else { return false }
+                index += 3
+                continue
+            }
+            guard isAlnum(byte) || pathPunctuation.contains(byte) else { return false }
+            index += 1
+        }
+        return true
     }
 
-    /// A path inside the voice's folder: relative, `/`-separated, no empty or `.`/`..` segments, no backslash.
+    /// A path inside the voice's folder: relative, `/`-separated, only letters, digits and `. _ + -`
+    /// in each segment, no empty or `.`/`..` segments. Nothing a file system treats specially.
     public static func isRelativeFilePath(_ text: String) -> Bool {
         guard !text.isEmpty, text.utf8.count <= 256 else { return false }
-        guard text.utf8.allSatisfy({ $0 >= 0x21 && $0 <= 0x7E && $0 != UInt8(ascii: "\\") }) else { return false }
         let segments = text.split(separator: "/", omittingEmptySubsequences: false)
-        return segments.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+        return segments.allSatisfy { segment in
+            !segment.isEmpty && segment != "." && segment != ".."
+                && segment.utf8.allSatisfy { isAlnum($0) || $0 == UInt8(ascii: ".") || $0 == UInt8(ascii: "_") || $0 == UInt8(ascii: "+") || $0 == UInt8(ascii: "-") }
+        }
     }
 
     /// `26`, `26.0` or `26.0.1`.
     public static func isIOSVersion(_ text: String) -> Bool {
         let parts = text.split(separator: ".", omittingEmptySubsequences: false)
         return (1...3).contains(parts.count) && parts.allSatisfy { !$0.isEmpty && $0.utf8.count <= 4 && $0.utf8.allSatisfy { $0 >= 0x30 && $0 <= 0x39 } }
+    }
+
+    private static let pathPunctuation: Set<UInt8> = Set("-._~!$&'()*+,;=:@/?".utf8)
+
+    private static func isHexDigit(_ byte: UInt8) -> Bool {
+        (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x46) || (byte >= 0x61 && byte <= 0x66)
     }
 
     private static func isAlnum(_ byte: UInt8) -> Bool {

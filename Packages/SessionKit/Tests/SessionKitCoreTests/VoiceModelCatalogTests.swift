@@ -241,6 +241,17 @@ final class VoiceModelCatalogTests: XCTestCase {
             ("zero bytes", { $0.files[0].byteCount = 0 }, .invalidField("files.model.onnx.byteCount")),
             ("path climbs out", { $0.files[0].path = "../model.onnx" }, .invalidField("files.path")),
             ("duplicate path", { $0.files[1].path = $0.files[0].path }, .duplicatePath("model.onnx")),
+            ("paths differing only by case", { $0.files[1].path = "Model.onnx" }, .duplicatePath("Model.onnx")),
+            ("a file that is also a folder", { $0.files[1].path = "model.onnx/extra.json" }, .duplicatePath("model.onnx")),
+            ("path with a colon", { $0.files[0].path = "a:b" }, .invalidField("files.path")),
+            ("superseded by itself", { $0.status = .superseded; $0.supersededBy = $0.id }, .supersededWithoutSuccessor),
+            ("successor that is not an id", { $0.supersededBy = "NOT AN ID" }, .invalidField("supersededBy")),
+            ("source URL over 2,048 characters", { $0.files[0].sources = ["https://models.example.org/" + String(repeating: "a", count: 2_048)] }, .insecureSource(path: "model.onnx")),
+            ("too many sources", { $0.files[0].sources = (0..<9).map { "https://models.example.org/\($0)/model.onnx" } }, .invalidField("files.model.onnx.sources")),
+            ("too many files", { voice in voice.files = (0..<257).map { VoiceModelFile(path: "f\($0).bin", byteCount: 1, sha256: String(repeating: "a", count: 64), sources: ["https://models.example.org/f"]) } }, .invalidField("files")),
+            ("summary over 1,500 characters", { $0.licenses[0].restrictionsSummary = String(repeating: "x", count: 1_501) }, .invalidField("licenses.restrictionsSummary")),
+            ("SPDX id with a space", { $0.licenses[0].spdxId = "Apache 2.0" }, .invalidField("licenses.spdxId")),
+            ("runtime name that is not a name", { $0.runtime.name = "ONNX Runtime" }, .invalidField("runtime.name")),
             ("file names a licence the voice lacks", { $0.files[0].licenseId = "nope" }, .unknownLicense("nope")),
             ("acceptance with no summary", { $0.licenses[0].restrictionsSummary = "  " }, .acceptanceWithoutSummary(licenseId: "fixture-rail")),
             ("superseded by nothing", { $0.status = .superseded; $0.supersededBy = nil }, .supersededWithoutSuccessor),
@@ -263,6 +274,19 @@ final class VoiceModelCatalogTests: XCTestCase {
         }
     }
 
+    func testCatalogWithMoreThanTheMaximumVoicesIsRejected() throws {
+        let valid = try VoiceModelCatalog.decode(fixture("catalog-valid.json"))
+        var catalog = valid
+        catalog.voices = (0...VoiceModelCatalogRules.maximumVoices).map { index in
+            var voice = valid.voices[1]
+            voice.id = "voice-\(index)"
+            return voice
+        }
+        XCTAssertThrowsError(try VoiceModelCatalogVerifier.screen(catalog)) {
+            XCTAssertEqual($0 as? VoiceCatalogError, .malformedPayload)
+        }
+    }
+
     func testBundledVoiceNeedsNoFilesButStillNeedsItsLicence() throws {
         let valid = try VoiceModelCatalog.decode(fixture("catalog-valid.json"))
         var bundled = try XCTUnwrap(valid.voices.first { $0.bundled })
@@ -275,16 +299,18 @@ final class VoiceModelCatalogTests: XCTestCase {
 
     func testFieldRulesAgreeWithTheNeighbouringInputTable() throws {
         struct Row: Decodable { var value: String; var valid: Bool; var why: String }
-        struct Table: Decodable { var sha256: [Row]; var httpsURL: [Row]; var filePath: [Row]; var id: [Row] }
+        struct Table: Decodable { var sha256: [Row]; var httpsURL: [Row]; var filePath: [Row]; var id: [Row]; var spdxId: [Row]; var runtimeName: [Row] }
         let table = try JSONDecoder().decode(Table.self, from: fixture("neighbour-inputs.json"))
         let rules: [(String, [Row], (String) -> Bool)] = [
             ("sha256", table.sha256, VoiceModelCatalogRules.isLowercaseSHA256),
             ("httpsURL", table.httpsURL, VoiceModelCatalogRules.isHTTPSURL),
             ("filePath", table.filePath, VoiceModelCatalogRules.isRelativeFilePath),
             ("id", table.id, VoiceModelCatalogRules.isVoiceID),
+            ("spdxId", table.spdxId, VoiceModelCatalogRules.isSPDXId),
+            ("runtimeName", table.runtimeName, VoiceModelCatalogRules.isRuntimeName),
         ]
         for (name, rows, rule) in rules {
-            XCTAssertGreaterThanOrEqual(rows.count, 10, name)
+            XCTAssertGreaterThanOrEqual(rows.count, 6, name)
             for row in rows {
                 XCTAssertEqual(rule(row.value), row.valid, "\(name): \(row.why): \(row.value.debugDescription)")
             }
