@@ -11,8 +11,9 @@ bot, a missing `author_association` is not trusted, and so is every other associ
 FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, MANNEQUIN, NONE). GitHub does not allow `[` or `]` in a user name, so a person
 cannot register the bot's login.
 
-Two payload shapes are understood: REST (`user.login`, `author_association`) and `gh ... --json` (`author.login`,
-`authorAssociation`).
+Two payload shapes are understood: REST (`user.login`, `author_association`) and GraphQL / `gh ... --json`
+(`author.login`, `authorAssociation`). In the second the bot appears as `github-actions` and only counts when the
+author is marked as a bot (`__typename: Bot` or `is_bot: true`).
 
 `ops/dial/dial_gate.py` is deployed to the VPS as a single file and keeps a copy of these two constants;
 `ops/dial/test_dial_gate.py` fails if they drift.
@@ -21,6 +22,7 @@ from __future__ import annotations
 
 TRUSTED_ASSOCIATIONS = ('OWNER', 'MEMBER', 'COLLABORATOR')
 TRUSTED_BOTS = ('github-actions[bot]',)
+GRAPHQL_BOT_LOGINS = ('github-actions', 'app/github-actions')
 
 
 def trusted_author(association: object, login: object) -> bool:
@@ -35,9 +37,21 @@ def author_login(item: dict) -> str:
     return person.get('login') or ''
 
 
+def is_project_bot_in_graphql_shape(item: dict) -> bool:
+    """GraphQL and `gh --json` call the workflows' bot `github-actions` (or `app/github-actions`), without the
+    `[bot]` REST adds, and mark it as a bot (`__typename` Bot, or `is_bot`). The marker is what keeps a person who
+    registers that login from passing; REST payloads never carry it, so they are judged by the exact login."""
+    person = item.get('author')
+    if not isinstance(person, dict):
+        return False
+    marked = person.get('__typename') == 'Bot' or person.get('is_bot') is True
+    return marked and person.get('login') in GRAPHQL_BOT_LOGINS
+
+
 def trusted(item: dict) -> bool:
     """Whether a comment or an issue (REST or `gh --json` shape) comes from the owner, a collaborator or the bot."""
-    return trusted_author(item.get('author_association', item.get('authorAssociation')), author_login(item))
+    return trusted_author(item.get('author_association', item.get('authorAssociation')), author_login(item)) \
+        or is_project_bot_in_graphql_shape(item)
 
 
 def trusted_only(items: list[dict] | None) -> list[dict]:

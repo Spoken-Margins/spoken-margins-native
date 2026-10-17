@@ -58,6 +58,20 @@ class AuthorTable(unittest.TestCase):
         self.assertFalse(trust.trusted({'author': {'login': 'x'}, 'authorAssociation': 'CONTRIBUTOR'}))
         self.assertFalse(trust.trusted({'author': {'login': 'x'}}))
 
+    def test_the_bot_in_graphql_shape_needs_its_bot_marker(self):
+        rows = [
+            ('GraphQL bot', {'author': {'login': 'github-actions', '__typename': 'Bot'}, 'authorAssociation': 'NONE'}, True),
+            ('gh app login', {'author': {'login': 'app/github-actions', 'is_bot': True}, 'authorAssociation': 'NONE'}, True),
+            ('a user named github-actions', {'author': {'login': 'github-actions', '__typename': 'User'}, 'authorAssociation': 'NONE'}, False),
+            ('no marker', {'author': {'login': 'github-actions'}, 'authorAssociation': 'NONE'}, False),
+            ('is_bot false', {'author': {'login': 'github-actions', 'is_bot': False}}, False),
+            ('another bot', {'author': {'login': 'dependabot', '__typename': 'Bot'}, 'authorAssociation': 'NONE'}, False),
+            ('marker on a REST user is ignored', {'user': {'login': 'github-actions', '__typename': 'Bot'}}, False),
+        ]
+        for name, item, expected in rows:
+            with self.subTest(name):
+                self.assertIs(trust.trusted(item), expected)
+
     def test_an_issue_is_judged_like_a_comment(self):
         self.assertTrue(trust.trusted({'number': 5, 'user': {'login': 'uncomposed'}, 'author_association': 'OWNER'}))
         self.assertFalse(trust.trusted({'number': 5, 'user': {'login': 'stranger'}, 'author_association': 'NONE'}))

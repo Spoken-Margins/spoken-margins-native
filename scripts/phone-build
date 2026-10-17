@@ -479,7 +479,7 @@ def reverted_prs(sha: str) -> set[int]:
     return _reverted[sha]
 
 
-COMMENTS = 'comments(last:30){nodes{body authorAssociation author{login}}}'  # a check written in a comment (#927)
+COMMENTS = 'comments(last:30){nodes{body authorAssociation author{login __typename}}}'  # a check written in a comment (#927)
 PR_FIELDS = '''number title url mergedAt body labels(first:20){nodes{name}} files(first:100){nodes{path}}
 closingIssuesReferences(first:5){nodes{number title url state body labels(first:20){nodes{name}} milestone{title state} %s}}''' % COMMENTS
 ISSUE_FIELDS = 'number title url state body labels(first:20){nodes{name}} milestone{title state} ' + COMMENTS  # state: passed_on_phone (#1100)
