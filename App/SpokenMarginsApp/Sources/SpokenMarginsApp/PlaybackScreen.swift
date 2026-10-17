@@ -1910,7 +1910,7 @@ private struct TimelineRow: View {
                         if isCurrent {
                             Text("NOW")
                                 .font(.caption2.weight(.bold))
-                                .foregroundStyle(AppColors.primaryAction)
+                                .foregroundStyle(AppColors.text)
                                 .padding(.horizontal, 7)
                                 .padding(.vertical, 3)
                                 .background(AppColors.accentSoft)
