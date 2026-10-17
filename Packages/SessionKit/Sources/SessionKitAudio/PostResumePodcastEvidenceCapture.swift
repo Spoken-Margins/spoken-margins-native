@@ -93,7 +93,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         }
     }
 
-    private struct RingChunk: @unchecked Sendable {
+    struct RingChunk: @unchecked Sendable {
         let buffer: AVAudioPCMBuffer
         let startMediaTimeMs: Int
         let endMediaTimeMs: Int
@@ -116,6 +116,9 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
 
     /// Rounding slack when deciding whether a buffer starts before the audio already seen ends.
     static let rewindToleranceMs = 10
+    /// The most a buffer may start after the previous one ended before the ring counts a hole there. Start and end
+    /// times are each rounded to a millisecond, so adjacent buffers differ by a couple at most.
+    static let contiguityToleranceMs = 25
     /// The most decoded audio the tap keeps waiting for the worker. Beyond it the tap drops buffers, and the
     /// windows start again after the gap, rather than letting memory grow behind a stuck worker.
     static let maxPendingSeconds = 20.0
@@ -217,9 +220,14 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         let endMs = request.anchorMediaTimeMs - 5_000
         let startMs = endMs - request.targetDurationMs
         guard startMs >= 0 else { return false }
+        // The stored duration is the signature's, which is the length of the audio the buffers really hold. A
+        // window with a hole inside it (a tap buffer that never arrived, #1872) passes a check on the first and
+        // last media times while holding less audio, and its signature would splice across the hole. So the
+        // buffers must run unbroken through the window and hold the target's worth of audio themselves.
         guard let chunks = bufferedChunks(startMs: startMs, endMs: endMs),
               let first = chunks.first, let last = chunks.last,
-              last.endMediaTimeMs - first.startMediaTimeMs >= request.targetDurationMs - 250 else {
+              last.endMediaTimeMs - first.startMediaTimeMs >= request.targetDurationMs - 250,
+              Self.audioDurationMs(of: chunks) >= request.targetDurationMs - 250 else {
             return false
         }
         completionQueue.async { [resultHandler] in
@@ -502,13 +510,7 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
     }
 
     private func bufferedChunks(startMs: Int, endMs: Int) -> [RingChunk]? {
-        lock.withLock {
-            let selected = ring.filter { $0.endMediaTimeMs > startMs && $0.startMediaTimeMs < endMs }
-            guard let first = selected.first, let last = selected.last,
-                  first.startMediaTimeMs <= startMs + 250,
-                  last.endMediaTimeMs >= endMs - 250 else { return nil }
-            return selected
-        }
+        lock.withLock { bufferedChunksWithoutLock(startMs: startMs, endMs: endMs) }
     }
 
     private func scheduleSparseLandmarkIfReady(now: Date) {
@@ -566,12 +568,30 @@ final class PostResumePodcastEvidenceTapContext: @unchecked Sendable {
         }
     }
 
+    /// The ring's buffers across `startMs`..`endMs`, or nil when it doesn't cover the window or has a hole in it.
+    /// Buffers the tap dropped leave no trace in the ring except the missing time, so a hole is any buffer that
+    /// starts later than the one before it ended.
     private func bufferedChunksWithoutLock(startMs: Int, endMs: Int) -> [RingChunk]? {
         let selected = ring.filter { $0.endMediaTimeMs > startMs && $0.startMediaTimeMs < endMs }
         guard let first = selected.first, let last = selected.last,
               first.startMediaTimeMs <= startMs + 250,
-              last.endMediaTimeMs >= endMs - 250 else { return nil }
+              last.endMediaTimeMs >= endMs - 250,
+              Self.isContiguous(selected) else { return nil }
         return selected
+    }
+
+    static func isContiguous(_ chunks: [RingChunk]) -> Bool {
+        zip(chunks, chunks.dropFirst()).allSatisfy { previous, next in
+            next.startMediaTimeMs - previous.endMediaTimeMs <= contiguityToleranceMs
+        }
+    }
+
+    /// The length of the audio the buffers hold, which is what a signature made from them lasts.
+    static func audioDurationMs(of chunks: [RingChunk]) -> Int {
+        let seconds = chunks.reduce(0.0) { total, chunk in
+            total + Double(chunk.buffer.frameLength) / chunk.buffer.format.sampleRate
+        }
+        return Int((seconds * 1_000).rounded())
     }
 
     private static func signature(from buffers: [AVAudioPCMBuffer]) throws -> SHSignature {
