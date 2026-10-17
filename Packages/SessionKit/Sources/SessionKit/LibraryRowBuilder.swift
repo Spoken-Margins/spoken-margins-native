@@ -122,6 +122,7 @@ public enum LibraryRowBuilder {
                 storageRecencyRank: storageRank
             )
             row.usesNewReader = data.structuredDocumentItemIds.contains(item.id)
+            row.sharedMargins = data.sharedMarginsByItemId[item.id] ?? .none
             row.canMarkUnfinished = item.sourceCompletedAt != nil && !PreparationChunkGate.itemAlreadyListened(sessions)
             row.textCharacterCount = row.hasNativeAudio ? nil : ListeningTimeEstimator.characterCount(of: item.text)
             return row

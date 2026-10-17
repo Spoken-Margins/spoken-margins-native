@@ -256,6 +256,13 @@ struct ExperienceLibraryScreen: View {
                     }
                 }
             }
+            Section("Shared Margins") {
+                Picker("Shared Margins", selection: $model.libraryQuery.sharedMargins) {
+                    ForEach(LibrarySharedMarginsFilter.allCases, id: \.self) { option in
+                        Text(option.title).tag(option)
+                    }
+                }
+            }
         } label: {
             if dynamicTypeSize.isAccessibilitySize {
                 Image(systemName: "line.3.horizontal.decrease.circle")
@@ -300,6 +307,7 @@ struct ExperienceLibraryScreen: View {
         model.libraryQuery.contentType != .all
             || model.libraryQuery.listeningState != .unfinished
             || model.libraryQuery.offlineState != .all
+            || model.libraryQuery.sharedMargins != .all
     }
 
     @ViewBuilder
@@ -396,6 +404,7 @@ private struct ExperienceLibraryCompactRow: View {
                         .font(.subheadline)
                         .foregroundStyle(AppColors.secondaryText)
                         .multilineTextAlignment(.leading)
+                    sharedMarginsLine
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -502,6 +511,23 @@ private struct ExperienceLibraryCompactRow: View {
             }
         } else {
             Text(detail.rest).lineLimit(1)
+        }
+    }
+
+    /// Where a friend left Margins, and whether any are new (#1792). The words carry it, not the color.
+    @ViewBuilder private var sharedMarginsLine: some View {
+        if let line = row.sharedMargins.libraryLine {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2.fill")
+                    .accessibilityHidden(true)
+                Text(line)
+                if row.sharedMargins.new > 0 { NewMarginBadge() }
+            }
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(AppColors.evergreen)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.sharedMargins.accessibilityLine ?? line)
+            .accessibilityIdentifier("library.sharedMargins.\(row.id)")
         }
     }
 

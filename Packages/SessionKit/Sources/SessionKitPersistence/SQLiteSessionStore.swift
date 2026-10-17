@@ -1654,6 +1654,46 @@ extension SQLiteSessionStore: StructuredDocumentRepository {
         }
     }
 
+    /// Margins other people shared, counted per item for the Library rows (#1792). One query in SQL:
+    /// opening the Library must not decode every imported recording, transcript and anchor. Only a
+    /// layer the listener hasn't deleted and still has switched on counts, as on the Margins screens.
+    public func loadSharedMarginTallies() throws -> [String: SharedMarginTally] {
+        try withConnectionLock {
+            var statement: OpaquePointer?
+            guard sqlite3_prepare_v2(
+                db,
+                """
+                SELECT layer.item_id, COUNT(note.id),
+                       SUM(CASE WHEN json_extract(note.payload, '$.firstHeardAt') IS NULL THEN 1 ELSE 0 END)
+                FROM records AS layer
+                JOIN records AS note
+                  ON note.kind = ? AND json_valid(note.payload) AND json_extract(note.payload, '$.layerId') = layer.id
+                WHERE layer.kind = ? AND layer.item_id IS NOT NULL AND json_valid(layer.payload)
+                  AND json_extract(layer.payload, '$.deletedAt') IS NULL
+                  AND COALESCE(json_extract(layer.payload, '$.isEnabled'), 0) != 0
+                GROUP BY layer.item_id;
+                """,
+                -1,
+                &statement,
+                nil
+            ) == SQLITE_OK else {
+                throw SessionKitError.persistenceFailed("prepare_shared_margin_tallies")
+            }
+            defer { sqlite3_finalize(statement) }
+            bind(statement, index: 1, value: "imported_commentary_interjection")
+            bind(statement, index: 2, value: "imported_commentary_layer")
+            var tallies: [String: SharedMarginTally] = [:]
+            while sqlite3_step(statement) == SQLITE_ROW {
+                guard let raw = sqlite3_column_text(statement, 0) else { continue }
+                tallies[String(cString: raw)] = SharedMarginTally(
+                    total: Int(sqlite3_column_int64(statement, 1)),
+                    new: Int(sqlite3_column_int64(statement, 2))
+                )
+            }
+            return tallies
+        }
+    }
+
     public func applyStructuredDocumentUpgrade(_ upgrade: StructuredDocumentUpgrade) throws {
         let itemId = upgrade.item.id
         try withTransaction {
