@@ -392,12 +392,9 @@ final class VoiceModelInstallerTests: XCTestCase {
         let v1 = payload(30_000, seed: 16)
         let v2 = payload(90_000, seed: 17)
         let server = try startServer { request, _ in
-            guard request.path == "/v2" else { return LocalHTTPServer.file(v1, for: request) }
-            var reply = LocalHTTPServer.file(v2, for: request)
-            reply.cutAfter = 40_000
-            return reply
+            LocalHTTPServer.file(request.path == "/v2" ? v2 : v1, for: request)
         }
-        let installer = installer(attemptsPerSource: 1)
+        let installer = installer(attemptsPerSource: 1, transport: CuttingTransport(cutFirstRequestAfter: 40_000, onlyPath: "/v2"))
 
         try await installer.install(voiceId: "v", version: "1", files: [installFile("model.onnx", v1, sources: [server.url("/v1")])])
         do {
@@ -409,9 +406,7 @@ final class VoiceModelInstallerTests: XCTestCase {
         XCTAssertEqual(try read(root.appendingPathComponent("v/1/model.onnx")), v1)
         XCTAssertEqual(stagedFolders(), ["v@2"], "the unfinished upgrade stays staged")
         let partial = try read(root.appendingPathComponent(".staging/v@2/model.onnx.partial"))
-        XCTAssertGreaterThan(partial.count, 0)
-        XCTAssertLessThan(partial.count, v2.count)
-        XCTAssertEqual(partial, v2.prefix(partial.count), "what was kept is the start of the new version")
+        XCTAssertEqual(partial, v2.prefix(40_000), "what was kept is exactly the start of the new version that arrived before the cut")
     }
 
     func testASuccessfulUpgradeReplacesTheOldVersion() async throws {
@@ -539,6 +534,7 @@ final class VoiceModelInstallerTests: XCTestCase {
             try await installer(attemptsPerSource: 1, transport: CuttingTransport(cutFirstRequestAfter: 120_000)).install(voiceId: "v", version: "1", files: files)
             XCTFail("the first request is cut")
         } catch is VoiceModelInstallError {}
+        XCTAssertEqual(try read(root.appendingPathComponent(".staging/v@1/model.onnx.partial")).count, 120_000, "the cut left exactly the bytes the space check should discount")
         let folder = try await installer(marginBytes: 50_000, availableCapacity: { _ in 150_000 }).install(voiceId: "v", version: "1", files: files)
         XCTAssertEqual(try read(folder.appendingPathComponent("model.onnx")), model)
     }
