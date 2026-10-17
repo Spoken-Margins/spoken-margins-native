@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
-"""Build the onboarding top-podcast catalog snapshot (stream B1, seam I2).
+"""Build the onboarding starter-podcast catalog snapshot (stream B1, seam I2).
 
-Source: Apple's public per-genre top-podcast charts (the legacy iTunes RSS
-feed, which is the only public Apple chart that filters by genre), then one
-iTunes Lookup call per batch of shows to resolve the RSS feed URL and
-600px artwork. Every feed URL is fetched once to confirm it answers with
-RSS/Atom before the show is kept.
+The list of shows is hand-picked in research/B1/shows.json: a feed URL, the
+subjects it belongs to, and whether it leads its subject's starter row. Each
+show's title, author, description, explicit flag, website and artwork URL are
+read from that show's own RSS feed. Nothing comes from Apple's charts or
+lookup API, and artwork that points at Apple's image servers is never used
+(#1732, docs/legal/attorney-questions.md D13).
 
-Raw responses are written under research/B1/recorded/<date>/ so the
-snapshot can be rebuilt offline (--replay) and audited later.
+The head of every feed (everything before its first <item>) and every artwork
+check is recorded under research/B1/recorded/<date>/, so the snapshot can be
+rebuilt offline (--replay) and audited later.
 
 Usage:
-  .venv/bin/python research/B1/build_catalog.py            # live fetch
-  .venv/bin/python research/B1/build_catalog.py --replay recorded/2026-09-28
+  .venv/bin/python research/B1/build_catalog.py --content-version 3        # live fetch
+  .venv/bin/python research/B1/build_catalog.py --replay recorded/<date>   # offline
 """
 from __future__ import annotations
 
@@ -20,97 +22,34 @@ import argparse
 import concurrent.futures
 import datetime as dt
 import hashlib
+import html
 import json
 import re
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
 SITE_DIR = ROOT / "Site" / "onboarding" / "catalog" / "v1"
+SHOWS_FILE = HERE / "shows.json"
 CATALOG_BASE_URL = "https://spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/"
 
-COUNTRY = "us"
-PER_SUBJECT = 16          # chart positions kept per subject, before de-duplication
-CHART_DEPTH = 40          # positions fetched per chart, so de-duplication can backfill
-USER_AGENT = "SpokenMarginsCatalogResearch/1 (+https://spokenmargins.proximitytoprogress.com)"
+USER_AGENT = "SpokenMarginsCatalogResearch/2 (+https://spokenmargins.proximitytoprogress.com)"
+FEED_HEAD_LIMIT = 512 * 1024   # bytes read from a feed while looking for its first <item>
+SUMMARY_LIMIT = 300            # characters of a feed's description kept (the schema allows 600)
 
-# Subject id -> (display title, Apple top-level podcast genre id).
-SUBJECTS: list[tuple[str, str, int]] = [
-    ("news", "News", 1489),
-    ("society-culture", "Society & Culture", 1324),
-    ("comedy", "Comedy", 1303),
-    ("true-crime", "True Crime", 1488),
-    ("business", "Business", 1321),
-    ("science", "Science", 1533),
-    ("history", "History", 1487),
-    ("health-fitness", "Health & Fitness", 1512),
-    ("technology", "Technology", 1318),
-    ("sports", "Sports", 1545),
-    ("education", "Education", 1304),
-    ("arts", "Arts", 1301),
-]
-
-# Apple primaryGenreName (top-level or sub-genre) -> our subject id. Used to add
-# secondary subjects; the chart a show was found in is always its primary subject.
-GENRE_TO_SUBJECT = {
-    "News": "news", "Daily News": "news", "Politics": "news", "News Commentary": "news",
-    "Society & Culture": "society-culture", "Documentary": "society-culture",
-    "Personal Journals": "society-culture", "Philosophy": "society-culture",
-    "Relationships": "society-culture", "Places & Travel": "society-culture",
-    "Comedy": "comedy", "Comedy Interviews": "comedy", "Improv": "comedy", "Stand-Up": "comedy",
-    "True Crime": "true-crime",
-    "Business": "business", "Investing": "business", "Entrepreneurship": "business",
-    "Careers": "business", "Management": "business", "Marketing": "business",
-    "Business News": "business",
-    "Science": "science", "Natural Sciences": "science", "Social Sciences": "science",
-    "Life Sciences": "science", "Physics": "science", "Astronomy": "science",
-    "Nature": "science", "Mathematics": "science", "Earth Sciences": "science",
-    "Chemistry": "science",
-    "History": "history",
-    "Health & Fitness": "health-fitness", "Mental Health": "health-fitness",
-    "Fitness": "health-fitness", "Nutrition": "health-fitness", "Medicine": "health-fitness",
-    "Alternative Health": "health-fitness", "Sexuality": "health-fitness",
-    "Technology": "technology", "Tech News": "technology",
-    "Sports": "sports", "Football": "sports", "Basketball": "sports", "Baseball": "sports",
-    "Soccer": "sports", "Hockey": "sports", "Fantasy Sports": "sports", "Golf": "sports",
-    "Sports News": "sports", "Wrestling": "sports",
-    "Education": "education", "Self-Improvement": "education", "How To": "education",
-    "Language Learning": "education", "Courses": "education",
-    "Arts": "arts", "Books": "arts", "Design": "arts", "Performing Arts": "arts",
-    "Visual Arts": "arts", "Food": "arts", "Fashion & Beauty": "arts",
-}
+# Hosts the catalog must never point at. Apple's image servers carry artwork
+# whose terms need a link to Apple's store (#632).
+APPLE_HOST_SUFFIXES = ("mzstatic.com", "apple.com", "itunes.com", "apple-dns.net")
 
 
-def chart_url(genre_id: int) -> str:
-    return f"https://itunes.apple.com/{COUNTRY}/rss/toppodcasts/limit={CHART_DEPTH}/genre={genre_id}/json"
-
-
-def lookup_url(ids: list[str]) -> str:
-    return f"https://itunes.apple.com/lookup?id={','.join(ids)}&entity=podcast&country={COUNTRY}"
-
-
-def fetch(url: str, *, limit: int | None = None, timeout: int = 25) -> tuple[int, bytes, str]:
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read(limit) if limit else response.read()
-            return response.status, body, response.geturl()
-    except urllib.error.HTTPError as error:
-        return error.code, b"", url
-    except Exception as error:  # network errors are recorded, not fatal
-        return 0, str(error).encode(), url
-
-
-def now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-
-
-def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48] or "podcast"
+def is_apple_url(url: str) -> bool:
+    host = (urllib.parse.urlsplit(url).hostname or "").lower()
+    return any(host == suffix or host.endswith("." + suffix) for suffix in APPLE_HOST_SUFFIXES)
 
 
 # Catalogs never carry private feeds (#168). Mirrors ShareableLinkPolicy's host and
@@ -133,224 +72,267 @@ def looks_private(url: str) -> bool:
                for name, _ in urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
 
 
-FEED_MARKERS = (b"<rss", b"<feed", b"<channel", b"<rdf:RDF")
+def fetch(url: str, *, limit: int | None = None, timeout: int = 25) -> tuple[int, bytes, str, str]:
+    """(status, body, final URL, content type). Network errors come back as status 0."""
+    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read(limit) if limit else response.read()
+            return response.status, body, response.geturl(), response.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as error:
+        return error.code, b"", url, ""
+    except Exception as error:  # network errors are recorded, not fatal
+        return 0, str(error).encode(), url, ""
 
 
-def check_feed(url: str) -> dict:
-    status, body, final_url = fetch(url, limit=64 * 1024, timeout=20)
-    head = body[:64 * 1024].lower()
-    looks_like_feed = status == 200 and any(marker.lower() in head for marker in FEED_MARKERS)
-    return {"url": url, "status": status, "finalURL": final_url, "looksLikeFeed": looks_like_feed}
+def now_iso() -> str:
+    return dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def artwork_600(result: dict) -> str | None:
-    url = result.get("artworkUrl600") or result.get("artworkUrl100")
-    if not url:
-        return None
-    # Apple's image CDN resizes by path; ask for a 600px square JPEG either way.
-    return re.sub(r"/\d+x\d+bb\.(jpg|png|webp)$", "/600x600bb.jpg", url)
+def slug(text: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "podcast"
 
 
-def main() -> int:
+def https_form(url: str) -> str:
+    # App Transport Security blocks plain http, so a feed or image served over http is
+    # used in its https form, which is checked before the show is kept.
+    return "https://" + url[len("http://"):] if url.startswith("http://") else url
+
+
+def feed_head(url: str) -> dict:
+    """Read a feed until its first <item>/<entry> (or the byte limit) and keep the channel part."""
+    status, body, final_url, _ = fetch(url, limit=FEED_HEAD_LIMIT, timeout=30)
+    text = body.decode("utf-8", errors="replace") if status == 200 else ""
+    match = re.search(r"<(item|entry)[\s>]", text)
+    head = text[:match.start()] if match else text
+    looks_like_feed = status == 200 and any(m in head.lower() for m in ("<rss", "<feed", "<channel"))
+    return {"url": url, "status": status, "finalURL": final_url, "looksLikeFeed": looks_like_feed,
+            "head": head, "fetchedAt": now_iso()}
+
+
+def check_artwork(url: str) -> dict:
+    status, body, final_url, content_type = fetch(url, limit=2048, timeout=25)
+    ok = status == 200 and (content_type.lower().startswith("image/") or body[:4] in (b"\xff\xd8\xff\xe0", b"\xff\xd8\xff\xe1", b"\x89PNG"))
+    return {"url": url, "status": status, "finalURL": final_url, "contentType": content_type, "ok": ok}
+
+
+def plain_text(raw: str | None) -> str:
+    if not raw:
+        return ""
+    text = re.sub(r"</?(?:br|p|div|li|ul|ol|h\d)\b[^>]*>", " ", html.unescape(raw), flags=re.I)  # block tags break words
+    text = re.sub(r"<[^>]+>", "", text)                                                    # inline tags don't
+    return re.sub(r"\s+", " ", html.unescape(text)).strip()
+
+
+def shorten(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-")
+    return cut + "…"
+
+
+def parse_channel(head: str) -> dict:
+    """Title, author, summary, website, explicit flag and artwork candidates from a feed's head."""
+    meta: dict = {"artwork": []}
+    root = None
+    try:
+        # The head stops before the first <item>; close what is still open so it parses.
+        closers = "</channel></rss>" if "<channel" in head and "</channel>" not in head else ""
+        root = ET.fromstring(head + closers) if head.lstrip().startswith("<") else None
+    except ET.ParseError:
+        root = None
+    if root is not None:
+        channel = root.find("channel")
+        if channel is None:
+            channel = root
+        def text_of(*names: str) -> str:
+            for name in names:
+                node = channel.find(name)
+                if node is not None and (node.text or "").strip():
+                    return node.text.strip()
+            return ""
+        meta["title"] = plain_text(text_of("title", "{*}title"))
+        meta["author"] = plain_text(text_of("{*}author", "managingEditor"))
+        meta["summary"] = plain_text(text_of("{*}summary", "description", "{*}subtitle"))
+        meta["website"] = text_of("link")
+        meta["explicit"] = text_of("{*}explicit").lower()
+        for node in channel.findall("{*}image"):
+            href = node.get("href")
+            if href:
+                meta["artwork"].append(href.strip())
+            url_node = node.find("url")
+            if url_node is not None and (url_node.text or "").strip():
+                meta["artwork"].append(url_node.text.strip())
+    else:
+        def first(pattern: str) -> str:
+            found = re.search(pattern, head, re.S | re.I)
+            return found.group(1).strip() if found else ""
+        meta["title"] = plain_text(first(r"<title[^>]*>(.*?)</title>"))
+        meta["author"] = plain_text(first(r"<itunes:author[^>]*>(.*?)</itunes:author>"))
+        meta["summary"] = plain_text(first(r"<description[^>]*>(.*?)</description>"))
+        meta["website"] = first(r"<link[^>]*>(https?://[^<]+)</link>")
+        meta["explicit"] = first(r"<itunes:explicit[^>]*>(.*?)</itunes:explicit>").lower()
+        meta["artwork"] = re.findall(r"<itunes:image[^>]*href=[\"']([^\"']+)[\"']", head, re.I)
+    return meta
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--replay", help="recorded directory (relative to research/B1) to rebuild from without network")
     parser.add_argument("--content-version", type=int, default=1)
-    args = parser.parse_args()
+    parser.add_argument("--out", type=Path, default=SITE_DIR, help="where catalog.json and manifest.json go (default: Site/onboarding/catalog/v1)")
+    args = parser.parse_args(argv)
+
+    config = json.loads(SHOWS_FILE.read_text())
+    shows = config["shows"]
+    subject_ids = {s["id"] for s in config["subjects"]}
 
     if args.replay:
         record_dir = HERE / args.replay
-        meta = json.loads((record_dir / "fetch-log.json").read_text())
+        log = json.loads((record_dir / "fetch-log.json").read_text())
     else:
         record_dir = HERE / "recorded" / dt.date.today().isoformat()
-        record_dir.mkdir(parents=True, exist_ok=True)
-        meta = {"charts": {}, "lookups": [], "feedChecks": {}}
+        (record_dir / "feeds").mkdir(parents=True, exist_ok=True)
+        log = {"feeds": {}, "artwork": {}}
 
-    # 1. Charts.
-    chart_rows: dict[str, list[dict]] = {}
-    provenance = []
-    for subject_id, _title, genre_id in SUBJECTS:
-        path = record_dir / f"chart-{subject_id}.json"
-        if args.replay:
-            fetched_at = meta["charts"][subject_id]["fetchedAt"]
-        else:
-            fetched_at = now_iso()
-            status, body, _ = fetch(chart_url(genre_id))
-            if status != 200:
-                print(f"chart {subject_id}: HTTP {status}", file=sys.stderr)
-                return 1
-            path.write_bytes(body)
-            meta["charts"][subject_id] = {"url": chart_url(genre_id), "fetchedAt": fetched_at}
-        feed = json.loads(path.read_text())["feed"]
-        entries = feed.get("entry", [])
-        chart_rows[subject_id] = [
-            {"appleId": e["id"]["attributes"]["im:id"], "rank": rank, "name": e["im:name"]["label"]}
-            for rank, e in enumerate(entries, start=1)
-        ]
-        provenance.append({
-            "id": f"apple-top-{COUNTRY}-{subject_id}",
-            "kind": "apple_top_chart",
-            "url": chart_url(genre_id),
-            "country": COUNTRY,
-            "appleGenreId": genre_id,
-            "chartUpdatedAt": feed["updated"]["label"],
-            "fetchedAt": fetched_at,
-        })
+    # 1. Fetch (or replay) every feed's head, over https.
+    feed_urls = [https_form(show["feed"]) for show in shows]
+    assert len(feed_urls) == len(set(u.rstrip("/").lower() for u in feed_urls)), "duplicate feed URL in shows.json"
+    heads: dict[str, dict] = {}
+    if args.replay:
+        for url in feed_urls:
+            entry = log["feeds"][url]
+            entry["head"] = (record_dir / "feeds" / entry["file"]).read_text()
+            heads[url] = entry
+    else:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            for result in pool.map(feed_head, feed_urls):
+                name = hashlib.sha256(result["url"].encode()).hexdigest()[:16] + ".xml"
+                (record_dir / "feeds" / name).write_text(result["head"])
+                heads[result["url"]] = result
+                log["feeds"][result["url"]] = {k: v for k, v in result.items() if k != "head"} | {"file": name}
 
-    # 2. Lookups (feed URL + artwork) for every charted show.
-    all_ids = sorted({row["appleId"] for rows in chart_rows.values() for row in rows})
-    lookup: dict[str, dict] = {}
-    batches = [all_ids[i:i + 100] for i in range(0, len(all_ids), 100)]
-    for index, batch in enumerate(batches):
-        path = record_dir / f"lookup-{index:02d}.json"
-        if not args.replay:
-            status, body, _ = fetch(lookup_url(batch))
-            if status != 200:
-                print(f"lookup batch {index}: HTTP {status} (itunes.apple.com blocked?)", file=sys.stderr)
-                return 1
-            path.write_bytes(body)
-            meta["lookups"].append({"url": lookup_url(batch), "fetchedAt": now_iso(), "file": path.name})
-        for result in json.loads(path.read_text()).get("results", []):
-            lookup[str(result.get("collectionId"))] = result
-    lookup_fetched_at = meta["lookups"][0]["fetchedAt"]
-    provenance.append({
-        "id": "itunes-lookup",
-        "kind": "itunes_lookup",
-        "url": "https://itunes.apple.com/lookup",
-        "country": COUNTRY,
-        "fetchedAt": lookup_fetched_at,
-    })
-
-    # 3. Select PER_SUBJECT unique shows per subject (a show charted in several
-    #    subjects belongs to the first chart it was found in, in SUBJECTS order).
-    chosen: list[tuple[str, dict]] = []
-    taken: set[str] = set()
-    candidates: dict[str, list[dict]] = {}
-    for subject_id, *_ in SUBJECTS:
-        candidates[subject_id] = [r for r in chart_rows[subject_id] if r["appleId"] in lookup and lookup[r["appleId"]].get("feedUrl")]
-
-    # 4. Check every candidate feed that could be chosen.
-    # App Transport Security blocks plain http, so try the https form of any
-    # http feed and use it when it answers with a feed.
-    for result in lookup.values():
-        if result.get("feedUrl", "").startswith("http://"):
-            result["httpFeedUrl"] = result["feedUrl"]
-            result["feedUrl"] = "https://" + result["feedUrl"][len("http://"):]
-    to_check = sorted({lookup[r["appleId"]]["feedUrl"] for rows in candidates.values() for r in rows})
+    # 2. Read each show's own metadata and decide which artwork URL to use.
+    parsed: dict[str, dict] = {}
+    to_check: list[str] = []
+    for show, url in zip(shows, feed_urls):
+        result = heads[url]
+        if not result["looksLikeFeed"]:
+            continue
+        meta = parse_channel(result["head"])
+        meta["artwork"] = [https_form(a) for a in meta["artwork"] if a and not is_apple_url(a)]
+        parsed[url] = meta
+        to_check += meta["artwork"][:2]
     if not args.replay:
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
-            for result in pool.map(check_feed, to_check):
-                result["checkedAt"] = now_iso()
-                meta["feedChecks"][result["url"]] = result
-        (record_dir / "fetch-log.json").write_text(json.dumps(meta, indent=1, sort_keys=True) + "\n")
+            for result in pool.map(check_artwork, sorted(set(to_check))):
+                log["artwork"][result["url"]] = result
+        (record_dir / "fetch-log.json").write_text(json.dumps(log, indent=1, sort_keys=True) + "\n")
 
-    dropped = []
-    for subject_id, *_ in SUBJECTS:
-        kept = 0
-        for row in candidates[subject_id]:
-            if kept >= PER_SUBJECT:
-                break
-            if row["appleId"] in taken:
-                continue
-            check = meta["feedChecks"].get(lookup[row["appleId"]]["feedUrl"], {})
-            if looks_private(lookup[row["appleId"]]["feedUrl"]):
-                dropped.append({"subject": subject_id, "name": row["name"], "feed": lookup[row["appleId"]]["feedUrl"], "status": "private"})
-                continue
-            if not check.get("looksLikeFeed"):
-                dropped.append({"subject": subject_id, "name": row["name"], "feed": lookup[row["appleId"]]["feedUrl"], "status": check.get("status")})
-                continue
-            taken.add(row["appleId"])
-            chosen.append((subject_id, row))
-            kept += 1
-
-    # 5. Build catalog entries.
+    # 3. Build the entries, in shows.json order.
     entries = []
+    dropped = []
     used_ids: set[str] = set()
-    for subject_id, row in chosen:
-        result = lookup[row["appleId"]]
-        subjects = [subject_id]
-        for genre in result.get("genres", []) + [result.get("primaryGenreName", "")]:
-            extra = GENRE_TO_SUBJECT.get(genre)
-            if extra and extra not in subjects:
-                subjects.append(extra)
-        entry_id = f"apple-{row['appleId']}"
-        assert entry_id not in used_ids
+    fetched_at = max(r["fetchedAt"] for r in log["feeds"].values())
+    for show, url in zip(shows, feed_urls):
+        label = show.get("name") or url
+        if looks_private(url):
+            dropped.append({"show": label, "feed": url, "why": "private feed"})
+            continue
+        if url not in parsed:
+            dropped.append({"show": label, "feed": url, "why": f"not a feed (HTTP {heads[url]['status']})"})
+            continue
+        meta = parsed[url]
+        artwork = next((a for a in meta["artwork"] if log["artwork"].get(a, {}).get("ok")), None)
+        if not meta["title"] or not artwork:
+            dropped.append({"show": label, "feed": url, "why": "no title" if not meta["title"] else "no usable artwork"})
+            continue
+        for subject in show["subjects"]:
+            assert subject in subject_ids, f"{label}: unknown subject {subject}"
+        entry_id = show.get("id") or slug(meta["title"])
+        if entry_id in used_ids:
+            entry_id = f"{entry_id}-{hashlib.sha256(url.encode()).hexdigest()[:6]}"
         used_ids.add(entry_id)
         entry = {
             "id": entry_id,
-            "kind": "podcast_feed",
-            "contentKind": "podcast",
-            "title": result.get("collectionName") or row["name"],
-            "author": result.get("artistName"),
-            "feedURL": result["feedUrl"],
-            "artworkURL": artwork_600(result),
-            "subjects": subjects,
-            # collectionExplicitness reads "notExplicit" for every show; the
-            # advisory rating is the field Apple actually sets.
-            "explicit": result.get("contentAdvisoryRating") == "Explicit",
-            "chartPositions": [{"provenanceId": f"apple-top-{COUNTRY}-{subject_id}", "rank": row["rank"]}],
-            "externalIds": {"applePodcastsId": row["appleId"]},
-            "provenanceIds": [f"apple-top-{COUNTRY}-{subject_id}", "itunes-lookup"],
+            "kind": show.get("kind", "podcast_feed"),
+            "contentKind": show.get("contentKind", "podcast"),
+            "title": meta["title"],
+            "feedURL": url,
+            "artworkURL": artwork,
+            "subjects": show["subjects"],
+            "explicit": show["explicit"] if "explicit" in show else meta["explicit"] in ("true", "yes", "explicit"),
+            "provenanceIds": ["hand-picked-shows", "publisher-feeds"],
         }
-        if not entry["author"]:
-            del entry["author"]
-        # Other charts the same show appears in (for ranking, not subject assignment).
-        for other_subject, rows in chart_rows.items():
-            if other_subject == subject_id:
-                continue
-            for other in rows:
-                if other["appleId"] == row["appleId"]:
-                    entry["chartPositions"].append({"provenanceId": f"apple-top-{COUNTRY}-{other_subject}", "rank": other["rank"]})
-                    if other_subject not in entry["subjects"]:
-                        entry["subjects"].append(other_subject)
+        author = show.get("author") or meta["author"]
+        if author:
+            entry["author"] = author
+        website = https_form(meta["website"]) if meta["website"] else ""
+        if website.startswith("https://") and not is_apple_url(website):
+            entry["websiteURL"] = website
+        summary = show.get("summary") or shorten(meta["summary"], SUMMARY_LIMIT)
+        if summary:
+            entry["summary"] = summary
         entries.append(entry)
 
-    subjects_out = [{"id": sid, "title": title, "appleGenreId": gid} for sid, title, gid in SUBJECTS]
-    # Starter rows: the owner edits these in the remote catalog. Seeded with the
-    # top five charted shows per subject so the drawer has something on day one.
-    starter_rows = [
-        {"subjectId": sid, "title": f"Start with {title}",
-         "entryIds": [f"apple-{row['appleId']}" for s, row in chosen if s == sid][:5],
-         "curatedBy": "chart-seed"}
-        for sid, title, _ in SUBJECTS
+    # 4. Starter rows: the shows marked "starter", in shows.json order.
+    starter_rows = []
+    for subject in config["subjects"]:
+        ids = [e["id"] for show, e in _pair(shows, feed_urls, entries) if show.get("starter") and e["subjects"][0] == subject["id"]]
+        if ids:
+            starter_rows.append({"subjectId": subject["id"], "title": f"Start with {subject['title']}",
+                                 "entryIds": ids, "curatedBy": "hand-picked"})
+
+    provenance = [
+        {"id": "hand-picked-shows", "kind": "hand_curated", "fetchedAt": fetched_at,
+         "note": "Which shows, and which lead each subject, is chosen by hand in research/B1/shows.json. Edit it freely."},
+        {"id": "publisher-feeds", "kind": "publisher_feed", "fetchedAt": fetched_at,
+         "note": "Title, author, description, explicit flag, website and artwork URL are read from each show's own RSS feed."},
     ]
-    generated_at = max(p["fetchedAt"] for p in provenance)
     catalog = {
         "schemaVersion": "source-catalog.v1",
         "catalogId": "onboarding-top-podcasts",
         "contentVersion": args.content_version,
         "title": "Popular podcasts",
-        "generatedAt": generated_at,
-        "locale": f"en-{COUNTRY.upper()}",
+        "generatedAt": fetched_at,
+        "locale": "en-US",
         "provenance": provenance,
-        "subjects": subjects_out,
+        "subjects": config["subjects"],
         "starterRows": starter_rows,
         "entries": entries,
     }
-    SITE_DIR.mkdir(parents=True, exist_ok=True)
+    args.out.mkdir(parents=True, exist_ok=True)
     catalog_bytes = (json.dumps(catalog, indent=1, ensure_ascii=False) + "\n").encode("utf-8")
-    (SITE_DIR / "catalog.json").write_bytes(catalog_bytes)
+    (args.out / "catalog.json").write_bytes(catalog_bytes)
     manifest = {
         "schemaVersion": "source-catalog-manifest.v1",
         "catalogId": catalog["catalogId"],
         "contentVersion": catalog["contentVersion"],
-        "generatedAt": generated_at,
+        "generatedAt": fetched_at,
         "catalogURL": CATALOG_BASE_URL + "catalog.json",
         "catalogByteCount": len(catalog_bytes),
         "catalogChecksumSHA256": hashlib.sha256(catalog_bytes).hexdigest(),
         "entryCount": len(entries),
     }
-    (SITE_DIR / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    (HERE / "last-build-report.json").write_text(json.dumps({
+    (args.out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+    report_path = HERE / "last-build-report.json" if args.out == SITE_DIR else args.out / "build-report.json"
+    report_path.write_text(json.dumps({
         "entries": len(entries),
-        "perSubject": {sid: sum(1 for s, _ in chosen if s == sid) for sid, *_ in SUBJECTS},
-        "droppedForFeedCheck": dropped,
-        "missingFeedUrl": sorted(
-            {r["name"] for rows in chart_rows.values() for r in rows if not lookup.get(r["appleId"], {}).get("feedUrl")}
-        ),
+        "perSubject": {s["id"]: sum(1 for e in entries if e["subjects"][0] == s["id"]) for s in config["subjects"]},
+        "explicit": sum(1 for e in entries if e["explicit"]),
+        "dropped": dropped,
     }, indent=1) + "\n")
-    print(f"{len(entries)} entries across {len(SUBJECTS)} subjects; {len(dropped)} dropped by feed check; "
+    print(f"{len(entries)} entries across {len(config['subjects'])} subjects; {len(dropped)} dropped; "
           f"catalog {len(catalog_bytes)} bytes")
+    for item in dropped:
+        print(f"  dropped {item['show']}: {item['why']}", file=sys.stderr)
     return 0
+
+
+def _pair(shows: list[dict], feed_urls: list[str], entries: list[dict]):
+    """(show, entry) for every kept show; dropped shows have no entry."""
+    by_feed = {e["feedURL"]: e for e in entries}
+    return [(show, by_feed[url]) for show, url in zip(shows, feed_urls) if url in by_feed]
 
 
 if __name__ == "__main__":

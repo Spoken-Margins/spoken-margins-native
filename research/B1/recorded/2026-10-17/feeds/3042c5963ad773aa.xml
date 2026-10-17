@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<rss version="2.0"
+  xmlns:atom="http://www.w3.org/2005/Atom"
+  xmlns:cc="http://web.resource.org/cc/"
+  xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+  xmlns:media="http://search.yahoo.com/mrss/"
+  xmlns:content="http://purl.org/rss/1.0/modules/content/"
+  xmlns:podcast="https://podcastindex.org/namespace/1.0"
+  xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0"
+  xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+  xmlns:libsyn="https://rss.libsyn.com/ns.xml">
+
+  <channel>
+    <atom:link href="https://rss.libsyn.com/shows/254861/destinations/1928300.xml" rel="self" type="application/rss+xml"/>
+    <title>All-In with Chamath, Jason, Sacks &amp; Friedberg</title>
+    <pubDate>Sat, 17 Oct 2026 01:57:45 +0000</pubDate>
+    <lastBuildDate>Sat, 17 Oct 2026 01:57:45 +0000</lastBuildDate>
+    <generator>Libsyn RSSgen 1.0</generator>
+    <libsyn:show-id>254861</libsyn:show-id>
+    
+    <libsyn:last-updated>2026-04-01T00:46:08Z</libsyn:last-updated>
+    
+    <link>http://allinchamathjason.libsyn.com/website</link>
+    <language>en</language>
+    <copyright><![CDATA[]]></copyright>
+    <docs>http://allinchamathjason.libsyn.com/website</docs>
+    <itunes:summary><![CDATA[Industry veterans, degenerate gamblers & besties Chamath Palihapitiya, Jason Calacanis, David Sacks & David Friedberg cover all things economic, tech, political, social & poker.]]></itunes:summary>
+    <image>
+      <url>https://static.libsyn.com/p/assets/a/9/c/b/a9cb4d1dadb1ea21/all-in_logo.png</url>
+      <title>All-In with Chamath, Jason, Sacks &amp; Friedberg</title>
+      <link><![CDATA[http://allinchamathjason.libsyn.com/website]]></link>
+    </image>
+    <itunes:author>All-In Podcast, LLC</itunes:author>
+		<itunes:category text="Technology" />
+<itunes:category text="Business">
+  <itunes:category text="Entrepreneurship" />
+</itunes:category>
+    <itunes:image href="https://static.libsyn.com/p/assets/a/9/c/b/a9cb4d1dadb1ea21/all-in_logo.png" />
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:owner>
+      <itunes:name>All-In Podcast, LLC</itunes:name>
+      <itunes:email>theallinpod@gmail.com</itunes:email>
+    </itunes:owner>
+    <description><![CDATA[Industry veterans, degenerate gamblers & besties Chamath Palihapitiya, Jason Calacanis, David Sacks & David Friedberg cover all things economic, tech, political, social & poker.]]></description>
+    
+    <itunes:type>episodic</itunes:type>
+    
+
+    <itunes:keywords />
+
+    
+
+    
+    <podcast:locked owner="theallinpod@gmail.com">no</podcast:locked>
+    
+    
+    
+    
+    
+    

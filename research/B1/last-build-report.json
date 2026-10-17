@@ -1,30 +1,20 @@
 {
- "entries": 192,
+ "entries": 133,
  "perSubject": {
-  "news": 16,
-  "society-culture": 16,
-  "comedy": 16,
-  "true-crime": 16,
-  "business": 16,
-  "science": 16,
-  "history": 16,
-  "health-fitness": 16,
-  "technology": 16,
-  "sports": 16,
-  "education": 16,
-  "arts": 16
+  "news": 10,
+  "society-culture": 11,
+  "comedy": 10,
+  "true-crime": 12,
+  "business": 7,
+  "science": 10,
+  "history": 14,
+  "health-fitness": 8,
+  "technology": 10,
+  "sports": 13,
+  "education": 5,
+  "arts": 15,
+  "writers": 8
  },
- "droppedForFeedCheck": [
-  {
-   "subject": "business",
-   "name": "Bred To Lead | With Dr. Jake Tayler Jacobs",
-   "feed": "https://feed.podbean.com/bredtolead/feed.xml",
-   "status": 404
-  }
- ],
- "missingFeedUrl": [
-  "Apple News Today",
-  "Conspiracy Theories",
-  "The Ben Shapiro Show"
- ]
+ "explicit": 15,
+ "dropped": []
 }

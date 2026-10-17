@@ -4,6 +4,7 @@ import hashlib
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -56,11 +57,44 @@ NEGATIVE_PATH_SCHEMA_RULES = [
 
 # Remote source catalogs (seam I2): the published catalog and its manifest, and each
 # fixture manifest with the fixture catalog of the same name.
+PUBLISHED_CATALOG = ROOT / "Site/onboarding/catalog/v1/catalog.json"
 SOURCE_CATALOG_PAIRS = [
-    (ROOT / "Site/onboarding/catalog/v1/manifest.json", ROOT / "Site/onboarding/catalog/v1/catalog.json"),
+    (ROOT / "Site/onboarding/catalog/v1/manifest.json", PUBLISHED_CATALOG),
     (CONTRACTS / "fixtures/source-catalog-manifest/top-podcasts-small.json",
      CONTRACTS / "fixtures/source-catalog/top-podcasts-small.json"),
 ]
+
+
+# The published starter catalog is built from each show's own feed (#1732). Apple's chart and lookup data and
+# its image servers are off limits: research/B1/build_catalog.py keeps the same host list.
+APPLE_HOST_SUFFIXES = ("mzstatic.com", "apple.com", "itunes.com", "apple-dns.net")
+APPLE_PROVENANCE_KINDS = ("apple_top_chart", "itunes_lookup")
+
+
+def is_apple_url(url: str) -> bool:
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == suffix or host.endswith("." + suffix) for suffix in APPLE_HOST_SUFFIXES)
+
+
+def validate_no_apple_data(path: Path) -> list[str]:
+    """The published catalog carries no Apple chart data and no Apple-hosted URLs."""
+    catalog = load_json(path)
+    errors: list[str] = []
+    for item in catalog.get("provenance", []):
+        if item["kind"] in APPLE_PROVENANCE_KINDS or is_apple_url(item.get("url", "")):
+            errors.append(f"{path}: provenance {item['id']!r} is Apple data ({item['kind']})")
+    for subject in catalog.get("subjects", []):
+        if "appleGenreId" in subject:
+            errors.append(f"{path}: subject {subject['id']!r} carries an Apple genre id")
+    for entry in catalog.get("entries", []):
+        for field in ("feedURL", "artworkURL", "websiteURL"):
+            if is_apple_url(entry.get(field, "")):
+                errors.append(f"{path}: {entry['id']} {field} points at Apple: {entry[field]}")
+        if entry.get("chartPositions"):
+            errors.append(f"{path}: {entry['id']} carries Apple chart ranks")
+        if "applePodcastsId" in entry.get("externalIds", {}):
+            errors.append(f"{path}: {entry['id']} carries an Apple Podcasts id")
+    return errors
 
 
 def load_json(path: Path):
@@ -146,12 +180,14 @@ def validate_source_catalog(path: Path) -> list[str]:
     return errors
 
 
-def validate_source_catalog_pair(manifest_path: Path, catalog_path: Path) -> list[str]:
+def validate_source_catalog_pair(manifest_path: Path, catalog_path: Path, *, published: bool = False) -> list[str]:
     errors = validate_file(manifest_path, SCHEMAS / "source-catalog-manifest.schema.json")
     errors += validate_file(catalog_path, SCHEMAS / "source-catalog.schema.json")
     if errors:
         return errors
     errors += validate_source_catalog(catalog_path)
+    if published:
+        errors += validate_no_apple_data(catalog_path)
     manifest = load_json(manifest_path)
     catalog = load_json(catalog_path)
     data = catalog_path.read_bytes()
@@ -184,7 +220,8 @@ def main() -> int:
                 errors.extend(validate_source_catalog(path))
 
     for manifest_path, catalog_path in SOURCE_CATALOG_PAIRS:
-        errors.extend(validate_source_catalog_pair(manifest_path, catalog_path))
+        # Only the published catalog is held to the no-Apple rule; the fixtures are test data.
+        errors.extend(validate_source_catalog_pair(manifest_path, catalog_path, published=catalog_path == PUBLISHED_CATALOG))
 
     for pattern, schema_name in NEGATIVE_PATH_SCHEMA_RULES:
         schema_path = SCHEMAS / schema_name

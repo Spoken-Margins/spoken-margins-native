@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:castfire="https://amperwave.com/mrss/" xmlns:media="http://search.yahoo.com/mrss/" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link type="application/rss+xml" rel="first" href="https://rss.amperwave.net/v2/feed/audacynetwork/the-moth?offset=0"/>
+    <atom:link type="application/rss+xml" rel="self" href="https://rss.amperwave.net/v2/feed/audacynetwork/the-moth"/>
+    <atom:link type="application/rss+xml" rel="last" href="https://rss.amperwave.net/v2/feed/audacynetwork/the-moth?offset=975"/>
+    <atom:link type="application/rss+xml" rel="next" href="https://rss.amperwave.net/v2/feed/audacynetwork/the-moth?offset=195"/>
+    <atom:link type="application/rss+xml" rel="previous" href="https://rss.amperwave.net/v2/feed/audacynetwork/the-moth?offset=0"/>
+    <atom:updated>2026-10-16T07:25:03+00:00</atom:updated>
+    <lastBuildDate>Fri, 16 Oct 2026 07:25:03 +0000</lastBuildDate>
+    <itunes:owner>
+      <itunes:email><![CDATA[msollinger@themoth.org]]></itunes:email>
+      <itunes:name><![CDATA[The Moth]]></itunes:name>
+    </itunes:owner>
+    <title><![CDATA[The Moth]]></title>
+    <description><![CDATA[On Tuesdays and Fridays The Moth’s podcast feed presents episodes of the Peabody-Award Winning Moth Radio Hour and original episodes of The Moth Podcast. Since its launch in 1997, The Moth has presented thousands of true stories, told live and without notes, to standing-room-only crowds worldwide. Moth storytellers stand alone, under a spotlight, with only a microphone and a roomful of strangers. The storyteller and the audience embark on a high-wire act of shared experience which is both terrifying and exhilarating. Since 2008, The Moth podcast has featured many of our favorite stories told live on Moth stages around the country. For information on all of our programs and live events, visit themoth.org.]]></description>
+    <content:encoded><![CDATA[<p>On Tuesdays and Fridays The Moth’s podcast feed presents episodes of the Peabody-Award Winning Moth Radio Hour and original episodes of The Moth Podcast. Since its launch in 1997, The Moth has presented thousands of true stories, told live and without notes, to standing-room-only crowds worldwide. Moth storytellers stand alone, under a spotlight, with only a microphone and a roomful of strangers. The storyteller and the audience embark on a high-wire act of shared experience which is both terrifying and exhilarating. Since 2008, The Moth podcast has featured many of our favorite stories told live on Moth stages around the country. For information on all of our programs and live events, visit themoth.org.</p>]]></content:encoded>
+    <itunes:author><![CDATA[The Moth]]></itunes:author>
+    <itunes:explicit>False</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <language><![CDATA[en]]></language>
+    <itunes:image href="https://images.castfire.com/image/661/0/0/0/0-8486082.jpg"/>
+    <image>
+      <url>https://images.castfire.com/image/661/0/0/0/0-8486082.jpg</url>
+      <title><![CDATA[The Moth]]></title>
+      <link><![CDATA[http://themoth.org/]]></link>
+    </image>
+    <link><![CDATA[http://themoth.org/]]></link>
+    <itunes:category text="Arts">
+      <itunes:category text="Performing Arts"/>
+    </itunes:category>
+    <copyright><![CDATA[2006-2020]]></copyright>
+    <castfire:playlistCustomField key="megaphone_podcast_id" value="8342843a-743e-11ef-a80e-9fc2ba3fba25" />
+<itunes:new-feed-url>https://rss.amperwave.net/v2/feed/audacynetwork/the-moth</itunes:new-feed-url>
+  

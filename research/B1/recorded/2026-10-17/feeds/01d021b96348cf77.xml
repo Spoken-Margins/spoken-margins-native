@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/VMP5705694065" rel="self" type="application/rss+xml"/>
+    <title>Today, Explained</title>
+    <link>https://www.vox.com/todayexplained</link>
+    <language>en</language>
+    <copyright>© 2019 Vox Media, Inc. All Rights Reserved</copyright>
+    <description>Today, Explained&amp;nbsp;is Vox's daily news explainer podcast. Hosts&amp;nbsp;Sean Rameswaram&amp;nbsp;and&amp;nbsp;Noel King&amp;nbsp;will guide you through the most important stories of the day.
+
+Part of the Vox Media Podcast Network.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Today, Explained</title>
+      <link>https://www.vox.com/todayexplained</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>Vox</itunes:author>
+    <itunes:summary>Today, Explained&amp;nbsp;is Vox's daily news explainer podcast. Hosts&amp;nbsp;Sean Rameswaram&amp;nbsp;and&amp;nbsp;Noel King&amp;nbsp;will guide you through the most important stories of the day.
+
+Part of the Vox Media Podcast Network.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p><em>Today, Explained</em>&nbsp;is Vox's daily news explainer podcast. Hosts&nbsp;<a href="https://www.vox.com/authors/sean-rameswaram"><strong>Sean Rameswaram</strong></a>&nbsp;and&nbsp;<a href="https://www.vox.com/authors/noel-king"><strong>Noel King</strong></a>&nbsp;will guide you through the most important stories of the day.</p><p><br></p><p>Part of the Vox Media Podcast Network.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Vox</itunes:name>
+      <itunes:email>podcasting@voxmedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="News">
+      <itunes:category text="Daily News"/>
+      <itunes:category text="Politics"/>
+    </itunes:category>
+    

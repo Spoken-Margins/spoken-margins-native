@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/kwWc0lhf" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Hidden Brain</title>
+    <description>Why do I feel stuck? How can I become more creative? What can I do to improve my relationships? If you’ve ever asked yourself these questions, you’re not alone. On Hidden Brain, we help you understand your own mind — and the minds of the people around you. (We&apos;re routinely rated the #1 science podcast in the United States.) Hosted by veteran science journalist Shankar Vedantam.</description>
+    <copyright>All Rights Reserved</copyright>
+    <language>en</language>
+    <pubDate>Mon, 12 Oct 2026 17:35:10 +0000</pubDate>
+    <lastBuildDate>Mon, 12 Oct 2026 19:18:34 +0000</lastBuildDate>
+    <image>
+      <link>https://www.siriusxm.com</link>
+      <title>Hidden Brain</title>
+      <url>https://image.simplecastcdn.com/images/5982e1b7-239c-4b89-81f9-49df1f33fdae/dd71b17c-82bb-441d-a979-e16975aebc1c/3000x3000/hbtilewshankarfinal_rgbsimplecast.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://www.siriusxm.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Why do I feel stuck? How can I become more creative? What can I do to improve my relationships? If you’ve ever asked yourself these questions, you’re not alone. On Hidden Brain, we help you understand your own mind — and the minds of the people around you. (We&apos;re routinely rated the #1 science podcast in the United States.) Hosted by veteran science journalist Shankar Vedantam.</itunes:summary>
+    <itunes:author>Hidden Brain, Shankar Vedantam</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/5982e1b7-239c-4b89-81f9-49df1f33fdae/dd71b17c-82bb-441d-a979-e16975aebc1c/3000x3000/hbtilewshankarfinal_rgbsimplecast.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/kwWc0lhf</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>Hidden Brain Media</itunes:name>
+      <itunes:email>business@hiddenbrain.org</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Science">
+      <itunes:category text="Social Sciences"/>
+    </itunes:category>
+    <itunes:category text="Arts">
+      <itunes:category text="Performing Arts"/>
+    </itunes:category>
+    

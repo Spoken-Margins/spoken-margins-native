@@ -1,0 +1,1140 @@
+{
+ "subjects": [
+  {
+   "id": "news",
+   "title": "News"
+  },
+  {
+   "id": "society-culture",
+   "title": "Society & Culture"
+  },
+  {
+   "id": "comedy",
+   "title": "Comedy"
+  },
+  {
+   "id": "true-crime",
+   "title": "True Crime"
+  },
+  {
+   "id": "business",
+   "title": "Business"
+  },
+  {
+   "id": "science",
+   "title": "Science"
+  },
+  {
+   "id": "history",
+   "title": "History"
+  },
+  {
+   "id": "health-fitness",
+   "title": "Health & Fitness"
+  },
+  {
+   "id": "technology",
+   "title": "Technology"
+  },
+  {
+   "id": "sports",
+   "title": "Sports"
+  },
+  {
+   "id": "education",
+   "title": "Education"
+  },
+  {
+   "id": "arts",
+   "title": "Arts"
+  },
+  {
+   "id": "writers",
+   "title": "Writers"
+  }
+ ],
+ "shows": [
+  {
+   "name": "The Daily",
+   "feed": "https://feeds.simplecast.com/Sl5CSM3S",
+   "subjects": [
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Up First from NPR",
+   "feed": "https://feeds.npr.org/510318/podcast.xml",
+   "subjects": [
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Today, Explained",
+   "feed": "https://feeds.megaphone.fm/VMP5705694065",
+   "subjects": [
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Journal.",
+   "feed": "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal",
+   "subjects": [
+    "news",
+    "business"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Global News Podcast",
+   "feed": "https://podcasts.files.bbci.co.uk/p02nq0gn.rss",
+   "subjects": [
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Pod Save America",
+   "feed": "https://audioboom.com/channels/5166624.rss",
+   "subjects": [
+    "news"
+   ]
+  },
+  {
+   "name": "Letters from an American",
+   "feed": "https://api.substack.com/feed/podcast/20533.rss",
+   "subjects": [
+    "news"
+   ]
+  },
+  {
+   "name": "NPR News Now",
+   "feed": "https://feeds.npr.org/500005/podcast.xml",
+   "subjects": [
+    "news"
+   ]
+  },
+  {
+   "name": "Pivot",
+   "feed": "https://feeds.megaphone.fm/pivot",
+   "subjects": [
+    "news",
+    "technology",
+    "business"
+   ]
+  },
+  {
+   "name": "Bulwark Takes",
+   "feed": "https://audioboom.com/channels/5149464.rss",
+   "subjects": [
+    "news"
+   ]
+  },
+  {
+   "name": "This American Life",
+   "feed": "https://www.thisamericanlife.org/podcast/rss.xml",
+   "subjects": [
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Ezra Klein Show",
+   "feed": "https://feeds.simplecast.com/kEKXbjuJ",
+   "subjects": [
+    "society-culture",
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Stuff You Should Know",
+   "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss",
+   "subjects": [
+    "society-culture",
+    "education"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Freakonomics Radio",
+   "feed": "https://feeds.simplecast.com/Y8lFbOT4",
+   "subjects": [
+    "society-culture",
+    "business"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Search Engine",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine",
+   "subjects": [
+    "society-culture",
+    "technology"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Interview",
+   "feed": "https://feeds.simplecast.com/HpGMoS4g",
+   "subjects": [
+    "society-culture",
+    "news"
+   ]
+  },
+  {
+   "name": "Hello Internet",
+   "feed": "http://www.hellointernet.fm/podcast?format=rss",
+   "subjects": [
+    "society-culture",
+    "technology"
+   ]
+  },
+  {
+   "name": "The Oprah Podcast",
+   "feed": "https://rss.art19.com/the-oprah-podcast",
+   "subjects": [
+    "society-culture"
+   ]
+  },
+  {
+   "name": "Heavyweight",
+   "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss",
+   "subjects": [
+    "society-culture"
+   ]
+  },
+  {
+   "name": "Behind the Bastards",
+   "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss",
+   "subjects": [
+    "society-culture",
+    "history"
+   ]
+  },
+  {
+   "name": "Modern Wisdom",
+   "feed": "https://feeds.megaphone.fm/SIXMSB5088139739",
+   "subjects": [
+    "society-culture",
+    "health-fitness"
+   ]
+  },
+  {
+   "name": "Wait Wait... Don't Tell Me!",
+   "feed": "https://feeds.npr.org/344098539/podcast.xml",
+   "subjects": [
+    "comedy",
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Good Hang with Amy Poehler",
+   "feed": "https://feeds.megaphone.fm/good-hang-with-amy-poehler",
+   "subjects": [
+    "comedy"
+   ],
+   "starter": true
+  },
+  {
+   "name": "No Such Thing As A Fish",
+   "feed": "https://audioboom.com/channels/2399216.rss",
+   "subjects": [
+    "comedy",
+    "education"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Tim Dillon Show",
+   "feed": "https://audioboom.com/channels/5093219.rss",
+   "subjects": [
+    "comedy"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Toast",
+   "feed": "https://feeds.megaphone.fm/DEARMEDIALLC7892434789",
+   "subjects": [
+    "comedy"
+   ],
+   "starter": true
+  },
+  {
+   "name": "SmartLess",
+   "feed": "https://feeds.simplecast.com/hNaFxXpO",
+   "subjects": [
+    "comedy"
+   ]
+  },
+  {
+   "name": "Conan O’Brien Needs A Friend",
+   "feed": "https://feeds.simplecast.com/dHoohVNH",
+   "subjects": [
+    "comedy"
+   ]
+  },
+  {
+   "name": "Armchair Expert with Dax Shepard",
+   "feed": "https://rss.art19.com/armchair-expert",
+   "subjects": [
+    "comedy"
+   ]
+  },
+  {
+   "name": "The Joe Rogan Experience",
+   "feed": "https://feeds.megaphone.fm/GLT1412515089",
+   "subjects": [
+    "comedy"
+   ]
+  },
+  {
+   "name": "The Weekly Show with Jon Stewart",
+   "feed": "https://feeds.megaphone.fm/BVLLC2163264914",
+   "subjects": [
+    "comedy",
+    "news"
+   ]
+  },
+  {
+   "name": "Crime Junkie",
+   "feed": "https://feeds.simplecast.com/qm_9xx0g",
+   "subjects": [
+    "true-crime"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Serial",
+   "feed": "https://feeds.simplecast.com/PpzWFGhg",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Criminal",
+   "feed": "https://feeds.megaphone.fm/VMP7924981569",
+   "subjects": [
+    "true-crime",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "In The Dark",
+   "feed": "https://feeds.megaphone.fm/CNE3915766304",
+   "subjects": [
+    "true-crime"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Dateline NBC",
+   "feed": "https://podcastfeeds.nbcnews.com/HL4TzgYC",
+   "subjects": [
+    "true-crime"
+   ],
+   "starter": true
+  },
+  {
+   "name": "20/20",
+   "feed": "https://feeds.megaphone.fm/ESP3456903052",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "48 Hours",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "Snapped: Women Who Murder",
+   "feed": "https://rss.art19.com/snapped-women-who-murder",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "MrBallen Podcast: Strange, Dark & Mysterious Stories",
+   "feed": "https://feeds.simplecast.com/dloY8UYJ",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "Rotten Mango",
+   "feed": "https://feeds.simplecast.com/6Qp23t6h",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "The Woman in the Woods",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/91ac7984b8d3ba72de60858d5e6155bd",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "Morbid",
+   "feed": "https://feeds.simplecast.com/ohmVlJZQ",
+   "subjects": [
+    "true-crime"
+   ]
+  },
+  {
+   "name": "Planet Money",
+   "feed": "https://feeds.npr.org/510289/podcast.xml",
+   "subjects": [
+    "business",
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "EconTalk",
+   "feed": "https://feeds.simplecast.com/wgl4xEgL",
+   "subjects": [
+    "business",
+    "education"
+   ],
+   "starter": true
+  },
+  {
+   "name": "3 Takeaways™",
+   "feed": "https://rss.buzzsprout.com/1236866.rss",
+   "subjects": [
+    "business",
+    "education"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Diary Of A CEO with Steven Bartlett",
+   "feed": "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn",
+   "subjects": [
+    "business"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast",
+   "feed": "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap",
+   "subjects": [
+    "business"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Learning Leader Show With Ryan Hawk",
+   "feed": "https://rss.libsyn.com/shows/65162/destinations/259291.xml",
+   "subjects": [
+    "business",
+    "education"
+   ]
+  },
+  {
+   "name": "Acquired",
+   "feed": "https://feeds.transistor.fm/acquired",
+   "subjects": [
+    "business",
+    "technology"
+   ]
+  },
+  {
+   "name": "Radiolab",
+   "feed": "https://feeds.simplecast.com/EmVW7VGp",
+   "subjects": [
+    "science",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Hidden Brain",
+   "feed": "https://feeds.simplecast.com/kwWc0lhf",
+   "subjects": [
+    "science",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Science Friday",
+   "feed": "https://feeds.simplecast.com/h18ZIZD_",
+   "subjects": [
+    "science"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Science Vs",
+   "feed": "https://feeds.megaphone.fm/sciencevs",
+   "subjects": [
+    "science"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Short Wave",
+   "feed": "https://feeds.npr.org/510351/podcast.xml",
+   "subjects": [
+    "science"
+   ],
+   "starter": true
+  },
+  {
+   "name": "StarTalk with Neil deGrasse Tyson",
+   "feed": "https://feeds.simplecast.com/4T39_jAj",
+   "subjects": [
+    "science"
+   ]
+  },
+  {
+   "name": "Sean Carroll's Mindscape: Science, Society, Philosophy, Culture, Arts, and Ideas",
+   "feed": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml",
+   "subjects": [
+    "science",
+    "education"
+   ]
+  },
+  {
+   "name": "Something You Should Know",
+   "feed": "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037",
+   "subjects": [
+    "science",
+    "education"
+   ]
+  },
+  {
+   "name": "Ologies with Alie Ward",
+   "feed": "https://feeds.simplecast.com/FO6kxYGj",
+   "subjects": [
+    "science"
+   ]
+  },
+  {
+   "name": "Big Ideas Lab",
+   "feed": "https://feeds.simplecast.com/WfThhbae",
+   "subjects": [
+    "science",
+    "technology"
+   ]
+  },
+  {
+   "name": "The Rest Is History",
+   "feed": "https://feeds.megaphone.fm/GLT4787413333",
+   "subjects": [
+    "history"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Dan Carlin's Hardcore History",
+   "feed": "https://feeds.feedburner.com/dancarlin/history?format=xml",
+   "subjects": [
+    "history"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Ancients",
+   "feed": "https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353",
+   "subjects": [
+    "history"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Throughline",
+   "feed": "https://feeds.npr.org/510333/podcast.xml",
+   "subjects": [
+    "history",
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Dan Snow's History Hit",
+   "feed": "https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5",
+   "subjects": [
+    "history"
+   ],
+   "starter": true
+  },
+  {
+   "name": "American History Tellers",
+   "feed": "https://rss.art19.com/american-history-tellers",
+   "subjects": [
+    "history"
+   ]
+  },
+  {
+   "name": "History That Doesn't Suck",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254",
+   "subjects": [
+    "history"
+   ]
+  },
+  {
+   "name": "Lore",
+   "feed": "https://rss.libsyn.com/shows/65267/destinations/259905.xml",
+   "subjects": [
+    "history",
+    "arts"
+   ]
+  },
+  {
+   "name": "Fall of Civilizations Podcast",
+   "feed": "https://anchor.fm/s/101adcf44/podcast/rss",
+   "subjects": [
+    "history"
+   ]
+  },
+  {
+   "name": "Revolutions",
+   "feed": "https://rss.libsyn.com/shows/47475/destinations/159998.xml",
+   "subjects": [
+    "history"
+   ]
+  },
+  {
+   "name": "Tides of History",
+   "feed": "https://rss.art19.com/tides-of-history",
+   "subjects": [
+    "history"
+   ]
+  },
+  {
+   "name": "In Our Time",
+   "feed": "https://podcasts.files.bbci.co.uk/b006qykl.rss",
+   "subjects": [
+    "history",
+    "education",
+    "society-culture"
+   ]
+  },
+  {
+   "name": "World War II with Tom Hanks",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/cc2b59fa44d0151fa8987e1b01e424bc",
+   "subjects": [
+    "history"
+   ]
+  },
+  {
+   "name": "American Scandal",
+   "feed": "https://rss.art19.com/american-scandal",
+   "subjects": [
+    "history",
+    "true-crime"
+   ]
+  },
+  {
+   "name": "Huberman Lab",
+   "feed": "https://feeds.megaphone.fm/hubermanlab",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ],
+   "starter": true
+  },
+  {
+   "name": "On Purpose with Jay Shetty",
+   "feed": "https://feeds.megaphone.fm/on-purpose",
+   "subjects": [
+    "health-fitness",
+    "education"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Nothing much happens: bedtime stories to help you sleep",
+   "feed": "https://feeds.megaphone.fm/SSM2868305742",
+   "subjects": [
+    "health-fitness",
+    "arts"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Get Sleepy: stories for sleep",
+   "feed": "https://feeds.megaphone.fm/SGP8517078272",
+   "subjects": [
+    "health-fitness",
+    "arts"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Passion Struck with John R. Miles",
+   "feed": "https://feeds.simplecast.com/XYHE1JPs",
+   "subjects": [
+    "health-fitness",
+    "education"
+   ]
+  },
+  {
+   "name": "Extend Podcast with Darshan Shah, MD",
+   "feed": "https://rss.libsyn.com/shows/551312/destinations/4758622.xml",
+   "subjects": [
+    "health-fitness"
+   ]
+  },
+  {
+   "name": "Decoded | Unlock The Secrets of Human Behavior, Emotion and Motivation",
+   "feed": "https://feeds.megaphone.fm/ARML6214944307",
+   "subjects": [
+    "health-fitness"
+   ]
+  },
+  {
+   "name": "Maintenance Phase",
+   "feed": "https://rss.buzzsprout.com/1411126.rss",
+   "subjects": [
+    "health-fitness",
+    "science"
+   ]
+  },
+  {
+   "name": "Hard Fork",
+   "feed": "https://feeds.simplecast.com/6HKOhNgS",
+   "subjects": [
+    "technology",
+    "news"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Lex Fridman Podcast",
+   "feed": "https://lexfridman.com/feed/podcast/",
+   "subjects": [
+    "technology",
+    "science"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Dwarkesh Podcast",
+   "feed": "https://www.dwarkesh.com/feed",
+   "subjects": [
+    "technology"
+   ],
+   "starter": true
+  },
+  {
+   "name": "All-In with Chamath, Jason, Sacks & Friedberg",
+   "feed": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml",
+   "subjects": [
+    "technology",
+    "business"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Darknet Diaries",
+   "feed": "https://podcast.darknetdiaries.com",
+   "subjects": [
+    "technology",
+    "true-crime"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Accidental Tech Podcast",
+   "feed": "https://cdn.atp.fm/rss/public?wtvryzdm",
+   "subjects": [
+    "technology"
+   ]
+  },
+  {
+   "name": "Cortex",
+   "feed": "https://relay.fm/cortex/feed",
+   "subjects": [
+    "technology",
+    "education"
+   ]
+  },
+  {
+   "name": "The AI Daily Brief: Artificial Intelligence News and Analysis",
+   "feed": "https://anchor.fm/s/f7cac464/podcast/rss",
+   "subjects": [
+    "technology",
+    "business",
+    "news"
+   ]
+  },
+  {
+   "name": "TED Radio Hour",
+   "feed": "https://feeds.npr.org/510298/podcast.xml",
+   "subjects": [
+    "technology",
+    "education",
+    "science"
+   ]
+  },
+  {
+   "name": "Plaintext with Rich",
+   "feed": "https://rss.buzzsprout.com/2566974.rss",
+   "subjects": [
+    "technology",
+    "news"
+   ]
+  },
+  {
+   "name": "Pablo Torre Finds Out",
+   "feed": "https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f",
+   "subjects": [
+    "sports"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Dan Le Batard Show",
+   "feed": "https://feeds.megaphone.fm/ESP2298543312",
+   "subjects": [
+    "sports"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The MeatEater Podcast",
+   "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss",
+   "subjects": [
+    "sports"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Zach Lowe Show",
+   "feed": "https://feeds.megaphone.fm/zach-lowe",
+   "subjects": [
+    "sports"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Herd with Colin Cowherd",
+   "feed": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss",
+   "subjects": [
+    "sports"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Fantasy Footballers - Fantasy Football Podcast",
+   "feed": "https://feeds.simplecast.com/sw7PGWfw",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "Fantasy Football Today",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "Cover 3 College Football",
+   "feed": "https://rss.amperwave.net/v2/feed/audacynetwork/4d511b61eff9f56a1fca4042ba77c21c",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "DOUBLE COVERAGE PODCAST",
+   "feed": "https://feeds.megaphone.fm/YMH1796246858",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "Pardon My Take",
+   "feed": "https://mcsorleys.barstoolsports.com/feed/pardon-my-take",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "The Bill Simmons Podcast",
+   "feed": "https://feeds.megaphone.fm/the-bill-simmons-podcast",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "New Heights with Jason & Travis Kelce",
+   "feed": "https://rss.art19.com/new-heights",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "No Laying Up - Golf Podcast",
+   "feed": "https://feeds.megaphone.fm/nolayingup",
+   "subjects": [
+    "sports"
+   ]
+  },
+  {
+   "name": "Philosophize This!",
+   "feed": "https://feeds.megaphone.fm/QCD6036500916",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Mel Robbins Podcast",
+   "feed": "https://feeds.simplecast.com/UCwaTX1J",
+   "subjects": [
+    "education",
+    "health-fitness"
+   ],
+   "starter": true
+  },
+  {
+   "name": "IMO with Michelle Obama and Craig Robinson",
+   "feed": "https://rss.art19.com/hga-imo",
+   "subjects": [
+    "education",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Jamie Kern Lima Show",
+   "feed": "https://feeds.megaphone.fm/LIFEISLOVELLC4342849321",
+   "subjects": [
+    "education",
+    "business"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Very Bad Wizards",
+   "feed": "https://rss.libsyn.com/shows/474285/destinations/4022211.xml",
+   "subjects": [
+    "education",
+    "society-culture"
+   ]
+  },
+  {
+   "name": "Fresh Air",
+   "feed": "https://feeds.npr.org/381444908/podcast.xml",
+   "subjects": [
+    "arts",
+    "news",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Moth",
+   "feed": "http://feeds.feedburner.com/themothpodcast",
+   "subjects": [
+    "arts",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "99% Invisible",
+   "feed": "https://feeds.simplecast.com/BqbsxVfO",
+   "subjects": [
+    "arts",
+    "technology"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Song Exploder",
+   "feed": "https://feed.songexploder.net/SongExploder",
+   "subjects": [
+    "arts"
+   ],
+   "starter": true
+  },
+  {
+   "name": "Snap Judgment",
+   "feed": "https://rss.pdrl.fm/9ba5b0/snap.feed.snapjudgment.org",
+   "subjects": [
+    "arts",
+    "society-culture"
+   ],
+   "starter": true
+  },
+  {
+   "name": "The Allusionist",
+   "feed": "https://rss.art19.com/the-allusionist",
+   "subjects": [
+    "arts",
+    "education"
+   ]
+  },
+  {
+   "name": "Articles of Interest",
+   "feed": "https://feed.articlesofinterest.club/",
+   "subjects": [
+    "arts"
+   ]
+  },
+  {
+   "name": "Twenty Thousand Hertz",
+   "feed": "https://feed.20k.org",
+   "subjects": [
+    "arts",
+    "technology"
+   ]
+  },
+  {
+   "name": "The Book Review",
+   "feed": "https://feeds.simplecast.com/zyaxg_KL",
+   "subjects": [
+    "arts"
+   ]
+  },
+  {
+   "name": "Stories of Art",
+   "feed": "https://rss2.flightcast.com/mqmgmtnt1tf3r7iyurohb3ib.xml",
+   "subjects": [
+    "arts",
+    "history"
+   ]
+  },
+  {
+   "name": "Welcome to Night Vale",
+   "feed": "https://feeds.megaphone.fm/SBP4591212513",
+   "subjects": [
+    "arts"
+   ]
+  },
+  {
+   "name": "The Magnus Archives",
+   "feed": "https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8",
+   "subjects": [
+    "arts"
+   ]
+  },
+  {
+   "name": "The Chef's Cut",
+   "feed": "https://feeds.megaphone.fm/LMINC5612116895",
+   "subjects": [
+    "arts"
+   ]
+  },
+  {
+   "name": "Happy Hour with Ina Garten",
+   "feed": "https://feeds.megaphone.fm/VMP2612107147",
+   "subjects": [
+    "arts"
+   ]
+  },
+  {
+   "name": "Jeselnik Book Club",
+   "feed": "https://feeds.megaphone.fm/jeselnik-book-club",
+   "subjects": [
+    "arts",
+    "comedy"
+   ]
+  },
+  {
+   "name": "One Useful Thing",
+   "feed": "https://www.oneusefulthing.org/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-oneusefulthing",
+   "starter": true
+  },
+  {
+   "name": "Experimental History",
+   "feed": "https://www.experimental-history.com/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-experimental-history",
+   "starter": true
+  },
+  {
+   "name": "Construction Physics",
+   "feed": "https://www.construction-physics.com/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-construction-physics",
+   "starter": true
+  },
+  {
+   "name": "The Honest Broker",
+   "feed": "https://www.honest-broker.com/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-honest-broker",
+   "starter": true
+  },
+  {
+   "name": "Noahpinion",
+   "feed": "https://www.noahpinion.blog/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-noahpinion",
+   "starter": true
+  },
+  {
+   "name": "Astral Codex Ten",
+   "feed": "https://www.astralcodexten.com/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-astralcodexten",
+   "starter": true
+  },
+  {
+   "name": "Your Local Epidemiologist",
+   "feed": "https://yourlocalepidemiologist.substack.com/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-yourlocalepidemiologist",
+   "starter": true
+  },
+  {
+   "name": "Lenny's Newsletter",
+   "feed": "https://www.lennysnewsletter.com/feed",
+   "subjects": [
+    "writers"
+   ],
+   "kind": "article_feed",
+   "contentKind": "newsletter",
+   "id": "substack-lennysnewsletter",
+   "starter": true
+  }
+ ]
+}

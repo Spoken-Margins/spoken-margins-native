@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/sciencevs" rel="self" type="application/rss+xml"/>
+    <title>Science Vs</title>
+    <link>https://gimletmedia.com/science-vs/</link>
+    <language>en</language>
+    <copyright>All rights reserved</copyright>
+    <description>There are a lot of fads, blogs and strong opinions, but then there’s SCIENCE. Science Vs is the show from Spotify Studios that finds out what’s fact, what’s not, and what’s somewhere in between. We do the hard work of sifting through all the science so you don't have to and cover everything from 5G and ADHD, to Fluoride and Fasting Diets.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Science Vs</title>
+      <link>https://gimletmedia.com/science-vs/</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>The show that pits facts against everything else, hosted by Wendy Zukerman, from Spotify Studios.</itunes:subtitle>
+    <itunes:author>Spotify Studios</itunes:author>
+    <itunes:summary>There are a lot of fads, blogs and strong opinions, but then there’s SCIENCE. Science Vs is the show from Spotify Studios that finds out what’s fact, what’s not, and what’s somewhere in between. We do the hard work of sifting through all the science so you don't have to and cover everything from 5G and ADHD, to Fluoride and Fasting Diets.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>There are a lot of fads, blogs and strong opinions, but then there’s SCIENCE. Science Vs is the show from Spotify Studios that finds out what’s fact, what’s not, and what’s somewhere in between. We do the hard work of sifting through all the science so you don't have to and cover everything from 5G and ADHD, to Fluoride and Fasting Diets.</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>Spotify Studios</itunes:name>
+      <itunes:email>podcasts@gimletmedia.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Science">
+    </itunes:category>
+    <itunes:category text="Education">
+    </itunes:category>
+    <itunes:category text="Health &amp; Fitness">
+    </itunes:category>
+    <itunes:new-feed-url>https://feeds.megaphone.fm/sciencevs</itunes:new-feed-url>
+    

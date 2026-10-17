@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/Y8lFbOT4" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>Freakonomics Radio</title>
+    <description>Freakonomics co-author Stephen J. Dubner uncovers the hidden side of everything. Why is it safer to fly in an airplane than drive a car? How do we decide whom to marry? Why is the media so full of bad news? Also: things you never knew you wanted to know about wolves, bananas, pollution, search engines, and the quirks of human behavior.
+
+To get every show in the Freakonomics Radio Network without ads and a monthly bonus episode of Freakonomics Radio, start a free trial for SiriusXM Podcasts+ on Apple Podcasts or by visiting siriusxm.com/podcastsplus.</description>
+    <copyright>2024 Dubner Productions and Stitcher</copyright>
+    <language>en-us</language>
+    <pubDate>Fri, 16 Oct 2026 10:00:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 10:00:41 +0000</lastBuildDate>
+    <image>
+      <link>https://freakonomics.com</link>
+      <title>Freakonomics Radio</title>
+      <url>https://image.simplecastcdn.com/images/2be48404-a43c-4fa8-a32c-760a3216272e/fab1584e-8ea9-4efa-9650-5e595861b2cd/3000x3000/image.jpg?aid=rss_feed</url>
+    </image>
+    <link>https://freakonomics.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Freakonomics co-author Stephen J. Dubner uncovers the hidden side of everything. Why is it safer to fly in an airplane than drive a car? How do we decide whom to marry? Why is the media so full of bad news? Also: things you never knew you wanted to know about wolves, bananas, pollution, search engines, and the quirks of human behavior.
+
+To get every show in the Freakonomics Radio Network without ads and a monthly bonus episode of Freakonomics Radio, start a free trial for SiriusXM Podcasts+ on Apple Podcasts or by visiting siriusxm.com/podcastsplus.</itunes:summary>
+    <itunes:author>Freakonomics Radio + Stitcher</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/2be48404-a43c-4fa8-a32c-760a3216272e/fab1584e-8ea9-4efa-9650-5e595861b2cd/3000x3000/image.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/Y8lFbOT4</itunes:new-feed-url>
+    <itunes:owner>
+      <itunes:name>Freakonomics Radio + Stitcher</itunes:name>
+      <itunes:email>editor@freakonomics.com</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Society &amp; Culture">
+      <itunes:category text="Documentary"/>
+    </itunes:category>
+    <itunes:category text="Society &amp; Culture"/>
+    

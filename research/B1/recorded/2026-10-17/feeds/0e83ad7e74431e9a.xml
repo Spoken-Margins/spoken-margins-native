@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<?xml-stylesheet type="text/xsl" href="/global/feed/rss.xslt" ?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podaccess="https://access.acast.com/schema/1.0/" xmlns:acast="https://schema.acast.com/1.0/">
+   <script src="https://feeds.acast.com/global/feed/xslt-polyfill.min.js" xmlns="http://www.w3.org/1999/xhtml"></script>
+    <channel>
+		<ttl>60</ttl>
+		<generator>acast.com</generator>
+		<title>The Magnus Archives</title>
+		<link>https://www.rustyquill.com</link>
+		<atom:link href="https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8" rel="self" type="application/rss+xml"/>
+		<language>en</language>
+		<copyright>Rusty Quill</copyright>
+		<itunes:keywords>horror podcast,anthology podcast,horror fiction,fiction podcast,rusty quill,Alexander J. Newall,Jonathan Sims,Audiodrama,Audio Fiction,Science Fiction,horror,unfiction,found footage,jonny sims,cosmic horror</itunes:keywords>
+		<itunes:author>Rusty Quill</itunes:author>
+		<itunes:subtitle>A weekly horror fiction podcast featuring short stories, serial plots, full soundscapes, guest actors and more.</itunes:subtitle>
+		<itunes:summary><![CDATA[<p>“Make your statement, face your fear.”<em> The Magnus Archives</em> is an award winning weekly horror fiction audiodrama podcast examining what lurks in the archives of the Magnus Institute, an organisation dedicated to researching the esoteric and the weird. Join Jonathan Sims as he explores the archive, but be warned, as he looks into its depths something starts to look back… New episodes every Thursday produced by <a href="https://rustyquill.com/" rel="noopener noreferrer" target="_blank">Rusty Quill</a>, featuring guest actors, short stories, serial plots and more. The long awaited continuation <em>The Magnus Protocol</em> launched in January 2024. Season 2 of the Magnus Protocol is ongoing!</p><br><p>This multi-award winning and record breaking epic horror anthology features elements of the supernatural and the eldritch while blending genres of horror, mystery, tragedy and romance in to a truly epic metaplot that has captivated millions and helped make <em>The Magnus Archives</em> the worlds most popular horror podcast.</p><br><p>Spotify Award winner for over 100 Million downloads, British Fantasy Award Winner and Webby Honoree.</p><br><p>For fans of M.R James, Cosmic Horror, deep storytelling, dark academia, great audio fiction and audio drama, analogue horror / unfiction and ARGs.</p><hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></itunes:summary>
+		<description><![CDATA[<p>“Make your statement, face your fear.”<em> The Magnus Archives</em> is an award winning weekly horror fiction audiodrama podcast examining what lurks in the archives of the Magnus Institute, an organisation dedicated to researching the esoteric and the weird. Join Jonathan Sims as he explores the archive, but be warned, as he looks into its depths something starts to look back… New episodes every Thursday produced by <a href="https://rustyquill.com/" rel="noopener noreferrer" target="_blank">Rusty Quill</a>, featuring guest actors, short stories, serial plots and more. The long awaited continuation <em>The Magnus Protocol</em> launched in January 2024. Season 2 of the Magnus Protocol is ongoing!</p><br><p>This multi-award winning and record breaking epic horror anthology features elements of the supernatural and the eldritch while blending genres of horror, mystery, tragedy and romance in to a truly epic metaplot that has captivated millions and helped make <em>The Magnus Archives</em> the worlds most popular horror podcast.</p><br><p>Spotify Award winner for over 100 Million downloads, British Fantasy Award Winner and Webby Honoree.</p><br><p>For fans of M.R James, Cosmic Horror, deep storytelling, dark academia, great audio fiction and audio drama, analogue horror / unfiction and ARGs.</p><hr><p style='color:grey; font-size:0.75em;'> Hosted on Acast. See <a style='color:grey;' target='_blank' rel='noopener noreferrer' href='https://acast.com/privacy'>acast.com/privacy</a> for more information.</p>]]></description>
+		<itunes:explicit>false</itunes:explicit>
+		<itunes:owner>
+			<itunes:name>Rusty Quill</itunes:name>
+			<itunes:email>mail@rustyquill.com</itunes:email>
+		</itunes:owner>
+		<acast:showId>b6085bcd-3542-4a43-b6a8-021e3fd251b8</acast:showId>
+		<acast:showUrl>themagnusarchives</acast:showUrl>
+		<acast:signature key="EXAMPLE" algorithm="aes-256-cbc"><![CDATA[wbG1Z7+6h9QOi+CR1Dv0uQ==]]></acast:signature>
+		<acast:settings><![CDATA[FYjHyZbXWHZ7gmX8Pp1rmStkiTEE0CNxIPxmLPEYNwMKCHLDRL22sHQZ4ElCEGqt3fze1jZ6iH+IMFJT2mYmZIxNfOPePdDgD3RJJa+1K76VnYN56+BRATUizdEfpskx083xoIhWE6vvMxOxQ+4GWQ58ORduxyMuFooJOtxJDRYb1bwcZ1l6ThRU5OVpDtGtqK65/OQZAoN9bgeBlwAzZgss71yzMFqr1PL1R4VsQnfWYGX2bdR8e9NKYpVIdcWzgFqpLpBFygwsAQECB3ShPNZVeEf5WKHQY8vEbn76KBhbD9anfgA1jjUKVCXYfAiozzJuW8jTgireLuRBaRcAcKMMn83nKuu8NgfY2a04gdP1ybmQ7hrYRs/7aImhm7HFlTZRt8BqGiR97PAZdeCz9cZS71fu40vTleaDhehuLUvKWW3/lGMF1RbHLr3fFDBN]]></acast:settings>
+        <acast:network id="a490292a-a27f-7095-5867-122d548e2113" slug="rusty-quill-ltd"><![CDATA[Rusty Quill LTD]]></acast:network>
+		<acast:importedFeed>https://rss.acast.com/themagnusarchives</acast:importedFeed>
+		<itunes:type>serial</itunes:type>
+			<itunes:image href="https://assets.pippa.io/shows/61ba0ccb1a8cbea8343cf12c/show-cover.jpg"/>
+			<image>
+				<url>https://assets.pippa.io/shows/61ba0ccb1a8cbea8343cf12c/show-cover.jpg</url>
+				<link>https://www.rustyquill.com</link>
+				<title>The Magnus Archives</title>
+			</image>
+			<itunes:new-feed-url>https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8</itunes:new-feed-url>
+		<itunes:applepodcastsverify>868329</itunes:applepodcastsverify>
+		

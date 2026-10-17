@@ -67,7 +67,10 @@ final class SourceResolutionTests: XCTestCase {
     }
 
     func testCatalogResolverMatchesAppleLinksExactlyAndNamesOnlyAsLikely() async throws {
-        let catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: TestInputs.url(.site, "onboarding/catalog/v1/catalog.json")))
+        var catalog = try SourceCatalogVerifier.decodeCatalog(Data(contentsOf: TestInputs.url(.site, "onboarding/catalog/v1/catalog.json")))
+        // The published list carries no Apple ids (#1732), so give one show its id here.
+        let daily = try XCTUnwrap(catalog.entries.firstIndex { $0.title == "The Daily" })
+        catalog.entries[daily].externalIds = SourceExternalIds(applePodcastsId: "1200361736")
         let resolver = CatalogSourceResolver(catalog: catalog)
 
         let link = SourceResolutionInput.classify(" https://podcasts.apple.com/us/podcast/the-daily/id1200361736?i=1000 ")

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:art19="https://art19.com/xmlns/rss-extensions/1.0" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0/" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">
+  <channel>
+    <title>American History Tellers</title>
+    <description>
+      <![CDATA[<p>The Cold War, Prohibition, the Gold Rush, the Space Race. Every part of your life - the words you speak, the ideas you share - can be traced to our history, but how well do you really know the stories that made America? We'll take you to the events, the times and the people that shaped our nation. And we'll show you how our history affected them, their families and affects you today. Hosted by Lindsay Graham (not the Senator). From Wondery, the network behind American Scandal, Tides of History, American Innovations and more.</p><p>Audible subscribers can listen to all episodes of American History Tellers<strong> </strong>ad-free right now. Join Audible today by downloading the Audible app.</p>]]>
+    </description>
+    <managingEditor>nobrejus@audible.com (Audible)</managingEditor>
+    <copyright>© 2018 All Rights Reserved</copyright>
+    <generator>ART19</generator>
+    <atom:link href="https://rss.art19.com/american-history-tellers" rel="self" type="application/rss+xml"/>
+    <link>https://wondery.com/shows/american-history-tellers/?utm_source=rss</link>
+    <itunes:owner>
+      <itunes:name>Audible</itunes:name>
+      <itunes:email>nobrejus@audible.com</itunes:email>
+    </itunes:owner>
+    <itunes:author>Audible</itunes:author>
+    <itunes:summary>
+      <![CDATA[<p>The Cold War, Prohibition, the Gold Rush, the Space Race. Every part of your life - the words you speak, the ideas you share - can be traced to our history, but how well do you really know the stories that made America? We'll take you to the events, the times and the people that shaped our nation. And we'll show you how our history affected them, their families and affects you today. Hosted by Lindsay Graham (not the Senator). From Wondery, the network behind American Scandal, Tides of History, American Innovations and more.</p><p>Audible subscribers can listen to all episodes of American History Tellers<strong> </strong>ad-free right now. Join Audible today by downloading the Audible app.</p>]]>
+    </itunes:summary>
+    <language>en</language>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:category text="History"/>
+    <itunes:category text="Kids &amp; Family">
+      <itunes:category text="Education for Kids"/>
+    </itunes:category>
+    <itunes:category text="Society &amp; Culture"/>
+    <itunes:type>serial</itunes:type>
+    <itunes:image href="https://content.production.cdn.art19.com/images/29/03/75/0e/2903750e-0ed3-488b-9096-158e2d0e825c/5de55cbe200588843216d1c35f4119bf642157cc8b7585181b1367c29317d42fba9ca97b9745adac411a6bfa833bcc5331437b963b59d7e7ecc479f2a3f67ddc.jpeg"/>
+    <image>
+      <url>https://content.production.cdn.art19.com/images/29/03/75/0e/2903750e-0ed3-488b-9096-158e2d0e825c/5de55cbe200588843216d1c35f4119bf642157cc8b7585181b1367c29317d42fba9ca97b9745adac411a6bfa833bcc5331437b963b59d7e7ecc479f2a3f67ddc.jpeg</url>
+      <link>https://wondery.com/shows/american-history-tellers/?utm_source=rss</link>
+      <title>American History Tellers</title>
+    </image>
+    

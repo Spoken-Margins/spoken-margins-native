@@ -1,0 +1,2022 @@
+{
+ "artwork": {
+  "https://assets.flightcast.com/workspaces/edpmsc3wdznn1aa2txug5e3p/podcasts/xmsftuzjjykcmqwolaqn6mdn/cs9v0tiwz4lv6yfo3vt6q6dx.png": {
+   "contentType": "image/png",
+   "finalURL": "https://assets.flightcast.com/workspaces/edpmsc3wdznn1aa2txug5e3p/podcasts/xmsftuzjjykcmqwolaqn6mdn/cs9v0tiwz4lv6yfo3vt6q6dx.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://assets.flightcast.com/workspaces/edpmsc3wdznn1aa2txug5e3p/podcasts/xmsftuzjjykcmqwolaqn6mdn/cs9v0tiwz4lv6yfo3vt6q6dx.png"
+  },
+  "https://assets.pippa.io/shows/61ba0ccb1a8cbea8343cf12c/show-cover.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://assets.pippa.io/shows/61ba0ccb1a8cbea8343cf12c/show-cover.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://assets.pippa.io/shows/61ba0ccb1a8cbea8343cf12c/show-cover.jpg"
+  },
+  "https://assets.pippa.io/shows/6215f67d4b795a40fffd3b2c/1723125486275-6a1ef96b-9474-4be2-bb87-7a9532f54a02.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://assets.pippa.io/shows/6215f67d4b795a40fffd3b2c/1723125486275-6a1ef96b-9474-4be2-bb87-7a9532f54a02.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://assets.pippa.io/shows/6215f67d4b795a40fffd3b2c/1723125486275-6a1ef96b-9474-4be2-bb87-7a9532f54a02.jpeg"
+  },
+  "https://assets.pippa.io/shows/6215f9e74b795a6299fd3b58/1688118301033-5d81dbbb93ddec91bc01fee4bb292511.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://assets.pippa.io/shows/6215f9e74b795a6299fd3b58/1688118301033-5d81dbbb93ddec91bc01fee4bb292511.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://assets.pippa.io/shows/6215f9e74b795a6299fd3b58/1688118301033-5d81dbbb93ddec91bc01fee4bb292511.jpeg"
+  },
+  "https://assets.pippa.io/shows/68b1d0ea993d10acb9c3fe4f/1775008407441-209a6288-80af-4538-9c37-9728cb9397d3.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://assets.pippa.io/shows/68b1d0ea993d10acb9c3fe4f/1775008407441-209a6288-80af-4538-9c37-9728cb9397d3.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://assets.pippa.io/shows/68b1d0ea993d10acb9c3fe4f/1775008407441-209a6288-80af-4538-9c37-9728cb9397d3.jpeg"
+  },
+  "https://audioboom.com/i/40034741/s=1400x1400/el=1/rt=fill.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://audioboom.com/i/40034741/s=1400x1400/el=1/rt=fill.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://audioboom.com/i/40034741/s=1400x1400/el=1/rt=fill.jpg"
+  },
+  "https://audioboom.com/i/41239450.png": {
+   "contentType": "image/png",
+   "finalURL": "https://audioboom.com/i/41239450.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://audioboom.com/i/41239450.png"
+  },
+  "https://audioboom.com/i/43405962.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://audioboom.com/i/43405962.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://audioboom.com/i/43405962.jpg"
+  },
+  "https://audioboom.com/i/43757337.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://audioboom.com/i/43757337.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://audioboom.com/i/43757337.jpg"
+  },
+  "https://cdn.atp.fm/artwork": {
+   "contentType": "image/png",
+   "finalURL": "https://cdn.atp.fm/artwork",
+   "ok": true,
+   "status": 200,
+   "url": "https://cdn.atp.fm/artwork"
+  },
+  "https://chumley.barstoolsports.com/union/2024/02/21/PMT-DK.994e7478.jpg?crop=3000%3A3000%2Csmart&format=jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://chumley.barstoolsports.com/union/2024/02/21/PMT-DK.994e7478.jpg?crop=3000%3A3000%2Csmart&format=jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://chumley.barstoolsports.com/union/2024/02/21/PMT-DK.994e7478.jpg?crop=3000%3A3000%2Csmart&format=jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/09/07/0d/91/09070d91-28ed-45ce-ace1-6e989334ec83/e84497c04fa5b894c7fd6fd559569a41dff4c6fc6368279754268b554d39bd477b89a398557259f158daf02b3f899b4caf9a06be8924ddeb831e6773043c43bf.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/09/07/0d/91/09070d91-28ed-45ce-ace1-6e989334ec83/e84497c04fa5b894c7fd6fd559569a41dff4c6fc6368279754268b554d39bd477b89a398557259f158daf02b3f899b4caf9a06be8924ddeb831e6773043c43bf.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/09/07/0d/91/09070d91-28ed-45ce-ace1-6e989334ec83/e84497c04fa5b894c7fd6fd559569a41dff4c6fc6368279754268b554d39bd477b89a398557259f158daf02b3f899b4caf9a06be8924ddeb831e6773043c43bf.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/0f/36/84/f4/0f3684f4-c745-4e9d-8cd3-aebfaf45bd50/144ac88caee66a21f306ecdbfb2837323de4291443f6aba3ff68b48bb9810c737eca6074ef1baa652bcb9298dd2d9389f5e526dd7d24e163dcc395d21ab3058b.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/0f/36/84/f4/0f3684f4-c745-4e9d-8cd3-aebfaf45bd50/144ac88caee66a21f306ecdbfb2837323de4291443f6aba3ff68b48bb9810c737eca6074ef1baa652bcb9298dd2d9389f5e526dd7d24e163dcc395d21ab3058b.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/0f/36/84/f4/0f3684f4-c745-4e9d-8cd3-aebfaf45bd50/144ac88caee66a21f306ecdbfb2837323de4291443f6aba3ff68b48bb9810c737eca6074ef1baa652bcb9298dd2d9389f5e526dd7d24e163dcc395d21ab3058b.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/29/03/75/0e/2903750e-0ed3-488b-9096-158e2d0e825c/5de55cbe200588843216d1c35f4119bf642157cc8b7585181b1367c29317d42fba9ca97b9745adac411a6bfa833bcc5331437b963b59d7e7ecc479f2a3f67ddc.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/29/03/75/0e/2903750e-0ed3-488b-9096-158e2d0e825c/5de55cbe200588843216d1c35f4119bf642157cc8b7585181b1367c29317d42fba9ca97b9745adac411a6bfa833bcc5331437b963b59d7e7ecc479f2a3f67ddc.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/29/03/75/0e/2903750e-0ed3-488b-9096-158e2d0e825c/5de55cbe200588843216d1c35f4119bf642157cc8b7585181b1367c29317d42fba9ca97b9745adac411a6bfa833bcc5331437b963b59d7e7ecc479f2a3f67ddc.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/3d/fd/b1/af/3dfdb1af-b17b-43f1-b9bc-5c1727d2677c/58297b0f5985e7c56e26fd684a6e11ac00e468daff7ea08e6bd03a979b34f3f4531e1d2f26a7d5200871182ffeb5c6091da519ac026e8d496663a73324010db3.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/3d/fd/b1/af/3dfdb1af-b17b-43f1-b9bc-5c1727d2677c/58297b0f5985e7c56e26fd684a6e11ac00e468daff7ea08e6bd03a979b34f3f4531e1d2f26a7d5200871182ffeb5c6091da519ac026e8d496663a73324010db3.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/3d/fd/b1/af/3dfdb1af-b17b-43f1-b9bc-5c1727d2677c/58297b0f5985e7c56e26fd684a6e11ac00e468daff7ea08e6bd03a979b34f3f4531e1d2f26a7d5200871182ffeb5c6091da519ac026e8d496663a73324010db3.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/6e/d6/06/35/6ed60635-c302-40b2-bc44-4dba56b10203/a1632c567236a82411be7fe7f3b31a692a684cbf22bc3c12b4ed8d9e458a23d2b1a467ea2fba901a52e2333df8b66eddf9b9585b03b4203d6105536b307337ba.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/6e/d6/06/35/6ed60635-c302-40b2-bc44-4dba56b10203/a1632c567236a82411be7fe7f3b31a692a684cbf22bc3c12b4ed8d9e458a23d2b1a467ea2fba901a52e2333df8b66eddf9b9585b03b4203d6105536b307337ba.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/6e/d6/06/35/6ed60635-c302-40b2-bc44-4dba56b10203/a1632c567236a82411be7fe7f3b31a692a684cbf22bc3c12b4ed8d9e458a23d2b1a467ea2fba901a52e2333df8b66eddf9b9585b03b4203d6105536b307337ba.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/95/2b/ce/09/952bce09-f5fb-4954-8127-d58dd577b159/914c323ae4d70fdd670d8be52e1ed316bef8f6caa7506259dc2b0f099a94bf5da6542c959e00f9e75928e0f18d7fa029934f4c88e312f8c33caf1f6bba694dd7.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/95/2b/ce/09/952bce09-f5fb-4954-8127-d58dd577b159/914c323ae4d70fdd670d8be52e1ed316bef8f6caa7506259dc2b0f099a94bf5da6542c959e00f9e75928e0f18d7fa029934f4c88e312f8c33caf1f6bba694dd7.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/95/2b/ce/09/952bce09-f5fb-4954-8127-d58dd577b159/914c323ae4d70fdd670d8be52e1ed316bef8f6caa7506259dc2b0f099a94bf5da6542c959e00f9e75928e0f18d7fa029934f4c88e312f8c33caf1f6bba694dd7.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/ae/b7/ee/00/aeb7ee00-3633-4871-a1ab-63814d9dbbc2/6974bbb1d592955edc05fcae62635a65ace00078688b652237a2eaa24615e584391e238a45c92b6433a358a6c4fb826a7b4e006dad49b84b7a4dad41d2258649.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/ae/b7/ee/00/aeb7ee00-3633-4871-a1ab-63814d9dbbc2/6974bbb1d592955edc05fcae62635a65ace00078688b652237a2eaa24615e584391e238a45c92b6433a358a6c4fb826a7b4e006dad49b84b7a4dad41d2258649.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/ae/b7/ee/00/aeb7ee00-3633-4871-a1ab-63814d9dbbc2/6974bbb1d592955edc05fcae62635a65ace00078688b652237a2eaa24615e584391e238a45c92b6433a358a6c4fb826a7b4e006dad49b84b7a4dad41d2258649.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/d6/00/9e/b0/d6009eb0-9b07-4ba6-a789-100939717b57/7c02d2966ac19a84e2023c4131df7f9aee56c0880c3a07c9f63bfcd3e8cec2310c1f095ed52f9aefdaa9a0b5eef22aa1691d1da0dd3eedcef834977157fa4efa.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/d6/00/9e/b0/d6009eb0-9b07-4ba6-a789-100939717b57/7c02d2966ac19a84e2023c4131df7f9aee56c0880c3a07c9f63bfcd3e8cec2310c1f095ed52f9aefdaa9a0b5eef22aa1691d1da0dd3eedcef834977157fa4efa.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/d6/00/9e/b0/d6009eb0-9b07-4ba6-a789-100939717b57/7c02d2966ac19a84e2023c4131df7f9aee56c0880c3a07c9f63bfcd3e8cec2310c1f095ed52f9aefdaa9a0b5eef22aa1691d1da0dd3eedcef834977157fa4efa.jpeg"
+  },
+  "https://content.production.cdn.art19.com/images/d6/39/3e/7c/d6393e7c-2c94-4bf8-ace5-22c075450625/5462340d2d523ce16f25efbd2b425f6ecdbdaa718e8222c7da564ce73eaaeca491e30d8a10cf99e9d351bdb65daad1681b4e54f264672188be0469655bad9155.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://content.production.cdn.art19.com/images/d6/39/3e/7c/d6393e7c-2c94-4bf8-ace5-22c075450625/5462340d2d523ce16f25efbd2b425f6ecdbdaa718e8222c7da564ce73eaaeca491e30d8a10cf99e9d351bdb65daad1681b4e54f264672188be0469655bad9155.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://content.production.cdn.art19.com/images/d6/39/3e/7c/d6393e7c-2c94-4bf8-ace5-22c075450625/5462340d2d523ce16f25efbd2b425f6ecdbdaa718e8222c7da564ce73eaaeca491e30d8a10cf99e9d351bdb65daad1681b4e54f264672188be0469655bad9155.jpeg"
+  },
+  "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/41472609/41472609-1752234663609-8665756a468e5.jpg": {
+   "contentType": "image/jpg",
+   "finalURL": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/41472609/41472609-1752234663609-8665756a468e5.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/41472609/41472609-1752234663609-8665756a468e5.jpg"
+  },
+  "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/43131353/5bf8fedc5204badc.jpg": {
+   "contentType": "application/octet-stream",
+   "finalURL": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/43131353/5bf8fedc5204badc.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://d3t3ozftmdmh3i.cloudfront.net/staging/podcast_uploaded_nologo/43131353/5bf8fedc5204badc.jpg"
+  },
+  "https://f.prxu.org/18144/images/24983ab6-e43f-4b49-8c21-f3b4d461c758/Twenty_Thousand_Hertz_-_Key_Icon_-_3000x3000.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://f.prxu.org/18144/images/24983ab6-e43f-4b49-8c21-f3b4d461c758/Twenty_Thousand_Hertz_-_Key_Icon_-_3000x3000.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/18144/images/24983ab6-e43f-4b49-8c21-f3b4d461c758/Twenty_Thousand_Hertz_-_Key_Icon_-_3000x3000.jpeg"
+  },
+  "https://f.prxu.org/18144/images/d955114e-9ad6-48f5-ba7d-19829542a6ed/170e41a42496782f20e8f69d0c5bda0f.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://f.prxu.org/18144/images/d955114e-9ad6-48f5-ba7d-19829542a6ed/170e41a42496782f20e8f69d0c5bda0f.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/18144/images/d955114e-9ad6-48f5-ba7d-19829542a6ed/170e41a42496782f20e8f69d0c5bda0f.jpg"
+  },
+  "https://f.prxu.org/187/images/4610f1dc-cafa-4b1b-8dd0-52a384c81214/Articles_of_Interest.png": {
+   "contentType": "image/png",
+   "finalURL": "https://f.prxu.org/187/images/4610f1dc-cafa-4b1b-8dd0-52a384c81214/Articles_of_Interest.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/187/images/4610f1dc-cafa-4b1b-8dd0-52a384c81214/Articles_of_Interest.png"
+  },
+  "https://f.prxu.org/320/images/bbb82df0-2f3d-4f53-83d9-bc88e39e3cdb/SnapIconKQEDPRX-Orange-Smooth-3000x3000.png": {
+   "contentType": "image/png",
+   "finalURL": "https://f.prxu.org/320/images/bbb82df0-2f3d-4f53-83d9-bc88e39e3cdb/SnapIconKQEDPRX-Orange-Smooth-3000x3000.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/320/images/bbb82df0-2f3d-4f53-83d9-bc88e39e3cdb/SnapIconKQEDPRX-Orange-Smooth-3000x3000.png"
+  },
+  "https://f.prxu.org/7057/images/18744d5d-8091-4bb8-b41a-1ed06efcd508/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://f.prxu.org/7057/images/18744d5d-8091-4bb8-b41a-1ed06efcd508/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/7057/images/18744d5d-8091-4bb8-b41a-1ed06efcd508/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg"
+  },
+  "https://f.prxu.org/7057/images/68ff605a-20f3-437f-9ba9-2d17316724b1/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://f.prxu.org/7057/images/68ff605a-20f3-437f-9ba9-2d17316724b1/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/7057/images/68ff605a-20f3-437f-9ba9-2d17316724b1/uploads_2F1562951997273-pdd2keiryql-99f75240ab90a579e25720d85d3057b2_2Fdarknet-diaries-rss.jpg"
+  },
+  "https://f.prxu.org/song-exploder/images/3b97a9c5-fef1-4c84-8038-3c6efa808016/songexploder-logo-2025-with-title.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://f.prxu.org/song-exploder/images/3b97a9c5-fef1-4c84-8038-3c6efa808016/songexploder-logo-2025-with-title.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/song-exploder/images/3b97a9c5-fef1-4c84-8038-3c6efa808016/songexploder-logo-2025-with-title.jpg"
+  },
+  "https://f.prxu.org/song-exploder/images/e1ac7426-23de-4fe6-9b38-c816ec398391/songexploder-logo-2025-with-title.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://f.prxu.org/song-exploder/images/e1ac7426-23de-4fe6-9b38-c816ec398391/songexploder-logo-2025-with-title.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://f.prxu.org/song-exploder/images/e1ac7426-23de-4fe6-9b38-c816ec398391/songexploder-logo-2025-with-title.jpg"
+  },
+  "https://files.flightcast.com/workspaces/h19hkz2qpvqpctfc142923ah/01KHKENMZG9XQ4VBZK8QVA649X/soa-cover-placeholder_2048x2048.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://s3.us-east-va.io.cloud.ovh.us/fc-prod-data/workspaces/h19hkz2qpvqpctfc142923ah/01KHKENMZG9XQ4VBZK8QVA649X/soa-cover-placeholder_2048x2048.jpg?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=a699e446655d4c9eb48a6873d8bf2ef9%2F20261017%2Fus-east-va%2Fs3%2Faws4_request&X-Amz-Date=20261017T113216Z&X-Amz-Expires=21600&X-Amz-SignedHeaders=host&X-Amz-Signature=00cce6b51ed7ef9ce874e0ea9d57da6b3bff3b8c8f6476ce0b28e5bd47abe19d",
+   "ok": true,
+   "status": 200,
+   "url": "https://files.flightcast.com/workspaces/h19hkz2qpvqpctfc142923ah/01KHKENMZG9XQ4VBZK8QVA649X/soa-cover-placeholder_2048x2048.jpg"
+  },
+  "https://files.relay.fm/uploads/broadcast/image/17/cortex_artwork_bc912281-9faa-4538-b034-74a2acf872bd.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://files.relay.fm/uploads/broadcast/image/17/cortex_artwork_bc912281-9faa-4538-b034-74a2acf872bd.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://files.relay.fm/uploads/broadcast/image/17/cortex_artwork_bc912281-9faa-4538-b034-74a2acf872bd.png"
+  },
+  "https://ichef.bbci.co.uk/images/ic/3000x3000/p0p8dsw0.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0p8dsw0.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0p8dsw0.jpg"
+  },
+  "https://ichef.bbci.co.uk/images/ic/3000x3000/p0pc2j9y.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0pc2j9y.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://ichef.bbci.co.uk/images/ic/3000x3000/p0pc2j9y.jpg"
+  },
+  "https://image.simplecastcdn.com/images/021681d1-f709-484c-bcbd-724e31176de5/5314856b-ca03-41b3-b1d4-007ee78cd8cd/3000x3000/big-20ideas-20lab-podcast-20nov2024-20update.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/021681d1-f709-484c-bcbd-724e31176de5/5314856b-ca03-41b3-b1d4-007ee78cd8cd/3000x3000/big-20ideas-20lab-podcast-20nov2024-20update.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/021681d1-f709-484c-bcbd-724e31176de5/5314856b-ca03-41b3-b1d4-007ee78cd8cd/3000x3000/big-20ideas-20lab-podcast-20nov2024-20update.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/2be48404-a43c-4fa8-a32c-760a3216272e/fab1584e-8ea9-4efa-9650-5e595861b2cd/3000x3000/image.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/2be48404-a43c-4fa8-a32c-760a3216272e/fab1584e-8ea9-4efa-9650-5e595861b2cd/3000x3000/image.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/2be48404-a43c-4fa8-a32c-760a3216272e/fab1584e-8ea9-4efa-9650-5e595861b2cd/3000x3000/image.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/2c9187d6-9dff-4257-bc55-469cf13afd48/60a2cfed-b8ca-460b-abb8-8ab0afb3fa8c/3000x3000/radiolab-showsquare-3000x3000.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/2c9187d6-9dff-4257-bc55-469cf13afd48/60a2cfed-b8ca-460b-abb8-8ab0afb3fa8c/3000x3000/radiolab-showsquare-3000x3000.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/2c9187d6-9dff-4257-bc55-469cf13afd48/60a2cfed-b8ca-460b-abb8-8ab0afb3fa8c/3000x3000/radiolab-showsquare-3000x3000.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/3c9c3c2a-a53f-40bd-9d24-bdb387b03fb1/eae76d2b-6d10-4d80-b309-a724ac0340f0/3000x3000/large-sxm-cover-mr-ballen-3000x3000-final.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/3c9c3c2a-a53f-40bd-9d24-bdb387b03fb1/eae76d2b-6d10-4d80-b309-a724ac0340f0/3000x3000/large-sxm-cover-mr-ballen-3000x3000-final.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/3c9c3c2a-a53f-40bd-9d24-bdb387b03fb1/eae76d2b-6d10-4d80-b309-a724ac0340f0/3000x3000/large-sxm-cover-mr-ballen-3000x3000-final.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/0bc389cf-b421-4727-8fda-e8c1fd983aba/3000x3000/nyt-theinterview-3000px.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/0bc389cf-b421-4727-8fda-e8c1fd983aba/3000x3000/nyt-theinterview-3000px.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/0bc389cf-b421-4727-8fda-e8c1fd983aba/3000x3000/nyt-theinterview-3000px.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/23965394-f5e4-4fdb-b150-639f4910353e/3000x3000/nyt-hf-album-art-3000-2.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/23965394-f5e4-4fdb-b150-639f4910353e/3000x3000/nyt-hf-album-art-3000-2.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/4105a47a-42e5-4ccc-887a-832af7989986/23965394-f5e4-4fdb-b150-639f4910353e/3000x3000/nyt-hf-album-art-3000-2.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/420025f0-46ea-493d-bf27-5999548228e9/8b898b7b-d448-41c7-ac51-e1c677e75e04/3000x3000/nyt-serialprod-album-400.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/420025f0-46ea-493d-bf27-5999548228e9/8b898b7b-d448-41c7-ac51-e1c677e75e04/3000x3000/nyt-serialprod-album-400.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/420025f0-46ea-493d-bf27-5999548228e9/8b898b7b-d448-41c7-ac51-e1c677e75e04/3000x3000/nyt-serialprod-album-400.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/47913775-afcf-4643-935f-31f1dcc86cfb/6a0e5e15-04a3-47c8-9c50-2f2fe8e84437/3000x3000/teks-album-20art-3000px.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/47913775-afcf-4643-935f-31f1dcc86cfb/6a0e5e15-04a3-47c8-9c50-2f2fe8e84437/3000x3000/teks-album-20art-3000px.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/47913775-afcf-4643-935f-31f1dcc86cfb/6a0e5e15-04a3-47c8-9c50-2f2fe8e84437/3000x3000/teks-album-20art-3000px.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/4ca709a1-1918-43a4-9035-1176b5aa9f2b/b8c673f8-58e7-4d4a-ab02-f83c2fd463c4/3000x3000/econtalknewbluecover1400.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/4ca709a1-1918-43a4-9035-1176b5aa9f2b/b8c673f8-58e7-4d4a-ab02-f83c2fd463c4/3000x3000/econtalknewbluecover1400.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/4ca709a1-1918-43a4-9035-1176b5aa9f2b/b8c673f8-58e7-4d4a-ab02-f83c2fd463c4/3000x3000/econtalknewbluecover1400.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/57083e1d-ee93-428d-9808-23e6996802e4/a86b2cff-389d-44b0-9456-3299bd523e18/3000x3000/sxmcovermorbid3000x3000r2026final.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/57083e1d-ee93-428d-9808-23e6996802e4/a86b2cff-389d-44b0-9456-3299bd523e18/3000x3000/sxmcovermorbid3000x3000r2026final.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/57083e1d-ee93-428d-9808-23e6996802e4/a86b2cff-389d-44b0-9456-3299bd523e18/3000x3000/sxmcovermorbid3000x3000r2026final.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/5982e1b7-239c-4b89-81f9-49df1f33fdae/dd71b17c-82bb-441d-a979-e16975aebc1c/3000x3000/hbtilewshankarfinal_rgbsimplecast.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/5982e1b7-239c-4b89-81f9-49df1f33fdae/dd71b17c-82bb-441d-a979-e16975aebc1c/3000x3000/hbtilewshankarfinal_rgbsimplecast.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/5982e1b7-239c-4b89-81f9-49df1f33fdae/dd71b17c-82bb-441d-a979-e16975aebc1c/3000x3000/hbtilewshankarfinal_rgbsimplecast.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/00d27c48-7cbc-44ae-a034-361382a30544/3000x3000/rm-20cover-203000x3000.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/00d27c48-7cbc-44ae-a034-361382a30544/3000x3000/rm-20cover-203000x3000.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/00d27c48-7cbc-44ae-a034-361382a30544/3000x3000/rm-20cover-203000x3000.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/2b201827-3634-43a1-aa2d-394a4304280f/3000x3000/ii-lpimppkh1.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/2b201827-3634-43a1-aa2d-394a4304280f/3000x3000/ii-lpimppkh1.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/2b201827-3634-43a1-aa2d-394a4304280f/3000x3000/ii-lpimppkh1.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/621229bd-2556-4ce6-8ae0-9fa3046f9da9/1e9abcf9-af9c-4105-8b1b-8e05c60c1fcf/3000x3000/8ce0200f165a6c5cafeecc11ac3294f228d9e46d8af6079a5a9db0fe3b62c8fe48ee2dbb6b2460bf705631e82a06b6b79e940141aad774c868833e2a204ce41b.jpeg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/621229bd-2556-4ce6-8ae0-9fa3046f9da9/1e9abcf9-af9c-4105-8b1b-8e05c60c1fcf/3000x3000/8ce0200f165a6c5cafeecc11ac3294f228d9e46d8af6079a5a9db0fe3b62c8fe48ee2dbb6b2460bf705631e82a06b6b79e940141aad774c868833e2a204ce41b.jpeg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/621229bd-2556-4ce6-8ae0-9fa3046f9da9/1e9abcf9-af9c-4105-8b1b-8e05c60c1fcf/3000x3000/8ce0200f165a6c5cafeecc11ac3294f228d9e46d8af6079a5a9db0fe3b62c8fe48ee2dbb6b2460bf705631e82a06b6b79e940141aad774c868833e2a204ce41b.jpeg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/7a686b61-de53-45dc-85c8-4b598a0af518/72d8e1f3-4a82-4082-ad95-47be0fafb1bf/3000x3000/tffb-main-podcast-logo-3000px.png?aid=rss_feed": {
+   "contentType": "image/png",
+   "finalURL": "https://image.simplecastcdn.com/images/7a686b61-de53-45dc-85c8-4b598a0af518/72d8e1f3-4a82-4082-ad95-47be0fafb1bf/3000x3000/tffb-main-podcast-logo-3000px.png?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/7a686b61-de53-45dc-85c8-4b598a0af518/72d8e1f3-4a82-4082-ad95-47be0fafb1bf/3000x3000/tffb-main-podcast-logo-3000px.png?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/7f2f4c05-9c2f-4deb-82b7-b538062bc22d/73549bf1-94b3-40ff-8aeb-b4054848ec1b/3000x3000/the-daily-album-art-original.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/7f2f4c05-9c2f-4deb-82b7-b538062bc22d/73549bf1-94b3-40ff-8aeb-b4054848ec1b/3000x3000/the-daily-album-art-original.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/7f2f4c05-9c2f-4deb-82b7-b538062bc22d/73549bf1-94b3-40ff-8aeb-b4054848ec1b/3000x3000/the-daily-album-art-original.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/0156216b-cc03-4f2c-9fcc-03fd38a2f4e0/3000x3000/sxm-cover-smartless-r2025-3000x3000-final.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/0156216b-cc03-4f2c-9fcc-03fd38a2f4e0/3000x3000/sxm-cover-smartless-r2025-3000x3000-final.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/0156216b-cc03-4f2c-9fcc-03fd38a2f4e0/3000x3000/sxm-cover-smartless-r2025-3000x3000-final.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/371e5714-91ee-4e31-9ef3-cdd31ebfb9f5/3000x3000/conanobrienneedsafriend-keyart-sxm-3000x3000.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/371e5714-91ee-4e31-9ef3-cdd31ebfb9f5/3000x3000/conanobrienneedsafriend-keyart-sxm-3000x3000.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/371e5714-91ee-4e31-9ef3-cdd31ebfb9f5/3000x3000/conanobrienneedsafriend-keyart-sxm-3000x3000.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/7723b0c5-0da6-4cbc-b482-26e1e19ffddd/3000x3000/sxm-cover-melrobbins-r2025-3000x3000-final-white.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/7723b0c5-0da6-4cbc-b482-26e1e19ffddd/3000x3000/sxm-cover-melrobbins-r2025-3000x3000-final-white.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/7723b0c5-0da6-4cbc-b482-26e1e19ffddd/3000x3000/sxm-cover-melrobbins-r2025-3000x3000-final-white.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/a6d5b177-ab5d-430d-b3f2-b393a09d8101/3000x3000/sxm-cover-99percentinvisible-r2025-3000x3000-final.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/a6d5b177-ab5d-430d-b3f2-b393a09d8101/3000x3000/sxm-cover-99percentinvisible-r2025-3000x3000-final.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/8436e3c1-2479-4466-ac48-fa58259960bb/a6d5b177-ab5d-430d-b3f2-b393a09d8101/3000x3000/sxm-cover-99percentinvisible-r2025-3000x3000-final.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/89060b63-e603-4297-b6e8-5a654e50244e/f9713c33-7eca-4512-8d96-7a668e274cb2/3000x3000/image.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/89060b63-e603-4297-b6e8-5a654e50244e/f9713c33-7eca-4512-8d96-7a668e274cb2/3000x3000/image.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/89060b63-e603-4297-b6e8-5a654e50244e/f9713c33-7eca-4512-8d96-7a668e274cb2/3000x3000/image.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/a1a87b67-2865-4234-a087-b342aa30c358/ae42d51b-df99-4b19-bb3f-09f25598bcdd/3000x3000/crimejunkie-logo-registered.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/a1a87b67-2865-4234-a087-b342aa30c358/ae42d51b-df99-4b19-bb3f-09f25598bcdd/3000x3000/crimejunkie-logo-registered.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/a1a87b67-2865-4234-a087-b342aa30c358/ae42d51b-df99-4b19-bb3f-09f25598bcdd/3000x3000/crimejunkie-logo-registered.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/ab52f648-8086-4015-a311-40e7bc613c04/ef2d9bea-09dc-4882-bdd0-eb7ccbd8346b/3000x3000/passion_struck_with_john_r_miles_main_podcast_artwork.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/ab52f648-8086-4015-a311-40e7bc613c04/ef2d9bea-09dc-4882-bdd0-eb7ccbd8346b/3000x3000/passion_struck_with_john_r_miles_main_podcast_artwork.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/ab52f648-8086-4015-a311-40e7bc613c04/ef2d9bea-09dc-4882-bdd0-eb7ccbd8346b/3000x3000/passion_struck_with_john_r_miles_main_podcast_artwork.jpg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/ae183fe2-c634-458a-93dd-5770f0676f77/b010809a-c311-425c-9325-2235c21e6939/3000x3000/7f0421f73d2ce0ca272e392c937e1a301285d44fe7c6d710c2844d80c0c7bb1a3e9838ac03ee80fc64199891cb9d5c6e9d4490f5081fb379c0ab2317f2cadf14.jpeg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/ae183fe2-c634-458a-93dd-5770f0676f77/b010809a-c311-425c-9325-2235c21e6939/3000x3000/7f0421f73d2ce0ca272e392c937e1a301285d44fe7c6d710c2844d80c0c7bb1a3e9838ac03ee80fc64199891cb9d5c6e9d4490f5081fb379c0ab2317f2cadf14.jpeg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/ae183fe2-c634-458a-93dd-5770f0676f77/b010809a-c311-425c-9325-2235c21e6939/3000x3000/7f0421f73d2ce0ca272e392c937e1a301285d44fe7c6d710c2844d80c0c7bb1a3e9838ac03ee80fc64199891cb9d5c6e9d4490f5081fb379c0ab2317f2cadf14.jpeg?aid=rss_feed"
+  },
+  "https://image.simplecastcdn.com/images/b99b6401-4efd-485f-b744-84da8d6c14f6/88d16dd9-fbeb-4b94-acd3-e9871b5060cc/3000x3000/sciencefriday-showsquare-2025-3000x3000.jpg?aid=rss_feed": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://image.simplecastcdn.com/images/b99b6401-4efd-485f-b744-84da8d6c14f6/88d16dd9-fbeb-4b94-acd3-e9871b5060cc/3000x3000/sciencefriday-showsquare-2025-3000x3000.jpg?aid=rss_feed",
+   "ok": true,
+   "status": 200,
+   "url": "https://image.simplecastcdn.com/images/b99b6401-4efd-485f-b744-84da8d6c14f6/88d16dd9-fbeb-4b94-acd3-e9871b5060cc/3000x3000/sciencefriday-showsquare-2025-3000x3000.jpg?aid=rss_feed"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8382458.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8382458.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8382458.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8382520.jpg": {
+   "contentType": "image/png",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8382520.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8382520.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8382559.jpg": {
+   "contentType": "image/png",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8382559.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8382559.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8382936.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8382936.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8382936.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8465544.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8465544.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8465544.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8486082.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8486082.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8486082.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8509451.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8509451.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8509451.jpg"
+  },
+  "https://images.castfire.com/image/661/0/0/0/0-8526910.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://images.castfire.com/image/661/0/0/0/0-8526910.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.castfire.com/image/661/0/0/0/0-8526910.jpg"
+  },
+  "https://images.squarespace-cdn.com/content/v1/52d66949e4b0a8cec3bcdd46/1391195775824-JVU9K0BX50LWOKG99BL5/Hello+Internet.003.png?format=1500w": {
+   "contentType": "image/webp",
+   "finalURL": "https://images.squarespace-cdn.com/content/v1/52d66949e4b0a8cec3bcdd46/1391195775824-JVU9K0BX50LWOKG99BL5/Hello+Internet.003.png?format=1500w",
+   "ok": true,
+   "status": 200,
+   "url": "https://images.squarespace-cdn.com/content/v1/52d66949e4b0a8cec3bcdd46/1391195775824-JVU9K0BX50LWOKG99BL5/Hello+Internet.003.png?format=1500w"
+  },
+  "https://img.transistorcdn.com/SYy-ia3mZbFnUAhbvsUEVW0EZyOaJlbF1tNaO9_3qEw/rs:fill:0:0:1/w:1400/h:1400/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS8zNjQx/ZWZhM2YzZTI3YjA5/MDZhYmE3ZWUzNzU2/ZWYzMy5qcGc.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://img.transistorcdn.com/SYy-ia3mZbFnUAhbvsUEVW0EZyOaJlbF1tNaO9_3qEw/rs:fill:0:0:1/w:1400/h:1400/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS8zNjQx/ZWZhM2YzZTI3YjA5/MDZhYmE3ZWUzNzU2/ZWYzMy5qcGc.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://img.transistorcdn.com/SYy-ia3mZbFnUAhbvsUEVW0EZyOaJlbF1tNaO9_3qEw/rs:fill:0:0:1/w:1400/h:1400/q:60/mb:500000/aHR0cHM6Ly9pbWct/dXBsb2FkLXByb2R1/Y3Rpb24udHJhbnNp/c3Rvci5mbS8zNjQx/ZWZhM2YzZTI3YjA5/MDZhYmE3ZWUzNzU2/ZWYzMy5qcGc.jpg"
+  },
+  "https://lexfridman.com/wordpress/wp-content/uploads/powerpress/artwork_3000-230.png": {
+   "contentType": "image/png",
+   "finalURL": "https://lexfridman.com/wordpress/wp-content/uploads/powerpress/artwork_3000-230.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://lexfridman.com/wordpress/wp-content/uploads/powerpress/artwork_3000-230.png"
+  },
+  "https://media.npr.org/assets/img/2022/09/23/fresh-air_tile_npr-network-01_sq-9b42f217746df08ce5a26c500024dd979ff94178.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2022/09/23/fresh-air_tile_npr-network-01_sq-9b42f217746df08ce5a26c500024dd979ff94178.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2022/09/23/fresh-air_tile_npr-network-01_sq-9b42f217746df08ce5a26c500024dd979ff94178.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://media.npr.org/assets/img/2022/09/23/short-wave_tile_npr-network-01_sq-c268cdb6be92867b01c6ef7e65aed8d605525779.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2022/09/23/short-wave_tile_npr-network-01_sq-c268cdb6be92867b01c6ef7e65aed8d605525779.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2022/09/23/short-wave_tile_npr-network-01_sq-c268cdb6be92867b01c6ef7e65aed8d605525779.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://media.npr.org/assets/img/2022/09/23/ted-radio-hour_tile_npr-network-01_sq-3ca507bd2dfa5c26d7db5b41c2b981b24a8789fa.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2022/09/23/ted-radio-hour_tile_npr-network-01_sq-3ca507bd2dfa5c26d7db5b41c2b981b24a8789fa.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2022/09/23/ted-radio-hour_tile_npr-network-01_sq-3ca507bd2dfa5c26d7db5b41c2b981b24a8789fa.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://media.npr.org/assets/img/2022/09/23/waitwait-don-t-tell-me_tile_npr-network-01_sq-c912ab84bb59df0c4eb2af72886c763ce97f3e3d.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2022/09/23/waitwait-don-t-tell-me_tile_npr-network-01_sq-c912ab84bb59df0c4eb2af72886c763ce97f3e3d.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2022/09/23/waitwait-don-t-tell-me_tile_npr-network-01_sq-c912ab84bb59df0c4eb2af72886c763ce97f3e3d.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://media.npr.org/assets/img/2022/10/24/pm_new_tile_2022_sq-e543deddd0a46a98be481b46e6a72efa6b52236f.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2022/10/24/pm_new_tile_2022_sq-e543deddd0a46a98be481b46e6a72efa6b52236f.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2022/10/24/pm_new_tile_2022_sq-e543deddd0a46a98be481b46e6a72efa6b52236f.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://media.npr.org/assets/img/2023/01/24/npr-news-now_tile_sq-2334a5fd44563fa94cdcdb27384b0f05987c2d15.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2023/01/24/npr-news-now_tile_sq-2334a5fd44563fa94cdcdb27384b0f05987c2d15.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2023/01/24/npr-news-now_tile_sq-2334a5fd44563fa94cdcdb27384b0f05987c2d15.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://media.npr.org/assets/img/2024/05/15/throughline_tile-art_sq-a59d7da2ea2bf97562aeec6440ddf837e8f7de65.jpg?s=1400&c=66&f=jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://media.npr.org/assets/img/2024/05/15/throughline_tile-art_sq-a59d7da2ea2bf97562aeec6440ddf837e8f7de65.jpg?s=1400&c=66&f=jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://media.npr.org/assets/img/2024/05/15/throughline_tile-art_sq-a59d7da2ea2bf97562aeec6440ddf837e8f7de65.jpg?s=1400&c=66&f=jpg"
+  },
+  "https://megaphone.imgix.net/podcasts/00c0a118-2426-11ee-b258-73d331d0123b/image/db3295fcd9d3a7113e8000e931f0541d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/00c0a118-2426-11ee-b258-73d331d0123b/image/db3295fcd9d3a7113e8000e931f0541d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/00c0a118-2426-11ee-b258-73d331d0123b/image/db3295fcd9d3a7113e8000e931f0541d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/042e6144-725e-11ec-a75d-c38f702aecad/image/ee4f0b7b466ca35620792970d9bce2d2.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/042e6144-725e-11ec-a75d-c38f702aecad/image/ee4f0b7b466ca35620792970d9bce2d2.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/042e6144-725e-11ec-a75d-c38f702aecad/image/ee4f0b7b466ca35620792970d9bce2d2.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/c621e53ad8ba502502befb29ac9a0752.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/c621e53ad8ba502502befb29ac9a0752.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/0cb56516-756e-11f1-942d-1f48449dfbbc/image/c621e53ad8ba502502befb29ac9a0752.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/12caad62-76d1-11f1-a7fd-0fd25a9888e6/image/30cb2b42d71bc5bb399dd8641e54fbca.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/12caad62-76d1-11f1-a7fd-0fd25a9888e6/image/30cb2b42d71bc5bb399dd8641e54fbca.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/12caad62-76d1-11f1-a7fd-0fd25a9888e6/image/30cb2b42d71bc5bb399dd8641e54fbca.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/23d52a2a-1c5f-11ea-9a0e-b70170f2a827/image/uploads_2F1588357113366-jjsdfzx6x4m-c0339c10f9b113a5fcc93436e66e5ef4_2FTodayExplained+V2_Tile_3000x3000+_281_29.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/24779146-88be-11ee-95a6-7b19628c6840/image/e231c2472d3da5c7bb06ad6651cdf3ea.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/png",
+   "finalURL": "https://megaphone.imgix.net/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/2646220c-ef7c-11ed-9222-bfc4b0a551e1/image/e9683a997b86f170b0ee1a1b770cc781.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/29f90218-abc4-11f1-85a9-5b8bfbc9b6ac/image/111b908ba24f5c8cb6a5cc8e9dc64837.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/29f90218-abc4-11f1-85a9-5b8bfbc9b6ac/image/111b908ba24f5c8cb6a5cc8e9dc64837.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/29f90218-abc4-11f1-85a9-5b8bfbc9b6ac/image/111b908ba24f5c8cb6a5cc8e9dc64837.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/353b02e2-4f64-11eb-938f-27ae6b16a7ea/image/dfafed6e502111909da5caedf08ce224.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/598d0700-73ec-11f1-8e29-4b8af072e87c/image/6e668a027b7fc8f39d8890a8aee2ce96.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/598d0700-73ec-11f1-8e29-4b8af072e87c/image/6e668a027b7fc8f39d8890a8aee2ce96.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/598d0700-73ec-11f1-8e29-4b8af072e87c/image/6e668a027b7fc8f39d8890a8aee2ce96.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/6389c408-538d-11f0-bf5a-674fe9d25c54/image/b632260f3deff8c76a2fa3733b9d204b.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/aef7061da638e1893d0ab7fdb85207d4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/aef7061da638e1893d0ab7fdb85207d4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/745e06ba-08ef-11f0-ac3b-234508f92d6b/image/aef7061da638e1893d0ab7fdb85207d4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/784ec55a-44d1-11ed-bc62-2b0607f8c6a2/image/f8a91fecce3e75aaf5d9f1f7569af4d5.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/7ead1b94-1938-11ef-8fb8-c377abd83739/image/e02a906c269a651a42d3d01518995631.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/7ead1b94-1938-11ef-8fb8-c377abd83739/image/e02a906c269a651a42d3d01518995631.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/7ead1b94-1938-11ef-8fb8-c377abd83739/image/e02a906c269a651a42d3d01518995631.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/83c028bc-3b63-11f0-86bb-17a55ed91a19/image/d6f0573de211e3ccc3403f81c80687d3.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/83c028bc-3b63-11f0-86bb-17a55ed91a19/image/d6f0573de211e3ccc3403f81c80687d3.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/83c028bc-3b63-11f0-86bb-17a55ed91a19/image/d6f0573de211e3ccc3403f81c80687d3.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/760b684379d2f5f6a98c67f65cf7b53f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/760b684379d2f5f6a98c67f65cf7b53f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/8e5bcebc-ca16-11ee-89f0-0fa0b9bdfc7c/image/760b684379d2f5f6a98c67f65cf7b53f.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/976410fc-bb19-11ee-841d-ef48288d2cd1/image/JKL_Show_FULL_Yellow2.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/976410fc-bb19-11ee-841d-ef48288d2cd1/image/JKL_Show_FULL_Yellow2.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/976410fc-bb19-11ee-841d-ef48288d2cd1/image/JKL_Show_FULL_Yellow2.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/98f67050-9f0a-11f0-b2a5-d3600b74e328/image/591f9b381e2aefc1f457f98f58cd1aa6.jpeg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/a62f84c0-f8b6-11ed-a4fc-fb9e7841d45b/image/76ed638554a4be965517200d1cd5f30d.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/a8b0be3e-9b2f-11f1-8732-df87a56ae1b0/image/05d25208b5326b272aacb972ca6577a4.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/aa039a8e-de63-11ef-a44c-17dcb97c571d/image/39dfe060dbf437bfe5e5e0f0e8a88681.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/aa039a8e-de63-11ef-a44c-17dcb97c571d/image/39dfe060dbf437bfe5e5e0f0e8a88681.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/aa039a8e-de63-11ef-a44c-17dcb97c571d/image/39dfe060dbf437bfe5e5e0f0e8a88681.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/ac00eed0-99e0-11ea-aeb9-d3bdda2ad25d/image/e82f0e492d40910541fac6ccd8656611.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/b84f9932-8174-11e9-bbd8-7f261513f0c9/image/d84a4f4d55158df9d14f6f2d4b219a28.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/b9613576-c92e-11ef-b24f-47750642b5c1/image/31338a0c042fa4d81e40b2eb4b15621e.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/b9613576-c92e-11ef-b24f-47750642b5c1/image/31338a0c042fa4d81e40b2eb4b15621e.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/b9613576-c92e-11ef-b24f-47750642b5c1/image/31338a0c042fa4d81e40b2eb4b15621e.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/c24d0a5a-b25b-11ea-bef6-ef68671ea875/image/88a8b82e5fae6701e778c1709b714e7a.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/ca047470-781a-11ea-9a10-cfa05a5eeb3b/image/e2dde0a311d907e0f1f37664859283fe.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/ca047470-781a-11ea-9a10-cfa05a5eeb3b/image/e2dde0a311d907e0f1f37664859283fe.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/ca047470-781a-11ea-9a10-cfa05a5eeb3b/image/e2dde0a311d907e0f1f37664859283fe.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/d6280242-e5c9-11e8-a7e3-d766bb7d2d3e/image/bbb7849ef30865b87218347b3a090613.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/f521b120-2c30-11e6-b5f3-63ee984ee1a4/image/e7470287efbfa0aff068175bb6c31805.jpg?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://megaphone.imgix.net/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/f547b046-5de4-11ec-acc5-733706bb297f/image/9ed2d59bc3ab179245d05a3c10636f99.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://megaphone.imgix.net/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress": {
+   "contentType": "image/png",
+   "finalURL": "https://megaphone.imgix.net/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress",
+   "ok": true,
+   "status": 200,
+   "url": "https://megaphone.imgix.net/podcasts/f97a0396-a456-11f0-8c65-03c1ab5f9b55/image/01089e3bcfc50a9f7f85bc1ee4d8fe33.png?ixlib=rails-4.3.1&max-w=3000&max-h=3000&fit=crop&auto=format,compress"
+  },
+  "https://npr.brightspotcdn.com/dims3/default/strip/false/crop/3000x3000+0+0/resize/1400/quality/66/format/jpg/?url=http%3A%2F%2Fnpr-brightspot.s3.amazonaws.com%2Fe0%2F7a%2Ffe9d16a44fbf9dd2d9932ffe799b%2F510318.png": {
+   "contentType": "image/jpg",
+   "finalURL": "https://npr.brightspotcdn.com/dims3/default/strip/false/crop/3000x3000+0+0/resize/1400/quality/66/format/jpg/?url=http%3A%2F%2Fnpr-brightspot.s3.amazonaws.com%2Fe0%2F7a%2Ffe9d16a44fbf9dd2d9932ffe799b%2F510318.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://npr.brightspotcdn.com/dims3/default/strip/false/crop/3000x3000+0+0/resize/1400/quality/66/format/jpg/?url=http%3A%2F%2Fnpr-brightspot.s3.amazonaws.com%2Fe0%2F7a%2Ffe9d16a44fbf9dd2d9932ffe799b%2F510318.png"
+  },
+  "https://static.libsyn.com/p/assets/1/5/2/e/152e4268d7a65c08e55e3c100dce7605/Untitled_design.png": {
+   "contentType": "image/png",
+   "finalURL": "https://static.libsyn.com/p/assets/1/5/2/e/152e4268d7a65c08e55e3c100dce7605/Untitled_design.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/1/5/2/e/152e4268d7a65c08e55e3c100dce7605/Untitled_design.png"
+  },
+  "https://static.libsyn.com/p/assets/3/4/5/f/345fbd6a253649c0/RevolutionsLogo_V2.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://static.libsyn.com/p/assets/3/4/5/f/345fbd6a253649c0/RevolutionsLogo_V2.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/3/4/5/f/345fbd6a253649c0/RevolutionsLogo_V2.jpg"
+  },
+  "https://static.libsyn.com/p/assets/5/2/6/a/526ac0bca875678727a2322813b393ee/VBW_logo2.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://static.libsyn.com/p/assets/5/2/6/a/526ac0bca875678727a2322813b393ee/VBW_logo2.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/5/2/6/a/526ac0bca875678727a2322813b393ee/VBW_logo2.jpg"
+  },
+  "https://static.libsyn.com/p/assets/6/0/8/9/6089c6a6a3b6312ce5bbc093207a2619/__lore-cover.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://static.libsyn.com/p/assets/6/0/8/9/6089c6a6a3b6312ce5bbc093207a2619/__lore-cover.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/6/0/8/9/6089c6a6a3b6312ce5bbc093207a2619/__lore-cover.jpg"
+  },
+  "https://static.libsyn.com/p/assets/a/9/c/b/a9cb4d1dadb1ea21/all-in_logo.png": {
+   "contentType": "image/png",
+   "finalURL": "https://static.libsyn.com/p/assets/a/9/c/b/a9cb4d1dadb1ea21/all-in_logo.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/a/9/c/b/a9cb4d1dadb1ea21/all-in_logo.png"
+  },
+  "https://static.libsyn.com/p/assets/b/0/6/d/b06d098337897af116c3140a3186d450/21d641ef836c48dff270cbede4360d187bdd6c56cb126be7d6f51078db34d4675527fa72e13c86bb573ec42c5d4fc493e18e7d95fec734ec77168fc379baefcf.jpeg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://static.libsyn.com/p/assets/b/0/6/d/b06d098337897af116c3140a3186d450/21d641ef836c48dff270cbede4360d187bdd6c56cb126be7d6f51078db34d4675527fa72e13c86bb573ec42c5d4fc493e18e7d95fec734ec77168fc379baefcf.jpeg",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/b/0/6/d/b06d098337897af116c3140a3186d450/21d641ef836c48dff270cbede4360d187bdd6c56cb126be7d6f51078db34d4675527fa72e13c86bb573ec42c5d4fc493e18e7d95fec734ec77168fc379baefcf.jpeg"
+  },
+  "https://static.libsyn.com/p/assets/d/5/1/7/d5176cf64b959ae8e55e3c100dce7605/DARSHAN_SHAH_MD.-3.png": {
+   "contentType": "image/png",
+   "finalURL": "https://static.libsyn.com/p/assets/d/5/1/7/d5176cf64b959ae8e55e3c100dce7605/DARSHAN_SHAH_MD.-3.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://static.libsyn.com/p/assets/d/5/1/7/d5176cf64b959ae8e55e3c100dce7605/DARSHAN_SHAH_MD.-3.png"
+  },
+  "https://storage.buzzsprout.com/28zfba3r8ueize9dez6ocf0uuuqi?.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://storage.buzzsprout.com/28zfba3r8ueize9dez6ocf0uuuqi?.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://storage.buzzsprout.com/28zfba3r8ueize9dez6ocf0uuuqi?.jpg"
+  },
+  "https://storage.buzzsprout.com/fec61jabs16rwgkpgcrqwe7puh43?.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://storage.buzzsprout.com/fec61jabs16rwgkpgcrqwe7puh43?.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://storage.buzzsprout.com/fec61jabs16rwgkpgcrqwe7puh43?.jpg"
+  },
+  "https://storage.buzzsprout.com/wpz6wfpvgkgl16xbig4s57l5qhao?.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://storage.buzzsprout.com/wpz6wfpvgkgl16xbig4s57l5qhao?.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://storage.buzzsprout.com/wpz6wfpvgkgl16xbig4s57l5qhao?.jpg"
+  },
+  "https://substackcdn.com/feed/podcast/20533/d8108611b5cdc00657825d77dc6029b1.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/feed/podcast/20533/d8108611b5cdc00657825d77dc6029b1.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/feed/podcast/20533/d8108611b5cdc00657825d77dc6029b1.jpg"
+  },
+  "https://substackcdn.com/image/fetch/$s_!8MSN!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F441213db-4824-4e48-9d28-a3a18952cbfc_592x592.png": {
+   "contentType": "image/png",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!8MSN!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F441213db-4824-4e48-9d28-a3a18952cbfc_592x592.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!8MSN!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F441213db-4824-4e48-9d28-a3a18952cbfc_592x592.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!QEPJ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F90fa9666-5b8b-4685-a8fb-4b64cb7e0333_1080x1080.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!QEPJ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F90fa9666-5b8b-4685-a8fb-4b64cb7e0333_1080x1080.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!QEPJ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F90fa9666-5b8b-4685-a8fb-4b64cb7e0333_1080x1080.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!UGSL!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F8cff4be5-3861-4e8d-b7ed-a3f1ee5acc12_256x256.png": {
+   "contentType": "image/png",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!UGSL!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F8cff4be5-3861-4e8d-b7ed-a3f1ee5acc12_256x256.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!UGSL!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F8cff4be5-3861-4e8d-b7ed-a3f1ee5acc12_256x256.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!Vsem!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F4b9b1c6d-1d25-4039-8b7e-dd5f2858bdee_600x600.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!Vsem!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F4b9b1c6d-1d25-4039-8b7e-dd5f2858bdee_600x600.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!Vsem!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F4b9b1c6d-1d25-4039-8b7e-dd5f2858bdee_600x600.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!VtWA!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fe1a1b3b4-5f35-4876-a0d5-449398201e1f_1171x1171.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!VtWA!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fe1a1b3b4-5f35-4876-a0d5-449398201e1f_1171x1171.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!VtWA!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fe1a1b3b4-5f35-4876-a0d5-449398201e1f_1171x1171.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!bGN2!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F430241cb-ade5-4316-b1c9-6e3fe6e63e5e_256x256.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!bGN2!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F430241cb-ade5-4316-b1c9-6e3fe6e63e5e_256x256.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!bGN2!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F430241cb-ade5-4316-b1c9-6e3fe6e63e5e_256x256.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!hyZZ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fcd2ee4f7-3e71-42f0-92eb-4d3018127e08_1024x1024.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!hyZZ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fcd2ee4f7-3e71-42f0-92eb-4d3018127e08_1024x1024.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!hyZZ!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2Fcd2ee4f7-3e71-42f0-92eb-4d3018127e08_1024x1024.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!l14h!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F04281755-2cd6-42e5-a496-e69153abebb2_281x281.png": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!l14h!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F04281755-2cd6-42e5-a496-e69153abebb2_281x281.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!l14h!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fbucketeer-e05bbc84-baa3-437e-9518-adb32be77984.s3.amazonaws.com%2Fpublic%2Fimages%2F04281755-2cd6-42e5-a496-e69153abebb2_281x281.png"
+  },
+  "https://substackcdn.com/image/fetch/$s_!pMIM!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F2c663799-8d26-4456-8c14-8283b618f705_590x590.png": {
+   "contentType": "image/png",
+   "finalURL": "https://substackcdn.com/image/fetch/$s_!pMIM!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F2c663799-8d26-4456-8c14-8283b618f705_590x590.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://substackcdn.com/image/fetch/$s_!pMIM!,w_256,c_limit,f_auto,q_auto:good,fl_progressive:steep/https%3A%2F%2Fsubstack-post-media.s3.amazonaws.com%2Fpublic%2Fimages%2F2c663799-8d26-4456-8c14-8283b618f705_590x590.png"
+  },
+  "https://thisamericanlife.org/sites/all/themes/thislife/img/tal-logo-3000x3000.png": {
+   "contentType": "image/png",
+   "finalURL": "https://www.thisamericanlife.org/sites/all/themes/thislife/img/tal-logo-3000x3000.png",
+   "ok": true,
+   "status": 200,
+   "url": "https://thisamericanlife.org/sites/all/themes/thislife/img/tal-logo-3000x3000.png"
+  },
+  "https://www.dancarlin.com/graphics/DC_HH_iTunes.jpg": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://www.dancarlin.com/graphics/DC_HH_iTunes.jpg",
+   "ok": true,
+   "status": 200,
+   "url": "https://www.dancarlin.com/graphics/DC_HH_iTunes.jpg"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/image.jpg?t=1788379017&size=Large": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/image.jpg?t=1788379017&size=Large",
+   "ok": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/image.jpg?t=1788379017&size=Large"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/image.jpg?t=1788302418&size=Large": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/image.jpg?t=1788302418&size=Large",
+   "ok": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/image.jpg?t=1788302418&size=Large"
+  },
+  "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/image.jpg?t=1749759419&size=Large": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/image.jpg?t=1749759419&size=Large",
+   "ok": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/image.jpg?t=1749759419&size=Large"
+  },
+  "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/image.jpg?t=1753291848&size=Large": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/image.jpg?t=1753291848&size=Large",
+   "ok": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/image.jpg?t=1753291848&size=Large"
+  },
+  "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/image.jpg?t=1749761552&size=Large": {
+   "contentType": "image/jpeg",
+   "finalURL": "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/image.jpg?t=1749761552&size=Large",
+   "ok": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/programs/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/image.jpg?t=1749761552&size=Large"
+  }
+ },
+ "feeds": {
+  "https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "040b540de36492e9.xml",
+   "finalURL": "https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://access.acast.com/rss/c939f8d1-c4bc-478e-8bb9-e5343f9a7ab5"
+  },
+  "https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "a3d4bb7229008a88.xml",
+   "finalURL": "https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://access.acast.com/rss/f2925f7a-eb08-471a-9958-387cb5ee6353"
+  },
+  "https://anchor.fm/s/101adcf44/podcast/rss": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "bb53f2a5105b994d.xml",
+   "finalURL": "https://anchor.fm/s/101adcf44/podcast/rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://anchor.fm/s/101adcf44/podcast/rss"
+  },
+  "https://anchor.fm/s/f7cac464/podcast/rss": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "c033f3515d9d7296.xml",
+   "finalURL": "https://anchor.fm/s/f7cac464/podcast/rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://anchor.fm/s/f7cac464/podcast/rss"
+  },
+  "https://api.substack.com/feed/podcast/20533.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "d31ee2ce5d64eec8.xml",
+   "finalURL": "https://api.substack.com/feed/podcast/20533.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://api.substack.com/feed/podcast/20533.rss"
+  },
+  "https://audioboom.com/channels/2399216.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "1e10b8adf514f9f2.xml",
+   "finalURL": "https://audioboom.com/channels/2399216.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://audioboom.com/channels/2399216.rss"
+  },
+  "https://audioboom.com/channels/5093219.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "15ced0b45dbd3b38.xml",
+   "finalURL": "https://audioboom.com/channels/5093219.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://audioboom.com/channels/5093219.rss"
+  },
+  "https://audioboom.com/channels/5149464.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "6c9a6cc2d5a6dd88.xml",
+   "finalURL": "https://audioboom.com/channels/5149464.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://audioboom.com/channels/5149464.rss"
+  },
+  "https://audioboom.com/channels/5166624.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "867fe537b307e009.xml",
+   "finalURL": "https://audioboom.com/channels/5166624.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://audioboom.com/channels/5166624.rss"
+  },
+  "https://cdn.atp.fm/rss/public?wtvryzdm": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "b3a9d681d8eb2260.xml",
+   "finalURL": "https://cdn.atp.fm/rss/public?wtvryzdm",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://cdn.atp.fm/rss/public?wtvryzdm"
+  },
+  "https://feed.20k.org": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "3fc87b367b944259.xml",
+   "finalURL": "https://feed.20k.org",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feed.20k.org"
+  },
+  "https://feed.articlesofinterest.club/": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "6a1d86e9a65f108f.xml",
+   "finalURL": "https://feed.articlesofinterest.club/",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feed.articlesofinterest.club/"
+  },
+  "https://feed.songexploder.net/SongExploder": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "2ff5340bf5d9bad2.xml",
+   "finalURL": "https://feed.songexploder.net/SongExploder",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feed.songexploder.net/SongExploder"
+  },
+  "https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "a194d27326322b97.xml",
+   "finalURL": "https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.acast.com/public/shows/68b1d0ea993d10acb9c3fe4f"
+  },
+  "https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "0e83ad7e74431e9a.xml",
+   "finalURL": "https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.acast.com/public/shows/b6085bcd-3542-4a43-b6a8-021e3fd251b8"
+  },
+  "https://feeds.feedburner.com/dancarlin/history?format=xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "14660a369e2d91f8.xml",
+   "finalURL": "https://feeds.feedburner.com/dancarlin/history?format=xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.feedburner.com/dancarlin/history?format=xml"
+  },
+  "https://feeds.feedburner.com/themothpodcast": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "d49bfeaed0472a1c.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/the-moth",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.feedburner.com/themothpodcast"
+  },
+  "https://feeds.megaphone.fm/ARML6214944307": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "405c3f9a354de509.xml",
+   "finalURL": "https://feeds.megaphone.fm/ARML6214944307",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/ARML6214944307"
+  },
+  "https://feeds.megaphone.fm/BVLLC2163264914": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "fa84de838ee022d0.xml",
+   "finalURL": "https://feeds.megaphone.fm/BVLLC2163264914",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/BVLLC2163264914"
+  },
+  "https://feeds.megaphone.fm/CNE3915766304": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "0bf1ef4020a230ed.xml",
+   "finalURL": "https://feeds.megaphone.fm/CNE3915766304",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/CNE3915766304"
+  },
+  "https://feeds.megaphone.fm/DEARMEDIALLC7892434789": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "d6e4b6711c269700.xml",
+   "finalURL": "https://feeds.megaphone.fm/DEARMEDIALLC7892434789",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/DEARMEDIALLC7892434789"
+  },
+  "https://feeds.megaphone.fm/ESP2298543312": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "8b4930d73f34267b.xml",
+   "finalURL": "https://feeds.megaphone.fm/ESP2298543312",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/ESP2298543312"
+  },
+  "https://feeds.megaphone.fm/ESP3456903052": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "a77aa6024d7e45fb.xml",
+   "finalURL": "https://feeds.megaphone.fm/ESP3456903052",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/ESP3456903052"
+  },
+  "https://feeds.megaphone.fm/GLT1412515089": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "a8cbb9fe29ae668e.xml",
+   "finalURL": "https://feeds.megaphone.fm/GLT1412515089",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/GLT1412515089"
+  },
+  "https://feeds.megaphone.fm/GLT4787413333": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "013eece96b2a8b8b.xml",
+   "finalURL": "https://feeds.megaphone.fm/GLT4787413333",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/GLT4787413333"
+  },
+  "https://feeds.megaphone.fm/LIFEISLOVELLC4342849321": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "fb3aee6e260e3f7a.xml",
+   "finalURL": "https://feeds.megaphone.fm/LIFEISLOVELLC4342849321",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/LIFEISLOVELLC4342849321"
+  },
+  "https://feeds.megaphone.fm/LMINC5612116895": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "0ecff00b5f0aae78.xml",
+   "finalURL": "https://feeds.megaphone.fm/LMINC5612116895",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/LMINC5612116895"
+  },
+  "https://feeds.megaphone.fm/QCD6036500916": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "5655cfe31d661599.xml",
+   "finalURL": "https://feeds.megaphone.fm/QCD6036500916",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/QCD6036500916"
+  },
+  "https://feeds.megaphone.fm/SBP4591212513": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "be3430011b525b28.xml",
+   "finalURL": "https://feeds.megaphone.fm/SBP4591212513",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/SBP4591212513"
+  },
+  "https://feeds.megaphone.fm/SGP8517078272": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "8dc16cff4957933b.xml",
+   "finalURL": "https://feeds.megaphone.fm/SGP8517078272",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/SGP8517078272"
+  },
+  "https://feeds.megaphone.fm/SIXMSB5088139739": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "7973cb25c3ce9555.xml",
+   "finalURL": "https://feeds.megaphone.fm/SIXMSB5088139739",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/SIXMSB5088139739"
+  },
+  "https://feeds.megaphone.fm/SSM2868305742": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "c6af98fc76dc7850.xml",
+   "finalURL": "https://feeds.megaphone.fm/SSM2868305742",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/SSM2868305742"
+  },
+  "https://feeds.megaphone.fm/VMP2612107147": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "a94553ad56fa12de.xml",
+   "finalURL": "https://feeds.megaphone.fm/VMP2612107147",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/VMP2612107147"
+  },
+  "https://feeds.megaphone.fm/VMP5705694065": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "01d021b96348cf77.xml",
+   "finalURL": "https://feeds.megaphone.fm/VMP5705694065",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/VMP5705694065"
+  },
+  "https://feeds.megaphone.fm/VMP7924981569": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "815de1599c85340f.xml",
+   "finalURL": "https://feeds.megaphone.fm/VMP7924981569",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/VMP7924981569"
+  },
+  "https://feeds.megaphone.fm/YMH1796246858": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "18cb74c33bcc10b0.xml",
+   "finalURL": "https://feeds.megaphone.fm/YMH1796246858",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/YMH1796246858"
+  },
+  "https://feeds.megaphone.fm/good-hang-with-amy-poehler": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "40e8e3202251a415.xml",
+   "finalURL": "https://feeds.megaphone.fm/good-hang-with-amy-poehler",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/good-hang-with-amy-poehler"
+  },
+  "https://feeds.megaphone.fm/hubermanlab": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "9f927302ecdf1b4c.xml",
+   "finalURL": "https://feeds.megaphone.fm/hubermanlab",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/hubermanlab"
+  },
+  "https://feeds.megaphone.fm/jeselnik-book-club": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "776b7d5713949fd1.xml",
+   "finalURL": "https://feeds.megaphone.fm/jeselnik-book-club",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/jeselnik-book-club"
+  },
+  "https://feeds.megaphone.fm/nolayingup": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "d7465e339aa527e8.xml",
+   "finalURL": "https://feeds.megaphone.fm/nolayingup",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/nolayingup"
+  },
+  "https://feeds.megaphone.fm/on-purpose": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "9a8f0799f4cc1907.xml",
+   "finalURL": "https://feeds.megaphone.fm/on-purpose",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/on-purpose"
+  },
+  "https://feeds.megaphone.fm/pivot": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "ee3b4ebc668fd53a.xml",
+   "finalURL": "https://feeds.megaphone.fm/pivot",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/pivot"
+  },
+  "https://feeds.megaphone.fm/sciencevs": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "4bd071cbff22b876.xml",
+   "finalURL": "https://feeds.megaphone.fm/sciencevs",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/sciencevs"
+  },
+  "https://feeds.megaphone.fm/the-bill-simmons-podcast": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "fe61fe90ff9ec12d.xml",
+   "finalURL": "https://feeds.megaphone.fm/the-bill-simmons-podcast",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/the-bill-simmons-podcast"
+  },
+  "https://feeds.megaphone.fm/zach-lowe": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "df94acf6834c953c.xml",
+   "finalURL": "https://feeds.megaphone.fm/zach-lowe",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.megaphone.fm/zach-lowe"
+  },
+  "https://feeds.npr.org/344098539/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "a69933ab3013ab2c.xml",
+   "finalURL": "https://feeds.npr.org/344098539/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/344098539/podcast.xml"
+  },
+  "https://feeds.npr.org/381444908/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "22206012468928d8.xml",
+   "finalURL": "https://feeds.npr.org/381444908/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/381444908/podcast.xml"
+  },
+  "https://feeds.npr.org/500005/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "603c950246a324a2.xml",
+   "finalURL": "https://feeds.npr.org/500005/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/500005/podcast.xml"
+  },
+  "https://feeds.npr.org/510289/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "ef15faeacb5c506d.xml",
+   "finalURL": "https://feeds.npr.org/510289/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/510289/podcast.xml"
+  },
+  "https://feeds.npr.org/510298/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "9b0af2d0a90e4483.xml",
+   "finalURL": "https://feeds.npr.org/510298/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/510298/podcast.xml"
+  },
+  "https://feeds.npr.org/510318/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "ae8b94d709c2c160.xml",
+   "finalURL": "https://feeds.npr.org/510318/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/510318/podcast.xml"
+  },
+  "https://feeds.npr.org/510333/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "76b68ac910163f78.xml",
+   "finalURL": "https://feeds.npr.org/510333/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/510333/podcast.xml"
+  },
+  "https://feeds.npr.org/510351/podcast.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "add3fb358ed013c2.xml",
+   "finalURL": "https://feeds.npr.org/510351/podcast.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.npr.org/510351/podcast.xml"
+  },
+  "https://feeds.simplecast.com/4T39_jAj": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "e5fb0eaf47fef99d.xml",
+   "finalURL": "https://feeds.simplecast.com/4T39_jAj",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/4T39_jAj"
+  },
+  "https://feeds.simplecast.com/6HKOhNgS": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "411674d7e8654610.xml",
+   "finalURL": "https://feeds.simplecast.com/6HKOhNgS",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/6HKOhNgS"
+  },
+  "https://feeds.simplecast.com/6Qp23t6h": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "148e3f4b7f07fa74.xml",
+   "finalURL": "https://feeds.simplecast.com/6Qp23t6h",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/6Qp23t6h"
+  },
+  "https://feeds.simplecast.com/BqbsxVfO": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "8ef9c24e8b09ab53.xml",
+   "finalURL": "https://feeds.simplecast.com/BqbsxVfO",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/BqbsxVfO"
+  },
+  "https://feeds.simplecast.com/EmVW7VGp": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "842527b9bd0fefa9.xml",
+   "finalURL": "https://feeds.simplecast.com/EmVW7VGp",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/EmVW7VGp"
+  },
+  "https://feeds.simplecast.com/FO6kxYGj": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "86c29d470649c82e.xml",
+   "finalURL": "https://feeds.simplecast.com/FO6kxYGj",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/FO6kxYGj"
+  },
+  "https://feeds.simplecast.com/HpGMoS4g": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "adf07d91b1b059ea.xml",
+   "finalURL": "https://feeds.simplecast.com/HpGMoS4g",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/HpGMoS4g"
+  },
+  "https://feeds.simplecast.com/PpzWFGhg": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "3976f5d7f7e88930.xml",
+   "finalURL": "https://feeds.simplecast.com/PpzWFGhg",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/PpzWFGhg"
+  },
+  "https://feeds.simplecast.com/Sl5CSM3S": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "33cb21e32e2d67f4.xml",
+   "finalURL": "https://feeds.simplecast.com/Sl5CSM3S",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/Sl5CSM3S"
+  },
+  "https://feeds.simplecast.com/UCwaTX1J": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "b2c1dbce5ab55967.xml",
+   "finalURL": "https://feeds.simplecast.com/UCwaTX1J",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/UCwaTX1J"
+  },
+  "https://feeds.simplecast.com/WfThhbae": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "3ebc1025c473af8e.xml",
+   "finalURL": "https://feeds.simplecast.com/WfThhbae",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/WfThhbae"
+  },
+  "https://feeds.simplecast.com/XYHE1JPs": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "2aa4b65df0046066.xml",
+   "finalURL": "https://feeds.simplecast.com/XYHE1JPs",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/XYHE1JPs"
+  },
+  "https://feeds.simplecast.com/Y8lFbOT4": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "c17926d15a05a166.xml",
+   "finalURL": "https://feeds.simplecast.com/Y8lFbOT4",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/Y8lFbOT4"
+  },
+  "https://feeds.simplecast.com/dHoohVNH": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "2c2d9d2c190d3753.xml",
+   "finalURL": "https://feeds.simplecast.com/dHoohVNH",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/dHoohVNH"
+  },
+  "https://feeds.simplecast.com/dloY8UYJ": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "3d71cd65560c35a6.xml",
+   "finalURL": "https://feeds.simplecast.com/dloY8UYJ",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/dloY8UYJ"
+  },
+  "https://feeds.simplecast.com/h18ZIZD_": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "2a260903456c2008.xml",
+   "finalURL": "https://feeds.simplecast.com/h18ZIZD_",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/h18ZIZD_"
+  },
+  "https://feeds.simplecast.com/hNaFxXpO": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "0812e1d48ecb4baa.xml",
+   "finalURL": "https://feeds.simplecast.com/hNaFxXpO",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/hNaFxXpO"
+  },
+  "https://feeds.simplecast.com/kEKXbjuJ": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "98a19033351f3a1a.xml",
+   "finalURL": "https://feeds.simplecast.com/kEKXbjuJ",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/kEKXbjuJ"
+  },
+  "https://feeds.simplecast.com/kwWc0lhf": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "e40061d358bb7bc9.xml",
+   "finalURL": "https://feeds.simplecast.com/kwWc0lhf",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/kwWc0lhf"
+  },
+  "https://feeds.simplecast.com/ohmVlJZQ": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "b93c698199a9557b.xml",
+   "finalURL": "https://feeds.simplecast.com/ohmVlJZQ",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/ohmVlJZQ"
+  },
+  "https://feeds.simplecast.com/qm_9xx0g": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "638757d5a6e2fa0e.xml",
+   "finalURL": "https://feeds.simplecast.com/qm_9xx0g",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/qm_9xx0g"
+  },
+  "https://feeds.simplecast.com/sw7PGWfw": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "619e4ae8e41daa3b.xml",
+   "finalURL": "https://feeds.simplecast.com/sw7PGWfw",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/sw7PGWfw"
+  },
+  "https://feeds.simplecast.com/wgl4xEgL": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "cc139b30e94598d0.xml",
+   "finalURL": "https://feeds.simplecast.com/wgl4xEgL",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/wgl4xEgL"
+  },
+  "https://feeds.simplecast.com/zyaxg_KL": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "9586f7224ddf4d93.xml",
+   "finalURL": "https://feeds.simplecast.com/zyaxg_KL",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.simplecast.com/zyaxg_KL"
+  },
+  "https://feeds.transistor.fm/acquired": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "886e81a7ce0632f0.xml",
+   "finalURL": "https://feeds.transistor.fm/acquired",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://feeds.transistor.fm/acquired"
+  },
+  "https://lexfridman.com/feed/podcast/": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "0b84d74a5b5d3cb0.xml",
+   "finalURL": "https://lexfridman.com/feed/podcast/",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://lexfridman.com/feed/podcast/"
+  },
+  "https://mcsorleys.barstoolsports.com/feed/pardon-my-take": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "7bac2a3b61d79121.xml",
+   "finalURL": "https://mcsorleys.barstoolsports.com/feed/pardon-my-take",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://mcsorleys.barstoolsports.com/feed/pardon-my-take"
+  },
+  "https://podcast.darknetdiaries.com": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "11f68aea5f2f680e.xml",
+   "finalURL": "https://podcast.darknetdiaries.com",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://podcast.darknetdiaries.com"
+  },
+  "https://podcastfeeds.nbcnews.com/HL4TzgYC": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "bf925702c83e9314.xml",
+   "finalURL": "https://podcastfeeds.nbcnews.com/HL4TzgYC",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://podcastfeeds.nbcnews.com/HL4TzgYC"
+  },
+  "https://podcasts.files.bbci.co.uk/b006qykl.rss": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "d03824a2a942c73d.xml",
+   "finalURL": "https://podcasts.files.bbci.co.uk/b006qykl.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://podcasts.files.bbci.co.uk/b006qykl.rss"
+  },
+  "https://podcasts.files.bbci.co.uk/p02nq0gn.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "355d724841a72572.xml",
+   "finalURL": "https://podcasts.files.bbci.co.uk/p02nq0gn.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://podcasts.files.bbci.co.uk/p02nq0gn.rss"
+  },
+  "https://relay.fm/cortex/feed": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "8f632234e74d8f39.xml",
+   "finalURL": "https://relay.fm/cortex/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://relay.fm/cortex/feed"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "d18faf60f826e5f7.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/38ad78ba12adc2acec34b47b1a455b85"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "c2992233195ed04a.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/496099a4061493caac75b71a6c26b8fb"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/4d511b61eff9f56a1fca4042ba77c21c": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "b31e7d9db42fecfd.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/4d511b61eff9f56a1fca4042ba77c21c",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/4d511b61eff9f56a1fca4042ba77c21c"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/91ac7984b8d3ba72de60858d5e6155bd": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "59b657f0226d9c6b.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/91ac7984b8d3ba72de60858d5e6155bd",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/91ac7984b8d3ba72de60858d5e6155bd"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/cc2b59fa44d0151fa8987e1b01e424bc": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "195f67b26f051c65.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/cc2b59fa44d0151fa8987e1b01e424bc",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/cc2b59fa44d0151fa8987e1b01e424bc"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "6093ff94011a16dd.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/e69da14a26973f1dc761432876205254"
+  },
+  "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "75eaafa4da333978.xml",
+   "finalURL": "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.amperwave.net/v2/feed/audacynetwork/search-engine"
+  },
+  "https://rss.art19.com/american-history-tellers": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "21420bedb6f4410f.xml",
+   "finalURL": "https://rss.art19.com/american-history-tellers",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/american-history-tellers"
+  },
+  "https://rss.art19.com/american-scandal": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "4101cc023180a0aa.xml",
+   "finalURL": "https://rss.art19.com/american-scandal",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/american-scandal"
+  },
+  "https://rss.art19.com/armchair-expert": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "2190ea74df04072b.xml",
+   "finalURL": "https://rss.art19.com/armchair-expert",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/armchair-expert"
+  },
+  "https://rss.art19.com/hga-imo": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "ec4217ad2a087ad5.xml",
+   "finalURL": "https://rss.art19.com/hga-imo",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/hga-imo"
+  },
+  "https://rss.art19.com/new-heights": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "75df7e935f99452a.xml",
+   "finalURL": "https://rss.art19.com/new-heights",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/new-heights"
+  },
+  "https://rss.art19.com/snapped-women-who-murder": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "f7763245fa13ba86.xml",
+   "finalURL": "https://rss.art19.com/snapped-women-who-murder",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/snapped-women-who-murder"
+  },
+  "https://rss.art19.com/the-allusionist": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "92c884ebabb9387f.xml",
+   "finalURL": "https://rss.art19.com/the-allusionist",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/the-allusionist"
+  },
+  "https://rss.art19.com/the-oprah-podcast": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "b58d05aa93f71e7d.xml",
+   "finalURL": "https://rss.art19.com/the-oprah-podcast",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/the-oprah-podcast"
+  },
+  "https://rss.art19.com/tides-of-history": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "e464472e1627bd88.xml",
+   "finalURL": "https://rss.art19.com/tides-of-history",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.art19.com/tides-of-history"
+  },
+  "https://rss.buzzsprout.com/1236866.rss": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "adaed792be61810a.xml",
+   "finalURL": "https://rss.buzzsprout.com/1236866.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.buzzsprout.com/1236866.rss"
+  },
+  "https://rss.buzzsprout.com/1411126.rss": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "810e7f2d2664ddc1.xml",
+   "finalURL": "https://rss.buzzsprout.com/1411126.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.buzzsprout.com/1411126.rss"
+  },
+  "https://rss.buzzsprout.com/2566974.rss": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "7131310e318d4834.xml",
+   "finalURL": "https://rss.buzzsprout.com/2566974.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.buzzsprout.com/2566974.rss"
+  },
+  "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "b169f79bfb2fcaa4.xml",
+   "finalURL": "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.introcast.io/1368888880/feeds.megaphone.fm/yap"
+  },
+  "https://rss.libsyn.com/shows/254861/destinations/1928300.xml": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "3042c5963ad773aa.xml",
+   "finalURL": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/254861/destinations/1928300.xml"
+  },
+  "https://rss.libsyn.com/shows/474285/destinations/4022211.xml": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "f543f1122308fe45.xml",
+   "finalURL": "https://rss.libsyn.com/shows/474285/destinations/4022211.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/474285/destinations/4022211.xml"
+  },
+  "https://rss.libsyn.com/shows/47475/destinations/159998.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "9b2133e6970f93cb.xml",
+   "finalURL": "https://rss.libsyn.com/shows/47475/destinations/159998.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/47475/destinations/159998.xml"
+  },
+  "https://rss.libsyn.com/shows/551312/destinations/4758622.xml": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "ce8b6c9f335701a9.xml",
+   "finalURL": "https://rss.libsyn.com/shows/551312/destinations/4758622.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/551312/destinations/4758622.xml"
+  },
+  "https://rss.libsyn.com/shows/604590/destinations/5264190.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "aa8a47c136eca74f.xml",
+   "finalURL": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/604590/destinations/5264190.xml"
+  },
+  "https://rss.libsyn.com/shows/65162/destinations/259291.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "5506f7c561e81691.xml",
+   "finalURL": "https://rss.libsyn.com/shows/65162/destinations/259291.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/65162/destinations/259291.xml"
+  },
+  "https://rss.libsyn.com/shows/65267/destinations/259905.xml": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "5b997ba212c47997.xml",
+   "finalURL": "https://rss.libsyn.com/shows/65267/destinations/259905.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.libsyn.com/shows/65267/destinations/259905.xml"
+  },
+  "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037": {
+   "fetchedAt": "2026-10-17T11:32:13Z",
+   "file": "97e567615fb64a54.xml",
+   "finalURL": "https://feeds.megaphone.fm/WWO9761275037",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.pdrl.fm/60a606/feeds.megaphone.fm/WWO9761275037"
+  },
+  "https://rss.pdrl.fm/9ba5b0/snap.feed.snapjudgment.org": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "cda22723f2f4d7a8.xml",
+   "finalURL": "https://snap.feed.snapjudgment.org/",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss.pdrl.fm/9ba5b0/snap.feed.snapjudgment.org"
+  },
+  "https://rss2.flightcast.com/mqmgmtnt1tf3r7iyurohb3ib.xml": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "5743b9d670429026.xml",
+   "finalURL": "https://rss2.flightcast.com/mqmgmtnt1tf3r7iyurohb3ib.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss2.flightcast.com/mqmgmtnt1tf3r7iyurohb3ib.xml"
+  },
+  "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "745d7b1424a2c5ff.xml",
+   "finalURL": "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://rss2.flightcast.com/xmsftuzjjykcmqwolaqn6mdn"
+  },
+  "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "2b0bef6d2b5ffafa.xml",
+   "finalURL": "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://video-api.shdsvc.dowjones.io/api/podcasts/feed/the%20journal"
+  },
+  "https://www.astralcodexten.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "2d4e136c48cf9d31.xml",
+   "finalURL": "https://www.astralcodexten.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.astralcodexten.com/feed"
+  },
+  "https://www.construction-physics.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "4855fd2d01535e9c.xml",
+   "finalURL": "https://www.construction-physics.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.construction-physics.com/feed"
+  },
+  "https://www.dwarkesh.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "4d0498cdaca27ed4.xml",
+   "finalURL": "https://www.dwarkesh.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.dwarkesh.com/feed"
+  },
+  "https://www.experimental-history.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "3b7b03f6ccfdb95d.xml",
+   "finalURL": "https://www.experimental-history.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.experimental-history.com/feed"
+  },
+  "https://www.hellointernet.fm/podcast?format=rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "9e3a5de000c367c3.xml",
+   "finalURL": "https://www.hellointernet.fm/podcast?format=rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.hellointernet.fm/podcast?format=rss"
+  },
+  "https://www.honest-broker.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "817b505e3dd15f48.xml",
+   "finalURL": "https://www.honest-broker.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.honest-broker.com/feed"
+  },
+  "https://www.lennysnewsletter.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "1ec8fb3c0807430c.xml",
+   "finalURL": "https://www.lennysnewsletter.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.lennysnewsletter.com/feed"
+  },
+  "https://www.noahpinion.blog/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "351be01f3a38266b.xml",
+   "finalURL": "https://www.noahpinion.blog/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.noahpinion.blog/feed"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "5b33ebabf1cd1825.xml",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/1508ddb2-0c9a-42f6-aafe-ae3300346aa9/bf391792-153e-41b3-9d3d-ae3300346ad8/podcast.rss"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss": {
+   "fetchedAt": "2026-10-17T11:32:14Z",
+   "file": "9c293b00b72e80d2.xml",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/63aba8bc-2dc8-4f89-807a-ae280065a7cd/3892b9a1-a960-4f9e-bee7-ae280065a7db/podcast.rss"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "c1ff9ee5db7e753f.xml",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/a91018a4-ea4f-4130-bf55-ae270180c327/44710ecc-10bb-48d1-93c7-ae270180c33e/podcast.rss"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "a0b99d70a50da8df.xml",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/afbd76b8-eff2-442a-b938-b28e0126edad/d08826cd-f888-4cd3-b700-b28e0126edbb/podcast.rss"
+  },
+  "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "da80cb0fa26e10b4.xml",
+   "finalURL": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.omnycontent.com/d/playlist/e73c998e-6e60-432f-8610-ae210140c5b1/e5f91208-cc7e-4726-a312-ae280140ad11/d64f756d-6d5e-4fae-b24f-ae280140ad36/podcast.rss"
+  },
+  "https://www.oneusefulthing.org/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "59f6b09081d623bf.xml",
+   "finalURL": "https://www.oneusefulthing.org/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.oneusefulthing.org/feed"
+  },
+  "https://www.thisamericanlife.org/podcast/rss.xml": {
+   "fetchedAt": "2026-10-17T11:32:12Z",
+   "file": "fb71a4c5346afdd7.xml",
+   "finalURL": "https://www.thisamericanlife.org/podcast/rss.xml",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://www.thisamericanlife.org/podcast/rss.xml"
+  },
+  "https://yourlocalepidemiologist.substack.com/feed": {
+   "fetchedAt": "2026-10-17T11:32:15Z",
+   "file": "d07946cf0aeba2f9.xml",
+   "finalURL": "https://yourlocalepidemiologist.substack.com/feed",
+   "looksLikeFeed": true,
+   "status": 200,
+   "url": "https://yourlocalepidemiologist.substack.com/feed"
+  }
+ }
+}

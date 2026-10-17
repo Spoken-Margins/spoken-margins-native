@@ -22,7 +22,7 @@ Apple counts data as "collected" when it leaves the device and the developer or 
 | # | When | Where it goes | What goes out | Code |
 |---|---|---|---|---|
 | 1 | **Every launch, automatically** | `spokenmargins.proximitytoprogress.com/onboarding/v1/manifest.json`, then its tour audio (the owner's server) | Nothing beyond the request itself (IP address) | `M:15623`, `A/GuidedOnboardingCoordinator.swift:29`, `:52`, `:74`, `:83` |
-| 2 | First run: the podcast drawer opens by itself | `spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/` (owner's server), then podcast artwork from `is1-ssl.mzstatic.com` | Nothing beyond the request | `SK/SessionKit/SourceCatalogStore.swift:32`, `:168-174`; `A/CatalogDrawer.swift:59`, `:232` |
+| 2 | First run: the podcast drawer opens by itself | `spokenmargins.proximitytoprogress.com/onboarding/catalog/v1/` (owner's server), then each show's artwork from the show's own publisher or image host (about 25 hosts, #1732) | Nothing beyond the request | `SK/SessionKit/SourceCatalogStore.swift:32`, `:168-174`; `A/CatalogDrawer.swift:59`, `:232` |
 | 3 | Following a show or site (user), then an **automatic refresh** at launch, at most every 6 hours | The feed or site the user followed; `substack.com` for Substack links | The feed URL (a private feed URL can carry a token), plus ETag and If-Modified-Since | `A/FollowedSourceCoordinator.swift:197`, `:292`, `:334`, `:349`; `SK/SessionKitFeeds/SubstackPublicationResolver.swift:119`; `M:15622` |
 | 4 | User pastes or shares a podcast link; also when **importing someone else's packet** | `itunes.apple.com/lookup` and `/search`, `open.spotify.com/oembed` and `/embed`, publisher pages and feeds | The pasted link. For a Spotify link, the episode title as a search term | `A/PublicPodcastLinkResolver.swift:402-421`, `:1284`, `:1388`, `:1410`; packet import `M:8208` |
 | 5 | After a podcast import that lists transcripts, **automatically** | The publisher's transcript URL | Nothing beyond the request | `M:12196` (scheduled at `M:3277`) |
@@ -238,7 +238,7 @@ My pick: ask the attorney. If the answer isn't clear before submission, use the 
 
 Data bundled in the app that isn't open-source software:
 
-- **Starter podcast catalog.** `Site/onboarding/catalog/v1/catalog.json` is bundled (`project.yml:33-34`). It was built from Apple's Top Charts RSS feeds (`provenance` in the file) and points at Apple-hosted artwork. Apple's terms for that feed and its artwork decide whether bundling it is allowed, not an open-source license. They don't clearly allow it: see "The starter podcast catalog" below (#632).
+- **Starter podcast catalog.** `Site/onboarding/catalog/v1/catalog.json` is bundled (`project.yml:33-34`). Since #1732 it is built from a hand-picked list of shows (`research/B1/shows.json`), and each row's title, author, description and artwork URL come from that show's own feed. It carries no Apple chart data and no Apple-hosted artwork; `scripts/validate-contracts.py` fails the build if either returns. It used to be built from Apple's Top Charts RSS feeds: see "The starter podcast catalog" below (#632).
 - **Test fixtures and traces.** `Contracts/fixtures` (about 2 MB, including iTunes Search responses and OPML from real feeds) and `Contracts/traces` are bundled (`project.yml:35-38`) only for the test hooks. #517 already plans to stop shipping the test hooks; these folders should leave the Release build with them.
 
 No bundled license forbids App Store distribution or conflicts with Apple's Standard EULA. None is GPL or LGPL, and the only copyleft is Eigen's file-level MPL-2.0, satisfied by the source pointer above.
@@ -248,6 +248,8 @@ Follow-up issues: #630 (notices for Defuddle's bundled dependencies, a modified-
 ### The starter podcast catalog (#632)
 
 Checked 2026-10-03 on `next` at `b26e133`. This is research, not legal advice.
+
+**Settled 2026-10-17 (#1732):** Cole picked option 3 below, and the bundled catalog is rebuilt that way, so the rest of this section describes the catalog before that change (content version 2). It is kept as the record of why. Search results in the podcast list's search field (#471) still load artwork from Apple's image server; that is a separate path.
 
 **Short answer: not clearly allowed.** No public Apple term we found grants a right to bundle a list built from the Top Charts feeds in an app. (Apple Media Feeds, the bulk data "for partners to fully incorporate aspects of content into a website or app", is a partner program we're not in.) The artwork terms that do exist allow it only on pages that promote it, beside a link to Apple's store, which the drawer doesn't have. So the question goes to the attorney (Q19 in `docs/legal/attorney-questions.md`, #455).
 

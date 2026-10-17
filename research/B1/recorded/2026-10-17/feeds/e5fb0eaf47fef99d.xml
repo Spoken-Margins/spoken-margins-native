@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <atom:link href="https://feeds.simplecast.com/4T39_jAj" rel="self" title="MP3 Audio" type="application/atom+xml"/>
+    <atom:link href="https://simplecast.superfeedr.com" rel="hub" xmlns="http://www.w3.org/2005/Atom"/>
+    <generator>https://simplecast.com</generator>
+    <title>StarTalk with Neil deGrasse Tyson</title>
+    <description>Science, pop culture, and comedy collide on StarTalk Radio! Neil deGrasse Tyson, astrophysicist and Director of New York&apos;s Hayden Planetarium, and his comic co-hosts, guest celebrities, and scientific experts explore astronomy, physics, and everything else there is to know about life in the universe. New episodes premiere Tuesdays. Keep Looking Up! 
+
+Subscribe to SiriusXM Podcasts+ to listen to new episodes of StarTalk Radio ad-free and a whole week early.
+Start a free trial now on Apple Podcasts or by visiting siriusxm.com/podcastsplus.</description>
+    <copyright>2026 Neil deGrasse Tyson</copyright>
+    <language>en-us</language>
+    <pubDate>Fri, 16 Oct 2026 05:00:00 +0000</pubDate>
+    <lastBuildDate>Fri, 16 Oct 2026 05:00:47 +0000</lastBuildDate>
+    <image>
+      <link>siriusxm.com</link>
+      <title>StarTalk with Neil deGrasse Tyson</title>
+      <url>https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/2b201827-3634-43a1-aa2d-394a4304280f/3000x3000/ii-lpimppkh1.jpg?aid=rss_feed</url>
+    </image>
+    <link>siriusxm.com</link>
+    <itunes:type>episodic</itunes:type>
+    <itunes:summary>Science, pop culture, and comedy collide on StarTalk Radio! Neil deGrasse Tyson, astrophysicist and Director of New York&apos;s Hayden Planetarium, and his comic co-hosts, guest celebrities, and scientific experts explore astronomy, physics, and everything else there is to know about life in the universe. New episodes premiere Tuesdays. Keep Looking Up! 
+
+Subscribe to SiriusXM Podcasts+ to listen to new episodes of StarTalk Radio ad-free and a whole week early.
+Start a free trial now on Apple Podcasts or by visiting siriusxm.com/podcastsplus.</itunes:summary>
+    <itunes:author>Neil deGrasse Tyson</itunes:author>
+    <itunes:explicit>false</itunes:explicit>
+    <itunes:image href="https://image.simplecastcdn.com/images/5b7d8c77-15ba-4eff-a999-2e725db21db5/2b201827-3634-43a1-aa2d-394a4304280f/3000x3000/ii-lpimppkh1.jpg?aid=rss_feed"/>
+    <itunes:new-feed-url>https://feeds.simplecast.com/4T39_jAj</itunes:new-feed-url>
+    <itunes:keywords>astrophysics, astrophysicist, astronomer, astronomy, cosmos, space, climate science, nature, startalk, earth science, quantum physics, multiverse, physics, spacetime, science, neil degrasse tyson, nasa, universe, star talk, scientist</itunes:keywords>
+    <itunes:owner>
+      <itunes:name>StarTalk Radio</itunes:name>
+      <itunes:email>feed@startalkradio.net</itunes:email>
+    </itunes:owner>
+    <itunes:category text="Science"/>
+    <itunes:category text="Education"/>
+    

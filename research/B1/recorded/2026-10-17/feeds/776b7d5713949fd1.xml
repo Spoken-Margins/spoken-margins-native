@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/jeselnik-book-club" rel="self" type="application/rss+xml"/>
+    <title>Jeselnik Book Club</title>
+    <link>https://www.theringer.com</link>
+    <language>en</language>
+    <copyright>© All rights reserved.</copyright>
+    <description>Anthony Jeselnik wants you to read books.
+
+In Jeselnik Book Club, Anthony shares his obsessive passion for the benefits of reading literature—with contagious results. Every week, Anthony will discuss modern literary gossip and question popular culture with a series of guests, ranging from authors to celebrities, friends, and guests from your favorite Ringer podcasts.
+
+Tune in to Jeselnik Book Club because you love to read or because you want to become a better, smarter, more beautiful person.</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/29f90218-abc4-11f1-85a9-5b8bfbc9b6ac/image/111b908ba24f5c8cb6a5cc8e9dc64837.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Jeselnik Book Club</title>
+      <link>https://www.theringer.com</link>
+    </image>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle></itunes:subtitle>
+    <itunes:author>The Ringer</itunes:author>
+    <itunes:summary>Anthony Jeselnik wants you to read books.
+
+In Jeselnik Book Club, Anthony shares his obsessive passion for the benefits of reading literature—with contagious results. Every week, Anthony will discuss modern literary gossip and question popular culture with a series of guests, ranging from authors to celebrities, friends, and guests from your favorite Ringer podcasts.
+
+Tune in to Jeselnik Book Club because you love to read or because you want to become a better, smarter, more beautiful person.</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>
+Anthony Jeselnik wants you to read books.</p>
+<p><br>In Jeselnik Book Club, Anthony shares his obsessive passion for the benefits of reading literature—with contagious results. <br>Every week, Anthony will discuss modern literary gossip and question popular culture with a series of guests, ranging from authors to celebrities, friends, and guests from your favorite Ringer podcasts.</p>
+<p><br>Tune in to Jeselnik Book Club because you love to read or because you want to become a better, smarter, more beautiful person.
+
+</p>
+<p><br></p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>The Ringer</itunes:name>
+      <itunes:email>ringerfeed@spotify.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/29f90218-abc4-11f1-85a9-5b8bfbc9b6ac/image/111b908ba24f5c8cb6a5cc8e9dc64837.jpg?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Arts">
+      <itunes:category text="Books"/>
+    </itunes:category>
+    

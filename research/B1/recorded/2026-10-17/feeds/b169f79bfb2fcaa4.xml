@@ -1,0 +1,42 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:googleplay="http://www.google.com/schemas/play-podcasts/1.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/" version="2.0">
+  <channel>
+    <atom:link href="https://feeds.megaphone.fm/yap" rel="self" type="application/rss+xml"/>
+    <title>Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast</title>
+    <link>https://www.youngandprofiting.com</link>
+    <language>en</language>
+    <copyright>Copyright 2022. All rights reserved.</copyright>
+    <description>YAP is the must-listen podcast for driven entrepreneurs and high achievers who are hardcore about business, personal growth, and achieving their potential. Hosted by Hala Taha, self-made entrepreneur and CEO of YAP Media, this #1 entrepreneurship podcast features mini-masterclasses with business icons and industry legends like GaryVee, Alex Hormozi, Mel Robbins, Reid Hoffman, Kevin O’Leary, and Codie Sanchez who help you profit in all aspects of life—from boosting sales and beating algorithms to biohacking and productivity. Whether you’re launching a startup, scaling your business, running a side hustle, or upgrading your mindset, every YAP episode delivers actionable advice that WILL help you profit. Listen, Learn, and Profit with the Young and Profiting (YAP) podcast!
+
+
+
+For ad inquiries, please reach out to: Network+YAP@yapmedia.com</description>
+    <image>
+      <url>https://megaphone.imgix.net/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress</url>
+      <title>Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast</title>
+      <link>https://www.youngandprofiting.com</link>
+    </image>
+    <itunes:explicit>no</itunes:explicit>
+    <itunes:type>episodic</itunes:type>
+    <itunes:subtitle>Listen. Learn. Profit.</itunes:subtitle>
+    <itunes:author>Hala Taha | Entrepreneurship, Sales, Marketing | YAP Media Network</itunes:author>
+    <itunes:summary>YAP is the must-listen podcast for driven entrepreneurs and high achievers who are hardcore about business, personal growth, and achieving their potential. Hosted by Hala Taha, self-made entrepreneur and CEO of YAP Media, this #1 entrepreneurship podcast features mini-masterclasses with business icons and industry legends like GaryVee, Alex Hormozi, Mel Robbins, Reid Hoffman, Kevin O’Leary, and Codie Sanchez who help you profit in all aspects of life—from boosting sales and beating algorithms to biohacking and productivity. Whether you’re launching a startup, scaling your business, running a side hustle, or upgrading your mindset, every YAP episode delivers actionable advice that WILL help you profit. Listen, Learn, and Profit with the Young and Profiting (YAP) podcast!
+
+
+
+For ad inquiries, please reach out to: Network+YAP@yapmedia.com</itunes:summary>
+    <content:encoded>
+      <![CDATA[<p>YAP is the must-listen podcast for driven entrepreneurs and high achievers who are hardcore about business, personal growth, and achieving their potential. Hosted by Hala Taha, self-made entrepreneur and CEO of YAP Media, this #1 entrepreneurship podcast features mini-masterclasses with business icons and industry legends like GaryVee, Alex Hormozi, Mel Robbins, Reid Hoffman, Kevin O’Leary, and Codie Sanchez who help you profit in all aspects of life—from boosting sales and beating algorithms to biohacking and productivity. Whether you’re launching a startup, scaling your business, running a side hustle, or upgrading your mindset, every YAP episode delivers actionable advice that WILL help you profit. Listen, Learn, and Profit with the Young and Profiting (YAP) podcast!</p>
+<p><br></p>
+<p>For ad inquiries, please reach out to: Network+YAP@yapmedia.com</p>]]>
+    </content:encoded>
+    <itunes:owner>
+      <itunes:name>YAP Media Network | Hala Taha</itunes:name>
+      <itunes:email>YoungandProfiting@gmail.com</itunes:email>
+    </itunes:owner>
+    <itunes:image href="https://megaphone.imgix.net/podcasts/12efd0fa-03fa-11ec-bec8-cf1cdc53b9e2/image/94b713f2df24c8a4a881973a0df7bc4f.png?ixlib=rails-4.3.1&amp;max-w=3000&amp;max-h=3000&amp;fit=crop&amp;auto=format,compress"/>
+    <itunes:category text="Business">
+      <itunes:category text="Entrepreneurship"/>
+      <itunes:category text="Marketing"/>
+    </itunes:category>
+    

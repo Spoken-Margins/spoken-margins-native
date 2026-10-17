@@ -1,19 +1,18 @@
 # B1 onboard research
 
-`build_catalog.py` builds the first-run drawer's catalog (seam I2) from Apple's public per-genre top-podcast charts:
+`build_catalog.py` builds the first-run drawer's starter list (seam I2) from each show's own feed. Nothing comes from Apple's charts or lookup API, and no artwork URL may point at Apple's image servers (#1732).
 
-1. For each of 12 subjects, fetch the US top-40 chart for that Apple genre (`itunes.apple.com/us/rss/toppodcasts/...genre=<id>/json`).
-2. Resolve each show's RSS feed and 600px artwork with iTunes Lookup (batches of 100).
-3. Fetch every candidate feed once and keep only those that answer 200 with RSS/Atom. Plain-http feeds are tried over https, because App Transport Security blocks http.
-4. Keep the top 16 unique shows per subject. A show charting in several subjects belongs to the first one in `SUBJECTS` order and lists the others as secondary subjects.
-5. Write `Site/onboarding/catalog/v1/catalog.json` and its `manifest.json` (byte count and SHA-256), plus `last-build-report.json` (drops and shows with no public feed).
+1. `shows.json` is the list: one row per show with its feed URL, its subjects (the first is the primary one), and `"starter": true` for the shows that lead their subject's row. It is hand-picked, so edit it freely. Optional per-show fields: `id`, `kind`, `contentKind`, `author`, `summary` and `explicit` override what the feed says.
+2. For each show the script reads its feed up to the first episode and takes the title, author (`itunes:author`), description, website, explicit flag (`itunes:explicit`) and artwork (`itunes:image`, else the channel `<image>`). An http feed or image is used over https, because App Transport Security blocks http.
+3. Each candidate artwork URL is fetched once and kept only if it answers 200 with an image. A show with no feed answer, no title or no usable artwork is dropped and listed in `last-build-report.json`.
+4. Write `Site/onboarding/catalog/v1/catalog.json` and its `manifest.json` (byte count and SHA-256), in the order of `shows.json`.
 
-Every raw response is recorded under `recorded/<date>/`. `--replay recorded/<date>` rebuilds the same catalog byte for byte without network access.
+The head of every feed and every artwork check are recorded under `recorded/<date>/`. `--replay recorded/<date>` rebuilds the same catalog byte for byte without network access, and `scripts/tests/test_starter_catalog.py` checks that it does.
 
 ```bash
-.venv/bin/python research/B1/build_catalog.py                              # live
-.venv/bin/python research/B1/build_catalog.py --replay recorded/2026-09-28 # offline
-.venv/bin/python scripts/validate-contracts.py                             # schema + checksum checks
+.venv/bin/python research/B1/build_catalog.py --content-version 4                    # live
+.venv/bin/python research/B1/build_catalog.py --content-version 3 --replay recorded/2026-10-17   # offline
+.venv/bin/python scripts/validate-contracts.py                                       # schema, checksum and no-Apple checks
 ```
 
-To publish a new catalog, bump `--content-version` so apps holding the old one take the new one.
+To publish a new catalog, edit `shows.json`, bump `--content-version` so apps holding the old one take the new one, delete the old `recorded/` folder (the test replays the newest) and commit the new one.
