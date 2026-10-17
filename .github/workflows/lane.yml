@@ -82,8 +82,9 @@ jobs:
     outputs:
       lane: ${{ steps.route.outputs.lane }}
       automerge: ${{ steps.route.outputs.automerge }}
-      skip_lane: ${{ steps.dedupe.outputs.skip_lane }}
-      skip_automerge: ${{ steps.dedupe.outputs.skip_automerge }}
+      # A sender without write access (and not the bot) starts neither Mac queue (#1822).
+      skip_lane: ${{ steps.sender.outputs.trusted == 'false' && 'true' || steps.dedupe.outputs.skip_lane }}
+      skip_automerge: ${{ steps.sender.outputs.trusted == 'false' && 'true' || steps.dedupe.outputs.skip_automerge }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -94,6 +95,7 @@ jobs:
           sparse-checkout: |
             scripts/test-scope.py
             scripts/lane_dedupe.py
+            scripts/lane_sender.py
             project.yml
           sparse-checkout-cone-mode: false
       - name: Discover runners and changed paths
@@ -115,6 +117,16 @@ jobs:
           else
             echo '::warning::Runner routing unavailable; using the normal Mac queues.'
           fi
+      - name: Check who sent the event
+        id: sender
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          # Whoever added the label or pushed must have write access, or be the project bot (#1822). Fails closed:
+          # when GitHub can't say, no run starts, and a trusted person re-adding the label starts it.
+          python3 scripts/lane_sender.py "$SENDER" >> "$GITHUB_OUTPUT"
       - name: Drop stale and duplicate runs
         id: dedupe
         env:
