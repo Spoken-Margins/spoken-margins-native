@@ -499,6 +499,11 @@ class VerificationTests(unittest.TestCase):
         self.assertIn('test_sharing_kit', verification.RUNNER_TEST_READERS)
         for path in ('docs/sharing-test-kit/kit.json', 'Packages/SessionKit/Sources/CoopPacket/PacketBuilder.swift'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        # The third-party notices test (#1823) reads the dependency manifests and the generated list.
+        self.assertIn('test_third_party_notices', verification.RUNNER_TEST_READERS)
+        for path in ('package.json', 'requirements-dev.txt', 'docs/legal/third-party-components.json',
+                     'THIRD_PARTY_NOTICES.md', 'Design/SpokenMarginsOverhaul/package.json'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
 
     def test_no_diff_information_runs_every_step(self):

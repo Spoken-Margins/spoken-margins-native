@@ -16,8 +16,13 @@ General Public License for more details.
 Source files do not carry their own license headers. This file is the
 single statement that covers them.
 
-Third-party components keep their own licenses. Their notices are in
-these files, which are the authoritative copies:
+Third-party components keep their own licenses. THIRD_PARTY_NOTICES.md
+lists every one (Swift packages, JavaScript packages, voice models, tools
+and captured data), with its licence and where its text is. It is
+generated from docs/legal/third-party-components.json, and
+scripts/third_party_notices.py fails when something is missing from it.
+The notice texts themselves are in these files, which are the
+authoritative copies:
 
 - App/SpokenMarginsApp/Resources/Kitten/NOTICES.txt
   Kitten fallback voice: KittenTTS model, misaki lexicon and g2p_en

@@ -404,9 +404,12 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
-                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved')
+                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
+                       'test_third_party_notices')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/')
+                      'docs/sharing-test-kit/',
+                      # test_third_party_notices reads the dependency manifests and its own list (#1823).
+                      'docs/legal/', 'THIRD_PARTY_NOTICES.md', 'package.json', 'requirements-dev.txt', 'Design/')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
 # files, so they follow the ops tools and anything the runner tests follow, plus the build inputs. The Codex
 # audit's tests also check that AGENTS.md is at the repository root. Re-measured 2026-10-09 the same way as
