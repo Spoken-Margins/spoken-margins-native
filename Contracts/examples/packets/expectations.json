@@ -1,0 +1,26 @@
+{
+  "about": "What the shipped readers do with each example packet. `swift` is the result of `coop-packet check <packet>` (Packages/SessionKit/Sources/CoopPacket), which imports with this build's SpokenMarginsPackageArchive and with Build 29's frozen copy (Packages/SessionKit/Tests/ShippedReader); both gave the same answer for every packet, recorded 2026-10-16 on next at 6a665eac. `reference` is the code spoken_margins_format.py reports. scripts/tests/test_portable_formats.py checks the reference reader against this file.",
+  "writtenBy": {
+    "article-reference.spokenmargins": "coop-packet build (Swift, the app's writer)",
+    "podcast-reference.spokenmargins": "coop-packet build (Swift, the app's writer)",
+    "*": "spoken_margins_format.py corpus, from the two Swift-written packets"
+  },
+  "packets": {
+    "article-reference.spokenmargins": {"swift": "imports", "reference": "valid", "rule": "an article Margin anchored by quote, item by reference"},
+    "podcast-reference.spokenmargins": {"swift": "imports", "reference": "valid", "rule": "a podcast Margin placed by time, item by reference"},
+    "article-embedded-text.spokenmargins": {"swift": "imports", "reference": "valid", "rule": "app-authored text travels inside the packet; its edition hashes match"},
+    "unknown-optional-artifact.spokenmargins": {"swift": "imports", "reference": "valid", "warning": "skipped-artifact", "rule": "an optional artifact of an unknown kind is skipped"},
+    "unknown-commentary-fields.spokenmargins": {"swift": "imports", "reference": "valid", "warning": "ignored-field", "rule": "unknown fields inside a Margin or its anchor are ignored"},
+    "private-link.spokenmargins": {"swift": "imports", "reference": "valid", "warning": "link-looks-private", "rule": "a link with an access token opens, but the exporter would have dropped it; --strict fails it"},
+    "invalid-edition-mismatch.spokenmargins": {"swift": "invalidManifest(\"embedded item transport is inconsistent\")", "reference": "edition-mismatch", "rule": "the embedded text is not the edition the item's hash names"},
+    "invalid-future-package-version.spokenmargins": {"swift": "unsupportedSchema(\"spoken-margins.package.v2\")", "reference": "unsupported-schema", "rule": "a newer package version is refused, not guessed at"},
+    "invalid-insecure-link.spokenmargins": {"swift": "invalidManifest(\"item fields are absent or out of bounds\")", "reference": "link-not-https", "rule": "every link in the item is https"},
+    "invalid-malformed-voice-asset.spokenmargins": {"swift": "invalidAsset(\"assets/audio/broken.m4a\")", "reference": "invalid-asset", "rule": "a voice asset must be MPEG-4 audio"},
+    "invalid-redaction-disabled.spokenmargins": {"swift": "invalidManifest(\"sender or redaction fields are invalid\")", "reference": "privacy-redaction", "rule": "a packet that does not omit raw audio is refused"},
+    "invalid-tampered-margin.spokenmargins": {"swift": "invalidDigest", "reference": "digest-mismatch", "rule": "a Margin edited after export is refused"},
+    "invalid-unknown-manifest-field.spokenmargins": {"swift": "invalidManifest(\"unknown manifest fields: futureField\")", "reference": "unknown-field", "rule": "an unknown manifest key is refused"},
+    "invalid-unknown-required-artifact.spokenmargins": {"swift": "unsupportedRequiredCapability(\"future_thing\")", "reference": "unsupported-capability", "rule": "a required artifact of an unknown kind is refused"},
+    "invalid-unknown-required-capability.spokenmargins": {"swift": "unsupportedRequiredCapability(\"spoken-margins.future-thing.v1\")", "reference": "unsupported-capability", "rule": "an unknown required capability is refused"},
+    "invalid-unsafe-entry.spokenmargins": {"swift": "invalidEntry(\"../outside.json\")", "reference": "unsafe-entry", "rule": "an archive entry outside the allowed paths is refused"}
+  }
+}
