@@ -1,7 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
-import SessionKitPersistence
+@testable import SessionKitPersistence
 
 /// #1792: the Library says which items hold Margins other people shared, and how many are new.
 final class SharedMarginTallyTests: XCTestCase {
@@ -74,6 +74,18 @@ final class SharedMarginTallyTests: XCTestCase {
         _ = try store.markImportedCommentaryInterjectionHeard(id: "m2", at: imported)
         XCTAssertEqual(try SQLiteSessionStore(path: path).loadSharedMarginTallies()["a"], SharedMarginTally(total: 3, new: 2),
                        "hearing one Margin takes one off the new count, across a reopen")
+    }
+
+    /// The audit of #1792: matching a layer to its Margins inside a CASE made SQLite scan every layer for every
+    /// Margin. The plan must find each layer by its primary key and scan the Margins once.
+    func testTheCountFindsEachLayerByPrimaryKeyInsteadOfScanningLayersPerMargin() throws {
+        let path = FileManager.default.temporaryDirectory.appending(path: "shared-tally-plan-\(UUID().uuidString).sqlite").path
+        defer { for suffix in ["", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: path + suffix) } }
+        let plan = try SQLiteSessionStore(path: path).sharedMarginTalliesQueryPlan()
+        let layerSteps = plan.filter { $0.contains("layer") }
+        // The primary key is (kind, id); SQLite names its index sqlite_autoindex_records_1.
+        XCTAssertTrue(layerSteps.contains { $0.hasPrefix("SEARCH layer") && $0.contains("(kind=? AND id=?)") }, "plan: \(plan)")
+        XCTAssertFalse(layerSteps.contains { $0.hasPrefix("SCAN") }, "plan: \(plan)")
     }
 
     func testTheRowBuilderPutsTheTallyOnTheItemsRow() {
