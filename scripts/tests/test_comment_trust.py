@@ -10,6 +10,7 @@ sys.path.insert(0, str(SCRIPTS.parent / 'ops' / 'dial'))
 import comment_trust as trust  # noqa: E402
 import dial_gate  # noqa: E402
 import lane_inherited_holds as holds  # noqa: E402
+import merge_audit  # noqa: E402
 
 BOT = 'github-actions[bot]'
 
@@ -99,6 +100,26 @@ class CopiesStayEqual(unittest.TestCase):
     def test_the_inherited_holds_copy(self):
         self.assertEqual(holds.TRUSTED_ASSOCIATIONS, trust.TRUSTED_ASSOCIATIONS)
         self.assertEqual(holds.TRUSTED_BOTS, trust.TRUSTED_BOTS)
+
+    def test_the_merge_audit_copy(self):
+        # .github/workflows/merge-audit.yml checks out only scripts/merge_audit.py: it can't import the helper.
+        self.assertEqual(merge_audit.TRUSTED_ASSOCIATIONS, trust.TRUSTED_ASSOCIATIONS)
+        self.assertEqual(merge_audit.TRUSTED_BOTS, trust.TRUSTED_BOTS)
+        self.assertEqual(merge_audit.GRAPHQL_BOT_LOGINS, trust.GRAPHQL_BOT_LOGINS)
+        self.assertNotIn('import comment_trust', (SCRIPTS / 'merge_audit.py').read_text())
+
+    def test_the_merge_audit_copy_decides_like_the_helper_in_every_shape(self):
+        shapes = []
+        for login in ('uncomposed', BOT, 'github-actions', 'app/github-actions', 'stranger', ''):
+            for association in ('OWNER', 'MEMBER', 'COLLABORATOR', 'CONTRIBUTOR', 'NONE', None):
+                shapes.append({'user': {'login': login}, 'author_association': association})
+                shapes.append({'author': {'login': login}, 'authorAssociation': association})
+                for marker in ({'__typename': 'Bot'}, {'__typename': 'User'}, {'is_bot': True}, {'is_bot': False}):
+                    shapes.append({'author': dict(marker, login=login), 'authorAssociation': association})
+        shapes += [{}, {'user': None}, {'author': None}]
+        for item in shapes:
+            with self.subTest(item=item):
+                self.assertEqual(merge_audit.trusted(item), trust.trusted(item))
 
     def test_the_copies_decide_like_the_helper(self):
         for login in ('uncomposed', BOT, 'github-actions', 'stranger'):
