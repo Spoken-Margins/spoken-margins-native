@@ -76,6 +76,6 @@ extension Gate1AppModel {
     /// the list redraws can't cut it short; a pull while a refresh runs returns at once and starts no second one.
     func pullToRefreshFollowing() async {
         refreshQuickAccessFolder()
-        await Task { await performFollowedSourceRefresh(force: true) }.value
+        await Task { [self] in await self.performFollowedSourceRefresh(force: true) }.value
     }
 }
