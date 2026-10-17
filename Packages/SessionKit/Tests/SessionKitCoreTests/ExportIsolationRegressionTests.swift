@@ -1,11 +1,11 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class ExportIsolationRegressionTests: XCTestCase {
     func testWrittenExportFixturePreservesCaptureKindAndExactTextInJSONAndMarkdown() throws {
-        let root = try repositoryRoot()
-        let fixture = root.appending(path: "Contracts/fixtures/exports/written-session-export.json")
+        let fixture = try TestInputs.url(.contracts, "fixtures/exports/written-session-export.json")
         let data = try Data(contentsOf: fixture)
         let export = try JSONDecoder().decode(SessionExport.self, from: data)
         let written = try XCTUnwrap(export.interjections.first)
@@ -100,17 +100,5 @@ final class ExportIsolationRegressionTests: XCTestCase {
             XCTAssertTrue(markdown.contains(try XCTUnwrap(included.transcript)))
             XCTAssertFalse(markdown.contains(try XCTUnwrap(excluded.transcript)))
         }
-    }
-
-    private func repositoryRoot() throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else {
-                throw NSError(domain: "ExportFixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository root unavailable"])
-            }
-            root = parent
-        }
-        return root
     }
 }

@@ -1,10 +1,9 @@
 import Foundation
 import SessionKit
-import SessionKitPersistence
 
 /// Loads item presentation while retaining the store's existing read and write policies.
-struct ItemDetailLoader {
-    static func load(
+public struct ItemDetailLoader {
+    public static func load(
         id: String,
         store: SQLiteSessionStore,
         snapshotItemId: String?,

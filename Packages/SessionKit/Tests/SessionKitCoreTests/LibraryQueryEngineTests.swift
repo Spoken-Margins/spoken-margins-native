@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 final class LibraryQueryEngineTests: XCTestCase {
     private struct Row: LibraryQueryRow {
@@ -111,9 +112,7 @@ final class LibraryQueryEngineTests: XCTestCase {
         XCTAssertEqual(LibraryOfflineStateFilter.allCases.map(\.rawValue), ["all", "preparing", "ready_offline", "needs_repreparation", "online_only"])
         XCTAssertEqual(LibrarySort.allCases.map(\.rawValue), ["recently_added", "recently_listened", "title", "progress"])
         // The writer stays app-side. Pin its literal keys without loading the iOS app.
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel.swift"), encoding: .utf8)
+        let source = try TestInputs.text(.appSources, "Gate1AppModel.swift")
         for key in ["libraryContentTypeFilter", "libraryListeningStateFilter", "libraryOfflineStateFilter", "librarySort"] {
             XCTAssertTrue(source.contains("forKey: \"\(key)\""), key)
         }

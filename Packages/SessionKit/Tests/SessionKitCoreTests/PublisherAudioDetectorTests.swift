@@ -3,6 +3,7 @@ import XCTest
 @testable import SessionKit
 @testable import SessionKitFeeds
 @testable import SessionKitPersistence
+import SessionKitTestInputs
 
 /// #545: a followed post with both its full text and the publisher's own recording (a Substack
 /// voiceover) became a podcast episode with no text, because the parser folded the post's body
@@ -56,7 +57,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
     // MARK: Detector
 
     func testASubstackVoiceoverPostIsAnArticleWithPublisherAudio() throws {
-        let voiceover = try XCTUnwrap(try Self.substackItems().first { $0.title == "The harbor in winter" })
+        let items = try Self.substackItems()
+        let voiceover = try XCTUnwrap(items.first { $0.title == "The harbor in winter" })
         let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: voiceover.url, title: voiceover.title,
                               bodyWordCount: PublisherAudioDetector.bodyWordCount(of: voiceover), fullBody: voiceover.content)
         let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(entry,
@@ -67,7 +69,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
     }
 
     func testAnEpisodeWithShortShowNotesIsStillAPodcastEpisode() throws {
-        let episode = try XCTUnwrap(try FeedParser().parse(data: Self.fixture("substack-transcript-podcast.rss")).items.first)
+        let feed = try Self.fixture("substack-transcript-podcast.rss")
+        let episode = try XCTUnwrap(try FeedParser().parse(data: feed).items.first)
         XCTAssertNotNil(episode.content)
         XCTAssertEqual(PublisherAudioDetector.kind(of: episode), .podcastEpisode)
         for item in try FeedParser().parse(data: Self.fixture("enclosure-only-episodes.rss")).items {
@@ -76,7 +79,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
     }
 
     func testATextOnlyPostIsAnArticleWithoutAudio() throws {
-        let post = try XCTUnwrap(try Self.substackItems().first { $0.title == "Notes from the archive" })
+        let items = try Self.substackItems()
+        let post = try XCTUnwrap(items.first { $0.title == "Notes from the archive" })
         XCTAssertNil(post.audioURL)
         XCTAssertEqual(PublisherAudioDetector.kind(of: post), .article)
     }
@@ -220,7 +224,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
 
     /// A real podcast feed's episodes are not Substack posts with narration: with no page evidence they import as before.
     func testPodcastEpisodesAreUnchangedByTheAutomaticVoice() throws {
-        let episode = try XCTUnwrap(try FeedParser().parse(data: Self.fixture("substack-transcript-podcast.rss")).items.first)
+        let feed = try Self.fixture("substack-transcript-podcast.rss")
+        let episode = try XCTUnwrap(try FeedParser().parse(data: feed).items.first)
         XCTAssertEqual(PublisherAudioDetector.kind(of: episode), .podcastEpisode)
         let entry = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: episode.url, audioURL: episode.audioURL, title: episode.title,
                               bodyWordCount: PublisherAudioDetector.bodyWordCount(of: episode))
@@ -247,8 +252,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
         let store = try SQLiteSessionStore(path: temporary.appendingPathComponent("confirmation.sqlite").path)
         let original = FeedEntry(id: "e", subscriptionId: "s", canonicalURL: "https://captured.example/p/voiceover",
                                  title: "Article", bodyWordCount: 720)
-        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(original,
-            html: String(decoding: Self.fixture("substack-voiceover-page.html"), as: UTF8.self)))
+        let html = String(decoding: try Self.fixture("substack-voiceover-page.html"), as: UTF8.self)
+        let confirmed = try XCTUnwrap(PublisherNarrationEvidence.confirmedEntry(original, html: html))
         try store.saveFeedEntry(original)
         try store.deleteFeedEntry(id: original.id)
         try PublisherNarrationEvidence.cache(confirmed, replacing: original, in: store)
@@ -343,7 +348,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
     /// #641: a publication followed as a podcast feed (it has some voiceovers) also has text-only
     /// posts. Adding one took the podcast path with the post's page as the "audio" and failed.
     func testATextOnlyPostOnAPodcastFeedImportsAsAnArticle() throws {
-        let post = try XCTUnwrap(try Self.substackItems().first { $0.title == "Notes from the archive" })
+        let items = try Self.substackItems()
+        let post = try XCTUnwrap(items.first { $0.title == "Notes from the archive" })
         XCTAssertNil(post.audioURL, "the feed lists it with an image enclosure only")
         let entry = FeedEntry(id: "text", subscriptionId: "s", canonicalURL: post.url, audioURL: post.audioURL, title: post.title,
                               bodyWordCount: PublisherAudioDetector.bodyWordCount(of: post), fullBody: post.content)
@@ -353,7 +359,8 @@ final class PublisherAudioDetectorTests: XCTestCase {
     }
 
     func testEpisodesStillImportAsAudioIncludingOlderOnesSavedWithoutTheirEnclosure() throws {
-        let item = try XCTUnwrap(try FeedParser().parse(data: Self.fixture("enclosure-only-episodes.rss")).items.first)
+        let feed = try Self.fixture("enclosure-only-episodes.rss")
+        let item = try XCTUnwrap(try FeedParser().parse(data: feed).items.first)
         let audio = try XCTUnwrap(item.audioURL)
         let episode = FeedEntry(id: "episode", subscriptionId: "s", canonicalURL: item.url, audioURL: audio, title: item.title)
         XCTAssertEqual(FollowedEntryAudio.stored(in: episode), .found(audio))
@@ -389,12 +396,6 @@ final class PublisherAudioDetectorTests: XCTestCase {
     }
 
     private static func fixture(_ name: String) throws -> Data {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/feeds/\(name)"))
+        try TestInputs.data(.contracts, "fixtures/feeds/\(name)")
     }
 }

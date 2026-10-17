@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import SessionKit
 import SessionKitSharing
+import SessionKitTestInputs
 
 final class SharedPodcastResolutionPolicyTests: XCTestCase {
     func testUniqueTrackingEnclosureWinsBeforeTitleAndDuration() throws {
@@ -142,9 +143,7 @@ final class SharedPodcastResolutionPolicyTests: XCTestCase {
 
     func testModelRetainsDiagnosticErrorAndRequestLiterals() throws {
         // These remain app-owned. Pin their bytes at the call site without pretending to run the app.
-        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let source = try String(contentsOf: root.appendingPathComponent("App/SpokenMarginsApp/Sources/SpokenMarginsApp/Gate1AppModel+PackageImport.swift"), encoding: .utf8)
+        let source = try TestInputs.text(.appSources, "Gate1AppModel+PackageImport.swift")
         let start = try XCTUnwrap(source.range(of: "func acquirePodcastForImportedPackage("))
         let end = try XCTUnwrap(source.range(of: "\n    }\n", range: start.upperBound..<source.endIndex))
         let body = String(source[start.lowerBound..<end.lowerBound])

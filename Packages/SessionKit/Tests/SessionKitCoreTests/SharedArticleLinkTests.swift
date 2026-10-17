@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 import SessionKit
 import SessionKitFeeds
+import SessionKitTestInputs
 
 /// #223: a Substack post shared from the Substack app arrives as a bare link. It must be read as an article,
 /// not quarantined and not imported as a podcast. Replays research/B2's recorded page and feed; never touches the
@@ -218,14 +219,7 @@ final class SharedArticleLinkTests: XCTestCase {
 
     private static func fixture(_ name: String) throws -> String {
         struct Hop: Decodable { let body: String }
-        let file = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent() // SessionKitCoreTests
-            .deletingLastPathComponent() // Tests
-            .deletingLastPathComponent() // SessionKit
-            .deletingLastPathComponent() // Packages
-            .deletingLastPathComponent() // repo
-            .appendingPathComponent("research/B2/fixtures/\(name).json")
-        return try JSONDecoder().decode(Hop.self, from: Data(contentsOf: file)).body
+        return try JSONDecoder().decode(Hop.self, from: TestInputs.data(.research, "B2/fixtures/\(name).json")).body
     }
 }
 

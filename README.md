@@ -52,3 +52,14 @@ physical-device validation.
 ## First Engineering Move
 
 Preserve the existing playback spine. Changes must pass contract validation, SessionKit tests, an iOS build-for-testing, and the bounded product-owner checks defined in the recovery document. Automated verification is not human validation.
+
+## Licence
+
+Copyright (C) 2026 Cole Miller.
+
+Spoken Margins is licensed under the [GNU Affero General Public License, version 3 only](LICENSE) (`AGPL-3.0-only`), with an [additional permission for Apple App Store distribution](COPYING.iOS). The permission's wording is adapted from the [Nextcloud iOS app's App Store exception](https://github.com/nextcloud/ios/blob/master/COPYING.iOS).
+
+- Source files don't carry per-file licence headers. [NOTICE](NOTICE) is the single statement that covers them, and it lists where the third-party licence notices live (the Kitten voice, Supertonic, ONNX Runtime, ZIPFoundation and the bundled JavaScript packages).
+- For now, only collaborators open pull requests. Contributions are accepted only under the terms in [CONTRIBUTING.md](CONTRIBUTING.md), which keep a later move to the Mozilla Public License 2.0 possible.
+
+_Apple and the Apple logo are trademarks of Apple Inc., registered in the U.S. and other countries. App Store is a service mark of Apple Inc., registered in the U.S. and other countries._

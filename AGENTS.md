@@ -92,7 +92,7 @@ Replace this section when the focus changes; do not append to it.
     - Threads and dispatch may still take `Later` issues, but only ones whose change needs no `/lane T3` (host-testable: SessionKit, ops, scripts, docs, or an app change the lane's host tests and builds cover). A `Later` issue that needs simulator tests waits until Solid Ground ships.
     - "Start more threads" advice on #337 means `Solid Ground` issues first, then host-testable `Later` issues.
     - `Later` PRs already armed with a T3 request on 2026-10-16 finish as they are.
-  - **Voice downloads start now, before Solid Ground ships.** "a way of having us download models such as Supertonic, Pocket TTS, and others would be awesome... a very nice thing to get done before we make this a public repo." The slices are #1816 to #1820, split from #1391 and #1392, whose "wait for Solid Ground" banners no longer hold for this work. Threads still take `Solid Ground` issues first.
+  - **Voice downloads start now, before Solid Ground ships.** "a way of having us download models such as Supertonic, Pocket TTS, and others would be awesome... a very nice thing to get done before we make this a public repo." The slices are #1816 to #1820, split from #1391 and #1392, whose "wait for Solid Ground" banners no longer hold for this work. Solid Ground is cut (Build 34), so they wait behind nothing ("We've already cut solid ground, so there shouldn't be any priority anymore.").
 - **Podcast anchors** continue as stream C4: [docs/podcast-anchor-plan.md](docs/podcast-anchor-plan.md).
 - **Parked, reference only:**
   - `park/co-op-2026-09-24`: failed co-op attempt plus in-progress anchor work. Do not merge it; port pieces by hand. Its packets use a Margin kind this build can't read.
@@ -166,7 +166,7 @@ While parallel streams are running, pick the lowest tier that covers your change
    - App orchestration changes: run `--plan app` (app-hosted XCTest in one simulator). If it stalls before XCTest connects, stop and report it; don't retry in a loop.
    - `--plan app` uses its own `SpokenMargins Test Runner` simulator, never the journey one. It removes the app's data there before testing and shuts the simulator down afterwards if it booted it.
 3. **Journey checks.** Before calling anything ready, run the affected journeys in [docs/journeys.md](docs/journeys.md) against the built app.
-   - The agent drives the simulator with computer use (real taps and screenshots) and reports what was observed at each step, including clocks advancing and which item or Margin is playing.
+   - The agent drives the simulator with the iOS simulator tool, never computer use (real taps and screenshots), and reports what was observed at each step, including clocks advancing and which item or Margin is playing.
    - An agent cannot hear audio. Audible content, Bluetooth, the Lock Screen and background behavior belong to the owner's pass on a physical device.
 
 The scripted UI route plans (`--plan ui`, `speech-canary`, `release`) are retired from routine use. They were slow, prone to crashing the simulator, and missed the failures the owner found. Use journeys instead.

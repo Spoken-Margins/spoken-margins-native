@@ -1,19 +1,6 @@
 import Foundation
 @testable import SessionKit
-
-enum RepoPaths {
-    static func root() throws -> URL {
-        var url = URL(fileURLWithPath: #filePath)
-        while url.pathComponents.count > 1 {
-            if FileManager.default.fileExists(atPath: url.appending(path: "README.md").path),
-               FileManager.default.fileExists(atPath: url.appending(path: "traces").path) {
-                return url
-            }
-            url.deleteLastPathComponent()
-        }
-        throw SessionKitError.missingFixture("repo-root")
-    }
-}
+import SessionKitTestInputs
 
 enum JSON {
     static func object(at url: URL) throws -> [String: Any] {
@@ -29,7 +16,7 @@ enum JSON {
 
 enum Fixtures {
     static func profile(id: String) throws -> RuntimeCapabilityProfile {
-        let root = try RepoPaths.root().appending(path: "Contracts")
+        let root = try TestInputs.directory(.contracts)
         let object = try JSON.object(at: root.appending(path: "fixtures/capabilities/\(id).json"))
         return RuntimeCapabilityProfile(
             id: object["id"] as? String ?? id,
@@ -40,7 +27,7 @@ enum Fixtures {
     }
 
     static func seed(trace: [String: Any], into repository: InMemorySessionRepository) throws {
-        let root = try RepoPaths.root().appending(path: "Contracts")
+        let root = try TestInputs.directory(.contracts)
         let fixtures = trace["fixtures"] as? [String: Any] ?? [:]
         if let itemPath = fixtures["item"] as? String {
             let item = try item(at: root.appending(path: itemPath))

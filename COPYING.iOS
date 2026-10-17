@@ -1,0 +1,31 @@
+Spoken Margins: additional permission for Apple App Store distribution
+(an additional permission under section 7 of the GNU Affero General
+Public License, version 3)
+
+Copyright (C) 2026 Cole Miller
+
+The copyright holders of Spoken Margins are aware that the terms of
+service that apply to apps distributed via Apple's App Store services
+may conflict with rights granted under the Spoken Margins license, the
+GNU Affero General Public License, version 3 (AGPLv3). The copyright
+holders of Spoken Margins do not wish this conflict to prevent the
+otherwise-compliant distribution of Spoken Margins or derived apps via
+the App Store. Therefore, as an additional permission under section 7
+of the AGPLv3, we have committed not to pursue any license violation
+that results solely from the conflict between the GNU AGPLv3 and the
+Apple App Store terms of service. In other words, as long as you comply
+with the AGPLv3 in all other respects, including its requirements to
+provide users with source code and the text of the license, we will not
+object to your distribution of Spoken Margins through the App Store.
+
+This permission covers only the code whose copyright the Spoken Margins
+copyright holders own. It does not change the licenses of the
+third-party components listed in NOTICE.
+
+As section 7 of the AGPLv3 allows, if you modify Spoken Margins you may
+extend this permission to your version, but you are not obliged to do
+so. If you do not wish to, delete this permission from your version.
+
+This text is adapted from the Apple App Store exception of the Nextcloud
+iOS app (https://github.com/nextcloud/ios/blob/master/COPYING.iOS),
+changed from the GNU GPLv3 to the GNU AGPLv3.

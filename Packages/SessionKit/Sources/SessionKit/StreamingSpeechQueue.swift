@@ -1,19 +1,23 @@
 import Foundation
-import SessionKit
-import SessionKitAudio
 
 @MainActor
-final class StreamingSpeechQueue {
-    struct PlaybackObservation: Equatable {
-        enum Event: Equatable {
+public final class StreamingSpeechQueue {
+    public struct PlaybackObservation: Equatable {
+        public enum Event: Equatable {
             case started
             case progressed
             case failed
         }
 
-        var event: Event
-        var turnId: String
-        var charOffset: Int
+        public var event: Event
+        public var turnId: String
+        public var charOffset: Int
+
+        public init(event: Event, turnId: String, charOffset: Int) {
+            self.event = event
+            self.turnId = turnId
+            self.charOffset = charOffset
+        }
     }
 
     private struct Unit: Equatable {
@@ -23,39 +27,44 @@ final class StreamingSpeechQueue {
         var text: String
     }
 
-    private var speech: AudioPlaybackClient = SystemSpeechPlaybackClient()
+    private var speech: AudioPlaybackClient
     private var pending: [Unit] = []
     private var current: Unit?
     private var nextOrdinalByTurn: [String: Int] = [:]
     private var nextCharacterOffsetByTurn: [String: Int] = [:]
     private var worker: Task<Void, Never>?
     private var generation = 0
-    private(set) var isPausedForInterjection = false
-    var onTurnDrained: ((String) -> Void)?
-    var onPlaybackObservation: ((PlaybackObservation) -> Void)?
+    public private(set) var isPausedForInterjection = false
+    public var onTurnDrained: ((String) -> Void)?
+    public var onPlaybackObservation: ((PlaybackObservation) -> Void)?
 
-    var pendingCount: Int { pending.count + (current == nil ? 0 : 1) }
-    var currentTurnId: String? { current?.turnId ?? pending.first?.turnId }
-    var currentSentenceStartOffset: Int? { current?.startOffset ?? pending.first?.startOffset }
-    var currentPresentationOffset: Int? {
+    /// `speech` is the app's shared speech client; the app passes `SystemSpeechPlaybackClient()` (SessionKitAudio).
+    public init(speech: AudioPlaybackClient) {
+        self.speech = speech
+    }
+
+    public var pendingCount: Int { pending.count + (current == nil ? 0 : 1) }
+    public var currentTurnId: String? { current?.turnId ?? pending.first?.turnId }
+    public var currentSentenceStartOffset: Int? { current?.startOffset ?? pending.first?.startOffset }
+    public var currentPresentationOffset: Int? {
         guard let current else { return pending.first?.startOffset }
         return current.startOffset + max(0, speech.currentCharOffset() ?? 0)
     }
-    var currentRecoveryOffset: Int? {
+    public var currentRecoveryOffset: Int? {
         guard let current else { return pending.first?.startOffset }
         return current.startOffset + max(0, speech.currentRecoveryCharOffset() ?? 0)
     }
 
-    func hasPendingSpeech(for turnId: String) -> Bool {
+    public func hasPendingSpeech(for turnId: String) -> Bool {
         current?.turnId == turnId || pending.contains(where: { $0.turnId == turnId })
     }
 
-    func configureSpeechClient(_ speech: AudioPlaybackClient) {
+    public func configureSpeechClient(_ speech: AudioPlaybackClient) {
         stopAndClear()
         self.speech = speech
     }
 
-    func enqueue(_ texts: [String], turnId: String) {
+    public func enqueue(_ texts: [String], turnId: String) {
         for text in texts {
             let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !normalized.isEmpty else { continue }
@@ -68,7 +77,7 @@ final class StreamingSpeechQueue {
         startWorkerIfNeeded()
     }
 
-    func pauseForInterjection() {
+    public func pauseForInterjection() {
         guard !isPausedForInterjection else { return }
         // The speech client is the shared audio router. Stopping it when no streamed unit is speaking also stops a
         // playing podcast, discarding its player, audio tap and buffer, so every Margin lost its anchor evidence
@@ -88,7 +97,7 @@ final class StreamingSpeechQueue {
     /// transport command. The shared speech client is deliberately left alone:
     /// it now belongs to SessionEngine, which may have paused or replaced its
     /// current item as part of the same command.
-    func relinquishToCanonicalPlayback() {
+    public func relinquishToCanonicalPlayback() {
         generation += 1
         worker?.cancel()
         worker = nil
@@ -99,13 +108,13 @@ final class StreamingSpeechQueue {
         isPausedForInterjection = false
     }
 
-    func resumeAfterInterjection() {
+    public func resumeAfterInterjection() {
         guard isPausedForInterjection else { return }
         isPausedForInterjection = false
         startWorkerIfNeeded()
     }
 
-    func stopAndClear() {
+    public func stopAndClear() {
         generation += 1
         worker?.cancel()
         worker = nil

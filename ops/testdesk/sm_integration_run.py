@@ -50,6 +50,7 @@ NOT_RUN = 'not run: agent-driven journeys (they need an attended session)'
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(REPO_ROOT / 'scripts'))
 import integration_revert as revert  # noqa: E402
+import lane_ledger  # noqa: E402
 import lane_slots  # noqa: E402
 from lane_xcresult_attachments import report_lines  # noqa: E402
 
@@ -799,6 +800,11 @@ def tick(ops: Ops, dry_run: bool = False) -> str:
         state['results'][sha] = {'verdict': result['verdict'], 'started': now, 'evidence': str(evidence),
                                  'failed': result['failed'], 'flaky': result.get('flaky', [])}
         save_state(path, state)
+        try:  # the per-test catch ledger (#1789); it must never hold up the report
+            lane_ledger.record_tip(lane_slots.state_dir(), ops.repo_root, sha, result['verdict'], result['failed'],
+                                   result.get('flaky', []), ops.now() - now)
+        except Exception as error:  # noqa: BLE001
+            ops.log('catch ledger failed: ' + str(error)[:300])
         try:
             body = report_text(sha, result, started=now, finished=ops.now(), previous=previous,
                                suspects=suspects, evidence=evidence)
