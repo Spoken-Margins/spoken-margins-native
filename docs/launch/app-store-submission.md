@@ -122,7 +122,7 @@ It also says there is "no developer-operated … backend", but rows 1 and 2 use 
 
 Facts behind the draft:
 
-- First-run content: `M:1836-1848` and `M:2569` (welcome item), `M:1850` and `M:1961` (Guided Tour), `A/CatalogDrawer.swift:45` (the 192-show bundled catalog).
+- First-run content: `M:1836-1848` and `M:2569` (welcome item), `M:1850` and `M:1961` (Guided Tour), `A/CatalogDrawer.swift:45` (the bundled starter catalog, 133 shows since #1732).
 - Content types: `A/ExperienceAddSourceFlow.swift:441-449`.
 - Package type: `project.yml:92-114`.
 - Terms gate: `docs/legal/spoken-margins-terms.md`.

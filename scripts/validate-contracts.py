@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import re
 import hashlib
 import subprocess
 import sys
@@ -67,7 +68,7 @@ SOURCE_CATALOG_PAIRS = [
 
 # The published starter catalog is built from each show's own feed (#1732). Apple's chart and lookup data and
 # its image servers are off limits: research/B1/build_catalog.py keeps the same host list.
-APPLE_HOST_SUFFIXES = ("mzstatic.com", "apple.com", "itunes.com", "apple-dns.net")
+APPLE_HOST_SUFFIXES = ("mzstatic.com", "apple.com", "apple.co", "itunes.com", "apple-dns.net", "aaplimg.com", "cdn-apple.com", "icloud.com")
 APPLE_PROVENANCE_KINDS = ("apple_top_chart", "itunes_lookup")
 
 
@@ -81,12 +82,15 @@ def validate_no_apple_data(path: Path) -> list[str]:
     catalog = load_json(path)
     errors: list[str] = []
     for item in catalog.get("provenance", []):
-        if item["kind"] in APPLE_PROVENANCE_KINDS or is_apple_url(item.get("url", "")):
+        if (item["kind"] in APPLE_PROVENANCE_KINDS or is_apple_url(item.get("url", ""))
+                or "appleGenreId" in item or "chartUpdatedAt" in item):
             errors.append(f"{path}: provenance {item['id']!r} is Apple data ({item['kind']})")
     for subject in catalog.get("subjects", []):
         if "appleGenreId" in subject:
             errors.append(f"{path}: subject {subject['id']!r} carries an Apple genre id")
     for entry in catalog.get("entries", []):
+        if re.fullmatch(r"apple-\d+", entry["id"]):
+            errors.append(f"{path}: {entry['id']} is named for an Apple Podcasts id")
         for field in ("feedURL", "artworkURL", "websiteURL"):
             if is_apple_url(entry.get(field, "")):
                 errors.append(f"{path}: {entry['id']} {field} points at Apple: {entry[field]}")

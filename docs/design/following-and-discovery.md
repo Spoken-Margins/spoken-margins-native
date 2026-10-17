@@ -322,7 +322,7 @@ The renamed Manage Feeds. A list (not a grid: names stay readable at large text 
 Nothing required. All ranking stays on the phone and nothing about a listener's follows leaves it. Search goes from the phone to iTunes, as the link resolver already does. Two optional later ideas, both privacy-preserving:
 
 - **"Shows like this"** on a show page, computed when the catalog is built (`research/B1/build_catalog.py`) from shared subjects and charts, and shipped inside the catalog file.
-- **A bigger catalog** with real curated starter rows (all five rows are still `chart-seed`). Subject to the open licensing question (#718).
+- **A bigger catalog** with real curated starter rows (the rows were `chart-seed` until #1732; they are now hand-picked in `research/B1/shows.json`). Subject to the open licensing question (#718).
 
 ---
 

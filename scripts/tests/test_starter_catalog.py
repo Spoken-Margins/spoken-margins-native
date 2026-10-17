@@ -39,6 +39,8 @@ class NoAppleDataTests(unittest.TestCase):
 
     def test_the_published_catalog_has_no_apple_data(self):
         self.assertEqual(contracts.validate_no_apple_data(CATALOG), [])
+        self.assertIn((MANIFEST, CATALOG), contracts.SOURCE_CATALOG_PAIRS)
+        self.assertEqual(contracts.PUBLISHED_CATALOG, CATALOG)
         # The contracts step runs the same check on the published pair.
         self.assertEqual(contracts.validate_source_catalog_pair(MANIFEST, CATALOG, published=True), [])
 
@@ -56,6 +58,10 @@ class NoAppleDataTests(unittest.TestCase):
             ("https://podcasts.apple.com/us/podcast/id1", True),
             ("https://apple.com/x", True),
             ("https://itunes.apple.com/lookup?id=1", True),
+            ("https://apple.co/abc", True),
+            ("https://a1.aaplimg.com/x.jpg", True),
+            ("https://cvws.icloud-content.com/x", False),
+            ("https://www.icloud.com/x.jpg", True),
             ("https://apple.dwarkesh-podcast.workers.dev/feed.rss", False),
             ("https://notapple.com/a.jpg", False),
             ("https://apple.com.example.org/a.jpg", False),
@@ -90,6 +96,12 @@ class NoAppleDataTests(unittest.TestCase):
         lookup = copy.deepcopy(base)
         lookup["provenance"].append({"id": "itunes-lookup", "kind": "itunes_lookup", "fetchedAt": base["generatedAt"]})
         cases["lookup provenance"] = lookup
+        named = copy.deepcopy(base)
+        named["entries"][0]["id"] = "apple-1200361736"
+        cases["apple id in entry id"] = named
+        dated = copy.deepcopy(base)
+        dated["provenance"][0]["chartUpdatedAt"] = "2026-09-28T05:17:56-07:00"
+        cases["chart date"] = dated
         genre = copy.deepcopy(base)
         genre["subjects"][0]["appleGenreId"] = 1489
         cases["genre id"] = genre
@@ -105,7 +117,7 @@ class NoAppleDataTests(unittest.TestCase):
                             "artworkURL": "https://is1-ssl.mzstatic.com/image/thumb/Podcasts221/v4/ab/64/mza.jpg/600x600bb.jpg",
                             "chartPositions": [{"provenanceId": "apple-top-us-news", "rank": 1}],
                             "externalIds": {"applePodcastsId": "1200361736"}}]}
-        self.assertEqual(len(self.errors_for(old)), 5)
+        self.assertEqual(len(self.errors_for(old)), 6)
 
 
 class PublishedStarterListTests(unittest.TestCase):
@@ -191,8 +203,9 @@ class FeedReadingTests(unittest.TestCase):
     def test_artwork_on_apple_servers_is_never_a_candidate(self):
         # The build keeps https non-Apple candidates only; the first survivor is checked and used.
         candidates = self.parse(image="http://is1-ssl.mzstatic.com/a.jpg")["artwork"]
-        kept = [builder.https_form(a) for a in candidates if a and not builder.is_apple_url(a)]
-        self.assertEqual(kept, ["https://example.org/channel.png"])
+        self.assertEqual(builder.artwork_candidates(candidates), ["https://example.org/channel.png"])
+        self.assertEqual(builder.artwork_candidates(["", "https://podcasts.apple.com/a.png", "http://example.org/b.png"]),
+                         ["https://example.org/b.png"])
 
     def test_http_artwork_is_used_over_https(self):
         self.assertEqual(builder.https_form("http://example.org/a.jpg"), "https://example.org/a.jpg")
@@ -202,6 +215,25 @@ class FeedReadingTests(unittest.TestCase):
         meta = builder.parse_channel("<rss><channel><title>Plain</title><itunes:author>A &amp; B</itunes:author>"
                                      "<itunes:image href='https://example.org/x.jpg'/>")
         self.assertEqual((meta["title"], meta["author"], meta["artwork"]), ("Plain", "A & B", ["https://example.org/x.jpg"]))
+
+    def test_explicit_flags_read_the_way_feeds_spell_them(self):
+        for flag, expected in (("true", True), ("Yes", True), (" explicit ", True), ("false", False), ("no", False),
+                               ("clean", False), ("", False)):
+            with self.subTest(flag=flag):
+                self.assertEqual(builder.is_explicit(flag), expected)
+
+    def test_an_author_address_is_never_published(self):
+        meta = builder.parse_channel("<rss xmlns:itunes='http://www.itunes.com/dtds/podcast-1.0.dtd'><channel><title>T</title>"
+                                     "<itunes:author>bob@example.com (Bob)</itunes:author></channel></rss>")
+        self.assertEqual(meta["author"], "")
+
+    def test_a_cdata_title_survives_the_fallback_parser(self):
+        meta = builder.parse_channel("<rss><channel><title><![CDATA[Cdata & Co]]></title><itunes:author>X")
+        self.assertEqual(meta["title"], "Cdata & Co")
+
+    def test_ids_do_not_end_in_a_hyphen(self):
+        self.assertEqual(builder.slug("Young and Profiting (YAP) with Hala Taha: Entrepreneurship and Self-Improvement Podcast"),
+                         "young-and-profiting-yap-with-hala-taha-entrepreneurship-and")
 
     def test_long_descriptions_are_cut_at_a_word(self):
         text = "word " * 200

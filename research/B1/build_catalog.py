@@ -44,7 +44,7 @@ SUMMARY_LIMIT = 300            # characters of a feed's description kept (the sc
 
 # Hosts the catalog must never point at. Apple's image servers carry artwork
 # whose terms need a link to Apple's store (#632).
-APPLE_HOST_SUFFIXES = ("mzstatic.com", "apple.com", "itunes.com", "apple-dns.net")
+APPLE_HOST_SUFFIXES = ("mzstatic.com", "apple.com", "apple.co", "itunes.com", "apple-dns.net", "aaplimg.com", "cdn-apple.com", "icloud.com")
 
 
 def is_apple_url(url: str) -> bool:
@@ -90,7 +90,7 @@ def now_iso() -> str:
 
 
 def slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:60] or "podcast"
+    return re.sub(r"[^a-z0-9]+", "-", text.lower())[:60].strip("-") or "podcast"
 
 
 def https_form(url: str) -> str:
@@ -112,13 +112,16 @@ def feed_head(url: str) -> dict:
 
 def check_artwork(url: str) -> dict:
     status, body, final_url, content_type = fetch(url, limit=2048, timeout=25)
-    ok = status == 200 and (content_type.lower().startswith("image/") or body[:4] in (b"\xff\xd8\xff\xe0", b"\xff\xd8\xff\xe1", b"\x89PNG"))
+    magic = body[:3] == b"\xff\xd8\xff" or body[:4] == b"\x89PNG" or (body[:4] == b"RIFF" and body[8:12] == b"WEBP") or body[:3] == b"GIF"
+    # An image that redirected to Apple's servers is still Apple's image.
+    ok = status == 200 and not is_apple_url(final_url) and (content_type.lower().startswith("image/") or magic)
     return {"url": url, "status": status, "finalURL": final_url, "contentType": content_type, "ok": ok}
 
 
 def plain_text(raw: str | None) -> str:
     if not raw:
         return ""
+    raw = re.sub(r"<!\[CDATA\[(.*?)\]\]>", r"\1", raw, flags=re.S)
     text = re.sub(r"</?(?:br|p|div|li|ul|ol|h\d)\b[^>]*>", " ", html.unescape(raw), flags=re.I)  # block tags break words
     text = re.sub(r"<[^>]+>", "", text)                                                    # inline tags don't
     return re.sub(r"\s+", " ", html.unescape(text)).strip()
@@ -152,7 +155,7 @@ def parse_channel(head: str) -> dict:
                     return node.text.strip()
             return ""
         meta["title"] = plain_text(text_of("title", "{*}title"))
-        meta["author"] = plain_text(text_of("{*}author", "managingEditor"))
+        meta["author"] = plain_text(text_of("{*}author"))
         meta["summary"] = plain_text(text_of("{*}summary", "description", "{*}subtitle"))
         meta["website"] = text_of("link")
         meta["explicit"] = text_of("{*}explicit").lower()
@@ -173,13 +176,25 @@ def parse_channel(head: str) -> dict:
         meta["website"] = first(r"<link[^>]*>(https?://[^<]+)</link>")
         meta["explicit"] = first(r"<itunes:explicit[^>]*>(.*?)</itunes:explicit>").lower()
         meta["artwork"] = re.findall(r"<itunes:image[^>]*href=[\"']([^\"']+)[\"']", head, re.I)
+    # A feed's author field sometimes holds "name@example.com (Name)"; never publish an address.
+    if "@" in meta.get("author", ""):
+        meta["author"] = ""
     return meta
+
+
+def is_explicit(flag: str) -> bool:
+    return flag.strip().lower() in ("true", "yes", "explicit")
+
+
+def artwork_candidates(urls: list[str]) -> list[str]:
+    """The artwork URLs a build may use, in the feed's order: https, and never on Apple's servers."""
+    return [https_form(u) for u in urls if u and not is_apple_url(https_form(u))]
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--replay", help="recorded directory (relative to research/B1) to rebuild from without network")
-    parser.add_argument("--content-version", type=int, default=1)
+    parser.add_argument("--content-version", type=int, required=True, help="bump on every published change; apps keep the higher version")
     parser.add_argument("--out", type=Path, default=SITE_DIR, help="where catalog.json and manifest.json go (default: Site/onboarding/catalog/v1)")
     args = parser.parse_args(argv)
 
@@ -220,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
         if not result["looksLikeFeed"]:
             continue
         meta = parse_channel(result["head"])
-        meta["artwork"] = [https_form(a) for a in meta["artwork"] if a and not is_apple_url(a)]
+        meta["artwork"] = artwork_candidates(meta["artwork"])
         parsed[url] = meta
         to_check += meta["artwork"][:2]
     if not args.replay:
@@ -261,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             "feedURL": url,
             "artworkURL": artwork,
             "subjects": show["subjects"],
-            "explicit": show["explicit"] if "explicit" in show else meta["explicit"] in ("true", "yes", "explicit"),
+            "explicit": show["explicit"] if "explicit" in show else is_explicit(meta["explicit"]),
             "provenanceIds": ["hand-picked-shows", "publisher-feeds"],
         }
         author = show.get("author") or meta["author"]
@@ -274,6 +289,16 @@ def main(argv: list[str] | None = None) -> int:
         if summary:
             entry["summary"] = summary
         entries.append(entry)
+
+    # The "All" list is the entries in this order, so interleave the subjects (first show of each, then the
+    # second of each, ...) instead of listing all of News first. Newsletters come last, as before.
+    positions: dict[str, int] = {}
+    ranked = []
+    for entry in entries:
+        subject = entry["subjects"][0]
+        positions[subject] = positions.get(subject, 0) + 1
+        ranked.append((entry["contentKind"] != "podcast", positions[subject], len(ranked), entry))
+    entries = [item[3] for item in sorted(ranked, key=lambda item: item[:3])]
 
     # 4. Starter rows: the shows marked "starter", in shows.json order.
     starter_rows = []
@@ -320,6 +345,8 @@ def main(argv: list[str] | None = None) -> int:
         "entries": len(entries),
         "perSubject": {s["id"]: sum(1 for e in entries if e["subjects"][0] == s["id"]) for s in config["subjects"]},
         "explicit": sum(1 for e in entries if e["explicit"]),
+        "noExplicitFlagInFeed": sorted(e["title"] for show, e in _pair(shows, feed_urls, entries)
+                                       if "explicit" not in show and not parsed[e["feedURL"]]["explicit"]),
         "dropped": dropped,
     }, indent=1) + "\n")
     print(f"{len(entries)} entries across {len(config['subjects'])} subjects; {len(dropped)} dropped; "
