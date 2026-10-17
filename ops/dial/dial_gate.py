@@ -15,7 +15,7 @@ Safety rules (owner, 2026-10-01):
 - At most one fire outstanding: no new fire until a thread claims an issue after the last
   one (or 3 hours pass), so fires can't pile up while the plan limit is hit.
 - Slots are per provider (owner, 2026-10-14): the Threads box is Claude's slot count and the
-  Codex workers box is Codex's. The Codex worker (ops/codex/sm_codex_worker.py) leaves the same
+  Codex workers box is Codex's. The Codex worker (deleted, #1853) left the same
   claim and stop notes under the title `Codex worker N`; the gate counts those against Codex,
   never against the Threads box, and its fire payload states Claude's number and Claude's count.
 - Active threads (owner, 2026-10-01): a thread is active from its claim note until its stop
@@ -67,7 +67,7 @@ STOP_RE = re.compile(r'[*_\s]*Thread "([^"]+)" stopping:\s*(.*)')
 
 MODES = ('off', 'paced', 'cloud max')
 
-# The Codex worker's notes use the title `Codex worker <slot>` (sm_codex_worker.py claim_note/stop_note).
+# The Codex worker's notes used the title `Codex worker <slot>`; old notes on GitHub still carry it.
 CODEX_TITLE_RE = re.compile(r'Codex worker \d+$', re.IGNORECASE)
 
 
