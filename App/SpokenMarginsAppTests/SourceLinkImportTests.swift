@@ -1686,14 +1686,14 @@ final class SourceLinkImportTests: XCTestCase {
         return (model, margin, try XCTUnwrap(failure.retry).action)
     }
 
-    /// #430, audit on 29cb964: a deleted Margin must not keep a working Retry, and its confirmation must show.
+    /// #430, audit on 29cb964: a deleted Margin must not keep a working Retry.
     func testDeletingAMarginWhoseTranscriptionFailedWithdrawsItsRetryAndShowsTheConfirmation() async throws {
         let (model, margin, staleRetry) = try await modelWithAFailedMarginTranscription()
 
         model.deleteInterjection(margin)
 
-        XCTAssertNil(model.feedbackEvent?.retry, "the deleted Margin's Retry must go with it")
-        XCTAssertEqual(model.feedbackEvent?.message, "Deleted Margin.", "the confirmation must not be held back behind a stale Retry")
+        XCTAssertNil(model.feedbackEvent, "the deleted Margin's failure and Retry must go with it")
+        XCTAssertEqual(model.statusMessage, "Deleted Margin.")
 
         // A Retry captured before the delete (an old banner, an accessibility action) reads the Margin as stored now.
         staleRetry()
@@ -1709,8 +1709,8 @@ final class SourceLinkImportTests: XCTestCase {
 
         model.moveItemToTrash(id: margin.itemId)
 
-        XCTAssertNil(model.feedbackEvent?.retry, "a trashed item's Margin keeps no Retry")
-        XCTAssertEqual(model.feedbackEvent?.kind, .success, "the move's confirmation must not be held back behind a stale Retry")
+        XCTAssertNil(model.feedbackEvent, "a trashed item's Margin keeps no failure or Retry")
+        XCTAssertTrue(model.statusMessage.hasPrefix("Moved "), model.statusMessage)
 
         staleRetry()
         XCTAssertTrue(model.retryingInterjectionTranscriptionIds.isEmpty, "a Margin in Recently Deleted must not be transcribed again")

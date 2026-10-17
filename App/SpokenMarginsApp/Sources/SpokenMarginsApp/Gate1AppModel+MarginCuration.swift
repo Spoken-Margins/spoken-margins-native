@@ -51,6 +51,10 @@ extension Gate1AppModel {
 
     func retryAnchorContext(_ interjection: Interjection) {
         guard interjection.captureKind != .written else { return }
+        guard currentMargin(matching: interjection).verdict != .gone else {
+            reportFailure("That Margin was deleted, so its context can't be retried.")
+            return
+        }
         guard !pendingSourceContextInterjectionIds.contains(Self.marginIdentity(interjection)) else { return }
         if !scheduleSourceWindowContextIfNeeded(for: interjection, reportsResult: true) {
             reportWarning("Context needs a source timestamp and completed Margin transcription. Retry when transcription finishes.")
@@ -59,7 +63,7 @@ extension Gate1AppModel {
 
     /// The Margin as stored now, with the verdict on retranscribing it. A Retry offer holds the Margin as it
     /// was when the failure was posted, so deleting the Margin or its item must not leave that copy usable (#430).
-    private func currentMargin(matching interjection: Interjection) -> (margin: Interjection?, verdict: MarginTranscriptionRetry.Verdict) {
+    func currentMargin(matching interjection: Interjection) -> (margin: Interjection?, verdict: MarginTranscriptionRetry.Verdict) {
         let store = try? requireStore()
         let current = (try? store?.loadInterjections(sessionId: interjection.sessionId))?.first { $0.id == interjection.id }
         let itemDeletedAt = (try? store?.loadItem(id: interjection.itemId))?.deletedAt
@@ -114,8 +118,7 @@ extension Gate1AppModel {
         run { engine in
             snapshot = try engine.deleteInterjection(interjectionId: interjection.id, sessionId: interjection.sessionId)
             refreshSelectedItem()
-            // Its failed-transcription Retry would otherwise outlive it, and the error that offers Retry
-            // also keeps this confirmation from replacing it (#430).
+            // Its failed-transcription Retry would otherwise outlive it (#430).
             withdrawRetryOffer(Self.transcriptionRetryKey(interjection))
             reportSuccess("Deleted Margin.")
         }
