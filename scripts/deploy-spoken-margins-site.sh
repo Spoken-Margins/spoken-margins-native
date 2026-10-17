@@ -5,7 +5,8 @@ IFS=$'\n\t'
 
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 site_directory="${repository_root}/Site"
-vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-root@72.60.117.194}"
+# `ptp` is an alias in the owner's ~/.ssh/config for the VPS; set SPOKEN_MARGINS_VPS_REMOTE to use another host.
+vps_remote="${SPOKEN_MARGINS_VPS_REMOTE:-root@ptp}"
 ssh_key="${SPOKEN_MARGINS_VPS_SSH_KEY:-}"
 site_host="spokenmargins.proximitytoprogress.com"
 web_root="/srv/www/spokenmargins"

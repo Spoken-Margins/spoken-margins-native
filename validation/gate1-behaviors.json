@@ -690,7 +690,7 @@
       "title": "Listening Map overview plays before source audio",
       "specSources": [
         "docs/prototype-spec.md:344",
-        "/Users/colemiller/Documents/GitHub/interject/src/App.tsx"
+        "interject prototype repo: src/App.tsx"
       ],
       "userPath": "Start item playback for an item with a Listening Map overview",
       "corePath": "SessionEngine.startSession -> playbackText -> itemPlaybackPreface",
@@ -710,8 +710,8 @@
       "id": "G1-PREPARED-SUMMARY-SEQUENCING",
       "title": "Prepared source summaries wait for item completion and AI-turn summaries do not interrupt active AI playback",
       "specSources": [
-        "/Users/colemiller/Documents/GitHub/interject/src/App.tsx",
-        "/Users/colemiller/Documents/GitHub/interject/src/App.test.tsx"
+        "interject prototype repo: src/App.tsx",
+        "interject prototype repo: src/App.test.tsx"
       ],
       "userPath": "Prepare summary during source playback; summarize interjections during AI response playback",
       "corePath": "Gate1AppModel.autoPlayCompletedTurn/playPendingTurnIfReady -> SessionEngine.aiJobCompleted/playTurn",
@@ -738,8 +738,8 @@
       "id": "G1-AI-TURN-TIMELINE-NAVIGATION",
       "title": "AI turns and AI-turn chapters are playable from the primary timeline",
       "specSources": [
-        "/Users/colemiller/Documents/GitHub/interject/src/App.test.tsx:331",
-        "/Users/colemiller/Documents/GitHub/interject/src/App.tsx:3137"
+        "interject prototype repo: src/App.test.tsx:331",
+        "interject prototype repo: src/App.tsx:3137"
       ],
       "userPath": "Playback -> Timeline -> AI turn or AI chapter row",
       "corePath": "Gate1RootView.timeline -> Gate1AppModel.playTurn/jumpToTurnChapter -> SessionEngine.playTurn/jumpToTurnChapter",
