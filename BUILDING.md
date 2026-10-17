@@ -78,13 +78,13 @@ xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp \
   CODE_SIGNING_ALLOWED=NO build-for-testing
 ```
 
-The hosted CI job builds the same way. `SpokenMarginsNative.xcodeproj` is committed; you only need `xcodegen generate` after editing `project.yml`.
+The hosted CI job's device build uses the same scheme and `CODE_SIGNING_ALLOWED=NO` (its simulator job builds the `SpokenMarginsAppBehavior` scheme instead). `SpokenMarginsNative.xcodeproj` is committed; you only need `xcodegen generate` after editing `project.yml`.
 
 ## Run on your own iPhone
 
 `project.yml` names the owner's Apple developer team and bundle identifiers, so a device build with your team needs more than a team override. Until the team moves to a local config (#1841), do all of this on your own copy:
 
-1. In `project.yml`, replace `DEVELOPMENT_TEAM` and every `com.spokenmargins.native` bundle identifier (app, widget, Safari extension, share extension) with your own, and the App Group `group.com.spokenmargins.native` in the four `.entitlements` files and in the three Swift files that name it (`Gate5BrowserTextHandoffStoreAppGroup.swift`, `SafariWebExtensionHandler.swift`, `SourceLinkHandoff.swift`).
+1. In `project.yml`, replace `DEVELOPMENT_TEAM` and every `com.spokenmargins.native` bundle identifier (app, widget, Safari extension, share extension) with your own, and the App Group `group.com.spokenmargins.native` in every file that names it. List them with `grep -rl group.com.spokenmargins.native App`; they are the `.entitlements` files and some Swift files.
 2. Remove the `applinks:` associated domain from the app's entitlements. Universal links belong to the owner's domain.
 3. Run `xcodegen generate`, open `SpokenMarginsNative.xcodeproj` in Xcode, pick your iPhone and run.
 
@@ -98,4 +98,4 @@ Do not commit those edits to a pull request.
 
 ## Check this page
 
-`scripts/check-fresh-clone.sh` clones the committed `HEAD` into an empty temporary folder, with no `.venv`, no `node_modules` and nothing from another checkout, and runs the steps above. It skips a step whose tool is missing and then says `PARTIAL PASS`, never `PASS`. Add `--app-build` for the simulator build on a Mac.
+`scripts/check-fresh-clone.sh` clones the committed `HEAD` into an empty temporary folder, with no `.venv`, no `node_modules` and nothing from another checkout, and runs the steps above. It stops at once if git-lfs is missing. It skips any other step whose tool is missing and then says `PARTIAL PASS`, never `PASS`. Add `--app-build` for the simulator build on a Mac.

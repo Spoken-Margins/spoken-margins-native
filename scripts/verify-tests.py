@@ -393,8 +393,9 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
 # app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
-# Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json and .gitattributes; the SessionKit pass key's reader guard reads every Swift file of the package (re-measured
-# 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
+# Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json, .gitattributes,
+# the hosted workflow and the App Group names in App/; the SessionKit pass key's reader guard reads every
+# Swift file of the package (re-measured 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
 # `python -m unittest discover -s scripts/tests` there and on a full checkout: the classes that fail only in
