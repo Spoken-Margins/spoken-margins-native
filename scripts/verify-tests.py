@@ -393,7 +393,7 @@ RUNNER_TEST_TRIGGERS = ('scripts/', '.github/', '.gitignore')
 # checks that the hot files exist under App/; the research harness test reads research/; and the lane
 # runner's T3 scope and "only testing" tests, and one lane-sim test, plan against the real TestPlans/ and the
 # app test sources; the sharing kit's tests read docs/sharing-test-kit/ and the packet and sharing sources under
-# Packages/ and App/; the SessionKit pass key's reader guard reads every Swift file of the package (re-measured
+# Packages/ and App/; the BUILDING.md test reads that file, README.md, package.json and .gitattributes; the SessionKit pass key's reader guard reads every Swift file of the package (re-measured
 # 2026-10-09; the guard added 2026-10-10, #1328). A diff that touches those inputs (and no lane path) runs just
 # these (a module, or a module.Class); the rest of the suite reads only scripts/.
 # To re-measure the list, copy scripts/, .github/ and .gitignore into a fresh git repository, run
@@ -404,9 +404,10 @@ RUNNER_TEST_READERS = ('test_filled_button_contrast', 'test_filled_button_labels
                        'test_validate_contracts', 'test_hot_file_ratchet', 'test_research_tests',
                        'test_lane_runner.OnlyTestingTests', 'test_lane_runner.ScopeClassTests',
                        'test_lane_runner.T3Tests', 'test_lane_sim.LaneSimTests', 'test_sharing_kit',
-                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved')
+                       'test_sessionkit_pass', 'test_mini_player_keep_out', 'test_package_resolved',
+                       'test_building_md')
 RUNNER_TEST_INPUTS = ('App/', 'Packages/', 'Contracts/', 'TestPlans/', 'validation/', 'research/', 'project.yml',
-                      'docs/sharing-test-kit/')
+                      'docs/sharing-test-kit/', 'BUILDING.md', 'README.md', 'package.json', '.gitattributes')
 # The ops tests read their own folder and scripts/lane-runner.py (the audit's test), test-scope and the release
 # files, so they follow the ops tools and anything the runner tests follow, plus the build inputs. The Codex
 # audit's tests also check that AGENTS.md is at the repository root. Re-measured 2026-10-09 the same way as

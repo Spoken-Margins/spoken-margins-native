@@ -32,6 +32,8 @@ The active product boundary and stopping rules are in `Contracts/docs/recovery-m
 
 ## Development Setup
 
+Starting from a fresh clone? [BUILDING.md](BUILDING.md) has the tool versions, the Git LFS step, the host tests and the simulator build. In short:
+
 Bootstrap the repository-local Python environment before running the contract validators:
 
 ```bash
