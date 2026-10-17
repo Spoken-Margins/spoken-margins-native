@@ -2,65 +2,109 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://spokenmargins.local/schemas/spoken-margins-package.schema.json",
   "title": "Spoken Margins portable package manifest",
+  "description": "manifest.json of a .spokenmargins packet, as SpokenMarginsPackageArchive (SessionKitSharing) writes and reads it. Every shipped reader refuses a key not listed here. Rules that span several fields (item transport, the digest, the preview) are in Contracts/README.md and Contracts/tools/spoken_margins_format.py.",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schemaVersion", "packageId", "createdAt", "contentDigest", "source",
-    "requiredCapabilities", "artifacts", "assets", "redactions"
+    "schemaVersion",
+    "packageId",
+    "createdAt",
+    "contentDigest",
+    "item",
+    "itemTransport",
+    "requiredCapabilities",
+    "artifacts",
+    "assets",
+    "redactions"
   ],
   "properties": {
     "schemaVersion": { "const": "spoken-margins.package.v1" },
     "packageId": { "type": "string", "minLength": 1, "maxLength": 200 },
     "createdAt": { "type": "string", "format": "date-time" },
     "contentDigest": { "$ref": "#/$defs/sha256" },
+    "item": { "$ref": "#/$defs/item" },
+    "itemTransport": { "$ref": "#/$defs/itemTransport" },
     "senderDisplayLabel": { "type": ["string", "null"], "maxLength": 120 },
     "suggestedRevealMode": { "enum": ["fresh", "companion", "guided", null] },
-    "source": { "$ref": "#/$defs/source" },
     "requiredCapabilities": {
-      "type": "array", "uniqueItems": true,
-      "items": { "type": "string", "minLength": 1, "maxLength": 200 }
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
     },
     "artifacts": {
-      "type": "array", "minItems": 1, "maxItems": 25,
+      "type": "array",
+      "minItems": 1,
       "items": { "$ref": "#/$defs/artifact" }
     },
     "assets": {
-      "type": "array", "maxItems": 200,
+      "type": "array",
       "items": { "$ref": "#/$defs/asset" }
     },
     "redactions": { "$ref": "#/$defs/redactions" }
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "httpsURL": { "type": "string", "format": "uri", "pattern": "^[hH][tT][tT][pP][sS]://" },
-    "source": {
-      "type": "object", "additionalProperties": false,
-      "required": ["sourceType", "canonicalURL", "title"],
+    "optionalSHA256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+    "httpsURL": { "type": "string", "pattern": "^[hH][tT][tT][pP][sS]://[^\\s<>@/]+(/[^\\s<>]*)?$" },
+    "optionalHTTPSURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
+    "optionalText": { "type": ["string", "null"] },
+    "item": {
+      "description": "SharedItemIdentity: what the Margins are about. canonicalURL is the item's public address; exactEditionSHA256 names the exact text the character offsets were taken from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["itemType", "title"],
       "properties": {
-        "sourceType": { "enum": ["article", "podcast", "other"] },
-        "canonicalURL": { "$ref": "#/$defs/httpsURL" },
-        "originalURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
-        "feedURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
-        "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "itemType": { "enum": ["text", "podcast", "pdf", "epub", "other"] },
+        "canonicalURL": { "$ref": "#/$defs/optionalHTTPSURL" },
+        "originalURL": { "$ref": "#/$defs/optionalHTTPSURL" },
+        "title": { "type": "string", "minLength": 1, "maxLength": 500, "pattern": "\\S" },
         "author": { "type": ["string", "null"], "maxLength": 300 },
         "publisher": { "type": ["string", "null"], "maxLength": 300 },
         "showTitle": { "type": ["string", "null"], "maxLength": 500 },
         "episodeGUID": { "type": ["string", "null"], "maxLength": 1000 },
-        "enclosureURL": { "anyOf": [{ "$ref": "#/$defs/httpsURL" }, { "type": "null" }] },
+        "enclosureURL": { "$ref": "#/$defs/optionalHTTPSURL" },
         "publishedAt": { "type": ["string", "null"], "maxLength": 100 },
         "durationMs": { "type": ["integer", "null"], "minimum": 0 },
-        "normalizedContentSHA256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
-        "exactEditionSHA256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
-        "languageCode": { "type": ["string", "null"], "maxLength": 35 }
+        "normalizedContentSHA256": { "$ref": "#/$defs/optionalSHA256" },
+        "exactEditionSHA256": { "$ref": "#/$defs/optionalSHA256" },
+        "languageCode": { "type": ["string", "null"], "maxLength": 35 },
+        "source": {
+          "description": "SharedSourceIdentity: the feed or site the item belongs to.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["sourceType", "canonicalURL"],
+              "properties": {
+                "sourceType": { "enum": ["podcast_feed", "text_feed", "newsletter", "blog", "social_feed", "other"] },
+                "canonicalURL": { "$ref": "#/$defs/httpsURL" },
+                "title": { "type": ["string", "null"], "maxLength": 500 },
+                "publisher": { "type": ["string", "null"], "maxLength": 300 }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "itemTransport": {
+      "description": "How the recipient gets the item: reference (they open canonicalURL), recipient_supplied (they bring their own copy) or embedded_text (the text travels as an embedded_text_item artifact, after a rights confirmation).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["reference", "embedded_text", "recipient_supplied"] },
+        "embeddedArtifactId": { "type": ["string", "null"] },
+        "rightsBasis": { "enum": ["app_authored", "sender_confirmed_private_rights", null] }
       }
     },
     "artifact": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "required": ["id", "kind", "schemaVersion", "path", "required", "byteCount", "sha256"],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "kind": { "type": "string", "minLength": 1, "maxLength": 100 },
-        "schemaVersion": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "string", "minLength": 1 },
         "path": { "type": "string", "pattern": "^artifacts/[A-Za-z0-9._-]+\\.json$" },
         "required": { "type": "boolean" },
         "byteCount": { "type": "integer", "minimum": 0, "maximum": 5242880 },
@@ -68,34 +112,48 @@
       }
     },
     "asset": {
-      "type": "object", "additionalProperties": false,
+      "type": "object",
+      "additionalProperties": false,
       "required": ["id", "role", "path", "mimeType", "provenance", "byteCount", "sha256"],
       "properties": {
-        "id": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "role": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "id": { "type": "string", "minLength": 1 },
+        "role": { "type": "string", "minLength": 1 },
         "path": {
           "type": "string",
           "pattern": "^assets/(audio/[A-Za-z0-9._-]+\\.m4a|evidence/[A-Za-z0-9._-]+\\.shazamsignature)$"
         },
-        "mimeType": { "enum": ["audio/mp4", "application/vnd.apple.shazam.signature"] },
+        "mimeType": { "type": "string", "minLength": 1 },
         "durationMs": { "type": ["integer", "null"], "minimum": 0, "maximum": 600000 },
-        "anchorOffsetMs": { "type": ["integer", "null"], "minimum": -600000, "maximum": 600000 },
-        "provenance": { "type": "string", "minLength": 1, "maxLength": 200 },
-        "byteCount": { "type": "integer", "minimum": 0, "maximum": 20971520 },
+        "anchorOffsetMs": {
+          "description": "The media anchor time measured from the start of this evidence clip; negative when the clip begins after the anchor.",
+          "type": ["integer", "null"],
+          "minimum": -600000,
+          "maximum": 600000
+        },
+        "provenance": { "type": "string", "maxLength": 200 },
+        "byteCount": { "type": "integer", "minimum": 0 },
         "sha256": { "$ref": "#/$defs/sha256" }
       }
     },
     "redactions": {
-      "type": "object", "additionalProperties": false,
+      "description": "What the packet leaves out. Every flag but fullItemOmitted must be true; fullItemOmitted is false only for embedded_text transport.",
+      "type": "object",
+      "additionalProperties": false,
       "required": [
-        "rawAudioOmitted", "rawTranscriptOmitted", "fullSourceTextOmitted", "sourceAudioOmitted",
-        "diagnosticsOmitted", "filesystemPathsOmitted", "unrelatedTurnsOmitted", "privateRepresentationsOmitted"
+        "rawAudioOmitted",
+        "rawTranscriptOmitted",
+        "fullItemOmitted",
+        "itemAudioOmitted",
+        "diagnosticsOmitted",
+        "filesystemPathsOmitted",
+        "unrelatedTurnsOmitted",
+        "privateRepresentationsOmitted"
       ],
       "properties": {
         "rawAudioOmitted": { "const": true },
         "rawTranscriptOmitted": { "const": true },
-        "fullSourceTextOmitted": { "const": true },
-        "sourceAudioOmitted": { "const": true },
+        "fullItemOmitted": { "type": "boolean" },
+        "itemAudioOmitted": { "const": true },
         "diagnosticsOmitted": { "const": true },
         "filesystemPathsOmitted": { "const": true },
         "unrelatedTurnsOmitted": { "const": true },
