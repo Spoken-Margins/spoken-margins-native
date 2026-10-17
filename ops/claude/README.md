@@ -62,8 +62,7 @@ I could not do these from the cloud, so they are written out and untried. The co
 
 ```zsh
 mkdir -p ~/SpokenMarginsOps/claude-worker
-cp ~/SpokenMarginsOps/repo/ops/claude/com.spokenmargins.claude-worker.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.claude-worker.plist
+/usr/bin/python3 ~/SpokenMarginsOps/repo/ops/install-launchd.py --install claude-worker
 ```
 
 5. The Codex worker is gone (unloaded 2026-10-17, files deleted by #1853). If `~/Library/LaunchAgents/com.spokenmargins.codex-worker.plist` is still there, delete it.

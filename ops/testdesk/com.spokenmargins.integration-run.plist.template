@@ -7,10 +7,10 @@
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/bin/python3</string>
-		<string>/Users/colemiller/SpokenMarginsOps/repo/ops/testdesk/sm_integration_run.py</string>
+		<string>@HOME@/SpokenMarginsOps/repo/ops/testdesk/sm_integration_run.py</string>
 	</array>
 	<key>WorkingDirectory</key>
-	<string>/Users/colemiller/SpokenMarginsOps/repo</string>
+	<string>@HOME@/SpokenMarginsOps/repo</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -27,6 +27,6 @@
 	<key>StandardOutPath</key>
 	<string>/dev/null</string>
 	<key>StandardErrorPath</key>
-	<string>/Users/colemiller/SpokenMarginsOps/integration-run/launchd.err</string>
+	<string>@HOME@/SpokenMarginsOps/integration-run/launchd.err</string>
 </dict>
 </plist>

@@ -77,6 +77,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ledger import usage
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+import sm_paths
+sys.path.insert(0, str(sm_paths.repo(__file__) / "scripts"))  # the public checkout's lane modules (SM_REPO)
 from lane_dedupe import GitHubApi, automerge_holds_a_slot
 from lane_audit_policy import PERSISTENCE_PATTERNS, NEVER_RISKY_RE
 import lane_inherited_holds as inherited
@@ -89,8 +91,8 @@ REPO = "uncomposed/spoken-margins-native"
 BASE_BRANCH = "next"
 AUTOMERGE = "automerge"
 HERE = Path(__file__).resolve().parent
-REPO_ROOT = HERE.parents[1]  # ops/codex/ -> repo root
-OPS_DIR = REPO_ROOT / "artifacts" / "ops"
+REPO_ROOT = sm_paths.repo(__file__)  # the public checkout it audits (SM_REPO)
+OPS_DIR = sm_paths.state_dir_or("codex-audit", REPO_ROOT / "artifacts" / "ops")  # SM_OPS_HOME moves it; unset it stays here
 LOG_PATH = OPS_DIR / "codex-audit.log"  # file names predate the switch to Claude; the launchd job writes here
 LOCK_PATH = OPS_DIR / "codex-audit.lock"
 OUTPUT_KEEP_DIR = OPS_DIR / "codex-audit-outputs"

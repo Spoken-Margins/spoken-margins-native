@@ -60,7 +60,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / 'scripts'))
 from ledger import usage  # noqa: E402
+import sm_paths  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -70,9 +72,9 @@ REPO = os.environ.get('SM_CLAUDE_WORKER_REPO', 'uncomposed/spoken-margins-native
 DIAL_ISSUE = int(os.environ.get('SM_DIAL_ISSUE', '589'))
 STATUS_ISSUE = int(os.environ.get('SM_DIAL_STATUS_ISSUE', '337'))
 BASE_BRANCH = 'next'
-REPO_ROOT = Path(__file__).resolve().parents[2]          # ops/claude/ -> repo root
-HOME_DIR = Path(os.environ.get('SM_CLAUDE_WORKER_HOME',
-                               str(Path.home() / 'SpokenMarginsOps' / 'claude-worker')))
+OWN_ROOT = sm_paths.own_root(__file__)                   # where this script lives (ops/, scripts/sm_project_sync.py)
+REPO_ROOT = sm_paths.repo(__file__)                      # the public checkout it works in (SM_REPO)
+HOME_DIR = Path(os.environ.get('SM_CLAUDE_WORKER_HOME') or sm_paths.state_dir('claude-worker'))
 
 CLAUDE = Path(os.environ.get('SM_CLAUDE_CLI', str(Path.home() / '.local' / 'bin' / 'claude')))
 KEYCHAIN_SERVICE = 'claude-code-oauth'     # the audit job's token (ops/codex/sm_codex_audit.py)
@@ -129,7 +131,7 @@ NEEDS_OWNER_RE = re.compile(r'^\s*NEEDS OWNER:\s*(.+)', re.I)
 def load_dial_gate():
     """ops/dial/dial_gate.py as a module, or None (the worker then reads Off)."""
     try:
-        here = str(REPO_ROOT / 'ops' / 'dial')
+        here = str(Path(__file__).resolve().parents[1] / 'dial')
         if here not in sys.path:
             sys.path.insert(0, here)
         import dial_gate  # type: ignore
@@ -770,18 +772,18 @@ def now_utc() -> dt.datetime:
 class Ops:
     """Everything with a side effect, so tests can swap each piece."""
 
-    def __init__(self, home: Path = HOME_DIR, repo_root: Path = REPO_ROOT,
+    def __init__(self, home: Path = HOME_DIR, repo_root: Path = REPO_ROOT, own_root: Path = OWN_ROOT,
                  run: Callable = default_run, claude: Optional[Callable] = None,
                  now: Callable = now_utc, alive: Callable = pid_alive,
                  free_bytes: Optional[Callable] = None, memory_ok: Callable = memory_normal,
                  token: Callable = keychain_token, echo: bool = True, ledger_dir: Optional[Path] = None):
-        self.home, self.repo_root = home, repo_root
+        self.home, self.repo_root, self.own_root = home, repo_root, own_root
         self.run, self.now, self.alive, self.memory_ok = run, now, alive, memory_ok
         self.claude = claude or (lambda wt, prompt, transcript, out_dir: default_claude(
             wt, prompt, transcript, out_dir, token))
         self.free_bytes = free_bytes or (lambda: shutil.disk_usage(str(Path.home())).free)
         self.echo = echo
-        self.ledger_dir = ledger_dir or (usage.DEFAULT_DIR if home.parent == Path.home() / 'SpokenMarginsOps'
+        self.ledger_dir = ledger_dir or (usage.DEFAULT_DIR if home.parent == sm_paths.ops_home()
                                          else home / 'ledger')
 
     def log(self, msg: str) -> None:
@@ -859,7 +861,7 @@ class Ops:
     def board_sync(self, number: Optional[int] = None, ledger: Optional[Path] = None) -> str:
         """Bring project 6's cards (or one issue's) in line with the evidence (#1621). Never raises.
         With `ledger` (the lane's state folder), the run's time and any unknowns go in the step ledger."""
-        script = self.repo_root / 'scripts' / 'sm_project_sync.py'
+        script = self.own_root / 'scripts' / 'sm_project_sync.py'
         if not script.exists():
             return 'skipped: scripts/sm_project_sync.py is not on this checkout'
         cmd = [sys.executable, str(script), '--apply'] + (['--issue', str(number)] if number else [])

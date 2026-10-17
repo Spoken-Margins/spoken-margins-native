@@ -12,7 +12,7 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/colemiller/Documents/GitHub/spoken-margins-native/ops/lane/sm_lane_power_guard.py</string>
+    <string>@HOME@/Documents/GitHub/spoken-margins-native/ops/lane/sm_lane_power_guard.py</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
@@ -26,8 +26,8 @@
   <key>AbandonProcessGroup</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/colemiller/SpokenMarginsOps/lane-power-guard/launchd.log</string>
+  <string>@HOME@/SpokenMarginsOps/lane-power-guard/launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/colemiller/SpokenMarginsOps/lane-power-guard/launchd.log</string>
+  <string>@HOME@/SpokenMarginsOps/lane-power-guard/launchd.log</string>
 </dict>
 </plist>

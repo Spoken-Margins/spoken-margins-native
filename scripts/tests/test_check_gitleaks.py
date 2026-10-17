@@ -3,7 +3,8 @@
 The scans run in a scratch repository holding the script, the config and a copy of every tracked file
 the config allowlists, so they take seconds instead of a full-tree pass. Tests that need gitleaks skip
 when it isn't installed (cloud threads lack it); the config's shape and the "not installed" line are
-checked everywhere.
+checked everywhere. Set SM_REQUIRE_TOOLS=1 where gitleaks must be present: a missing gitleaks then fails
+instead of skipping (#1905).
 """
 import os
 from pathlib import Path
@@ -18,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'scripts' / 'check-gitleaks.sh'
 CONFIG = ROOT / '.gitleaks.toml'
 GITLEAKS = shutil.which('gitleaks')
+REQUIRE_TOOLS = bool(os.environ.get('SM_REQUIRE_TOOLS'))
+needs_gitleaks = unittest.skipUnless(GITLEAKS or REQUIRE_TOOLS, 'gitleaks not installed')
 # High entropy, shaped like an assignment, so gitleaks' generic-api-key rule fires on it. It's assembled
 # at run time so this file, and its .pyc, don't hold the line and trip the repository's own scan.
 FAKE_KEY_LINE = 'let apiKey = "%s"\n' % 'q8Vx3LmP0zRt7KwN2bYc5HdJ9sFg4AeU'
@@ -69,6 +72,13 @@ class ConfigShapeTests(unittest.TestCase):
                     self.assertTrue(any(re.search(path, f) for f in files), path)
 
 
+class ToolPresenceTests(unittest.TestCase):
+    @unittest.skipUnless(REQUIRE_TOOLS, 'SM_REQUIRE_TOOLS is not set')
+    def test_gitleaks_is_installed_where_it_is_required(self):
+        # Without it every scan test below would skip or pass on the script's "skipped" line.
+        self.assertIsNotNone(GITLEAKS, 'SM_REQUIRE_TOOLS is set but gitleaks is not on PATH')
+
+
 class CheckGitleaksScriptTests(unittest.TestCase):
     def setUp(self):
         self.scratch = Path(tempfile.mkdtemp(prefix='check-gitleaks-test-'))
@@ -98,13 +108,13 @@ class CheckGitleaksScriptTests(unittest.TestCase):
     def test_rejects_unknown_arguments(self):
         self.assertEqual(self.run_script('--everything').returncode, 2)
 
-    @unittest.skipUnless(GITLEAKS, 'gitleaks not installed')
+    @needs_gitleaks
     def test_known_look_alikes_scan_clean(self):
         self.assertTrue(allowlisted_tracked_files())
         result = self.run_script()
         self.assertEqual(result.returncode, 0, result.stdout[-2000:] + result.stderr[-2000:])
 
-    @unittest.skipUnless(GITLEAKS, 'gitleaks not installed')
+    @needs_gitleaks
     def test_new_key_in_an_allowlisted_file_still_fails(self):
         target = self.scratch / 'Packages/SessionKit/Tests/SessionKitTests/PrivateFeedLinkTests.swift'
         with target.open('a') as handle:
@@ -113,12 +123,12 @@ class CheckGitleaksScriptTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout[-2000:] + result.stderr[-2000:])
         self.assertIn('PrivateFeedLinkTests.swift', result.stdout + result.stderr)
 
-    @unittest.skipUnless(GITLEAKS, 'gitleaks not installed')
+    @needs_gitleaks
     def test_new_key_in_a_new_file_fails(self):
         (self.scratch / 'Config.swift').write_text(FAKE_KEY_LINE)
         self.assertEqual(self.run_script().returncode, 1)
 
-    @unittest.skipUnless(GITLEAKS, 'gitleaks not installed')
+    @needs_gitleaks
     def test_crash_reporter_keys_in_old_crash_reports_scan_clean(self):
         # History only, so the tree scan never sees these; scan a synthetic report with the config.
         # The ID is joined at run time for the same reason as FAKE_KEY_LINE.
@@ -138,7 +148,7 @@ class CheckGitleaksScriptTests(unittest.TestCase):
         result = scan(CONFIG)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
 
-    @unittest.skipUnless(GITLEAKS, 'gitleaks not installed')
+    @needs_gitleaks
     def test_ignored_and_deleted_files_stay_out_of_the_tree_scan(self):
         # Local output under an ignored folder is never published, so it isn't scanned.
         (self.scratch / 'artifacts').mkdir()

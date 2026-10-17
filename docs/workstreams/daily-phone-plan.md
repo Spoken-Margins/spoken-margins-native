@@ -16,7 +16,7 @@ This PR does not install a job or change the Desktop copy of the shortcut.
    `swift build --package-path Packages/SessionKit -c release --product phone-plan --disable-sandbox`
 2. Configure the authenticated project-chat relay in the LaunchAgent environment: `SM_DAILY_RELAY_URL` and `SM_DAILY_RELAY_TOKEN`. It uses the existing Dial/lane-open `/fire` contract (`ops/lane/README.md`); `SM_LANE_OPEN_URL` and `SM_LANE_OPEN_TOKEN` are accepted too. Keep the token out of git. Authenticate the Claude CLI under this Mac login as for the audit. `SM_DAILY_CLAUDE` and `SM_DAILY_VALIDATOR` can override executable paths.
 3. Refresh the Desktop **Install Spoken Margins on iPhone.command** from `scripts/install-phone-build.command` so it honors the daily pin. Keep the existing Desktop name. The rolling LaunchAgent is unchanged.
-4. Copy `scripts/com.spokenmargins.daily-phone-plan.plist` into `~/Library/LaunchAgents/` with the configured relay environment, then run:
+4. Render the job with `ops/install-launchd.py --print daily-phone-plan`, add the relay variables to its `EnvironmentVariables`, save it as `~/Library/LaunchAgents/com.spokenmargins.daily-phone-plan.plist`, then run:
    `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.daily-phone-plan.plist`
 5. Run `scripts/daily-phone-plan --on-request` for a first attended delivery. Confirm one project-chat announcement, one Mac notification with the duration, and the same commit in the plan, binary and Settings > Version. Run the walkthrough on the phone without deleting existing content.
 
