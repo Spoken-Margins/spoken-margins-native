@@ -27,7 +27,14 @@ def front_matter(path):
 
 
 def labels(fields):
-    return {label.strip() for label in fields.get('labels', '').split(',') if label.strip()}
+    """The labels a template sets, as GitHub reads them: comma separated, optional brackets and quotes, any case."""
+    raw = fields.get('labels', '').strip().strip('[]')
+    return {label.strip().strip('"\'').lower() for label in raw.split(',') if label.strip().strip('"\'')}
+
+
+def forms():
+    """Issue forms (.yml) set labels too; none exist yet, and one that does must be reviewed against this test."""
+    return sorted(path for path in TEMPLATES.glob('*.yml') if path.name != 'config.yml')
 
 
 class IssueTemplateTests(unittest.TestCase):
@@ -45,6 +52,15 @@ class IssueTemplateTests(unittest.TestCase):
         for path in sorted(TEMPLATES.glob('*.md')):
             with self.subTest(path.name):
                 self.assertEqual(labels(front_matter(path)) & FORBIDDEN_LABELS, set())
+
+    def test_there_are_no_issue_forms_this_test_does_not_parse(self):
+        self.assertEqual(forms(), [], 'a .yml issue form can set labels: extend this test to parse it before adding one')
+
+    def test_label_parsing_reads_the_spellings_github_accepts(self):
+        for spelling in ('ready', 'Ready', '[ready]', '["ready"]', 'needs-triage-review, "Ready"'):
+            with self.subTest(spelling):
+                self.assertIn('ready', labels({'labels': spelling}))
+        self.assertEqual(labels({}), set())
 
     def test_outsider_templates_set_only_needs_triage_review(self):
         for name in sorted(OUTSIDER):
