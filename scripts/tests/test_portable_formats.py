@@ -116,6 +116,26 @@ class BothDirectionsTests(unittest.TestCase):
         self.manifest['createdAt'] = 'October 9'
         self.assertEqual(verdict(self.packet()), 'invalid-manifest')
 
+    def test_a_very_repetitive_transcript_is_written_the_way_the_readers_accept(self):
+        # Claude audit on f529489: deflate squeezes this past the 100x ratio every shipped reader refuses, so the
+        # Swift writer stores such an entry uncompressed, and stores every asset uncompressed.
+        layer = self.layer()
+        layer['interjections'][0]['representations'][0]['approvedTranscript'] = 'ha ' * 16_000
+        self.set_layer(layer)
+        self.manifest['assets'].append({'id': 'asset-voice', 'mimeType': 'audio/mp4', 'path': 'assets/audio/voice.m4a',
+                                        'provenance': 'sender_approved_original', 'role': 'original_voice'})
+        self.assets['assets/audio/voice.m4a'] = b'\0\0\0\x18ftypM4A ' + b'\0' * 4096
+        packet = self.packet()
+        self.assertEqual(verdict(packet), 'valid')
+        with zipfile.ZipFile(io.BytesIO(packet)) as archive:
+            infos = archive.infolist()
+        methods = {info.filename: info.compress_type for info in infos}
+        for info in infos:
+            self.assertLessEqual(info.file_size // max(1, info.compress_size), fmt.MAX_COMPRESSION_RATIO, info.filename)
+        self.assertEqual(methods['preview.md'], zipfile.ZIP_STORED)
+        self.assertEqual(methods['assets/audio/voice.m4a'], zipfile.ZIP_STORED)
+        self.assertEqual(methods['manifest.json'], zipfile.ZIP_DEFLATED)
+
     def test_unknown_optional_artifacts_are_skipped_and_required_ones_refused(self):
         for kind, version, required, expected in [
             ('listening_map_proposal', 'spoken-margins.listening-map-proposal.v3', False, 'valid'),

@@ -33,6 +33,7 @@ import unicodedata
 import urllib.parse
 import uuid
 import zipfile
+import zlib
 
 CONTRACTS = Path(__file__).resolve().parents[1]
 SCHEMAS = CONTRACTS / 'schemas'
@@ -888,11 +889,34 @@ def write_packet(manifest, artifacts, assets=None, preview=None, extra_entries=N
     manifest['contentDigest'] = content_digest(manifest, preview, {**artifacts, **assets})
     entries = [('manifest.json', encode_manifest(manifest)), ('preview.md', preview)]
     entries += sorted(artifacts.items()) + sorted(assets.items()) + list((extra_entries or {}).items())
+    return _zip(entries)
+
+
+def _deflated_size(body):
+    """The size zipfile's ZIP_DEFLATED writes for `body` (raw deflate at the default level)."""
+    compressor = zlib.compressobj(zlib.Z_DEFAULT_COMPRESSION, zlib.DEFLATED, -15)
+    return len(compressor.compress(body) + compressor.flush())
+
+
+def compression_for(name, body):
+    """The Swift writer's choice (SpokenMarginsPackageArchive.write, addDeflatedWithinReaderLimit): assets are
+    stored as they are; every other entry is deflated unless that would pass the 100x ratio the readers refuse
+    (very repetitive text does), in which case it is stored too."""
+    if name.startswith('assets/'):
+        return zipfile.ZIP_STORED
+    deflated = _deflated_size(body)
+    if deflated > 0 and len(body) // max(1, deflated) > MAX_COMPRESSION_RATIO:
+        return zipfile.ZIP_STORED
+    return zipfile.ZIP_DEFLATED
+
+
+def _zip(entries):
+    """Zip (name, bytes) pairs in order with a fixed date, compressed the way the Swift writer does."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w') as archive:
         for name, body in entries:
             info = zipfile.ZipInfo(name, date_time=FIXED_ZIP_DATE)
-            info.compress_type = zipfile.ZIP_DEFLATED
+            info.compress_type = compression_for(name, body)
             info.external_attr = 0o644 << 16
             archive.writestr(info, body)
     return buffer.getvalue()
@@ -1054,15 +1078,8 @@ def corpus(sources=EXAMPLES):
 
 def _rezip(manifest, preview, artifacts, assets):
     """Zip a manifest as it is, without recomputing anything: a packet edited after export."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, 'w') as archive:
-        for name, body in [('manifest.json', encode_manifest(manifest)), ('preview.md', preview)] + \
-                sorted(artifacts.items()) + sorted(assets.items()):
-            info = zipfile.ZipInfo(name, date_time=FIXED_ZIP_DATE)
-            info.compress_type = zipfile.ZIP_DEFLATED
-            info.external_attr = 0o644 << 16
-            archive.writestr(info, body)
-    return buffer.getvalue()
+    return _zip([('manifest.json', encode_manifest(manifest)), ('preview.md', preview)]
+                + sorted(artifacts.items()) + sorted(assets.items()))
 
 
 # --- command line -------------------------------------------------------------------------------------------------
