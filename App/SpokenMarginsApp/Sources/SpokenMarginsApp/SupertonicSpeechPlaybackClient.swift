@@ -2027,6 +2027,9 @@ final class SupertonicSpeechPlaybackClient: NSObject, AudioPlaybackClient, @unch
                 cached.request.generation = rebind
                 return cached
             }
+            // A chain resting ahead (#1681) or a split first chunk (#849) restarts in the new generation, or never lands.
+            restingRender = restingRender.flatMap { $0.startOffset >= request.startOffset ? Self.rebound([$0], to: rebind).first : nil }
+            fastStartOriginals = fastStartOriginals.mapValues { Self.rebound([$0], to: rebind)[0] }
             bundledVoiceGeneration = generation
             bundledVoiceBlock = .backgroundGap
             savedRunGeneration = nil

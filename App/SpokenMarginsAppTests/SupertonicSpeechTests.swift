@@ -2064,6 +2064,46 @@ final class SupertonicSpeechTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(harness.renderer.startedCount, 3, "C renders while B plays")
     }
 
+    // #1786 (b): Supertonic is reading with the app in the background and the next chunk isn't rendered at the seam.
+    // With the bundled voice there, it takes the passage and the rest of the item, not the iOS voice; Supertonic's late
+    // render of that chunk doesn't take the voice back.
+    func testABackgroundGapGoesToTheBundledVoiceNotTheIOSVoice() async throws {
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let (gate, openGate) = AsyncStream<Void>.makeStream()
+        openGate.finish()
+        let bundled = GatedBundledVoiceRenderer(templateURL: template, gatedRender: 0, gate: gate)
+        let harness = try SupertonicClientHarness(heldRenders: [2], applicationIsActive: { false }, pressureRenderer: bundled)
+        defer { harness.tearDown() }
+        let chunk = harness.chunkStarts
+        try await harness.start(waitingForRenders: 1)
+        await harness.waitForRenderStarts(2)
+        let before = harness.playerStarts
+
+        await harness.finishPlayingChunk()
+        let next = await harness.waitForPlayerStarts(before + 1)
+        XCTAssertTrue(next, "B plays from the bundled voice without waiting for Supertonic")
+        XCTAssertEqual(harness.playingChunkStart, chunk[1])
+        XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty, "the iOS voice never spoke")
+        XCTAssertFalse(harness.client.isSystemVoiceActive)
+        XCTAssertTrue(harness.fallbackReasons.values.isEmpty, "no hand-over to the iOS voice")
+        var kittenRenders = await bundled.renderCount
+        XCTAssertGreaterThanOrEqual(kittenRenders, 1)
+
+        // Supertonic's render of B lands late; the item stays with the bundled voice at the next seam too.
+        harness.releaseRender(2)
+        for _ in 0..<150 where kittenRenders < 2 {
+            try await Task.sleep(for: .milliseconds(20))
+            kittenRenders = await bundled.renderCount
+        }
+        XCTAssertGreaterThanOrEqual(kittenRenders, 2, "the bundled voice renders C ahead")
+        // B (one second of the bundled voice) ends by itself and C follows.
+        try await Task.sleep(for: .milliseconds(2500))
+        XCTAssertGreaterThan(harness.playingChunkStart, chunk[1], "narration moved on past B")
+        XCTAssertEqual(harness.renderer.startedCount, 2, "Supertonic renders nothing after the gap")
+        XCTAssertTrue(harness.systemVoice.playedOffsets.isEmpty)
+    }
+
     // The same failed hand-over on a phone that may not render with Supertonic (hot, or Low Power Mode): the bundled
     // voice is rendering, and the chunk it was still rendering plays when it lands, not held until the listener's next
     // play (#1673 audit).
