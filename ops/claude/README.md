@@ -62,8 +62,7 @@ I could not do these from the cloud, so they are written out and untried. The co
 
 ```zsh
 mkdir -p ~/SpokenMarginsOps/claude-worker
-cp ~/SpokenMarginsOps/repo/ops/claude/com.spokenmargins.claude-worker.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.claude-worker.plist
+/usr/bin/python3 ~/SpokenMarginsOps/repo/ops/install-launchd.py --install claude-worker
 ```
 
 5. After 2026-10-15, unload the Codex worker (the job here and the Codex one never run together on one issue, because the Codex worker skips `where:mac`, but the Codex allowance is gone):

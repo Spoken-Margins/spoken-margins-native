@@ -10,7 +10,7 @@ One place for every job that runs on a clock or an event and drives the project,
 |---|---|---|
 | Project routines | Claude routines on the owner's project | The routine list (`list_triggers`). Not in this repo. |
 | Claude scheduled tasks and loops | The owner's Mac, `~/.claude/scheduled-tasks/` and long-running threads | Outside this repo. |
-| Mac launchd jobs | `~/Library/LaunchAgents/`, one plist per job | Plists in this repo (`ops/`, `scripts/`), copied by hand. |
+| Mac launchd jobs | `~/Library/LaunchAgents/`, one plist per job | Plist templates in this repo (`ops/`, `scripts/`), rendered and installed with `ops/install-launchd.py` (`--list`, `--print JOB`, `--install JOB`, `--remove JOB`). The templates hold `@HOME@`; nothing is installed or reloaded by merging one. |
 | VPS systemd | The owner's VPS | Units in this repo (`ops/dial/`, `research/B4/deploy/`), installed by `deploy.sh`. |
 | GitHub Actions | `.github/workflows/` | Workflow files in this repo. |
 

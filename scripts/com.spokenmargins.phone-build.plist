@@ -3,7 +3,7 @@
 <!--
   The rolling phone build's poll (#384, #1329): every 10 minutes, check next's tip. scripts/phone-build
   coalesces changed tips to at most one start per hour, or sooner after an integration PASS. Owner
-  requests without --if-changed build immediately. The script keeps its Release cache and handles
+  requests that leave out the if-changed flag build immediately. The script keeps its Release cache and handles
   one build at a time, memory/disk guards, test evidence and failed-tip suppression. Not installed by the PR.
 
   Install (once, from the main checkout):
@@ -23,11 +23,11 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/colemiller/Documents/GitHub/spoken-margins-native/scripts/phone-build</string>
+    <string>@HOME@/Documents/GitHub/spoken-margins-native/scripts/phone-build</string>
     <string>--if-changed</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/colemiller/Documents/GitHub/spoken-margins-native</string>
+  <string>@HOME@/Documents/GitHub/spoken-margins-native</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
@@ -40,8 +40,8 @@
   <key>Nice</key>
   <integer>5</integer>
   <key>StandardOutPath</key>
-  <string>/Users/colemiller/SpokenMargins-phone/launchd.log</string>
+  <string>@HOME@/SpokenMargins-phone/launchd.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/colemiller/SpokenMargins-phone/launchd.log</string>
+  <string>@HOME@/SpokenMargins-phone/launchd.log</string>
 </dict>
 </plist>
