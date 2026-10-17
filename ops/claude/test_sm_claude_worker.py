@@ -238,7 +238,7 @@ class Harness:
                 self.git('push', '-q', 'origin', f'HEAD:refs/heads/{branch}', cwd=wt)
                 self.gh.add_pr(branch, labels=('automerge',))
             return res
-        return w.Ops(home=self.tmp / 'home', repo_root=self.repo, run=self.gh, claude=claude,
+        return w.Ops(home=self.tmp / 'home', repo_root=self.repo, own_root=self.repo, run=self.gh, claude=claude,
                      now=lambda: self.clock_now, alive=lambda pid: True, free_bytes=lambda: 500 * 2**30,
                      memory_ok=lambda: True, token=lambda: 'secret-token', echo=False,
                      ledger_dir=self.tmp / 'ledger', **kw)
@@ -411,7 +411,7 @@ class TickTests(unittest.TestCase):
                 sent.append([str(x) for x in cmd])
                 return w.Result(0, json.dumps({'changes': [{}], 'unknown': [], 'api_calls': 12, 'writes': 3,
                                                'seconds': 4.2}))
-            ops = w.Ops(home=root / 'home', repo_root=root, run=run, echo=False)
+            ops = w.Ops(home=root / 'home', repo_root=root, own_root=root, run=run, echo=False)
             self.assertIn('skipped', ops.board_sync(7))   # not on this checkout yet: nothing runs
             self.assertEqual(sent, [])
             (root / 'scripts').mkdir()

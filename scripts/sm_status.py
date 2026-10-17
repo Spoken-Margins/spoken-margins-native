@@ -55,6 +55,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+import sm_paths  # noqa: E402
+
+PUBLIC = sm_paths.repo(__file__)  # the public checkout (SM_REPO): test-scope.py
+sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: who may be believed)
 import merge_audit  # noqa: E402  (the lane's report and audit formats live there; reused so they can't drift)
 
@@ -370,7 +374,7 @@ def scope_of(paths: list[str], classify=None) -> dict:
     """
     try:
         if classify is None:
-            spec = importlib.util.spec_from_file_location('sm_status_test_scope', HERE / 'test-scope.py')
+            spec = importlib.util.spec_from_file_location('sm_status_test_scope', PUBLIC / 'scripts' / 'test-scope.py')
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             classify = module.classify

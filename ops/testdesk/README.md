@@ -49,11 +49,7 @@ mkdir -p ~/SpokenMarginsOps/integration-run
 ```
 
 ```zsh
-cp ~/SpokenMarginsOps/repo/ops/testdesk/com.spokenmargins.integration-run.plist ~/Library/LaunchAgents/
-```
-
-```zsh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.integration-run.plist
+/usr/bin/python3 ~/SpokenMarginsOps/repo/ops/install-launchd.py --install integration-run
 ```
 
 The first tick runs at load. Watch `~/SpokenMarginsOps/integration-run/log.txt` and #184. Once it has posted a report, switch off the "SM integration run" scheduled task. To stop the job:

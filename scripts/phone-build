@@ -87,8 +87,12 @@ import subprocess
 import sys
 
 SCRIPTS = Path(__file__).resolve().parent
-ROOT = Path(os.environ.get('SM_PHONE_REPO') or SCRIPTS.parent)  # tests use a scratch repo
 sys.path.insert(0, str(SCRIPTS))
+import sm_paths  # noqa: E402
+
+PUBLIC = sm_paths.repo(__file__)                      # the public checkout (SM_REPO): lane scripts, packages
+ROOT = Path(os.environ.get('SM_PHONE_REPO') or PUBLIC)  # the repo it builds from; tests use a scratch repo
+sys.path.insert(0, str(PUBLIC / 'scripts'))
 import comment_trust  # noqa: E402  (#1822: whose comments the plan believes)
 import lane_slots  # noqa: E402
 
@@ -1609,7 +1613,7 @@ def build(sha: str) -> int:
             if any(p.stat().st_size < 1024 for p in pointers):
                 raise RuntimeError('the voice models are still Git LFS pointers after `git lfs pull`')
         run_logged(['bash', str(src / 'scripts/setup-worktree.sh')], src, log)
-        lane = [sys.executable, str(SCRIPTS / 'xcodebuild-lane')]
+        lane = [sys.executable, str(PUBLIC / 'scripts' / 'xcodebuild-lane')]
         project = ['-project', 'SpokenMarginsNative.xcodeproj', '-scheme', 'SpokenMarginsApp']
         checks = runner_tested(sha)
         if not checks:
