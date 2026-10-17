@@ -101,6 +101,7 @@ final class CoopPacketEmbeddedTextTests: XCTestCase {
         let url = try plan(text: article, extraItem: #","exactEditionSHA256":"\#(stale)","normalizedContentSHA256":"\#(stale)""#)
         let (_, packet) = try await buildAndRead(url)
         XCTAssertEqual(packet.manifest.item.exactEditionSHA256, PortableArticleAnchorResolver.exactEditionSHA256(article))
+        XCTAssertEqual(packet.manifest.item.normalizedContentSHA256, PortableArticleAnchorResolver.normalizedContentSHA256(article))
     }
 
     func testEmbeddedTextThatCannotBeReadBackIsRefusedWithItsReason() async throws {
