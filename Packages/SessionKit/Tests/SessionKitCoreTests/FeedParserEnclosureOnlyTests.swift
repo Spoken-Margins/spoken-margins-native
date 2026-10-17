@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKitFeeds
+import SessionKitTestInputs
 
 /// #179: following a podcast feed dropped every episode that had audio but no <link>.
 final class FeedParserEnclosureOnlyTests: XCTestCase {
@@ -74,12 +75,6 @@ final class FeedParserEnclosureOnlyTests: XCTestCase {
     }
 
     private static func fixture(_ name: String) throws -> Data {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appendingPathComponent("Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else { throw CocoaError(.fileNoSuchFile) }
-            root = parent
-        }
-        return try Data(contentsOf: root.appendingPathComponent("Contracts/fixtures/feeds/\(name)"))
+        try TestInputs.data(.contracts, "fixtures/feeds/\(name)")
     }
 }

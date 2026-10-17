@@ -3,6 +3,7 @@ import SQLite3
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 
 /// What the current build writes into the Library must stay readable by the last
 /// shipped build (Build 29, tag `testflight/0.1-build-29`).
@@ -230,7 +231,7 @@ final class Build29PersistedShapeTests: XCTestCase {
     }
 
     private func copyOfBuild29Fixture() throws -> (directory: URL, database: URL) {
-        let fixture = try repositoryRoot().appending(path: "Contracts/fixtures/persistence/build29.sqlite")
+        let fixture = try TestInputs.url(.contracts, "fixtures/persistence/build29.sqlite")
         let directory = FileManager.default.temporaryDirectory.appending(path: "build29-shape-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let database = directory.appending(path: "library.sqlite")
@@ -259,7 +260,7 @@ final class Build29PersistedShapeTests: XCTestCase {
     }
 
     private func currentSessionKitSources() throws -> [String: String] {
-        let directory = try repositoryRoot().appending(path: "Packages/SessionKit/Sources/SessionKit")
+        let directory = TestInputs.packageURL("Sources/SessionKit")
         guard let walker = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
             throw NSError(domain: "Build29PersistedShape", code: 3, userInfo: [NSLocalizedDescriptionKey: "cannot read \(directory.path)"])
         }
@@ -269,18 +270,6 @@ final class Build29PersistedShapeTests: XCTestCase {
         }
         XCTAssertGreaterThan(sources.count, 20, "SessionKit sources not found")
         return sources
-    }
-
-    private func repositoryRoot() throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else {
-                throw NSError(domain: "Build29PersistedShape", code: 4, userInfo: [NSLocalizedDescriptionKey: "Repository root unavailable"])
-            }
-            root = parent
-        }
-        return root
     }
 }
 

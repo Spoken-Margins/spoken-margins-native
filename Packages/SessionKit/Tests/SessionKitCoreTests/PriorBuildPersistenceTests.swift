@@ -2,6 +2,7 @@ import Foundation
 import XCTest
 @testable import SessionKit
 import SessionKitPersistence
+import SessionKitTestInputs
 
 final class PriorBuildPersistenceTests: XCTestCase {
     func testExternalBuild19LibraryOpensAndPreservesBothSessionsAfterReconstruction() throws {
@@ -16,8 +17,7 @@ final class PriorBuildPersistenceTests: XCTestCase {
     /// comparing it with literals only proved the file says what it says (#1048, PERSIST-13), so this
     /// saves a written Margin through the engine and expects it to match the file field for field.
     func testSavingAWrittenMarginWritesWhatTheWireFixtureDeclares() throws {
-        let root = try repositoryRoot()
-        let fixture = root.appending(path: "Contracts/fixtures/interjections/written-interjection.json")
+        let fixture = try TestInputs.url(.contracts, "fixtures/interjections/written-interjection.json")
         let payload = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: fixture)) as? [String: Any])
         let audio = try XCTUnwrap(payload["audio"] as? [String: Any])
         XCTAssertEqual(payload["captureKind"] as? String, "written", "the wire value older readers know")
@@ -45,8 +45,7 @@ final class PriorBuildPersistenceTests: XCTestCase {
     }
 
     private func checkPriorLibrary(build: Int, schema: Int) throws {
-        let root = try repositoryRoot()
-        let fixture = root.appending(path: "Contracts/fixtures/persistence/build\(build).sqlite")
+        let fixture = try TestInputs.url(.contracts, "fixtures/persistence/build\(build).sqlite")
         let temporary = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -84,17 +83,5 @@ final class PriorBuildPersistenceTests: XCTestCase {
         XCTAssertNil(try reopened.loadInterjections(sessionId: "prior-A").first?.captureKind)
         XCTAssertNil(try reopened.loadInterjections(sessionId: "prior-B").first?.captureKind)
         XCTAssertEqual(try reopened.quarantinedRecordCount(), 0)
-    }
-
-    private func repositoryRoot() throws -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            let parent = root.deletingLastPathComponent()
-            guard parent != root else {
-                throw NSError(domain: "PriorBuildFixture", code: 1, userInfo: [NSLocalizedDescriptionKey: "Repository root unavailable"])
-            }
-            root = parent
-        }
-        return root
     }
 }

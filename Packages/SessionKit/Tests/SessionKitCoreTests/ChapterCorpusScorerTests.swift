@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 @testable import SessionKit
+import SessionKitTestInputs
 
 /// #1468: the chapters of a text item are the source's own headings. `Contracts/fixtures/chapters/`
 /// holds one source per file with the chapters a listener would pick by hand (`<name>.chapters.txt`,
@@ -43,17 +44,13 @@ final class ChapterCorpusScorerTests: XCTestCase {
         }
     }
 
-    private func chaptersFolder() -> URL {
-        var root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
-        while !FileManager.default.fileExists(atPath: root.appending(path: "Contracts").path) {
-            root.deleteLastPathComponent()
-        }
-        return root.appending(path: "Contracts/fixtures")
+    private func chaptersFolder() throws -> URL {
+        try TestInputs.url(.contracts, "fixtures")
     }
 
     /// (name, source text, expected chapter titles), from the fixture folder.
     private func corpus() throws -> [(name: String, text: String, expected: [String])] {
-        let folder = chaptersFolder()
+        let folder = try chaptersFolder()
         let names = try FileManager.default.contentsOfDirectory(atPath: folder.appending(path: "chapters").path)
             .filter { $0.hasSuffix(".chapters.txt") }
             .map { String($0.dropLast(".chapters.txt".count)) }
