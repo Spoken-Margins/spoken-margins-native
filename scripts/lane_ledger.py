@@ -25,7 +25,10 @@ head and the passing one (first-parent only, so next merged into the PR does not
 
 - catch: product code changed (App/, Packages/ or Contracts/, outside test folders);
 - wrong-test: only test files changed, so the test was wrong, not the code;
-- flake: same head, or nothing changed;
+- flake: same head, or nothing changed, and the passing run tested against the same next;
+- next-moved: the PR's own code didn't change but next did between the two runs (the same head re-run on a
+  newer next, or next merged into the PR). Either next broke the test and a later next fixed it, or it was a
+  flake; the ledger can't tell which, so it doesn't count it as either;
 - other: only files outside those (docs, scripts), or the diff could not be read.
 
 `python3 scripts/lane_ledger.py report` prints the totals per test. The lane reports list failing tests only, so
@@ -123,10 +126,14 @@ def classify(repo, old: str, new: str, merges: bool = False) -> str:
 
 
 def close_tests(sink: list, open_fail: dict, step: str, key: str, new: str, repo, merges: bool,
-                tests=None) -> None:
-    """Classify the tests in <open_fail> (all, or just <tests>) as fixed at <new>, adding a line each to <sink>."""
+                tests=None, base: str = '') -> None:
+    """Classify the tests in <open_fail> (all, or just <tests>) as fixed at <new>, adding a line each to <sink>.
+    base: the next commit the closing run tested against. When the PR's own code is unchanged but next moved since
+    the failing run, the class is next-moved, not flake. An unknown base (an older ledger) keeps flake."""
     old, found = open_fail['head'], open_fail.get('tests') or [f'step:{step}']
     kind = classify(repo, old, new, merges)
+    if kind == 'flake' and base and open_fail.get('base') and open_fail['base'] != base:
+        kind = 'next-moved'
     for test in found:
         if tests is None or test in tests:
             sink.append({'step': step, 'test': test, 'key': key, 'from': old, 'to': new, 'class': kind,
@@ -160,9 +167,9 @@ def record(ledger: dict, name: str, result: str, seconds: float, pr: int, head: 
         if before is not None and sink is not None:  # tests that failed before and pass now were fixed here
             before = _open(before)
             gone = [t for t in (before.get('tests') or []) if t not in tests]
-            if gone and before['head'] != head:
-                close_tests(sink, before, name, f'pr:{pr}', head, repo, False, gone)
-        step['open_fails'][pr_key] = {'head': head, 'tests': tests, 'seconds': seconds}
+            if gone:  # at the same head too: same code, different outcome is a flake (or next-moved)
+                close_tests(sink, before, name, f'pr:{pr}', head, repo, False, gone, base)
+        step['open_fails'][pr_key] = {'head': head, 'tests': tests, 'seconds': seconds, 'base': base}
     else:
         step['since_fail_runs'] += 1
         step['since_fail_seconds'] += seconds
@@ -171,7 +178,7 @@ def record(ledger: dict, name: str, result: str, seconds: float, pr: int, head: 
         if before['head'] != head:  # a later commit fixed what the step caught
             step['catches'] += 1
         if sink is not None:
-            close_tests(sink, before, name, f'pr:{pr}', head, repo, False)
+            close_tests(sink, before, name, f'pr:{pr}', head, repo, False, base=base)
     step['faults_in_a_row'] = step['faults_in_a_row'] + 1 if result == 'fault' else 0
 
     waste = f'waste:{name}'
@@ -287,7 +294,7 @@ def record_tip(state: Path, repo, sha: str, verdict: str, failed=(), flaky=(), s
         if verdict == 'FAIL':
             before = tips.get('next')
             tests = list(dict.fromkeys(failed))
-            if before and before['head'] != sha:
+            if before:  # a re-run of the same tip that fails fewer tests closes the rest as flakes
                 gone = [t for t in before['tests'] if t not in tests]
                 close_tests(lines, before, 'integration', 'next', sha, repo, True, gone)
             tips['next'] = {'head': sha, 'tests': tests, 'seconds': seconds}
@@ -298,25 +305,25 @@ def record_tip(state: Path, repo, sha: str, verdict: str, failed=(), flaky=(), s
 
 
 def report(state: Path) -> str:
-    """Per test: episodes closed, catches, wrong-test, flakes, other, and seconds spent in failing runs."""
+    """Per test: episodes closed, catches, wrong-test, flakes, next-moved, other, and seconds spent in failing runs."""
     totals: dict = {}
     try:
         rows = [json.loads(line) for line in (Path(state) / CATCHES).read_text().splitlines() if line.strip()]
     except FileNotFoundError:
         rows = []
     for row in rows:
-        total = totals.setdefault(row['test'], dict.fromkeys(('episodes', 'catch', 'wrong-test', 'flake', 'other', 'seconds'), 0))
+        total = totals.setdefault(row['test'], dict.fromkeys(('episodes', 'catch', 'wrong-test', 'flake', 'next-moved', 'other', 'seconds'), 0))
         total['episodes'] += 1
-        total[row['class']] += 1
+        total[row['class'] if row['class'] in total else 'other'] += 1
         total['seconds'] += row.get('seconds', 0)
     if not totals:
         return 'No closed test failures recorded yet.'
     order = sorted(totals.items(), key=lambda kv: (-kv[1]['catch'], -kv[1]['episodes'], kv[0]))
-    out = [f'{"test":<60} {"eps":>4} {"catch":>5} {"wrong":>5} {"flake":>5} {"other":>5} {"time":>7}']
+    out = [f'{"test":<60} {"eps":>4} {"catch":>5} {"wrong":>5} {"flake":>5} {"next":>5} {"other":>5} {"time":>7}']
     for test, t in order:
         name = test if len(test) <= 60 else '...' + test[-57:]
         out.append(f'{name:<60} {t["episodes"]:>4} {t["catch"]:>5} {t["wrong-test"]:>5} {t["flake"]:>5} '
-                   f'{t["other"]:>5} {duration(t["seconds"]):>7}')
+                   f'{t["next-moved"]:>5} {t["other"]:>5} {duration(t["seconds"]):>7}')
     return '\n'.join(out)
 
 

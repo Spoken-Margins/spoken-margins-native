@@ -268,7 +268,7 @@ class MainPostsAlarmsTests(unittest.TestCase):
             self.run_main(FakeGitHub(comments=[comment('/lane T2')]), t2=t2)
             ledger = json.loads((Path(state) / lane_ledger.LEDGER).read_text())
         self.assertEqual(ledger['failures'], {f'app builds|{MERGE}': {'device build': [5]}})
-        self.assertEqual(ledger['steps']['app builds']['open_fails'], {'5': {'head': HEAD, 'tests': ['device build'], 'seconds': 200}})
+        self.assertEqual(ledger['steps']['app builds']['open_fails'], {'5': {'head': HEAD, 'tests': ['device build'], 'seconds': 200, 'base': MERGE}})
 
 
 class Repo:
@@ -350,6 +350,35 @@ class CatchClassTests(unittest.TestCase):
         lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, BASE, (), self.repo.root, sink)
         self.assertEqual(sink[0]['class'], 'flake')  # a plain two-head diff would say catch
 
+    def test_same_head_passing_on_a_newer_next_is_not_a_flake(self):
+        # Audit on f5d113b: next at BASE broke the test, next at OTHER_BASE fixed it, and the lane re-ran the same
+        # PR head. Calling that a flake would mark a test that caught a regression on next as noise.
+        sink, head = [], self.repo.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['T/t'], self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, head, OTHER_BASE, (), self.repo.root, sink)
+        self.assertEqual([(l['test'], l['class']) for l in sink], [('T/t', 'next-moved')])
+
+    def test_next_merged_into_the_pr_on_a_newer_next_is_not_a_flake(self):
+        git = self.repo.git
+        git('checkout', '-q', '-b', 'pr')
+        bad = self.repo.commit('docs/pr.md')
+        git('checkout', '-q', 'next')
+        self.repo.commit('App/OnNext.swift')
+        git('checkout', '-q', 'pr')
+        git('merge', '-q', '--no-ff', '-m', 'merge next', 'next')
+        good = git('rev-parse', 'HEAD')
+        sink = []
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, bad, BASE, ['T/t'], self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'pass', 9, 7, good, OTHER_BASE, (), self.repo.root, sink)
+        self.assertEqual(sink[0]['class'], 'next-moved')
+
+    def test_a_test_that_passes_on_a_rerun_of_the_same_head_is_a_flake_not_dropped(self):
+        # Audit on f5d113b, finding 2: A and B fail at H, the re-run at H fails only B. A must be recorded.
+        sink, head = [], self.repo.git('rev-parse', 'HEAD')
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['A/a', 'B/b'], self.repo.root, sink)
+        lane_ledger.record(self.ledger, 'app tests', 'fail', 9, 7, head, BASE, ['B/b'], self.repo.root, sink)
+        self.assertEqual([(l['test'], l['class']) for l in sink], [('A/a', 'flake')])
+
     def test_a_test_that_stops_failing_while_another_still_fails_is_closed_then(self):
         sink = []
         r = self.repo
@@ -406,6 +435,12 @@ class TipLedgerTests(unittest.TestCase):
         self.tip(verdict='FAIL', failed=['AppTests/testY'])
         self.assertEqual(self.tip(verdict='PASS')[0]['class'], 'flake')
 
+    def test_a_rerun_of_the_same_tip_that_fails_fewer_tests_closes_the_rest_as_flakes(self):
+        sha = self.repo.commit()
+        lane_ledger.record_tip(self.state, self.repo.root, sha, 'FAIL', ['A/a', 'B/b'], (), 600.0)
+        lines = lane_ledger.record_tip(self.state, self.repo.root, sha, 'FAIL', ['B/b'], (), 600.0)
+        self.assertEqual([(l['test'], l['class']) for l in lines], [('A/a', 'flake')])
+
     def test_a_rerun_flake_is_recorded_at_once(self):
         lines = self.tip(verdict='PASS', flaky=['AppTests/testZ'])
         self.assertEqual([(l['test'], l['class']) for l in lines], [('AppTests/testZ', 'flake')])
@@ -417,10 +452,11 @@ class ReportTests(unittest.TestCase):
             self.assertIn('No closed', lane_ledger.report(Path(state)))
             rows = [dict(test='A/a', **{'class': c, 'seconds': 60}) for c in ('catch', 'flake', 'catch')]
             rows.append({'test': 'B/b', 'class': 'wrong-test', 'seconds': 5})
+            rows.append({'test': 'B/b', 'class': 'next-moved', 'seconds': 5})
             (Path(state) / lane_ledger.CATCHES).write_text('\n'.join(json.dumps(r) for r in rows) + '\n')
             out = lane_ledger.report(Path(state)).splitlines()
-        self.assertEqual(out[1].split(), ['A/a', '3', '2', '0', '1', '0', '3m00s'])
-        self.assertEqual(out[2].split(), ['B/b', '1', '0', '1', '0', '0', '5s'])
+        self.assertEqual(out[1].split(), ['A/a', '3', '2', '0', '1', '0', '0', '3m00s'])
+        self.assertEqual(out[2].split(), ['B/b', '2', '0', '1', '0', '1', '0', '10s'])
         self.assertEqual(lane_ledger.main(['report', str(state)]), 0)
 
 
