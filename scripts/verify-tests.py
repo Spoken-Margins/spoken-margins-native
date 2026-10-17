@@ -463,6 +463,14 @@ def process_group_alive(pgid):
     return True
 
 
+def load_average():
+    """The 1, 5 and 15 minute load averages, or None where the system doesn't report them."""
+    try:
+        return [round(value, 1) for value in os.getloadavg()]
+    except OSError:
+        return None
+
+
 def stop_process_group(process, grace=10):
     # The group may already be gone (or, on macOS, hold only zombies, which gives EPERM); that
     # must not replace the error that brought us here.
@@ -484,6 +492,16 @@ def stop_process_group(process, grace=10):
 
 PACKAGE_BUILD_TIMEOUT = 900  # SessionKit build with tests; cold, under load
 PACKAGE_TEST_TIMEOUT = 600  # the SessionKit tests alone (#844)
+# #1767: on a busy Mac the same tests run two to three times slower than the 230 s they take on a quiet one, and
+# three PRs were failed ("Process exit 124", hundreds of tests missing, no failing test) while the suite was still
+# working through its classes. The limit above stays the budget; a step that is still printing results when it
+# runs out may go on until the ceiling, and one that has printed nothing for the stall time is a hang and stops.
+PACKAGE_TEST_CEILING = 1500
+PACKAGE_STALL_SECONDS = 240
+# The lane (scripts/lane-runner.py FAST_TIMEOUT, 2400 s) starts its clock before this process, so the plan's wait for
+# a host-test slot counts there. A step's ceiling is cut to fit what is left of it, so the step ends itself with its
+# own note instead of the lane interrupting the whole plan without one.
+FAST_PLAN_SECONDS = 2340
 # SessionKitCoreTests run in parallel (#1328); the other two targets hold the real-time AVFoundation tests and
 # stay serial. A parallel run that fails for any reason is run again serially, and that result decides.
 PARALLEL_CORE_TIMEOUT = 300
@@ -644,6 +662,7 @@ class Run:
                          'input_sha256': input_identity(), 'status': 'running', 'steps': []}
         self.crash_baseline = None
         self.crash_times = {}
+        self.started = time.monotonic()
         self.save()
 
     def save(self):
@@ -671,9 +690,14 @@ class Run:
         return False
 
     def command(self, name, args, timeout=180, expected=None, allowed_skips=(), tests=False, probation=None,
-                startup=None, record_source=None):
+                startup=None, record_source=None, ceiling=None, stall_seconds=None):
+        """Run one step. `timeout` is its time budget. With `ceiling` and `stall_seconds`, a step that has written to
+        its log within the last `stall_seconds` when the budget runs out goes on, until `ceiling` seconds in all (#1767)."""
         entry = {'name': name, 'command': args, 'timeout_seconds': timeout,
                  'expected_tests': sorted(expected) if expected is not None else None}
+        if ceiling:
+            entry['ceiling_seconds'], entry['stall_seconds'] = ceiling, stall_seconds
+        entry['load_average_start'] = load_average()
         self.manifest['steps'].append(entry)
         self.save()
         print(f'{name} …', flush=True)
@@ -689,7 +713,11 @@ class Run:
         with (self.output / f'{name}.log').open('w') as log, slot as held:
             if held:
                 entry['build_slot'] = held
-            start = attempt_start = time.monotonic()
+            start = attempt_start = last_output = time.monotonic()
+            if ceiling and self.manifest['plan'] == 'fast':
+                ceiling = max(timeout, min(ceiling, FAST_PLAN_SECONDS - (start - self.started)))
+                entry['ceiling_seconds'] = round(ceiling)
+            log_size = 0
             attempt = 1
             watching = startup is not None
             scan_from = 0  # each launch is judged by its own part of the shared log
@@ -700,11 +728,18 @@ class Run:
                     if device and (report := new_crash(reports, self.crash_baseline, device)):
                         if self.note_crash(entry, report):
                             raise InterruptedError('Repeated simulator process crashes')
-                    remaining = timeout - (time.monotonic() - start)
-                    if remaining <= 0:
-                        raise subprocess.TimeoutExpired(args, timeout)
+                    now = time.monotonic()
+                    if ceiling and (size := os.fstat(log.fileno()).st_size) != log_size:
+                        log_size, last_output = size, now
+                    elapsed = now - start
+                    if elapsed >= timeout:
+                        if not ceiling or elapsed >= ceiling or now - last_output >= stall_seconds:
+                            entry['timeout_note'] = self.timeout_note(
+                                name, elapsed, timeout, ceiling, stall_seconds, now - last_output)
+                            raise subprocess.TimeoutExpired(args, timeout)
+                        entry['ran_past_its_limit'] = True
                     try:
-                        result = process.wait(timeout=min(0.25, remaining))
+                        result = process.wait(timeout=0.25)
                         break
                     except subprocess.TimeoutExpired:
                         pass
@@ -754,7 +789,7 @@ class Run:
                 # The runner itself failed: don't leave xcodebuild running orphaned (#767).
                 stop_process_group(process)
                 raise
-        entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3))
+        entry.update(exit_code=result, seconds=round(time.monotonic() - start, 3), load_average_end=load_average())
         text = (self.output / f'{name}.log').read_text(errors='replace')
         errors = []
         if entry.get('startup_stalls'):
@@ -828,12 +863,29 @@ class Run:
             if not any(error.startswith('Failed: ') for error in errors):  # failed tests already say why
                 errors[:0] = log_errors(text)
             errors.insert(0, f'Process exit {result}')
+            if entry.get('timeout_note'):
+                errors.insert(1, entry['timeout_note'])
         entry['errors'] = errors
         self.save()
         print(f'{name}: {entry["seconds"]}s — {"FAILED" if errors else "passed"}', flush=True)
         if errors:
             raise RuntimeError('; '.join(errors) + f' (see {self.output / (name + ".log")})')
         return text
+
+    def timeout_note(self, name, elapsed, timeout, ceiling, stall_seconds, silent):
+        """Why a step was stopped, for the lane's report: how long it ran, how far its tests got, how busy the Mac was,
+        and how long the plan waited for its host-test slot (before any step's clock starts; #1767)."""
+        results = len(re.findall(r"^Test Case '.*' (?:passed|failed)", (self.output / f'{name}.log').read_text(errors='replace'), re.M))
+        if ceiling and elapsed >= ceiling:
+            why = f'still running at its {ceiling}s ceiling'
+        elif ceiling and silent >= stall_seconds:
+            why = f'ran past its {timeout}s budget, then printed nothing for {silent:.0f}s (a hang)'
+        else:
+            why = f'ran out of its {timeout}s limit'
+        waited = self.manifest.get('host_test_slot', {}).get('waited_seconds')
+        slot = '' if waited is None else f'; waited {waited:.0f}s for the host-test slot before the steps, not counted'
+        load = load_average()
+        return (f'{name} {why}: {results} test results in the log, load average {load[0] if load else "unknown"}{slot}')
 
     def fast(self):
         # The host steps share two Mac-wide host-test slots with every session and the runner (#350);
@@ -914,7 +966,7 @@ class Run:
             if split:
                 self.package_core(core)
             self.command('package', [*PACKAGE_RUNNER, '--rest' if split else '--skip-build'],
-                         timeout=PACKAGE_TEST_TIMEOUT,
+                         timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
                          expected=expected - core if split else expected, tests=True,
                          allowed_skips={'SessionKitTests/SharingTests/testHeldOutPublicDomainPodcastAnchorCorpus',
                                         *POCKET_WEIGHT_TESTS},
@@ -953,7 +1005,8 @@ class Run:
             self.save()
             print('package-core: parallel run failed; running SessionKitCoreTests serially', flush=True)
         self.command('package-core-serial', [*PACKAGE_RUNNER, '--core-serial'],
-                     timeout=PACKAGE_TEST_TIMEOUT, expected=expected, tests=True)
+                     timeout=PACKAGE_TEST_TIMEOUT, ceiling=PACKAGE_TEST_CEILING, stall_seconds=PACKAGE_STALL_SECONDS,
+                     expected=expected, tests=True)
 
     def skip(self, name, reason=None):
         reason = reason or CODEX_SANDBOX_SKIPS[name]
