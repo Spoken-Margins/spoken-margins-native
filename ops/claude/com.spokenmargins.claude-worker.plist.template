@@ -16,16 +16,16 @@
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/colemiller/SpokenMarginsOps/repo/ops/claude/sm_claude_worker.py</string>
+    <string>@HOME@/SpokenMarginsOps/repo/ops/claude/sm_claude_worker.py</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/colemiller/SpokenMarginsOps/repo</string>
+  <string>@HOME@/SpokenMarginsOps/repo</string>
 
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key>
-    <string>/Users/colemiller/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     <key>GH_PROMPT_DISABLED</key>
     <string>1</string>
     <key>GIT_TERMINAL_PROMPT</key>
@@ -45,6 +45,6 @@
   <string>/dev/null</string>
 
   <key>StandardErrorPath</key>
-  <string>/Users/colemiller/SpokenMarginsOps/claude-worker/launchd.err</string>
+  <string>@HOME@/SpokenMarginsOps/claude-worker/launchd.err</string>
 </dict>
 </plist>

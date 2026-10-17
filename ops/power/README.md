@@ -83,11 +83,7 @@ mkdir -p ~/SpokenMarginsOps/keep-awake
 ```
 
 ```zsh
-cp ~/Documents/GitHub/spoken-margins-native/ops/power/com.spokenmargins.keep-awake.plist ~/Library/LaunchAgents/
-```
-
-```zsh
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.spokenmargins.keep-awake.plist
+/usr/bin/python3 ~/Documents/GitHub/spoken-margins-native/ops/install-launchd.py --install keep-awake
 ```
 
 The first time it talks to Amphetamine, macOS asks whether `python3` (or `osascript`) may control Amphetamine. Choose **Allow**. If you miss it, turn it on in System Settings, Privacy & Security, Automation.
