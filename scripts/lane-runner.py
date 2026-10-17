@@ -302,15 +302,17 @@ STEP_RUNS: list[dict] = []  # this job's step runs, for the step ledger once the
 TESTED_BASE = ''  # the next commit the job is testing now (remember_tested)
 
 
-def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False) -> None:
+def note_step(name: str, verdict: str, seconds: float, failed=(), zero_tests: bool = False, ran=None) -> None:
+    """ran: the tests this run executed (#1830), or None when the step can't say; the ledger closes a named test
+    failure only on a run that ran it."""
     STEP_RUNS.append({'step': name, 'verdict': verdict, 'seconds': seconds, 'base': TESTED_BASE,
-                      'failed': list(failed), 'zero_tests': zero_tests})
+                      'failed': list(failed), 'zero_tests': zero_tests, 'ran': None if ran is None else list(ran)})
 
 
 def ledger_step(name: str, read=None):
     """Note each run of the decorated step for the step ledger: its verdict (the result's first item) and wall
-    time, and through read(args, result) what failed and whether it ran zero tests. A step that raises is a
-    runner fault."""
+    time, and through read(args, result) what failed, whether it ran zero tests and, when it can say, which tests it
+    ran: (failed, zero) or (failed, zero, ran). A step that raises is a runner fault."""
     def wrap(function):
         @functools.wraps(function)
         def run(*args, **kwargs):
@@ -320,21 +322,23 @@ def ledger_step(name: str, read=None):
             except BaseException:
                 note_step(name, 'ERROR', time.monotonic() - started)
                 raise
-            failed, zero = [], False
+            failed, zero, ran = [], False, None
             try:
-                failed, zero = read(args, result) if read else ([], False)
+                failed, zero, *rest = read(args, result) if read else ([], False)
+                ran = rest[0] if rest else None
             except Exception:  # noqa: BLE001 - the ledger never changes a step's result
                 pass
-            note_step(name, result[0], time.monotonic() - started, failed, zero)
+            note_step(name, result[0], time.monotonic() - started, failed, zero, ran)
             return result
         return run
     return wrap
 
 
-def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
-    """(The failed tests, or failed steps when a step names no tests, and whether no test ran) in the
-    verify-tests.py manifests under <outputs>."""
-    failed, counted = [], 0
+def manifest_failures(*outputs: Path) -> tuple[list[str], bool, list[str]]:
+    """(The failed tests, or failed steps when a step names no tests, whether no test ran, and the names of the
+    tests that did run) in the verify-tests.py manifests under <outputs>. A SessionKit step skipped as already
+    passed (#1328) ran no test and adds no names."""
+    failed, counted, ran = [], 0, []
     for output in outputs:
         manifest = _read_manifest(output)
         if manifest.get('sessionkit_pass'):  # SessionKit's tests were skipped as already passed (#1328): not a run of none
@@ -344,10 +348,11 @@ def manifest_failures(*outputs: Path) -> tuple[list[str], bool]:
                 continue
             tests = step.get('tests') or {}
             counted += len(tests)
+            ran += tests
             failed += [test for test, record in tests.items() if record.get('status') == 'failed']
             if step.get('exit_code') and not step.get('interrupted') and not tests:
                 failed.append(str(step.get('name')))
-    return failed, counted == 0
+    return failed, counted == 0, list(dict.fromkeys(ran))
 
 
 STALL_ISSUE = 705  # the open regression for the app test host that launches and never reaches XCTest
@@ -622,7 +627,13 @@ def changed_paths_for_tests(tree: Path, base: str) -> list[str] | None:
     return sorted(set(paths)) or None
 
 
-@ledger_step('host tests', lambda args, result: (manifest_failures(args[0] / 'fast')[0], False))
+def fast_manifest(args, result):
+    """What the host tests failed and ran, for the step ledger; their zero-test case is not a runner fault."""
+    failed, _, ran = manifest_failures(args[0] / 'fast')
+    return failed, False, ran
+
+
+@ledger_step('host tests', fast_manifest)
 def run_fast(evidence: Path, runner=run_bounded, changed: list[str] | None = None) -> tuple[str, list[str]]:
     """--plan fast (host tests): returns (PASS, FAIL or INCONCLUSIVE, details).
 

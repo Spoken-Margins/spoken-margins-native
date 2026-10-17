@@ -193,6 +193,13 @@ class RunnerStepTests(unittest.TestCase):
             lane.run_fast(Path(evidence), runner=failing)
         self.assertEqual(lane.STEP_RUNS[0]['verdict'], 'FAIL')
         self.assertEqual(lane.STEP_RUNS[0]['failed'], ['runner-tests', 'S/testA'])
+        self.assertEqual(lane.STEP_RUNS[0]['ran'], ['S/testA', 'S/testB'])  # #1830
+
+    def test_a_step_that_cannot_say_which_tests_ran_notes_none(self):
+        codes = iter([0, 0])
+        with tempfile.TemporaryDirectory() as evidence:
+            lane.run_t2(Path(evidence), runner=lambda *_: next(codes))
+        self.assertIsNone(lane.STEP_RUNS[0]['ran'])
 
     def test_app_builds_name_the_build_that_failed(self):
         codes = iter([0, 2])
@@ -422,7 +429,7 @@ class CatchClassTests(unittest.TestCase):
         self.assertEqual(sorted((l['test'], l['class']) for l in sink), [('A/a', 'catch'), ('B/b', 'catch')])
 
     def test_without_the_list_of_tests_run_named_tests_stay_open(self):
-        # The lane runner passes no list of the tests it ran yet, so a PASS can't close a named test; the step-level
+        # A step that passes no list of the tests it ran can't close a named test with a PASS; the step-level
         # catch count still works, and a step failure without names still closes.
         sink, r = [], self.repo
         first = r.git('rev-parse', 'HEAD')
@@ -443,6 +450,40 @@ class CatchClassTests(unittest.TestCase):
         second = r.commit('App/A.swift')
         lane_ledger.record_runs(state, [{'step': 'app tests', 'result': 'pass', 'seconds': 9, 'base': BASE,
                                          'failed': [], 'ran': ['A/a']}], 7, second, r.root)
+        written = [json.loads(x) for x in (state / lane_ledger.CATCHES).read_text().splitlines()]
+        self.assertEqual([(w['test'], w['class']) for w in written], [('A/a', 'catch')])
+
+    def test_the_lane_runner_tells_the_ledger_which_tests_a_run_executed(self):
+        # #1830: a host-test FAIL followed by a PASS that ran the failing test is a catch; a PASS that did not run
+        # it leaves it open. Both go through run_fast and flush_ledger, the lane's own path.
+        def manifest(statuses):
+            def run(command, log, timeout):
+                output = Path(command[command.index('--output') + 1])
+                output.mkdir(parents=True, exist_ok=True)
+                (output / 'manifest.json').write_text(json.dumps({'steps': [{
+                    'name': 'xunit', 'exit_code': 0, 'tests': {t: {'status': s} for t, s in statuses.items()}}]}))
+                return 1 if 'failed' in statuses.values() else 0
+            return run
+
+        def job(statuses, head):
+            with tempfile.TemporaryDirectory() as evidence:
+                lane.run_fast(Path(evidence), runner=manifest(statuses))
+            lane.flush_ledger(7, head, mock.Mock())
+
+        state = Path(self.tmp.name) / 'state'
+        state.mkdir()
+        bad = self.repo.git('rev-parse', 'HEAD')
+        fixed = self.repo.commit('App/A.swift')
+        cwd = os.getcwd()
+        try:
+            os.chdir(self.repo.root)
+            with mock.patch.dict(os.environ, {'SM_LANE_STATE_DIR': str(state)}):
+                job({'A/a': 'failed', 'B/b': 'passed'}, bad)
+                job({'B/b': 'passed'}, fixed)  # the PASS did not run A/a: it stays open
+                self.assertFalse((state / lane_ledger.CATCHES).exists())
+                job({'A/a': 'passed', 'B/b': 'passed'}, fixed)  # now it ran
+        finally:
+            os.chdir(cwd)
         written = [json.loads(x) for x in (state / lane_ledger.CATCHES).read_text().splitlines()]
         self.assertEqual([(w['test'], w['class']) for w in written], [('A/a', 'catch')])
 
