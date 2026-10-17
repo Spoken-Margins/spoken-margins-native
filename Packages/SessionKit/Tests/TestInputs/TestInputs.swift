@@ -10,7 +10,8 @@ import XCTest
 ///
 /// Inside the spoken-margins-native checkout every input is found next to the package. A package
 /// checked out alone has none of them: a test that needs one is skipped with the input named, never
-/// passed silently. `SESSIONKIT_CONTRACTS_DIR` points the Contracts input somewhere else.
+/// passed silently. `SESSIONKIT_CONTRACTS_DIR` and `SESSIONKIT_VOICE_ASSETS_DIR` point those two inputs
+/// somewhere else.
 /// `scripts/sessionkit_pass.py`'s `READS` lists the same folders, so the lane's pass key covers them.
 ///
 /// Read an input into a `let` before asserting on it. XCTest records a skip thrown inside an
@@ -28,9 +29,15 @@ public enum TestInputs {
         case appSources = "App/SpokenMarginsApp/Sources/SpokenMarginsApp"
         /// The app's test sources, for the shipped-reader gate's scan.
         case appTests = "App/SpokenMarginsAppTests"
+        /// The bundled Kitten voice: its model, pronunciation lexicon and g2p weights (the voice that stays in the app).
+        case voiceAssets = "App/SpokenMarginsApp/Resources/Kitten"
 
         var environmentOverride: String? {
-            self == .contracts ? "SESSIONKIT_CONTRACTS_DIR" : nil
+            switch self {
+            case .contracts: return "SESSIONKIT_CONTRACTS_DIR"
+            case .voiceAssets: return "SESSIONKIT_VOICE_ASSETS_DIR"
+            default: return nil
+            }
         }
     }
 
@@ -55,7 +62,7 @@ public enum TestInputs {
             return URL(fileURLWithPath: value, isDirectory: true)
         }
         guard let root = repositoryRoot else {
-            throw XCTSkip("needs \(input.rawValue)/ from the spoken-margins-native checkout; this package is checked out alone")
+            throw XCTSkip("needs \(input) (\(input.rawValue)/) from the spoken-margins-native checkout; this package is checked out alone")
         }
         return root.appending(path: input.rawValue, directoryHint: .isDirectory)
     }
