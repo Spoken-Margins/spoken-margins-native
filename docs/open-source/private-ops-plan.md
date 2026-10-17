@@ -120,7 +120,7 @@ Once the repo is public, anyone can file an issue, comment, or open a fork PR. T
 | `merge-audit.yml` | Pushes to `next` | Labels | Only writers can push | None |
 | Audit (`sm_codex_audit.py`) | PR title, description, diff, comments | Posts the verdict that lets audio, persistence, packet and lane PRs merge | Read-only tools, `dontAsk` | Audit only same-repo PRs by collaborators; quote PR text inside a marked data block; never let text in the PR set the verdict wording. |
 | Claude Mac worker (`sm_claude_worker.py`, not live) | `ready` issue body, PR comments, hand-off notes | Full agent: Bash, Edit, Write, opens and arms PRs | Only labelled issues; budget and turn caps | Take only issues opened by, or labelled `ready` by, the owner or a collaborator (check the label event's actor); trust hand-off notes only from its own account. |
-| Codex worker | `ready` issues | Workspace-write agent | Retired | Unload and delete. |
+| Codex worker | `ready` issues | Workspace-write agent | Deleted (#1853) | Unloaded 2026-10-17. |
 | Integration run (`sm_integration_run.py`) | Merged code, comments on #184 | Reverts a culprit, removes `automerge` | Merged code is already reviewed; Claude is read-only | Same author filter on #184 comments. |
 | Dial gate (`dial_gate.py`) | #589 boxes, #337 tick, claim and stop notes on any issue | Sets how many threads run, fires the relay | None | Author filter on comments; a stranger's fake claim note or tick changes pacing. |
 | Phone build (`scripts/phone-build`) | Integration reports on #184 | Builds sooner | None | Author filter. |

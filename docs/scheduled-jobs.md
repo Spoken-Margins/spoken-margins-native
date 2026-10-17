@@ -99,8 +99,8 @@ Found while building the table. Routine and plist changes are the owner's or the
 2. **Two checkouts on the Mac, two update paths.** `disk-relief`, `keep-awake`, `lane-power-guard` and `phone-build` run from `~/Documents/GitHub/spoken-margins-native` (the Mac tick fast-forwards it). `codex-audit` and `integration-run` run from `~/SpokenMarginsOps/repo` (the phone-build job keeps it on `next`, per `ops/testdesk/README.md`). A change to an ops script reaches the two sets at different times. Fix: say in each README which checkout runs it, or move all to one.
 3. **`scripts/com.spokenmargins.phone-build.plist` says the "hourly Mac tick".** The tick is every 2 hours (`kickoff.md`). Also its header comment contains `--if-changed`; a double hyphen is not allowed inside an XML comment, and Python's `plistlib` refuses the file. The loaded copy may still work (`plutil -lint` on the Mac will say). Fix both in the next change to that file. #1600 is about to edit it, so it was left alone here.
 4. **`docs/workstreams/kickoff.md` still describes a standing Test Desk "in a loop".** Current practice (project instructions, 2026-10-13) is a managed desk started on a `Test Desk: GO` tick line. Fix: update `kickoff.md` the next time that table changes.
-6. **Six dead routines.** See the routine table. Fix: delete them.
-7. **`codex-audit` is named for Codex but calls Claude.** Documented in `ops/codex/README.md`, kept so the loaded job, log and lock carry on. No action unless the owner wants a rename after 2026-10-15.
+5. **Six dead routines.** See the routine table. Fix: delete them.
+6. **`codex-audit` is named for Codex but calls Claude.** Documented in `ops/codex/README.md`, kept so the loaded job, log and lock carry on. No action unless the owner wants a rename after 2026-10-15.
 
 ## Public-repo readiness note
 

@@ -1,6 +1,6 @@
 # Claude Mac worker (#1599)
 
-A Mac-side worker that takes Mac-only `ready` issues and stalled PRs with **headless Claude** (`claude -p`), one fresh session per job, so nobody taps Allow for each new Mac thread and no single session runs out of context mid-issue. It replaces the Codex worker (`ops/codex/sm_codex_worker.py`), which retires after 2026-10-15 (#1195).
+A Mac-side worker that takes Mac-only `ready` issues and stalled PRs with **headless Claude** (`claude -p`), one fresh session per job, so nobody taps Allow for each new Mac thread and no single session runs out of context mid-issue. It replaced the Codex worker, which was retired by #1195 and deleted by #1853.
 
 Nothing here is installed by default. Loading the job and the first real run need the owner's Mac: see "Mac steps".
 
