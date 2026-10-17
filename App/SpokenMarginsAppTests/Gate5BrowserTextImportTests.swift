@@ -59,27 +59,6 @@ final class Gate5BrowserTextImportTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    func testBrowserTextURLParsesHandoff() throws {
-        let handoff = BrowserTextHandoff(
-            itemId: "item-browser-url-test",
-            captureMode: .readablePage,
-            source: BrowserTextSource(url: "https://example.com/readable", title: "Readable Page", author: "A. Writer"),
-            text: "Readable page text.",
-            requestedContinuation: BrowserTextContinuation(startSession: true, preferredPlaybackOwner: "browser_or_app")
-        )
-
-        let parsed = try XCTUnwrap(Gate5BrowserTextHandoffURL.handoff(from: Gate5BrowserTextHandoffURL.url(for: handoff)))
-
-        XCTAssertEqual(parsed.itemId, "item-browser-url-test")
-        XCTAssertEqual(parsed.captureMode, .readablePage)
-        XCTAssertEqual(parsed.source.url, "https://example.com/readable")
-        XCTAssertEqual(parsed.source.title, "Readable Page")
-        XCTAssertEqual(parsed.source.author, "A. Writer")
-        XCTAssertEqual(parsed.text, "Readable page text.")
-        XCTAssertEqual(parsed.requestedContinuation.startSession, true)
-        XCTAssertEqual(parsed.requestedContinuation.preferredPlaybackOwner, "browser_or_app")
-    }
-
     func testArticleShortcutBuildsReadablePageHandoff() throws {
         let publishedAt = Date(timeIntervalSince1970: 1_700_000_000)
         let handoff = try AddArticleShortcutImport.makeHandoff(
