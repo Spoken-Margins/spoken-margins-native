@@ -296,6 +296,24 @@ func TestSweepDropsOldTranscripts(t *testing.T) {
 	if keys, _ := store.WaitingKeys(); len(keys) != 0 {
 		t.Fatalf("the order still lists %v", keys)
 	}
+
+	// Old and young entries mixed: the young ones stay, in arrival order.
+	mixed := []string{strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64), strings.Repeat("4", 64)}
+	for i, key := range mixed {
+		tr := testTranscript()
+		tr.EpisodeKey = key
+		arrived := t0
+		if i%2 == 1 {
+			arrived = t0.Add(time.Hour)
+		}
+		store.PutTranscript(tr, arrived)
+	}
+	if n, _ := store.Sweep(t0.Add(TranscriptMaxAge+time.Minute), TranscriptMaxAge); n != 2 {
+		t.Fatalf("swept %d of the 2 old transcripts", n)
+	}
+	if got, _ := store.WaitingKeys(); strings.Join(got, ",") != mixed[1]+","+mixed[3] || !store.HasTranscript(mixed[1]) || store.HasTranscript(mixed[0]) {
+		t.Fatalf("after a mixed sweep, WaitingKeys = %v", got)
+	}
 }
 
 func TestTakedownKeepsMapDown(t *testing.T) {

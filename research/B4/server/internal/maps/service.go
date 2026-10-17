@@ -123,8 +123,8 @@ func (s *Service) Submit(t Transcript) (Outcome, error) { return s.SubmitSpendin
 // the uploader nothing. If spend fails, nothing is queued and Submit
 // returns SpendFailed with spend's error.
 //
-// If the spend succeeds and the transcript then can't be written (a disk
-// fault), the spend stands: callers can't take a token back.
+// If the spend succeeds and the transcript then can't be queued (it can
+// only fail on an invalid key), the spend stands: callers can't take a token back.
 func (s *Service) SubmitSpending(t Transcript, spend func() error) (Outcome, error) {
 	s.init()
 	s.submitMu.Lock()
@@ -187,7 +187,7 @@ func (s *Service) ProcessWaiting(ctx context.Context) {
 	}
 	for _, key := range keys {
 		if ctx.Err() != nil {
-			return // kept for the next start; the sweep bounds its age
+			return // shutting down: waiting transcripts were only in memory and go with the process
 		}
 		t, err := s.Store.ReadTranscript(key)
 		if err != nil {
