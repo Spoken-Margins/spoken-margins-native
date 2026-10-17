@@ -17,7 +17,7 @@ There is no fixed spacing: when the lane is quiet, each new tip is tested within
 Otherwise it tests the tip in its own detached worktree (`~/SpokenMarginsOps/integration-run/worktree`):
 
 - It runs `--plan app`, then re-runs any failing tests twice on the same build. A test that passes in any re-run that completed is reported as `flaky:` (with a note when it failed in the other re-run), and the verdict is PASS. A re-run that never ran a test (the simulator would not boot) counts for nothing either way.
-- It runs the scripted journeys, which only change the verdict once one is on `gating`.
+- It runs the scripted journeys, which only change the verdict once one is on `gating`. It counts each script's passing and bad runs in `state.json`, and the report says when one is due to move (`journeys due to move:`); `journey_promotion.py --state ~/SpokenMarginsOps/integration-run/state.json [--apply]` lists or makes the move in `TestPlans/scripted-journeys.json`, for a PR into `next`. The phone-candidate line counts passed, failed, skipped and not-run scripts, and says "passed" only when every listed script passed.
 - It frees the simulator, then posts one `Lane report integration-<sha7>` on #184 in test-lane.md's format, with `run by: integration script`. `scripts/phone-build` reads it unchanged.
 
 On a confirmed FAIL it also (owner's "revert first" rule, #1180):
