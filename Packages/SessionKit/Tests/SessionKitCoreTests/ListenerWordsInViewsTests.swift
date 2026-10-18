@@ -12,9 +12,11 @@ final class ListenerWordsInViewsTests: XCTestCase {
     private static let bannedWords = try! NSRegularExpression(
         pattern: #"\b[Ii]nterjections?\b|\b[Aa]nchors\b|\b[Aa]nchor (?:text|context|excerpts)\b|Source Notes"#)
     private static let stringLiteral = try! NSRegularExpression(pattern: #""((?:[^"\\\n]|\\.)*)""#)
-    /// Lines whose literals name code, not text: identifiers, tags, diagnostics keys and symbols.
-    private static let codeLinePattern = try! NSRegularExpression(
-        pattern: #"accessibilityIdentifier|\.tag\(|diagnostics\[|systemImage|\bcase \""#)
+    /// A literal that is the argument of a call or label that names code, not text: an identifier, a tag, a
+    /// diagnostics key, a symbol, a switch case. Only that literal is blanked, so the visible text on the same line
+    /// (`Label("Delete Interjection", systemImage: "trash")`, `Text("Source Notes").tag("source")`) is still scanned.
+    private static let codeLiteral = try! NSRegularExpression(
+        pattern: #"(systemImage:\s*|\.tag\(\s*|accessibilityIdentifier\(\s*|diagnostics\[\s*|\bcase\s+)"(?:[^"\\]|\\.)*""#)
 
     /// The banned words found in the string literals of `source` that a listener can read, with the line that holds them.
     /// Any literal counts, whatever call holds it (a ternary arm, a return value, a banner, an accessibility label).
@@ -22,10 +24,11 @@ final class ListenerWordsInViewsTests: XCTestCase {
     static func offences(in source: String) -> [String] {
         var found: [String] = []
         for (index, line) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
-            let text = String(line)
+            var text = String(line)
             if text.trimmingCharacters(in: .whitespaces).hasPrefix("//") { continue }
+            text = codeLiteral.stringByReplacingMatches(
+                in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "$1\"\"")
             let range = NSRange(text.startIndex..., in: text)
-            if codeLinePattern.firstMatch(in: text, range: range) != nil { continue }
             for match in stringLiteral.matches(in: text, range: range) {
                 guard let literalRange = Range(match.range(at: 1), in: text) else { continue }
                 let literal = withoutInterpolations(String(text[literalRange]))
@@ -79,10 +82,21 @@ final class ListenerWordsInViewsTests: XCTestCase {
         XCTAssertEqual(Self.offences(in: #"Text(verbatim: "No sessions with interjections")"#).count, 1)
     }
 
+    /// Audit: skipping whole lines hid the usual forms, a label with a symbol and a row with a tag.
+    func testTheScannerReadsTheVisibleTextOnALineThatAlsoHoldsCode() {
+        XCTAssertEqual(Self.offences(in: #"Label("Delete Interjection", systemImage: "trash")"#).count, 1)
+        XCTAssertEqual(Self.offences(in: #"Label(copied ? "Copied" : "Copy Transcript and Anchors", systemImage: copied ? "checkmark" : "doc.on.doc")"#).count, 1)
+        XCTAssertEqual(Self.offences(in: #"Text("Source Notes").tag("source_interjections")"#).count, 1)
+        XCTAssertEqual(Self.offences(in: #"Button("Delete Interjection") {}.accessibilityIdentifier("interjection.detail.delete")"#).count, 1)
+    }
+
     func testTheScannerIgnoresIdentifiersAndComments() {
         XCTAssertTrue(Self.offences(in: #".accessibilityIdentifier("interjection.detail.delete")"#).isEmpty)
         XCTAssertTrue(Self.offences(in: #"let payload = ["interjections": records]"#).isEmpty)
         XCTAssertTrue(Self.offences(in: #"Text("Delete Margin").tag("source_interjections")"#).isEmpty)
+        XCTAssertTrue(Self.offences(in: #"Label("Delete Margin", systemImage: "interjection.trash")"#).isEmpty)
+        XCTAssertTrue(Self.offences(in: #"case "interjection summary": return 1"#).isEmpty)
+        XCTAssertTrue(Self.offences(in: #"diagnostics["Interjection count"] = "n""#).isEmpty)
         XCTAssertTrue(Self.offences(in: #"// Button("Delete Interjection")"#).isEmpty)
         XCTAssertTrue(Self.offences(in: "let kind = \"interjection_summary\"").isEmpty)
     }

@@ -489,7 +489,7 @@ struct InterjectionDetailView: View {
                     }
                 }
                 Button("Cancel", role: .cancel) { pendingDeletion = nil }
-            } message: { Text(pendingDeletion == .transcript ? "The transcript will be removed." : "This Margin will be removed.") }
+            } message: { Text(pendingDeletion == .transcript ? "The transcript will be removed." : (current.captureKind == .written ? "Its words will be removed." : "Its voice recording and words will be removed.")) }
         }
     }
 }
