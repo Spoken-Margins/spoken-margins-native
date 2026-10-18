@@ -250,6 +250,7 @@ struct ExperienceItemDetailScreen: View {
             } label: {
                 Label("Where people reacted", systemImage: "person.2.fill")
                     .frame(maxWidth: .infinity, minHeight: 40)
+                    .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
@@ -291,6 +292,7 @@ struct ExperienceItemDetailScreen: View {
             } label: {
                 Label("New session", systemImage: "plus.circle")
                     .frame(minHeight: 40)
+                    .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)
@@ -304,6 +306,7 @@ struct ExperienceItemDetailScreen: View {
             } label: {
                 Label("Review Margins", systemImage: "quote.bubble")
                     .frame(minHeight: 40)
+                    .expandedHitArea(vertical: 2)
             }
             .buttonStyle(.bordered)
             .tint(AppColors.evergreen)

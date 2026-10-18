@@ -71,6 +71,18 @@ extension View {
     }
 }
 
+extension View {
+    /// Grows the hit area by this much on each side without moving anything: the layout keeps its size, and
+    /// the control still looks the same. For controls in rows too tight to take a 44 pt frame (#1929).
+    func expandedHitArea(horizontal: CGFloat = 0, vertical: CGFloat = 0) -> some View {
+        padding(.horizontal, horizontal)
+            .padding(.vertical, vertical)
+            .contentShape(Rectangle())
+            .padding(.horizontal, -horizontal)
+            .padding(.vertical, -vertical)
+    }
+}
+
 /// A bare icon button label (dismiss ✕, clear search) with a 44 pt hit area around the unchanged glyph (#151).
 struct TapTargetIcon: View {
     let systemName: String

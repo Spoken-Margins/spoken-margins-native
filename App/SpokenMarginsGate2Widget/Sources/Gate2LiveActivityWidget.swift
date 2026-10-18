@@ -378,6 +378,7 @@ private struct Gate2SharedMarginButtons: View {
                     .foregroundStyle(.white)
                     .background(Color.green.opacity(0.28))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .expandedHitArea(vertical: compact ? 7 : 3)
             }
             Button(intent: Gate2SharedMarginActionIntent(command: Gate2CompactApplicationCommand.dismissSharedMargin)) {
                 Label(compact ? "Skip" : "Dismiss", systemImage: "xmark")
@@ -386,6 +387,7 @@ private struct Gate2SharedMarginButtons: View {
                     .foregroundStyle(.white)
                     .background(Color.white.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .expandedHitArea(vertical: compact ? 7 : 3)
             }
         }
         .buttonStyle(.plain)
@@ -473,8 +475,18 @@ private struct CompactActionIntentButton: View {
                 .foregroundStyle(.white)
                 .background(Color.white.opacity(0.16))
                 .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+                .expandedHitArea(vertical: 3)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private extension View {
+    /// Grows the hit area to 44 pt without moving anything: the layout keeps its size (#1929).
+    func expandedHitArea(vertical: CGFloat) -> some View {
+        padding(.vertical, vertical)
+            .contentShape(Rectangle())
+            .padding(.vertical, -vertical)
     }
 }
 
