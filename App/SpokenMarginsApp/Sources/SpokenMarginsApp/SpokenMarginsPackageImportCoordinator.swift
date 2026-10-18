@@ -495,9 +495,16 @@ final class SpokenMarginsPackageImportCoordinator {
         case .added(let placed, let total, let replaced):
             environment.recordDiagnostic("lastSpokenMarginsPackageImport", "map_added:\(itemId):\(placed)/\(total):replaced=\(replaced)")
         }
-        try environment.showImportedItem(itemId, store)
+        // The map is saved: from here the import has succeeded, whatever happens to the screen. A map packet
+        // carries no assets, so its working copy can go now.
         self.review = nil
         isImporting = false
+        try? FileManager.default.removeItem(at: review.extractionDirectory)
         environment.reportConfirmation(outcome.message)
+        do {
+            try environment.showImportedItem(itemId, store)
+        } catch {
+            environment.reportFailure(error, "Opening the item after adding a Listening Map failed")
+        }
     }
 }
