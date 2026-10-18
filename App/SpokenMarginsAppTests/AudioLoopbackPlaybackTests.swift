@@ -27,7 +27,8 @@ final class AudioLoopbackPlaybackTests: XCTestCase {
         defer { try? client.stop() }
         _ = try client.prepareSpeechText(Self.passage)
 
-        let window = try AudioLoopbackWindow.open(for: self, seconds: 25, expected: Self.passage,
+        // PROOF ONLY (#1790): expect the wrong text, so the lane shows the check can fail. Reverted next commit.
+        let window = try AudioLoopbackWindow.open(for: self, seconds: 25, expected: "Seven purple elephants sang loudly beside the frozen river at noon.",
                                                   limits: .init(maxStall: 2.0, minSound: 4.0, maxWER: 0.25))
         try await window.waitUntilRecording()
         try client.play(targetId: "passage", from: 0)
