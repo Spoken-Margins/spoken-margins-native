@@ -50,6 +50,7 @@ PAGE_REL = "voices/index.html"
 TRUST_SWIFT = ROOT / "Packages/SessionKit/Sources/SessionKit/VoiceModelCatalogVerifier.swift"
 DEPLOY_SCRIPT = ROOT / "scripts/deploy-spoken-margins-site.sh"
 SCHEMA_PATH = ROOT / "Contracts/schemas/voice-model-catalog.schema.json"
+APP_SNAPSHOT_PATH = ROOT / "App/SpokenMarginsApp/Resources/VoiceCatalog/catalog-snapshot.json"
 
 KEYCHAIN_SERVICE = "SpokenMargins voice catalog signing key"
 KEY_ID = "sm-voices-1"
@@ -526,6 +527,28 @@ def build(sources: dict, state_dir: Path, site_dir: Path, *, now: dt.datetime | 
     return payload
 
 
+def app_snapshot(sources: dict, issued_at: str) -> dict:
+    """The catalog document the app bundles (#1819): what Settings > Voices offers until a signed catalog verifies.
+    It ships inside the code-signed app, so it carries no catalog signature. Every voice in sources.json, nothing held."""
+    payload = {"schemaVersion": "voice-model-catalog.v1", "catalogVersion": 1, "issuedAt": issued_at,
+               "voices": [voice_entry(sources, voice) for voice in sources["voices"]]}
+    problems = schema_errors(payload)
+    if problems:
+        raise CatalogToolError("the app snapshot breaks its schema:\n" + "\n".join(problems))
+    return payload
+
+
+def write_app_snapshot(sources: dict, path: Path = APP_SNAPSHOT_PATH, *, now: dt.datetime | None = None, out=print) -> Path:
+    # Keep the date when the voices are unchanged, so regenerating doesn't churn the file.
+    previous = _load_json_or(path, None)
+    payload = app_snapshot(sources, iso(now or dt.datetime.now(dt.timezone.utc)))
+    if previous and previous.get("voices") == payload["voices"]:
+        payload["issuedAt"] = previous["issuedAt"]
+    write_json(path, payload)
+    out(f"app snapshot: {len(payload['voices'])} voices -> {path.relative_to(ROOT) if path.is_relative_to(ROOT) else path}")
+    return path
+
+
 # --- keys and signing ----------------------------------------------------------------------------------------
 
 def _security(arguments: list[str], run=subprocess.run, stdin: str | None = None):
@@ -826,6 +849,7 @@ def main(argv: list[str]) -> int:
     check_parser.add_argument("--token-file", type=Path)
     check_parser.add_argument("--repo", default=ISSUE_REPO)
     commands.add_parser("build")
+    commands.add_parser("app-snapshot", help="write the catalog snapshot the app bundles")
     commands.add_parser("keygen")
     commands.add_parser("sign")
     commands.add_parser("page")
@@ -859,6 +883,8 @@ def main(argv: list[str]) -> int:
             if key is None:
                 raise CatalogToolError(f"no key named {KEY_ID!r} in the login Keychain; run `keygen` once on the Mac")
             sign(sources, arguments.state_dir, arguments.site_dir, key)
+        elif arguments.command == "app-snapshot":
+            write_app_snapshot(sources)
         elif arguments.command == "page":
             write_page(sources, arguments.site_dir)
         elif arguments.command == "publish":

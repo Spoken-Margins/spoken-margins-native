@@ -170,6 +170,24 @@ class TheShippedSources(unittest.TestCase):
                          ["https://spokenmargins.proximitytoprogress.com/voices/files/supertonic-3-int8/2026-05-11/onnx/duration_predictor.onnx"])
 
 
+class TheAppSnapshot(unittest.TestCase):
+    """The catalog the app bundles (#1819) must list exactly what sources.json lists, or Settings > Voices
+    offers files whose hashes no longer match what the site serves."""
+
+    def test_the_committed_snapshot_matches_sources_json(self):
+        committed = json.loads(vc.APP_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        rebuilt = vc.app_snapshot(vc.load_sources(), committed["issuedAt"])
+        self.assertEqual(committed, rebuilt, "run `scripts/voice-catalog app-snapshot` and commit the result")
+
+    def test_regenerating_an_unchanged_snapshot_keeps_its_date(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "snapshot.json"
+            sources = vc.load_sources()
+            vc.write_app_snapshot(sources, path, now=dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc), out=lambda _: None)
+            vc.write_app_snapshot(sources, path, now=dt.datetime(2026, 2, 1, tzinfo=dt.timezone.utc), out=lambda _: None)
+            self.assertEqual(json.loads(path.read_text())["issuedAt"], "2026-01-01T00:00:00Z")
+
+
 class ValidatingSources(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
