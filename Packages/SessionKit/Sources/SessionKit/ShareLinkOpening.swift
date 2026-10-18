@@ -48,15 +48,50 @@ public struct ShareLinkPacketDownloader: Sendable {
     public typealias Fetch = @Sendable (_ url: URL, _ maximumBytes: Int) async throws -> (status: Int, body: Data)
 
     public enum Failure: Error, Equatable, Sendable {
-        /// Expired, removed, switched off, or the network didn't answer.
+        /// The phone couldn't reach the server (no connection, a timeout, a dropped connection). Worth another tap.
+        case offline
+        /// The server says the link is gone: expired, removed or switched off.
+        case expired
+        /// The server answered with a fault of its own (too many requests, a 5xx). Worth trying again later.
+        case serverProblem
+        /// Anything else that stopped the download: an odd answer, an oversized body, a failed secure connection.
         case expiredOrUnreachable
         /// No key, a flipped byte, or a part that isn't a sealed packet.
         case incompleteOrDamaged
 
         public var message: String {
             switch self {
+            case .offline: "You're offline. Reconnect, then tap the link again."
+            case .expired: "This link has expired. Ask your friend to share it again."
+            case .serverProblem: "The server had a problem. Try again in a minute."
             case .expiredOrUnreachable: "This link has expired or can't be reached."
             case .incompleteOrDamaged: ShareLinkSealing.Failure.incompleteOrDamaged.message
+            }
+        }
+
+        /// True when the same link may well open on another try, so the app offers a Retry button.
+        public var isRetryable: Bool {
+            switch self {
+            case .offline, .serverProblem: true
+            case .expired, .expiredOrUnreachable, .incompleteOrDamaged: false
+            }
+        }
+
+        static func forStatus(_ status: Int) -> Failure {
+            switch status {
+            case 404, 410: .expired
+            case 429, 500...599: .serverProblem
+            default: .expiredOrUnreachable
+            }
+        }
+
+        static func forNetworkError(_ error: URLError) -> Failure {
+            switch error.code {
+            case .notConnectedToInternet, .timedOut, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost,
+                 .dnsLookupFailed, .dataNotAllowed, .internationalRoamingOff, .callIsActive:
+                .offline
+            default:
+                .expiredOrUnreachable
             }
         }
     }
@@ -93,13 +128,14 @@ public struct ShareLinkPacketDownloader: Sendable {
         let sealed: Data
         do {
             let response = try await fetch(link.packetURL, Self.maximumSealedBytes)
-            guard response.status == 200 else { throw Failure.expiredOrUnreachable }
+            guard response.status == 200 else { throw Failure.forStatus(response.status) }
             sealed = response.body
         } catch let failure as Failure {
             throw failure
         } catch {
             // A superseded or abandoned download surfaces as URLError.cancelled; callers treat it as a plain cancellation.
             if error is CancellationError || (error as? URLError)?.code == .cancelled { throw CancellationError() }
+            if let urlError = error as? URLError { throw Failure.forNetworkError(urlError) }
             throw Failure.expiredOrUnreachable
         }
         let packet: Data
