@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "voice-model-catalog.schema.json",
+  "title": "Voice model catalog (#1816)",
+  "description": "Every voice the app can download: what it is, where each file comes from, each file's size and SHA-256, and the licence that applies. This is the document that gets signed; it travels inside the envelope in voice-model-catalog-envelope.schema.json, and the app verifies the signature (VoiceModelCatalogVerifier) before it reads any of this. Whole-catalog rules the app enforces beyond this schema: a catalogVersion lower than the last accepted one is a rollback and is rejected; voice ids are unique. Entry rules: an entry whose runtime.name the build can't run (the schema leaves runtime.name open so a newer catalog still validates), or that breaks any rule below, is left out and the other voices are kept. The app reads fields by name and ignores any it does not know; a change that would break an older reader bumps schemaVersion.",
+  "type": "object",
+  "required": ["schemaVersion", "catalogVersion", "issuedAt", "voices"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {"const": "voice-model-catalog.v1"},
+    "catalogVersion": {"type": "integer", "minimum": 1, "description": "Rises with every published catalog. The app refuses one lower than the last it accepted."},
+    "issuedAt": {"type": "string", "format": "date-time"},
+    "voices": {
+      "type": "array",
+      "maxItems": 64,
+      "items": {"$ref": "#/$defs/voice"}
+    }
+  },
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,63}(?![\\s\\S])"},
+    "sha256": {
+      "type": "string",
+      "minLength": 64,
+      "maxLength": 64,
+      "pattern": "^[0-9a-f]{64}(?![\\s\\S])",
+      "description": "Lowercase hex. Uppercase, 63 or 65 characters, padding and surrounding whitespace are all rejected."
+    },
+    "httpsURL": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:(6553[0-5]|655[0-2][0-9]|65[0-4][0-9]{2}|6[0-4][0-9]{3}|[1-5][0-9]{4}|[1-9][0-9]{0,3}))?(/([A-Za-z0-9._~!$&'()*+,;=:@/?-]|%[0-9A-Fa-f]{2})*)?(?![\\s\\S])",
+      "description": "A plain https:// URL of at most 2,048 characters: a dotted ASCII host, a port from 1 to 65535, a path and query of unreserved characters, sub-delimiters, ':', '@', '/', '?' and %XX escapes. No credentials in the host part, no fragment, no whitespace. The app checks this with hand-written code, not Foundation's URL parser, which differs between platforms."
+    },
+    "filePath": {
+      "type": "string",
+      "maxLength": 256,
+      "pattern": "^(?!/)(?!.*(^|/)\\.{1,2}(/|(?![\\s\\S])))(?!.*//)(?!.*/(?![\\s\\S]))[A-Za-z0-9._+/-]+(?![\\s\\S])",
+      "description": "Where the file lands inside the voice's folder: relative, '/'-separated, only letters, digits and . _ + - in each segment, no empty, '.' or '..' segment. The app also refuses two paths that differ only by case, and a path that is also a folder another file sits in."
+    },
+    "iosVersion": {"type": "string", "pattern": "^[0-9]{1,4}(\\.[0-9]{1,4}){0,2}(?![\\s\\S])"},
+    "text": {"type": "string", "pattern": "\\S"},
+    "voice": {
+      "type": "object",
+      "required": ["id", "displayName", "publisher", "version", "runtime", "minimumIOSVersion", "minimumMemoryMegabytes", "status", "bundled", "files", "licenses"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "displayName": {"$ref": "#/$defs/text"},
+        "publisher": {"$ref": "#/$defs/text"},
+        "version": {"$ref": "#/$defs/text", "description": "The publisher's exact version or pinned revision of these files."},
+        "runtime": {
+          "type": "object",
+          "required": ["name", "version"],
+          "additionalProperties": false,
+          "properties": {
+            "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,31}(?![\\s\\S])", "description": "Open on purpose. The app runs 'onnxruntime' today and skips voices for any other runtime."},
+            "version": {"$ref": "#/$defs/text"}
+          }
+        },
+        "minimumIOSVersion": {"$ref": "#/$defs/iosVersion"},
+        "minimumMemoryMegabytes": {"type": "integer", "minimum": 1, "description": "The device's physical memory below which the voice is not offered."},
+        "status": {"enum": ["available", "withdrawn", "superseded"]},
+        "supersededBy": {"$ref": "#/$defs/id", "description": "Required when status is 'superseded', and never the voice itself."},
+        "bundled": {"type": "boolean", "description": "True when the voice ships inside the app (Kitten), so its licence shows without a download. A bundled voice may list no files."},
+        "files": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {"$ref": "#/$defs/file"}
+        },
+        "licenses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "items": {"$ref": "#/$defs/license"}
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "superseded"}}, "required": ["status"]}, "then": {"required": ["supersededBy"]}},
+        {"if": {"properties": {"bundled": {"const": false}}, "required": ["bundled"]}, "then": {"properties": {"files": {"minItems": 1}}}}
+      ]
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "byteCount", "sha256", "sources"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {"$ref": "#/$defs/filePath"},
+        "byteCount": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {"$ref": "#/$defs/httpsURL"},
+          "description": "In order of preference: the upstream pinned revision first; our own mirror only where the licence allows redistributing the file."
+        },
+        "licenseId": {"$ref": "#/$defs/id", "description": "Which of the voice's licenses governs this file."},
+        "origin": {
+          "type": "object",
+          "required": ["url"],
+          "additionalProperties": false,
+          "description": "Where the bytes were derived from when no source serves this exact file (a member of an upstream archive). Provenance for readers; never downloaded from.",
+          "properties": {
+            "url": {"$ref": "#/$defs/httpsURL"},
+            "note": {"type": "string", "maxLength": 500}
+          }
+        }
+      }
+    },
+    "license": {
+      "type": "object",
+      "required": ["id", "name", "textURL", "textSHA256", "requiresAcceptance"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "name": {"$ref": "#/$defs/text"},
+        "spdxId": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9.+-]+(?![\\s\\S])", "description": "Absent for licences with no SPDX identifier (the Open RAIL licences)."},
+        "textURL": {"$ref": "#/$defs/httpsURL"},
+        "textSHA256": {"$ref": "#/$defs/sha256", "description": "SHA-256 of the licence text when it was reviewed, so a change at textURL shows up."},
+        "requiresAcceptance": {"type": "boolean", "description": "True when the listener has to agree to use restrictions before the files download."},
+        "restrictionsSummary": {"type": "string", "maxLength": 1500, "description": "The use restrictions in plain words. Required when requiresAcceptance is true."}
+      },
+      "if": {"properties": {"requiresAcceptance": {"const": true}}, "required": ["requiresAcceptance"]},
+      "then": {"required": ["restrictionsSummary"], "properties": {"restrictionsSummary": {"$ref": "#/$defs/text"}}}
+    }
+  }
+}
