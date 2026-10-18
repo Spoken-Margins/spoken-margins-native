@@ -3,7 +3,7 @@
 //	smserver serve   -state DIR -public DIR [-listen 127.0.0.1:8795] [-attest-root PEM] [-allow-development]
 //	smserver block   -state DIR TAG      refuse one install from now on
 //	smserver unblock -state DIR TAG
-//	smserver switch  -public DIR SERVICE on|off   the kill switch
+//	smserver switch  -public DIR [-minimum-build N] SERVICE on|off   the kill switch
 //	smserver purge   -state DIR [-idle-days 90]
 //	smserver validate-manifest FILE
 //	smserver publish-manifest -public DIR FILE   the only way the manifest should change
@@ -306,11 +306,12 @@ func block(cmd string, args []string) error {
 func switchService(args []string) error {
 	fs := flag.NewFlagSet("switch", flag.ExitOnError)
 	public := fs.String("public", "public", "web root")
+	minimumBuild := fs.Int("minimum-build", config.KeepMinimumBuild, "app builds below this number get the service off; 0 removes the limit; leave out to keep it")
 	fs.Parse(args)
 	if fs.NArg() != 2 || (fs.Arg(1) != "on" && fs.Arg(1) != "off") {
-		return fmt.Errorf("usage: smserver switch -public DIR SERVICE on|off (services: %v)", config.KnownServices)
+		return fmt.Errorf("usage: smserver switch -public DIR [-minimum-build N] SERVICE on|off (services: %v)", config.KnownServices)
 	}
-	doc, err := config.Set(configPath(*public), fs.Arg(0), fs.Arg(1) == "on")
+	doc, err := config.SetWithMinimumBuild(configPath(*public), fs.Arg(0), fs.Arg(1) == "on", *minimumBuild)
 	if err == nil {
 		fmt.Println(doc.Summary())
 	}
