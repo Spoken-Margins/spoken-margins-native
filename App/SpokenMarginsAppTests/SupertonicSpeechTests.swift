@@ -4668,6 +4668,41 @@ final class SupertonicSpeechTests: XCTestCase {
         try secondClient.stop()
     }
 
+    // #1820: Supertonic's model is a download. With James chosen and nothing downloaded, the app builds this player
+    // around SupertonicModelNotDownloaded: Kitten reads the passage, Supertonic is never asked, and the iOS voice
+    // doesn't take over. A render that reached the stand-in would fail and hand the passage to the iOS voice.
+    func testWithoutTheDownloadedModelKittenReadsAndSupertonicIsNeverAsked() async throws {
+        do {
+            _ = try await SupertonicModelNotDownloaded().render(text: "x", voice: .m2, language: "en", speed: 1, synthesisSteps: 8)
+            XCTFail("the stand-in never renders")
+        } catch {
+            XCTAssertEqual(error as? SupertonicNarrationError, .missingAsset("Supertonic"))
+        }
+        XCTAssertFalse(SupertonicModelNotDownloaded.renderingAllowed())
+
+        let template = try makeTestWAV(duration: 1)
+        defer { try? FileManager.default.removeItem(at: template) }
+        let kitten = RecordingBundledVoiceRenderer(templateURL: template)
+        let fallback = RecordingFallbackAudioClient()
+        let started = expectation(description: "Kitten's audio starts")
+        started.assertForOverFulfill = false
+        let client = SupertonicSpeechPlaybackClient(
+            renderer: SupertonicModelNotDownloaded(), voice: .m2, speed: 1,
+            fallbackVoiceIdentifier: nil, fallbackRate: 0.5,
+            audioSessionActivator: {}, audioPlayerStarter: { _, _ in started.fulfill() },
+            observesPlayerLifecycle: false, onDeviceRenderingAllowed: SupertonicModelNotDownloaded.renderingAllowed,
+            pressureRenderer: kitten,
+            fallbackClient: fallback
+        )
+        _ = try client.prepareSpeechText("James isn't downloaded yet, so the bundled voice reads this sentence.")
+        try client.play(targetId: "not-downloaded")
+        await fulfillment(of: [started], timeout: 3)
+        let texts = await kitten.renderedTexts
+        XCTAssertFalse(texts.isEmpty, "Kitten rendered the passage")
+        XCTAssertTrue(fallback.playedOffsets.isEmpty, "the iOS voice did not take over: \(fallback.playedOffsets)")
+        try client.stop()
+    }
+
     // APA-15 (#1042): the app always bundles the model (project.yml), so a missing folder is a broken build,
     // not a reason to skip the only test that runs it inside the app. A peak of 0.000001 also accepted
     // near-silence; 0.01 is quiet speech. Whether each voice loads its own style is checked on the host, by

@@ -42,14 +42,20 @@ extension Gate1AppModel {
             throw SessionKitError.persistenceFailed("selected_speech_voice_unavailable")
         }
         if let voice = ttsVoiceSelection.supertonicVoice {
-            let renderer = try makeSupertonicRenderer()
+            // Supertonic's model is a download (#1820): until it is downloaded, Kitten reads through this same player.
+            let assets = SupertonicAssetResolver.location()
+            let renderer: any SupertonicRendering
+            if assets != nil {
+                renderer = try makeSupertonicRenderer()
+            } else {
+                try verifyCurrentTermsForOnDeviceVoice()
+                renderer = SupertonicModelNotDownloaded()
+            }
             let supportDirectory = try applicationSupportDirectory()
             guard let store else { throw SessionKitError.persistenceFailed("prepared_audio_store_unavailable") }
-            guard let assets = SupertonicAssetResolver.location() else {
-                throw SupertonicNarrationError.missingAsset("Supertonic")
-            }
-            let signatureTask = Task.detached(priority: .userInitiated) {
-                try SupertonicRenderIdentity.make(assets: assets, voice: voice)
+            let signatureTask = Task.detached(priority: .userInitiated) { () throws -> TTSRenderSignature in
+                guard let assets else { throw SupertonicNarrationError.missingAsset("Supertonic") }
+                return try SupertonicRenderIdentity.make(assets: assets, voice: voice)
             }
             let coordinator = PreparedAudioCoordinator(
                 repository: store,
@@ -74,7 +80,7 @@ extension Gate1AppModel {
                 renderedSpeechDiskCache = created
                 diskCache = created
             }
-            diagnostics["sessionTTS"] = "Supertonic 3 INT8 \(voice.rawValue)"
+            diagnostics["sessionTTS"] = assets == nil ? SupertonicModelNotDownloaded.sessionDescription : "Supertonic 3 INT8 \(voice.rawValue)"
             diagnostics["renderedSpeechCacheLimitMB"] = "\(renderedSpeechCacheLimitMB)"
             diagnostics["renderedSpeechCacheBytes"] = "\(diskCache.sizeBytes)"
             return SupertonicSpeechPlaybackClient(
@@ -86,6 +92,9 @@ extension Gate1AppModel {
                 diskCache: diskCache,
                 preparedAudioDirectory: supportDirectory.appending(path: "PreparedSupertonicAudio", directoryHint: .isDirectory),
                 voiceChangeCue: { [chime = NarrationVoiceChangeChime()] in _ = chime.play() },
+                onDeviceRenderingAllowed: assets == nil
+                    ? SupertonicModelNotDownloaded.renderingAllowed
+                    : { OnDeviceVoiceGovernor.app.supertonicRenderingBlock() == nil },
                 pressureRenderer: makeKittenRenderer(),
                 interruptionHandler: { [weak self] event in
                     Task { @MainActor [weak self] in
@@ -168,7 +177,11 @@ extension Gate1AppModel {
                     }
                 },
                 onBundledVoice: { [weak self] block, offset, _ in
-                    Task { @MainActor [weak self] in self?.reportBundledVoiceTookOver(block: block, offset: offset) }
+                    Task { @MainActor [weak self] in
+                        // Not downloaded is not a warm-phone warning; the one-time download card explains it (#1820).
+                        if assets == nil { self?.diagnostics["supertonicFallback"] = SupertonicModelNotDownloaded.fallbackCode; return }
+                        self?.reportBundledVoiceTookOver(block: block, offset: offset)
+                    }
                 },
                 onStall: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
                 onSystemPause: { [weak self] kind, fields in Task { @MainActor [weak self] in self?.recordDeveloperDiagnostic(kind, fields) } },
