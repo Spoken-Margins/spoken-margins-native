@@ -21,7 +21,7 @@ class IncreaseContrastWiringTests(unittest.TestCase):
     def test_the_border_token_has_an_increased_variant(self):
         text = _read("Gate1RootView.swift")
         self.assertIn("AppSemanticColorRGB.borderIncreased", text)
-        self.assertIn("traits.accessibilityContrast == .high", text)
+        self.assertIn("traits.accessibilityContrast == .high", _read("AccessibilityPreferences.swift"))
 
     def test_one_helper_reads_both_settings(self):
         text = _read("AccessibilityPreferences.swift")
