@@ -11,7 +11,6 @@ import UIKit
 final class WrittenMarginDraftKeeper {
     let saver: WrittenMarginDraftSaver
     private let currentDraft: () -> WrittenMarginDraft?
-    private var observers: [NSObjectProtocol] = []
 
     init(
         journal: WrittenMarginDraftJournal?,
@@ -21,16 +20,13 @@ final class WrittenMarginDraftKeeper {
         saver = WrittenMarginDraftSaver(journal: journal, onFailure: onFailure)
         self.currentDraft = currentDraft
         #if canImport(UIKit)
+        // The keeper lives as long as the model, and the observers hold it weakly, so they are never removed.
         for name in [UIApplication.willResignActiveNotification, UIApplication.didEnterBackgroundNotification, UIApplication.willTerminateNotification] {
-            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.flush() }
-            })
+            }
         }
         #endif
-    }
-
-    deinit {
-        for observer in observers { NotificationCenter.default.removeObserver(observer) }
     }
 
     func textChanged(_ draft: WrittenMarginDraft) {

@@ -101,8 +101,10 @@ extension Gate1AppModel {
             tryRefreshOfflineStorageUsage()
             diagnostics["libraryBootstrap"] = "loaded:\(rows.count)"
             reportSuccess(rows.isEmpty ? "Add a source to begin." : "Library ready.")
-            if let recordingDraftNotice { reportWarning(recordingDraftNotice) }
-            if let writtenMarginNotice { reportWarning(writtenMarginNotice) }
+            // One status line holds one message, so a spoken-draft notice (#951) and this one share it.
+            if let notice = [recordingDraftNotice, writtenMarginNotice].compactMap({ $0 }).joined(separator: " ").nilIfEmpty {
+                reportWarning(notice)
+            }
             try refreshAudioPreparationPresentation(store: store, announceNewCompletions: true)
             scheduleAutomaticAudioPreparationIfNeeded()
             // Recover missing opening windows as well as durable jobs. Yield

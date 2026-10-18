@@ -30,6 +30,17 @@ extension Gate1AppModel {
         writtenMarginDraftKeeper.discard(captureId: captureId)
     }
 
+    /// A draft for an item that is gone, or untouched for a month, can never be reopened, so it is removed. Every
+    /// other draft stays until its Margin is saved or discarded.
+    private func discardAbandonedWrittenMarginDrafts(_ drafts: [WrittenMarginDraftRecord], journal: WrittenMarginDraftJournal, store: SQLiteSessionStore) -> [WrittenMarginDraftRecord] {
+        let cutoff = Date().addingTimeInterval(-30 * 24 * 3600)
+        return drafts.filter { draft in
+            guard draft.updatedAt < cutoff || (try? store.loadItem(id: draft.itemId)) == nil else { return true }
+            try? journal.remove(id: draft.id)
+            return false
+        }
+    }
+
     /// Launch: reopens the unfinished Margin that belongs to the restored session, with its text. A draft for a
     /// session that isn't open is left where it is. Returns what to tell the listener, or nil.
     func restoreUnfinishedWrittenMargin(store: SQLiteSessionStore) -> String? {
@@ -39,8 +50,9 @@ extension Gate1AppModel {
         do {
             let loaded = try journal.load()
             if !loaded.unreadableFileNames.isEmpty { diagnostics["writtenMarginDraftsUnreadable"] = "\(loaded.unreadableFileNames.count)" }
+            let drafts = discardAbandonedWrittenMarginDrafts(loaded.drafts, journal: journal, store: store)
             guard let sessionId = engine.currentSession?.id,
-                  let record = loaded.drafts.first(where: { $0.sessionId == sessionId }) else { return nil }
+                  let record = drafts.first(where: { $0.sessionId == sessionId }) else { return nil }
             let capture = try engine.restoreWrittenInterjection(record.capture)
             snapshot = engine.snapshot
             var draft = makeWrittenMarginDraft(for: capture, store: store, reply: nil)
