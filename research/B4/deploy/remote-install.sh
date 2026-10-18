@@ -2,7 +2,9 @@
 # Runs ON THE VPS as root, from the staging directory deploy.sh uploads.
 #   remote-install.sh dry-run PORT SERVER_ROOT   show every change, change nothing
 #   remote-install.sh apply   PORT SERVER_ROOT   install, reload Caddy, check, roll back on failure
-#   remote-install.sh rollback BACKUP            restore a Caddyfile backup and reload
+#   remote-install.sh rollback BACKUP [BIN_BACKUP UNIT_BACKUP]
+#                                                restore a Caddyfile backup and reload; with the
+#                                                server backups, put the previous smserver back too
 # Paths can be overridden for local testing (SM_CADDYFILE and friends).
 set -euo pipefail
 umask 077
@@ -42,12 +44,59 @@ status() {
 
 reload_caddy() { systemctl reload caddy && systemctl is-active --quiet caddy; }
 
+# server_healthy PORT: smserver answers ok on loopback within ten seconds.
+server_healthy() {
+  local _
+  for _ in $(seq 20); do
+    if curl -fsS --noproxy '*' --max-time 2 "http://127.0.0.1:$1/api/v1/health" 2>/dev/null | grep -q '"status":"ok"'; then return 0; fi
+    sleep 0.5
+  done
+  return 1
+}
+
+# backup_server STAMP: copy the binary and unit aside before they are
+# replaced, so a failed check can put the running server back. The new unit
+# may pass flags the old binary doesn't know, so the two travel together.
+# Prints BIN_BACKUP= and UNIT_BACKUP= (empty on a first install).
+backup_server() {
+  bin_backup="" unit_backup=""
+  if [[ -f "${bin}" ]]; then bin_backup="${bin}.before-smserver.$1"; cp -a "${bin}" "${bin_backup}"; fi
+  if [[ -f "${unit}" ]]; then unit_backup="${unit}.before-smserver.$1"; cp -a "${unit}" "${unit_backup}"; fi
+  echo "BIN_BACKUP=${bin_backup}"
+  echo "UNIT_BACKUP=${unit_backup}"
+}
+
+# restore_server PORT BIN_BACKUP UNIT_BACKUP: put the previous binary and
+# unit back and restart. With no previous binary (first install) it stops
+# the new one instead. Never exits; says what it found.
+restore_server() {
+  local port="$1" b="$2" u="$3"
+  if [[ -z "${b}" || ! -f "${b}" ]]; then
+    systemctl stop smserver || true
+    echo "no previous smserver to restore; stopped the new one" >&2
+    return 0
+  fi
+  cp -a "${b}" "${bin}"
+  if [[ -n "${u}" && -f "${u}" ]]; then cp -a "${u}" "${unit}"; fi
+  systemctl daemon-reload || true
+  systemctl restart smserver || true
+  if server_healthy "${port}"; then
+    echo "restored the previous smserver from ${b}; healthy on 127.0.0.1:${port}" >&2
+  else
+    echo "WARNING: restored the previous smserver from ${b} but it isn't healthy; check it now" >&2
+  fi
+}
+
+# Tests source this file with __lib to get the functions above.
+if [[ "${1:-}" == __lib ]]; then return 0; fi
+
 if [[ "${1:-}" == rollback ]]; then
   backup="${2:?backup path}"
   [[ -f "${backup}" ]] || die "no backup at ${backup}"
   cp "${backup}" "${caddyfile}"
   reload_caddy
   say "restored ${backup} and reloaded Caddy"
+  if [[ -n "${3:-}" ]]; then restore_server "${SM_SERVER_PORT:-8795}" "$3" "${4:-}"; fi
   exit 0
 fi
 
@@ -94,6 +143,8 @@ say "apply"
 declare -A before
 for u in "${check_urls[@]}"; do before["${u}"]="$(status "${u}")"; done
 
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_server "${stamp}"
 id smserver >/dev/null 2>&1 || useradd --system --home-dir /var/lib/smserver --no-create-home --shell /usr/sbin/nologin smserver
 install -d -o smserver -g smserver -m 0755 "${server_root}" "${server_root}/api" "${server_root}/api/v1" "${server_root}/bridge" "${server_root}/bridge/v1"
 install -m 0755 "${stage}/smserver" "${bin}.new" && mv -f "${bin}.new" "${bin}"
@@ -116,19 +167,14 @@ systemctl daemon-reload
 systemctl try-restart systemd-journald@smserver.service || true
 systemctl enable --quiet smserver
 systemctl restart smserver
-healthy=0
-for _ in $(seq 20); do
-  if curl -fsS --noproxy '*' --max-time 2 "http://127.0.0.1:${port}/api/v1/health" 2>/dev/null | grep -q '"status":"ok"'; then healthy=1; break; fi
-  sleep 0.5
-done
-if ((!healthy)); then
+if ! server_healthy "${port}"; then
   journalctl -u smserver -n 20 --no-pager >&2 || true
-  systemctl stop smserver || true
-  die "smserver didn't answer on 127.0.0.1:${port}; stopped it. Caddy was not touched."
+  restore_server "${port}" "${bin_backup}" "${unit_backup}"
+  die "the new smserver didn't answer on 127.0.0.1:${port}. Caddy was not touched."
 fi
 echo "smserver healthy on 127.0.0.1:${port}"
 
-backup="${caddyfile}.before-smserver.$(date -u +%Y%m%dT%H%M%SZ)"
+backup="${caddyfile}.before-smserver.${stamp}"
 cp -a "${caddyfile}" "${backup}"
 echo "BACKUP=${backup}"
 cp "${stage}/Caddyfile.candidate" "${caddyfile}"
@@ -136,6 +182,7 @@ rollback() {
   echo "check failed: $*; rolling back the Caddyfile" >&2
   cp "${backup}" "${caddyfile}"
   reload_caddy || echo "WARNING: Caddy reload after rollback failed; check it now" >&2
+  restore_server "${port}" "${bin_backup}" "${unit_backup}"
   exit 1
 }
 reload_caddy || rollback "caddy reload"
