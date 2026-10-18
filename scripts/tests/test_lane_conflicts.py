@@ -1,9 +1,12 @@
 from pathlib import Path
+import os
 import re
+import stat
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import lane_conflicts as conflicts  # noqa: E402
@@ -63,7 +66,7 @@ class FakeApi:
         self.pulls = {pull['number']: pull for pull in pulls}
         self.comments = {number: list(found) for number, found in (comments or {}).items()}
         self.runs, self.jobs = list(runs), jobs or {}
-        self.posted, self.deleted, self.cancelled = [], [], []
+        self.posted, self.deleted, self.cancelled, self.delete_errors = [], [], [], {}
 
     def get(self, path):
         if re.fullmatch(r'pulls/\d+', path):
@@ -98,6 +101,8 @@ class FakeApi:
 
     def delete(self, path):
         self.deleted.append(path)
+        if self.delete_errors.get(path):
+            raise self.delete_errors[path]
         number, name = int(path.split('/')[1]), path.split('/labels/')[1].replace('%3A', ':')
         self.pulls[number]['labels'] = [label for label in self.pulls[number]['labels'] if label['name'] != name]
 
@@ -156,7 +161,7 @@ class ConflictCheckTests(unittest.TestCase):
 
     def test_a_clean_merge_changes_nothing(self):
         head = self.clean_pr()
-        api = FakeApi([pull(8, head)])
+        api = FakeApi([pull(8, head)], runs=[run(60, 8, head)], jobs={60: [{'name': 'automerge', 'status': 'queued'}]})
         self.assertEqual(self.sweep(api), {})
         self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
         self.assertEqual([label['name'] for label in api.pulls[8]['labels']], ['automerge'])
@@ -183,7 +188,10 @@ class ConflictCheckTests(unittest.TestCase):
 
     def test_only_armed_same_repo_prs_are_checked(self):
         head = self.conflicting_pr()
-        api = FakeApi([pull(7, head, ('needs-mac',)), pull(6, head, ('automerge',), repo='someone/fork')])
+        api = FakeApi([pull(7, head, ('needs-mac',)), pull(6, head, ('automerge',), repo='someone/fork')],
+                      runs=[run(70, 7, head), run(71, 6, head)],
+                      jobs={70: [{'name': 'automerge', 'status': 'queued'}],
+                            71: [{'name': 'automerge', 'status': 'queued'}]})
         self.assertEqual(self.sweep(api), {})
         self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
 
@@ -209,25 +217,92 @@ class ConflictCheckTests(unittest.TestCase):
 
     def test_a_head_that_moved_after_the_pr_list_is_left_alone(self):
         head = self.conflicting_pr()
-        api = FakeApi([pull(7, 'f' * 40)])  # the list says another head than the fetched ref
+        api = FakeApi([pull(7, 'f' * 40)], runs=[run(80, 7, 'f' * 40)],  # the list says another head than the fetched ref
+                      jobs={80: [{'name': 'automerge', 'status': 'queued'}]})
         self.assertEqual(self.sweep(api), {})
         self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
 
     def test_a_head_that_moves_between_the_check_and_the_hand_off_is_left_alone(self):
         head = self.conflicting_pr()
-        api = FakeApi([pull(7, head)])
+        api = FakeApi([pull(7, head)], runs=[run(90, 7, head)], jobs={90: [{'name': 'automerge', 'status': 'queued'}]})
         moved = dict(api.pulls[7], head={'sha': 'e' * 40, 'repo': {'full_name': REPO}})
         real_get = api.get
         api.get = lambda path: moved if path == 'pulls/7' else real_get(path)
         self.sweep(api)
         self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
 
-    def test_an_unreadable_pr_ref_changes_nothing(self):
+    def test_one_missing_pr_ref_costs_only_that_pr_its_check(self):
+        head = self.conflicting_pr(7)
+        api = FakeApi([pull(99, 'c' * 40), pull(7, head)])  # refs/pull/99/head does not exist
+        found = self.sweep(api)
+        self.assertEqual(found, {7: ['shared.txt']})
+        self.assertTrue(any('::warning::#99' in line for line in self.logs))
+        self.assertFalse([path for path, _ in api.posted if path.startswith('issues/99/')])
+
+    def test_a_base_that_cannot_be_fetched_checks_nothing(self):
         head = self.clean_pr(8)
-        api = FakeApi([pull(8, head), pull(99, 'c' * 40)])  # refs/pull/99/head does not exist
+        api = FakeApi([pull(8, head)])
         with self.assertRaises(subprocess.CalledProcessError):
-            self.sweep(api)
+            conflicts.sweep(api, str(self.origin.bare) + '-missing', 'next', self.cache, log=self.logs.append)
         self.assertEqual((api.posted, api.deleted, api.cancelled), ([], [], []))
+
+    def test_a_failed_hand_off_leaves_the_pr_armed_with_its_queued_runs(self):
+        head = self.conflicting_pr(7)
+        api = FakeApi([pull(7, head, ('automerge', 'lane:queued'))], runs=[run(50, 7, head)],
+                      jobs={50: [{'name': 'automerge', 'status': 'queued'}]})
+        real_post = api.post
+
+        def post(path, fields=None):
+            if path == 'issues/7/comments':
+                raise subprocess.CalledProcessError(1, 'gh', stderr='HTTP 502')
+            real_post(path, fields)
+        api.post = post
+        self.sweep(api)
+        self.assertEqual(api.cancelled, [])
+        self.assertEqual(api.deleted, [])
+        self.assertEqual(sorted(label['name'] for label in api.pulls[7]['labels']), ['automerge', 'lane:queued'])
+
+    def test_a_label_that_is_already_gone_does_not_stop_the_other_label_or_the_cancel(self):
+        head = self.conflicting_pr(7)
+        api = FakeApi([pull(7, head, ('automerge', 'lane:queued'))], runs=[run(50, 7, head)],
+                      jobs={50: [{'name': 'automerge', 'status': 'queued'}]})
+        api.delete_errors['issues/7/labels/automerge'] = subprocess.CalledProcessError(
+            1, 'gh', stderr='gh: Label does not exist (HTTP 404)')
+        self.sweep(api)
+        self.assertEqual(sorted(api.deleted), ['issues/7/labels/automerge', 'issues/7/labels/lane%3Aqueued'])
+        self.assertEqual(api.cancelled, [50])
+
+    def test_a_label_removal_that_really_fails_keeps_the_runs(self):
+        head = self.conflicting_pr(7)
+        api = FakeApi([pull(7, head, ('automerge',))], runs=[run(50, 7, head)],
+                      jobs={50: [{'name': 'automerge', 'status': 'queued'}]})
+        api.delete_errors['issues/7/labels/automerge'] = subprocess.CalledProcessError(1, 'gh', stderr='HTTP 500')
+        self.sweep(api)
+        self.assertEqual(api.cancelled, [])
+        self.assertNotIn('needs-mac', [label['name'] for label in api.pulls[7]['labels']])
+
+    def test_only_runs_for_the_conflicting_head_are_cancelled(self):
+        head = self.conflicting_pr(7)
+        api = FakeApi([pull(7, head)], runs=[run(50, 7, head), run(51, 7, 'a' * 40), run(52, 8, head)],
+                      jobs={50: [{'name': 'automerge', 'status': 'queued'}],
+                            51: [{'name': 'automerge', 'status': 'queued'}],
+                            52: [{'name': 'automerge', 'status': 'queued'}]})
+        self.sweep(api)
+        self.assertEqual(api.cancelled, [50])
+
+    def test_a_non_ascii_file_name_is_reported_as_written(self):
+        self.origin.branch_from_start('accent')
+        self.origin.write('caf\u00e9.txt', 'pr\n')
+        self.origin.write('shared.txt', 'one\nTWO FROM THE PR\nthree\n')
+        head = self.origin.commit('pr')
+        self.origin.pull(4, head)
+        self.origin.advance_next('shared.txt', 'one\nTWO FROM NEXT\nthree\n')
+        self.assertEqual(self.sweep(FakeApi([pull(4, head)])), {4: ['shared.txt']})
+        run_git(self.origin.work, 'checkout', '-q', 'next')
+        self.origin.write('caf\u00e9.txt', 'next\n')
+        self.origin.commit('next adds the accented name')
+        run_git(self.origin.work, 'push', '-q', 'origin', 'next')
+        self.assertEqual(self.sweep(FakeApi([pull(4, head)])), {4: ['caf\u00e9.txt', 'shared.txt']})
 
     def test_no_branch_or_pull_ref_in_the_origin_changes(self):
         head = self.conflicting_pr()
@@ -235,11 +310,28 @@ class ConflictCheckTests(unittest.TestCase):
         self.sweep(FakeApi([pull(7, head)]))
         self.assertEqual(self.origin.refs(), before)
 
-    def test_the_throwaway_worktree_is_gone_and_the_cache_has_no_merge_in_progress(self):
+    def test_no_worktree_temp_folder_or_merge_in_progress_is_left_behind(self):
         head = self.conflicting_pr()
+        before = set(Path(tempfile.gettempdir()).glob('sm-lane-merge-*'))
         self.sweep(FakeApi([pull(7, head)]))
-        self.assertEqual(run_git(self.cache, 'worktree', 'list').count('\n'), 0)
-        self.assertFalse((self.cache / '.git' / 'MERGE_HEAD').exists())
+        self.assertEqual(set(Path(tempfile.gettempdir()).glob('sm-lane-merge-*')), before)
+        self.assertEqual(list((self.cache / '.git' / 'worktrees').glob('*')) if (self.cache / '.git' / 'worktrees').exists() else [], [])
+        self.assertEqual(run_git(self.cache, 'status', '--porcelain'), '')
+
+    def test_a_folder_left_by_a_killed_run_is_cleared_by_the_next_sweep(self):
+        head = self.conflicting_pr()
+        leftover = Path(tempfile.mkdtemp(prefix='sm-lane-merge-'))
+        self.addCleanup(lambda: __import__('shutil').rmtree(leftover, ignore_errors=True))
+        self.sweep(FakeApi([pull(7, head)]))
+        self.assertFalse(leftover.exists())
+
+    def test_the_refs_of_a_closed_pr_do_not_pile_up_in_the_cache(self):
+        head = self.conflicting_pr(7)
+        self.sweep(FakeApi([pull(7, head)]))
+        other = self.clean_pr(8)
+        self.sweep(FakeApi([pull(8, other)]))
+        refs = run_git(self.cache, 'for-each-ref', '--format=%(refname)', 'refs/lane-conflicts/').split()
+        self.assertEqual(sorted(refs), ['refs/lane-conflicts/base', 'refs/lane-conflicts/pr-8'])
 
     def test_an_api_failure_while_acting_does_not_stop_the_other_steps_or_the_sweep(self):
         head = self.conflicting_pr(7)
@@ -272,6 +364,71 @@ class ConflictCheckTests(unittest.TestCase):
             conflicts.GitHubApi = original
 
 
+class GitHubApiTests(unittest.TestCase):
+    """The real GitHubApi against a fake `gh` that records its arguments."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bin = Path(self.tmp.name)
+        self.log = self.bin / 'calls.txt'
+        self.reply = self.bin / 'reply.json'
+        gh = self.bin / 'gh'
+        gh.write_text(f'#!/bin/sh\nprintf "%s\\n" "$*" >> "{self.log}"\ncat "{self.reply}"\n[ -f "{self.bin}/fail" ] && {{ echo "HTTP 404" >&2; exit 1; }}\nexit 0\n')
+        gh.chmod(gh.stat().st_mode | stat.S_IEXEC)
+        patcher = mock.patch.dict(os.environ, {'PATH': f'{self.bin}:{os.environ["PATH"]}'})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.reply.write_text('[]')
+        self.api = conflicts.GitHubApi(REPO)
+
+    def test_get_all_flattens_the_pages_gh_slurps(self):
+        self.reply.write_text('[[{"number": 1}, {"number": 2}], [{"number": 3}]]')
+        self.assertEqual([item['number'] for item in self.api.get_all('pulls?state=open&per_page=100')], [1, 2, 3])
+        self.assertEqual(self.log.read_text().strip(),
+                         f'api --paginate --slurp repos/{REPO}/pulls?state=open&per_page=100')
+
+    def test_post_and_delete_build_the_calls_the_workflow_depends_on(self):
+        self.api.post('issues/7/labels', {'labels[]': 'needs-mac'})
+        self.api.post('actions/runs/5/cancel')
+        self.api.delete('issues/7/labels/lane%3Aqueued')
+        self.assertEqual(self.log.read_text().splitlines(), [
+            f'api -X POST repos/{REPO}/issues/7/labels -f labels[]=needs-mac',
+            f'api -X POST repos/{REPO}/actions/runs/5/cancel',
+            f'api -X DELETE repos/{REPO}/issues/7/labels/lane%3Aqueued'])
+
+    def test_a_404_is_kept_on_the_error_so_an_already_removed_label_can_be_told_apart(self):
+        (self.bin / 'fail').write_text('')
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            self.api.delete('issues/7/labels/automerge')
+        self.assertIn('404', caught.exception.stderr)
+        self.assertTrue(conflicts.remove_label(self.api, 7, 'automerge'))
+
+
+class TokenHandlingTests(unittest.TestCase):
+    def test_the_token_reaches_git_through_the_environment_never_the_command_line(self):
+        captured = {}
+
+        def fake_run(cmd, **kwargs):
+            captured.update(cmd=cmd, env=kwargs['env'])
+            return subprocess.CompletedProcess(cmd, 0, '', '')
+        with mock.patch.object(subprocess, 'run', fake_run), mock.patch('builtins.print') as printed:
+            conflicts.git('.', 'fetch', auth='SECRETTOKEN')
+        basic = __import__('base64').b64encode(b'x-access-token:SECRETTOKEN').decode()
+        self.assertNotIn(basic, ' '.join(captured['cmd']))
+        self.assertNotIn('SECRETTOKEN', ' '.join(captured['cmd']))
+        self.assertEqual(captured['env']['GIT_CONFIG_VALUE_0'], f'Authorization: basic {basic}')
+        printed.assert_any_call(f'::add-mask::{basic}')
+        self.assertEqual(captured['env']['GIT_CONFIG_GLOBAL'], os.devnull)
+
+    def test_a_failed_fetch_is_described_without_its_command_line(self):
+        error = subprocess.CalledProcessError(128, ['git', '-c', 'x=Authorization: basic SECRET', 'fetch'],
+                                              stderr='fatal: repository not found')
+        text = conflicts.describe(error)
+        self.assertNotIn('SECRET', text)
+        self.assertIn('fatal: repository not found', text)
+
+
 class WorkflowWiringTests(unittest.TestCase):
     workflow = (Path(__file__).resolve().parents[2] / '.github' / 'workflows' / 'lane-conflicts.yml')
 
@@ -287,6 +444,7 @@ class WorkflowWiringTests(unittest.TestCase):
 
     def test_it_starts_when_next_moves_and_when_a_lane_label_or_push_lands(self):
         text = self.workflow.read_text()
+        self.assertIn('ONLY_PR: ${{ inputs.pr }}', text)  # a PR event sweeps everything; only a dispatch narrows
         for needle in ('push:', 'branches: [next]', 'pull_request:', 'types: [labeled, synchronize, reopened]',
                        'workflow_dispatch:', "'automerge'", "'lane:queued'"):
             self.assertIn(needle, text)

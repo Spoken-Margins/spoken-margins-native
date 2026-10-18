@@ -39,8 +39,9 @@ class GitHubApi:
     def __init__(self, repo):
         self.repo = repo
 
-    def _run(self, args, **kwargs):
-        return subprocess.check_output(['gh', 'api', *args], text=True, timeout=30, **kwargs)
+    def _run(self, args):
+        # stderr is kept on the error, so a 404 can be told from any other failure (and never reaches the log raw).
+        return subprocess.run(['gh', 'api', *args], text=True, timeout=30, capture_output=True, check=True).stdout
 
     def get(self, path):
         return json.loads(self._run([f'repos/{self.repo}/{path}']))
@@ -53,36 +54,68 @@ class GitHubApi:
         args = ['-X', 'POST', f'repos/{self.repo}/{path}']
         for key, value in (fields or {}).items():
             args += ['-f', f'{key}={value}']
-        self._run(args, stderr=subprocess.DEVNULL)
+        self._run(args)
 
     def delete(self, path):
-        self._run(['-X', 'DELETE', f'repos/{self.repo}/{path}'], stderr=subprocess.DEVNULL)
+        self._run(['-X', 'DELETE', f'repos/{self.repo}/{path}'])
 
 
 def git(cwd, *args, check=True, auth=None, timeout=300):
-    """One git command with no hooks, no LFS downloads and no prompts. `auth` is a token for an https remote."""
-    cmd = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.process=',
-           '-c', 'filter.lfs.required=false', '-c', 'user.name=lane-conflicts', '-c', 'user.email=lane@localhost']
+    """One git command with no hooks, no LFS downloads, no prompts and no user or system git config.
+
+    `auth` is a token for an https remote. It goes in through the environment (never argv, which `ps` shows and
+    an error message repeats) and its derived header is masked in the job log.
+    """
+    cmd = ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.quotePath=false', '-c', 'filter.lfs.smudge=',
+           '-c', 'filter.lfs.process=', '-c', 'filter.lfs.required=false', '-c', 'user.name=lane-conflicts',
+           '-c', 'user.email=lane@localhost']
+    env = dict(os.environ, GIT_LFS_SKIP_SMUDGE='1', GIT_TERMINAL_PROMPT='0', GIT_CONFIG_NOSYSTEM='1',
+               GIT_CONFIG_GLOBAL=os.devnull)
     if auth:
         basic = base64.b64encode(f'x-access-token:{auth}'.encode()).decode()
-        cmd += ['-c', f'http.extraHeader=Authorization: basic {basic}']
-    env = dict(os.environ, GIT_LFS_SKIP_SMUDGE='1', GIT_TERMINAL_PROMPT='0')
+        print(f'::add-mask::{basic}')
+        env.update(GIT_CONFIG_COUNT='1', GIT_CONFIG_KEY_0='http.extraHeader',
+                   GIT_CONFIG_VALUE_0=f'Authorization: basic {basic}')
     return subprocess.run(cmd + list(args), cwd=cwd, env=env, text=True, capture_output=True, check=check,
                           timeout=timeout)
 
 
-def fetch(workdir, remote, base, prs, token=None):
-    """Bring the base tip and each PR head into the cached clone. Returns the base tip sha."""
+def describe(error):
+    """An error as one safe log line: git's or gh's own message, never the command line."""
+    if isinstance(error, subprocess.CalledProcessError):
+        text = (error.stderr or '').strip().replace('\n', ' ')[:300]
+        return f'{Path(str(error.cmd[0])).name} exited {error.returncode}' + (f': {text}' if text else '')
+    return repr(error)
+
+
+def fetch(workdir, remote, base, prs, token=None, log=print):
+    """Bring the base tip and each PR head into the cached clone. Returns (base tip sha, PRs that fetched).
+
+    The base must fetch or this raises. Each PR head is fetched on its own, so one missing ref (a PR closed or
+    deleted mid-run) costs only that PR its check.
+    """
     workdir = Path(workdir)
     if not (workdir / '.git').exists():
         workdir.mkdir(parents=True, exist_ok=True)
         git(workdir, 'init', '-q')
     git(workdir, 'remote', 'remove', 'origin', check=False)
     git(workdir, 'remote', 'add', 'origin', remote)
-    specs = [f'+refs/heads/{base}:refs/lane-conflicts/base'] + [
-        f'+refs/pull/{pr}/head:refs/lane-conflicts/pr-{pr}' for pr in prs]
-    git(workdir, 'fetch', '-q', '--no-tags', 'origin', *specs, auth=token)
-    return git(workdir, 'rev-parse', 'refs/lane-conflicts/base').stdout.strip()
+    # Last run's refs and any worktree a killed run left behind.
+    for ref in git(workdir, 'for-each-ref', '--format=%(refname)', 'refs/lane-conflicts/').stdout.split():
+        git(workdir, 'update-ref', '-d', ref, check=False)
+    for stale in Path(tempfile.gettempdir()).glob('sm-lane-merge-*'):
+        shutil.rmtree(stale, ignore_errors=True)
+    git(workdir, 'worktree', 'prune', check=False)
+    git(workdir, 'fetch', '-q', '--no-tags', 'origin', f'+refs/heads/{base}:refs/lane-conflicts/base', auth=token)
+    fetched = []
+    for pr in prs:
+        try:
+            git(workdir, 'fetch', '-q', '--no-tags', 'origin', f'+refs/pull/{pr}/head:refs/lane-conflicts/pr-{pr}',
+                auth=token)
+            fetched.append(pr)
+        except subprocess.SubprocessError as error:
+            log(f'::warning::#{pr}: could not fetch its head ({describe(error)}); skipped.')
+    return git(workdir, 'rev-parse', 'refs/lane-conflicts/base').stdout.strip(), fetched
 
 
 def conflicts_with(workdir, base_sha, head_sha):
@@ -125,13 +158,13 @@ def comment_body(pr_base, base_sha, head, files):
             f'{marker(head, base_sha)}')
 
 
-def cancel_queued_runs(api, pr):
-    """Cancel the PR's lane.yml runs whose Mac jobs have not started. Returns the cancelled run ids."""
+def cancel_queued_runs(api, pr, head):
+    """Cancel the lane.yml runs for this PR head whose Mac jobs have not started. Returns the cancelled run ids."""
     import lane_dedupe
     cancelled = []
     for run_id, run in sorted(lane_dedupe.active_runs(api).items()):
         info = lane_dedupe.parse_run_name(run.get('display_title'))
-        if not info or info['pr'] != pr:
+        if not info or info['pr'] != pr or info['head'] != head:
             continue
         if lane_dedupe.mac_job_started(lane_dedupe.mac_jobs(api, run_id)):
             continue
@@ -140,8 +173,22 @@ def cancel_queued_runs(api, pr):
     return cancelled
 
 
+def remove_label(api, pr, name):
+    """Remove a label; one that is already gone (404) counts as removed. Returns True when it is gone."""
+    try:
+        api.delete(f'issues/{pr}/labels/{quote(name, safe="")}')
+    except subprocess.CalledProcessError as error:
+        if '404' not in (error.stderr or '') and 'Not Found' not in (error.stderr or ''):
+            raise
+    return True
+
+
 def act_on_conflict(api, pr, base, base_sha, head, files, log=print):
-    """Comment once, move the labels, cancel queued runs. Each step is tried on its own; returns what was done."""
+    """Comment once, move the labels, then cancel queued runs. Returns what was done.
+
+    The queued runs are cancelled only after both lane labels are off the PR: a PR that kept its labels but lost
+    its runs would wait with nothing to queue it again. Any failure stops the hand-off and leaves the rest alone.
+    """
     done = []
     try:
         current = api.get(f'pulls/{pr}')
@@ -155,21 +202,18 @@ def act_on_conflict(api, pr, base, base_sha, head, files, log=print):
         if not any(marker(head, base_sha) in (c.get('body') or '') for c in api.get_all(f'issues/{pr}/comments?per_page=100')):
             api.post(f'issues/{pr}/comments', {'body': comment_body(base, base_sha, head, files)})
             done.append('comment')
+        # The labels that start a Mac job go first; needs-mac is the hand-off and goes on last.
+        for name in REMOVE:
+            if name in labels and remove_label(api, pr, name):
+                done.append(f'-{name}')
         if ADD not in labels:
             api.post(f'issues/{pr}/labels', {'labels[]': ADD})
             done.append(f'+{ADD}')
-        for name in REMOVE:
-            if name in labels:
-                api.delete(f'issues/{pr}/labels/{quote(name, safe="")}')
-                done.append(f'-{name}')
-    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        log(f'::warning::#{pr}: the conflict hand-off stopped ({error!r}); the Mac check still catches it.')
-    try:
-        cancelled = cancel_queued_runs(api, pr)
+        cancelled = cancel_queued_runs(api, pr, head)
         if cancelled:
             done.append('cancelled ' + ', '.join(str(run) for run in cancelled))
     except (ImportError, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
-        log(f'::warning::#{pr}: could not cancel queued runs ({error!r}).')
+        log(f'::warning::#{pr}: the conflict hand-off stopped ({describe(error)}); the Mac check still catches it.')
     return done
 
 
@@ -192,17 +236,19 @@ def sweep(api, remote, base, workdir, token=None, only=None, log=print):
     if not pulls:
         log('No armed PRs into ' + base + '.')
         return {}
-    base_sha = fetch(workdir, remote, base, [pull['number'] for pull in pulls], token)
+    base_sha, fetched = fetch(workdir, remote, base, [pull['number'] for pull in pulls], token, log)
     found = {}
     for pull in pulls:
         pr, head = pull['number'], pull['head']['sha']
+        if pr not in fetched:
+            continue
         try:
             if git(workdir, 'rev-parse', f'refs/lane-conflicts/pr-{pr}').stdout.strip() != head:
                 log(f'#{pr}: head moved while fetching; skipped.')
                 continue
             files = conflicts_with(workdir, base_sha, head)
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
-            log(f'::warning::#{pr}: could not check ({error!r}); the Mac check still catches it.')
+            log(f'::warning::#{pr}: could not check ({describe(error)}); the Mac check still catches it.')
             continue
         if not files:
             log(f'#{pr}: merges cleanly into {base} ({base_sha[:7]}).')
@@ -229,7 +275,7 @@ def main(argv=None):
         sweep(GitHubApi(args.repo), remote, args.base, args.workdir, os.environ.get('GH_TOKEN'), args.pr)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         # Never red: a red check wakes the PR's thread as if its code failed. The Mac check still catches conflicts.
-        print(f'::warning::Conflict check unavailable ({error!r}).')
+        print(f'::warning::Conflict check unavailable ({describe(error)}).')
     return 0
 
 
