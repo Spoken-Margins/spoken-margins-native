@@ -49,6 +49,7 @@ struct Gate2LiveActivityWidget: Widget {
                 Image(systemName: context.state.sharedMarginSenderLabel != nil
                     ? "text.bubble.fill"
                     : context.state.surfaceSymbol(isStale: context.isStale))
+                    .accessibilityLabel(context.state.stateAccessibilityLabel(isStale: context.isStale))
             } compactTrailing: {
                 Text(context.state.sharedMarginSenderLabel != nil ? "NEW" : "\(context.state.progressPercent)%")
                     .font(.caption2.monospacedDigit())
@@ -56,6 +57,7 @@ struct Gate2LiveActivityWidget: Widget {
                 Image(systemName: context.state.sharedMarginSenderLabel != nil
                     ? "text.bubble.fill"
                     : context.state.surfaceSymbol(isStale: context.isStale))
+                    .accessibilityLabel(context.state.stateAccessibilityLabel(isStale: context.isStale))
             }
             .widgetURL(context.state.tapURL(isStale: context.isStale))
         }
@@ -158,6 +160,7 @@ private struct Gate2LiveActivitySmallView: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(state.isRecording ? state.recordingTint : .green)
                     .frame(width: 22, height: 22)
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(state.title)
@@ -181,6 +184,7 @@ private struct Gate2LiveActivitySmallView: View {
                     Text(stateText)
                         .font(.caption2.weight(.bold).monospaced())
                         .foregroundStyle(state.isRecording ? state.recordingTint : .white.opacity(0.84))
+                        .accessibilityLabel(state.stateAccessibilityLabel(isStale: isStale))
                     Spacer(minLength: 4)
                     Text("\(max(0, min(100, state.progressPercent)))%")
                         .font(.caption.weight(.bold).monospacedDigit())
@@ -281,7 +285,12 @@ private struct Gate2LiveActivityView: View {
                     )
                 }
                 if state.canRun("skipBack") {
-                    CompactRoundIntentButton(command: "skipBack", systemImage: "gobackward.15", size: 56)
+                    CompactRoundIntentButton(
+                        command: "skipBack",
+                        systemImage: "gobackward.15",
+                        size: 56,
+                        accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipBack")
+                    )
                 }
                 if state.canRun("togglePlayPause") {
                     CompactPlayPauseButton(
@@ -290,7 +299,12 @@ private struct Gate2LiveActivityView: View {
                     )
                 }
                 if state.canRun("skipForward") {
-                    CompactRoundIntentButton(command: "skipForward", systemImage: "goforward.15", size: 56)
+                    CompactRoundIntentButton(
+                        command: "skipForward",
+                        systemImage: "goforward.15",
+                        size: 56,
+                        accessibilityLabel: Gate2LiveActivityAccessibility.label(forCommand: "skipForward")
+                    )
                 }
                 if state.canRun("skimForward") {
                     CompactRoundIntentButton(
@@ -379,6 +393,9 @@ private struct Gate2SharedMarginButtons: View {
                     .background(Color.green.opacity(0.28))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
+            .accessibilityLabel(compact
+                ? Gate2LiveActivityAccessibility.playSharedMargin
+                : Gate2LiveActivityAccessibility.listenToSharedMargin)
             Button(intent: Gate2SharedMarginActionIntent(command: Gate2CompactApplicationCommand.dismissSharedMargin)) {
                 Label(compact ? "Skip" : "Dismiss", systemImage: "xmark")
                     .font(.caption.weight(.bold))
@@ -387,6 +404,9 @@ private struct Gate2SharedMarginButtons: View {
                     .background(Color.white.opacity(0.14))
                     .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
+            .accessibilityLabel(compact
+                ? Gate2LiveActivityAccessibility.skipSharedMargin
+                : Gate2LiveActivityAccessibility.dismissSharedMargin)
         }
         .buttonStyle(.plain)
     }
@@ -431,7 +451,7 @@ private struct CompactRoundIntentButton: View {
         }
         .frame(width: size, height: size)
         .contentShape(Circle())
-        .accessibilityLabel(accessibilityLabel ?? command)
+        .accessibilityLabel(accessibilityLabel ?? Gate2LiveActivityAccessibility.label(forCommand: command))
     }
 }
 
@@ -445,6 +465,7 @@ private struct CompactPlayPauseButton: View {
         }
         .frame(width: 60, height: 60)
         .contentShape(Circle())
+        .accessibilityLabel(Gate2LiveActivityAccessibility.playPauseLabel(isPlaying: isPlaying))
     }
 
     private var playPauseLabel: some View {
