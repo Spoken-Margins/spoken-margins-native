@@ -92,7 +92,7 @@ else
   step "fast plan (scripts/verify-tests.py)" swift '.venv/bin/python scripts/verify-tests.py --plan fast'
 fi
 if [[ $app_build -eq 1 ]]; then
-  step "simulator build" xcodebuild "xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -destination 'generic/platform=iOS Simulator' build-for-testing"
+  step "simulator build" xcodebuild "xcodebuild -project SpokenMarginsNative.xcodeproj -scheme SpokenMarginsApp -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build-for-testing"
 else
   echo "skipped: simulator build (pass --app-build; needs Xcode)"
   skipped+=("simulator build")

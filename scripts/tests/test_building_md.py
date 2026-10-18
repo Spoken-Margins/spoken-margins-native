@@ -68,6 +68,16 @@ class BuildingMdTests(unittest.TestCase):
         self.assertIn("-destination 'generic/platform=iOS Simulator'", BUILDING)
         self.assertRegex((ROOT / 'project.yml').read_text(), r'(?m)^schemes:\n  SpokenMarginsApp:')
 
+    def test_the_script_runs_the_same_simulator_build_the_page_documents(self):
+        def words(text):
+            return sorted(text.replace('\\', ' ').replace("'", ' ').replace('"', ' ').split())
+
+        page = re.search(r'```sh\n(xcodebuild .*?)```', BUILDING, re.S).group(1)
+        script = (ROOT / 'scripts/check-fresh-clone.sh').read_text()
+        line = next(line for line in script.splitlines() if 'step "simulator build"' in line)
+        command = line[line.index('xcodebuild -project'):]
+        self.assertEqual(words(command), words(page))
+
     def test_the_lfs_files_it_warns_about_are_tracked_by_lfs(self):
         attributes = (ROOT / '.gitattributes').read_text()
         self.assertIn('git lfs pull', BUILDING)
