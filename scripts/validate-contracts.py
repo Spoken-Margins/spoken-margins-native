@@ -525,7 +525,14 @@ def portable_format_problems(reader=None) -> list[str]:
     return problems
 
 
-def main() -> int:
+def main(argv=()) -> int:
+    # --allow-lfs-pointers: a checkout without Git LFS (the hosted portable plan, #1847) has pointer files
+    # where the voice models go; the Supertonic check then compares each pointer's recorded size and hash.
+    arguments = list(argv)
+    unknown = [a for a in arguments if a != "--allow-lfs-pointers"]
+    if unknown:
+        print(f"usage: validate-contracts.py [--allow-lfs-pointers] (unknown: {' '.join(unknown)})", file=sys.stderr)
+        return 2
     errors: list[str] = []
     errors.extend(portable_format_problems())
     for rule in PATH_SCHEMA_RULES:
@@ -565,7 +572,7 @@ def main() -> int:
         return 1
 
     asset_validation = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "validate-supertonic-assets.py")],
+        [sys.executable, str(ROOT / "scripts" / "validate-supertonic-assets.py"), *arguments],
         check=False,
         text=True,
         capture_output=True,
@@ -580,4 +587,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))
