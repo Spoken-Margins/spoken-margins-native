@@ -97,7 +97,7 @@ def swift_packages(root):
     text = (root / 'Packages/SessionKit/Package.swift').read_text()
     text = '\n'.join(line for line in text.splitlines() if not line.lstrip().startswith('//'))
     found = {identity(url): version for url, version in
-             re.findall(r'\.package\(\s*url:\s*"([^"]+)"(?:\s*,\s*exact:\s*"([^"]+)")?', text)}
+             re.findall(r'\.package\(\s*(?:name:\s*"[^"]*"\s*,\s*)?url:\s*"([^"]+)"(?:\s*,\s*exact:\s*"([^"]+)")?', text)}
     for url in re.findall(r'^\s+url:\s*(\S+)', (root / 'project.yml').read_text(), re.M):
         found.setdefault(identity(url), None)
     for resolved in ('Packages/SessionKit/Package.resolved',
@@ -201,6 +201,9 @@ def problems(root):
     prefixes = [path for component in components if component['distribution'] != 'tool'
                 for path in component.get('paths', [])]
     own = data.get('projectAuthored', [])
+    # Captured content is covered as data, but a model or font file dropped there still needs its own entry.
+    model_prefixes = [path for component in components if component['distribution'] not in ('tool', 'content')
+                      for path in component.get('paths', [])]
     for path in sorted(resource_folders(root)):
         if not covers([*prefixes, *own], path) and not any(covers([path], listed) for listed in [*prefixes, *own]):
             found.append(f'project.yml bundles {path}, which no entry lists in "paths" and "projectAuthored" does not claim')
@@ -210,7 +213,7 @@ def problems(root):
                             'SpokenMarginsNative.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved'}
     for path in walk(root):
         name = path.rsplit('/', 1)[-1]
-        if Path(path).suffix.lower() in MODEL_SUFFIXES and not covers(prefixes, path):
+        if Path(path).suffix.lower() in MODEL_SUFFIXES and not covers(model_prefixes, path):
             found.append(f'{path}: a model or font file under no entry\'s paths')
         if MANIFEST_NAMES.match(name) and path not in individually_checked and path not in claimed_manifests:
             found.append(f'{path}: a dependency manifest no entry claims under tracks.manifests')

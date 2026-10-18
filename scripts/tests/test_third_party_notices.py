@@ -69,6 +69,12 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         swift.write_text(swift.read_text() + '\nlet extra = [.package(url: "https://github.com/x/Extra.git", exact: "1.0.0")]\n')
         self.assertProblem(root, 'Swift package extra')
 
+    def test_a_package_declared_with_a_name_still_needs_an_entry(self):
+        root = self.tree()
+        swift = root / 'Packages/SessionKit/Package.swift'
+        swift.write_text(swift.read_text() + '\nlet named = [.package(name: "Named", url: "https://github.com/x/Named.git", exact: "2.0.0")]\n')
+        self.assertProblem(root, 'Swift package named')
+
     def test_a_new_npm_dependency_needs_an_entry(self):
         root = self.tree()
         self.edit_json(root / 'package.json', lambda d: d['devDependencies'].update({'left-pad': '1.0.0'}))
@@ -163,6 +169,13 @@ class ThirdPartyNoticesTests(unittest.TestCase):
         (root / 'App/SharedResources/Serif.ttf').touch()
         self.assertProblem(root, 'scripts/stray.onnx')
         self.assertProblem(root, 'App/SharedResources/Serif.ttf')
+
+    def test_a_content_folder_does_not_cover_a_model_file(self):
+        root = self.tree()
+        (root / 'fixtures/voice.onnx').touch()
+        (root / 'Contracts/fixtures/Serif.ttf').touch()
+        self.assertProblem(root, 'fixtures/voice.onnx')
+        self.assertProblem(root, 'Contracts/fixtures/Serif.ttf')
 
     def test_other_model_file_types_are_caught(self):
         root = self.tree()

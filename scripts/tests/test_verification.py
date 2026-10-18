@@ -506,6 +506,12 @@ class VerificationTests(unittest.TestCase):
                      'THIRD_PARTY_NOTICES.md', 'Design/SpokenMarginsOverhaul/package.json'):
             self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
         self.assertEqual(verification.runner_test_scope(['docs/a.md'])[0], 'none')
+        # A manifest, model or font file added anywhere must run the check in the PR that adds it, not in the
+        # next PR that touches scripts/.
+        for path in ('ops/x/requirements.txt', 'Design/New/fonts/a.ttf', 'docs/y/package.json', 'ops/m/voice.onnx',
+                     'Design/NewPrototype/package.json', 'Tools/z/Package.swift'):
+            self.assertEqual(verification.runner_test_scope([path])[0], 'readers', path)
+        self.assertEqual(verification.runner_test_scope(['ops/x/notes.txt', 'docs/a.png'])[0], 'none')
 
     def test_no_diff_information_runs_every_step(self):
         for changed in (None, []):
