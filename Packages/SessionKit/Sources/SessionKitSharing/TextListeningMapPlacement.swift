@@ -41,7 +41,7 @@ public struct TextListeningMapPlacement: Equatable, Sendable {
 
     /// Chapter summaries by chapter id, for the chapters that have one.
     public var summariesByChapterId: [String: String] {
-        Dictionary(uniqueKeysWithValues: scenes.compactMap { scene in scene.summary.map { (scene.id, $0) } })
+        Dictionary(scenes.compactMap { scene in scene.summary.map { (scene.id, $0) } }, uniquingKeysWith: { first, _ in first })
     }
 
     /// The listener-facing line for a map that only partly landed. Nil when every chapter did.
@@ -61,21 +61,39 @@ public struct TextListeningMapPlacement: Equatable, Sendable {
 public enum TextListeningMapPlacer {
     /// Places `proposal` on `text`. `expectedExactEditionSHA256` is the sender's exact-text hash: when it equals
     /// the hash of `text`, the sender's offsets are trusted without searching.
+    ///
+    /// Looking for a quotation that isn't there reads the whole text, so a copy that can't hold the map is given up on
+    /// early: once more than `1 - minimumPlacedFraction` of the scenes have missed, nothing is placed. Scenes are tried
+    /// spread across the map, so a wrong text misses at once. With `giveUpIfNoneOfFirst`, a text that finds none of
+    /// that many scenes is also given up on.
     public static func place(
         _ proposal: PortableListeningMapProposalArtifact,
         in text: String,
-        expectedExactEditionSHA256: String? = nil
+        expectedExactEditionSHA256: String? = nil,
+        minimumPlacedFraction: Double = 0.5,
+        giveUpIfNoneOfFirst sample: Int = 0
     ) -> TextListeningMapPlacement {
         let scenes = proposal.scenes.sorted { $0.order < $1.order }
+        let neededPlaced = Int((Double(scenes.count) * minimumPlacedFraction - 1e-9).rounded(.up))
+        let allowedMisses = scenes.count - neededPlaced
         var found: [(sceneIndex: Int, start: Int)] = []
-        for (index, scene) in scenes.enumerated() {
+        var misses = 0
+        var tried = 0
+        for index in spreadOrder(scenes.count) {
             let resolution = PortableArticleAnchorResolver.resolve(
-                anchor: scene.startAnchor, in: text, expectedExactEditionSHA256: expectedExactEditionSHA256
+                anchor: scenes[index].startAnchor, in: text, expectedExactEditionSHA256: expectedExactEditionSHA256
             )
-            guard resolution.evidenceClass == .articleTextVerified, !resolution.isAmbiguous,
-                  let start = resolution.localStartChar else { continue }
-            found.append((index, start))
+            tried += 1
+            if resolution.evidenceClass == .articleTextVerified, !resolution.isAmbiguous, let start = resolution.localStartChar {
+                found.append((index, start))
+            } else {
+                misses += 1
+                if misses > allowedMisses || (sample > 0 && tried == sample && found.isEmpty) {
+                    return TextListeningMapPlacement(proposalId: proposal.id, scenes: [], unplacedSceneIds: scenes.map(\.id))
+                }
+            }
         }
+        found.sort { $0.sceneIndex < $1.sceneIndex }
         // A start that jumped ahead of its neighbours is a wrong match; keep the longest run in reading order.
         let kept = longestStrictlyIncreasing(found.map(\.start)).map { found[$0] }
         let keptIndexes = Set(kept.map(\.sceneIndex))
@@ -97,6 +115,12 @@ public enum TextListeningMapPlacer {
             proposalId: proposal.id, scenes: placed,
             unplacedSceneIds: scenes.indices.filter { !keptIndexes.contains($0) }.map { scenes[$0].id }
         )
+    }
+
+    /// 0, s, 2s, 3s, then 1, 1+s, ...: four scenes from across the map come first.
+    static func spreadOrder(_ count: Int) -> [Int] {
+        let stride = max(1, count / 4)
+        return (0..<stride).flatMap { offset in Swift.stride(from: offset, to: count, by: stride) }
     }
 
     /// Indexes of a longest strictly increasing subsequence; the earliest wins a tie.

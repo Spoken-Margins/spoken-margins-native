@@ -60,7 +60,10 @@ public enum ListeningMapPacketItemMatcher {
         var tied = false
         for item in candidates where SharedItemIdentityBuilder.itemType(for: item) == packetItem.itemType {
             guard let text = item.text, !text.isEmpty else { continue }
-            let placement = TextListeningMapPlacer.place(proposal, in: text, expectedExactEditionSHA256: packetItem.exactEditionSHA256)
+            let placement = TextListeningMapPlacer.place(
+                proposal, in: text, expectedExactEditionSHA256: packetItem.exactEditionSHA256,
+                minimumPlacedFraction: minimumPlacedFraction, giveUpIfNoneOfFirst: 4
+            )
             guard placement.isUsable else { continue }
             let fraction = Double(placement.scenes.count) / Double(max(1, placement.totalSceneCount))
             guard fraction >= minimumPlacedFraction else { continue }

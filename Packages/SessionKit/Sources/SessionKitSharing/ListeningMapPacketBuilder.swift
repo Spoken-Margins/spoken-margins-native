@@ -52,7 +52,8 @@ public enum ListeningMapPacketBuilder {
         languageCode: String? = nil
     ) -> SharedItemIdentity {
         // A link that holds an access secret never leaves the device, as for every other packet (#168).
-        let link = ShareableLinkPolicy.shareableLink(canonicalURL)
+        // Only an https link travels; the writer refuses any other, so an http source is shared like a file with none.
+        let link = SharedItemIdentityBuilder.normalizedSharingURL(ShareableLinkPolicy.shareableLink(canonicalURL))
         return SharedItemIdentity(
             itemType: itemType,
             canonicalURL: link,
@@ -108,10 +109,14 @@ public enum ListeningMapPacketBuilder {
             ))
         }
         let proposal = PortableListeningMapProposalArtifact(
-            id: id, languageCode: languageCode, createdAt: createdAt, generator: generator, scenes: records
+            id: id, languageCode: languageCode, createdAt: createdAt, generator: String(generator.prefix(200)), scenes: records
         )
         if let violation = PortableListeningMapContract.violations(in: proposal, itemText: text).first {
             throw BuildError.contractViolation(violation.description)
+        }
+        // The packet carries none of the text: a quotation the share contract would strip must never be written.
+        if PortableListeningMapContract.withoutLongAnchorQuotations(proposal) != proposal {
+            throw BuildError.contractViolation("an anchor quotes \(PortableListeningMapContract.verbatimRunWords) or more words of the text")
         }
         // A listener's copy is only as good at finding a scene as the builder's own: check on the sender's text.
         for (index, record) in records.enumerated() {
@@ -179,24 +184,42 @@ public enum ListeningMapPacketBuilder {
         var first = start
         while first < characters.count, characters[first].isWhitespace { first += 1 }
         guard first < characters.count else { return nil }
-        let quoteEnd = endOfWords(ListeningMapPacket.quotedWords, from: first, in: characters)
-        let context = ListeningMapPacket.contextWords > 0
-            ? startOfWords(ListeningMapPacket.contextWords, before: first, in: characters) : first
-        return PortableAnchorEvidence(
-            anchorType: .text, startChar: first, endChar: quoteEnd,
-            exactText: String(characters[first..<quoteEnd]),
-            prefix: context < first ? String(characters[context..<first]) : nil
-        ).bounded()
+        // The share contract counts words more finely than whitespace ("father's" is two), so shrink the context
+        // and then the quotation until the whole anchor stays under its ten-word limit.
+        for (quoted, context) in wordBudgets() {
+            let quoteEnd = endOfWords(quoted, from: first, in: characters)
+            let contextStart = context > 0 ? startOfWords(context, before: first, in: characters) : first
+            let anchor = PortableAnchorEvidence(
+                anchorType: .text, startChar: first, endChar: quoteEnd,
+                exactText: String(characters[first..<quoteEnd]),
+                prefix: contextStart < first ? String(characters[contextStart..<first]) : nil
+            ).bounded()
+            if PortableListeningMapContract.quotedWordCount(of: anchor) < PortableListeningMapContract.verbatimRunWords { return anchor }
+        }
+        return nil
     }
 
     private static func endAnchor(at end: Int, in characters: [Character]) -> PortableAnchorEvidence? {
         var last = end
         while last > 0, characters[last - 1].isWhitespace { last -= 1 }
         guard last > 0 else { return nil }
-        let first = startOfWords(ListeningMapPacket.quotedWords, before: last, in: characters)
-        return PortableAnchorEvidence(
-            anchorType: .text, startChar: first, endChar: last, exactText: String(characters[first..<last])
-        ).bounded()
+        for (quoted, _) in wordBudgets() {
+            let first = startOfWords(quoted, before: last, in: characters)
+            let anchor = PortableAnchorEvidence(
+                anchorType: .text, startChar: first, endChar: last, exactText: String(characters[first..<last])
+            ).bounded()
+            if PortableListeningMapContract.quotedWordCount(of: anchor) < PortableListeningMapContract.verbatimRunWords { return anchor }
+        }
+        return nil
+    }
+
+    /// Quoted and context word counts to try, most generous first.
+    private static func wordBudgets() -> [(quoted: Int, context: Int)] {
+        var budgets: [(Int, Int)] = []
+        for quoted in stride(from: ListeningMapPacket.quotedWords, through: 3, by: -1) {
+            for context in stride(from: ListeningMapPacket.contextWords, through: 0, by: -1) { budgets.append((quoted, context)) }
+        }
+        return budgets
     }
 
     /// The index just past the `count`th word at or after `index`, or the end of the text.

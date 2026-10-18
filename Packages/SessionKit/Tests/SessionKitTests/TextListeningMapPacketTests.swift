@@ -89,8 +89,8 @@ final class TextListeningMapPacketTests: XCTestCase {
         let map = try proposal()
         for scene in map.scenes {
             for anchor in [scene.startAnchor, scene.endAnchor] {
-                let quoted = [anchor.prefix, anchor.exactText, anchor.suffix].compactMap { $0 }.joined(separator: " ")
-                let words = quoted.split(whereSeparator: \.isWhitespace).count
+                // The share contract's own count: an apostrophe splits a word, so "father's" is two.
+                let words = PortableListeningMapContract.quotedWordCount(of: anchor)
                 XCTAssertLessThan(words, PortableListeningMapContract.verbatimRunWords, "\(scene.id) quotes \(words) words")
             }
         }
@@ -123,7 +123,59 @@ final class TextListeningMapPacketTests: XCTestCase {
 
     func testTheImporterRefusesAMapPacketInsteadOfMakingAnEmptyLayer() throws {
         let verified = try read(try write(try packet()))
-        XCTAssertThrowsError(try SpokenMarginsPackageImporter.importPackage(verified, repository: InMemorySessionRepository()))
+        XCTAssertThrowsError(try SpokenMarginsPackageImporter.importPackage(verified, repository: InMemorySessionRepository())) { error in
+            XCTAssertTrue("\(error)".contains("no Margins to import"), "\(error)")
+        }
+    }
+
+    func testAnApostropheCountsAsTwoWordsSoTheSecondSceneStillStaysUnderTheLimit() throws {
+        // "father's" is two words to the contract; a seven-word quote plus context would reach eleven.
+        let second = try XCTUnwrap(try proposal().scenes.first { $0.id == "scene-2" })
+        XCTAssertLessThan(PortableListeningMapContract.quotedWordCount(of: second.startAnchor), PortableListeningMapContract.verbatimRunWords)
+        let stripped = PortableListeningMapContract.withoutLongAnchorQuotations(try proposal())
+        XCTAssertEqual(stripped, try proposal(), "the exporter's rule for reference packets would change nothing")
+    }
+
+    func testTheReaderRefusesAMapWhoseAnchorQuotesTheTextAtLength() throws {
+        let one = try packet()
+        var data = one.artifactData
+        let path = "artifacts/listening-map-proposal-0001.json"
+        var json = String(decoding: try XCTUnwrap(data[path]), as: UTF8.self)
+        let long = "The harbour town woke slowly that morning, with the fishing boats rocking against their ropes"
+        let short = try XCTUnwrap(try proposal().scenes.first?.startAnchor.exactText)
+        json = json.replacingOccurrences(of: "\"exactText\":\"\(short)\"", with: "\"exactText\":\"\(long)\"")
+        data[path] = Data(json.utf8)
+        XCTAssertThrowsError(try SpokenMarginsPackageArchive.write(
+            PreparedSpokenMarginsPackage(manifest: one.manifest, artifactData: data, assetFiles: [:]),
+            to: root.appendingPathComponent("long.spokenmargins"))) { error in
+            XCTAssertTrue("\(error)".contains("quotes the text at length"), "\(error)")
+        }
+    }
+
+    func testAnHTTPLinkIsNotPutInTheIdentitySoThePacketStillWrites() throws {
+        let identity = ListeningMapPacketBuilder.identity(itemType: .text, title: "T", canonicalURL: "http://example.com/a", text: text)
+        XCTAssertNil(identity.canonicalURL)
+        let prepared = try ListeningMapPacketBuilder.prepare(
+            packageId: "p-http", createdAt: created, item: identity, proposal: try proposal(), senderDisplayLabel: nil)
+        XCTAssertEqual(prepared.manifest.itemTransport.kind, .recipientSupplied)
+        XCTAssertNoThrow(try read(try write(prepared, name: "http")))
+    }
+
+    func testAWrongTextIsGivenUpOnAfterAFewMissesAndPlacesNothing() throws {
+        let other = String(repeating: "Gardens need patient hands and a quiet afternoon in spring. ", count: 40)
+        let placement = TextListeningMapPlacer.place(try proposal(), in: other, minimumPlacedFraction: 0.8, giveUpIfNoneOfFirst: 4)
+        XCTAssertTrue(placement.scenes.isEmpty)
+        XCTAssertEqual(placement.totalSceneCount, 6)
+    }
+
+    func testTheGiveUpRuleNeverCostsAChapterThatWouldHaveQualified() throws {
+        // Five of six found is exactly the matcher's 0.8 bar, with the miss anywhere in the spread order.
+        for missing in 0..<6 {
+            var edited = paragraphs
+            edited[missing] = "A completely different paragraph about gardens, entirely unrelated to the harbour story."
+            let placement = TextListeningMapPlacer.place(try proposal(), in: edited.joined(separator: "\n\n"), minimumPlacedFraction: 0.8, giveUpIfNoneOfFirst: 4)
+            XCTAssertEqual(placement.scenes.count, 5, "paragraph \(missing) replaced")
+        }
     }
 
     func testTheReaderRefusesAMapPacketThatCarriesTwoMaps() throws {
@@ -273,9 +325,11 @@ final class TextListeningMapPacketTests: XCTestCase {
 
     func testAMapThatPlacesFewerThanHalfOfItsChaptersIsNotUsable() throws {
         let copy = paragraphs.prefix(2).joined(separator: "\n\n") + "\n\nSomething else entirely about winter tides and a lighthouse keeper's cat.\n\nAnd another unrelated page."
+        // Two of six is below the bar, so placement stops looking and places none rather than a map that mostly misses.
         let placement = try place(on: copy)
-        XCTAssertEqual(placement.scenes.count, 2)
+        XCTAssertTrue(placement.scenes.isEmpty)
         XCTAssertFalse(placement.isUsable)
+        XCTAssertEqual(placement.totalSceneCount, 6)
     }
 
     func testTheSenderOffsetsAreNotTrustedOnAnotherEdition() throws {

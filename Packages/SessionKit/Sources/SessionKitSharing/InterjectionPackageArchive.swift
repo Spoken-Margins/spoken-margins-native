@@ -671,6 +671,10 @@ public enum SpokenMarginsPackageArchive {
                 throw SpokenMarginsPackageArchiveError.invalidManifest("a listening map scene has no text anchor")
             }
         }
+        // The packet carries none of the item's text beyond a few words per scene.
+        guard PortableListeningMapContract.withoutLongAnchorQuotations(proposal) == proposal else {
+            throw SpokenMarginsPackageArchiveError.invalidManifest("a listening map anchor quotes the text at length")
+        }
     }
 
     /// A repeated entry or a reply with two parents (a fork) is allowed; the importer keeps both
