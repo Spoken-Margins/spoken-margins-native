@@ -13,7 +13,8 @@ public enum SharedTextListeningMapImporter {
         case none
         /// This same map was added before.
         case sameMap(chapterCount: Int)
-        /// Another shared map is saved for this item. Importing replaces it.
+        /// Another map the listener has is saved for this item: one shared earlier, one they generated or pasted in,
+        /// or one from a Listening Edition. Importing replaces it.
         case differentMap
     }
 
@@ -42,7 +43,20 @@ public enum SharedTextListeningMapImporter {
     ) throws -> Existing {
         let stored = try repository.loadPortableListeningMapProposals(itemId: itemId)
         if let same = stored.first(where: { $0.id == proposal.id }) { return .sameMap(chapterCount: same.scenes.count) }
-        return stored.isEmpty ? .none : .differentMap
+        if !stored.isEmpty { return .differentMap }
+        // A map the listener made or pasted in is saved only as a Listening Map, with no proposal beside it. Saving a
+        // new map deletes it, so the sheet has to say "Replace" before that happens.
+        if let map = try repository.loadListeningMap(itemId: itemId), !isAppDerived(map, itemId: itemId) { return .differentMap }
+        return .none
+    }
+
+    /// Chapters the app found by itself, from headings or the document's own navigation. They can be found again, so
+    /// replacing them costs the listener nothing. Any other map was made, pasted or shared, and replacing it loses it.
+    static func isAppDerived(_ map: ListeningMap, itemId: String) -> Bool {
+        map.id == "shared-map-" + itemId
+            || map.id.hasPrefix("canonical-navigation-")
+            || map.id == "map-\(itemId)-markdown"
+            || map.id == "map-\(itemId)-generated"
     }
 
     /// A map placed on an item, ready to save. Building it only reads the repository, so it can run off the main actor.

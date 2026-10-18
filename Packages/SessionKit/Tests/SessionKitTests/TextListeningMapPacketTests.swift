@@ -356,8 +356,8 @@ final class TextListeningMapPacketTests: XCTestCase {
 
     // MARK: Finding the item
 
-    private func textItem(id: String, title: String, body: String, reference: String?) -> Item {
-        Item(id: id, title: title, mediaType: "text", text: body, externalReference: reference, status: "ready", externalReferenceType: reference == nil ? "manual" : "url")
+    private func textItem(id: String, title: String, body: String, reference: String?, mediaType: String = "text") -> Item {
+        Item(id: id, title: title, mediaType: mediaType, text: body, externalReference: reference, status: "ready", externalReferenceType: reference == nil ? "manual" : "url")
     }
 
     func testAMapMatchesTheArticleTheListenerHasByLink() throws {
@@ -380,18 +380,37 @@ final class TextListeningMapPacketTests: XCTestCase {
         let extracted = paragraphs.joined(separator: "\n") .replacingOccurrences(of: "harbour", with: "harbor")
         let pdfIdentity = ListeningMapPacketBuilder.identity(itemType: .pdf, title: "The Harbour Town", canonicalURL: nil, text: text)
         let items = [
-            textItem(id: "pdf", title: "harbour-town.pdf", body: extracted, reference: "harbour-town.pdf"),
-            textItem(id: "other-pdf", title: "other.pdf", body: "Unrelated words about gardens.", reference: "other.pdf"),
+            textItem(id: "pdf", title: "harbour-town.pdf", body: extracted, reference: "harbour-town.pdf", mediaType: "pdf"),
+            textItem(id: "other-pdf", title: "other.pdf", body: "Unrelated words about gardens.", reference: "other.pdf", mediaType: "pdf"),
             textItem(id: "article", title: "An article", body: extracted, reference: "https://example.com/harbour-copy")
         ]
         XCTAssertEqual(ListeningMapPacketItemMatcher.match(packetItem: pdfIdentity, proposal: try proposal(), among: items), .item("pdf"))
     }
 
+    func testAPDFFetchedFromALinkWithNoPDFEndingStillMatchesByWhereTheChaptersLand() throws {
+        let extracted = paragraphs.joined(separator: "\n").replacingOccurrences(of: "harbour", with: "harbor")
+        let pdfIdentity = ListeningMapPacketBuilder.identity(itemType: .pdf, title: "The Harbour Town", canonicalURL: nil, text: text)
+        let items = [textItem(id: "arxiv", title: "Paper", body: extracted, reference: "https://arxiv.org/pdf/2401.12345", mediaType: "pdf")]
+        XCTAssertEqual(ListeningMapPacketItemMatcher.match(packetItem: pdfIdentity, proposal: try proposal(), among: items), .item("arxiv"))
+    }
+
+    func testAnEPUBMatchesByWhereTheChaptersLand() throws {
+        let extracted = paragraphs.joined(separator: "\n").replacingOccurrences(of: "harbour", with: "harbor")
+        let epubIdentity = ListeningMapPacketBuilder.identity(itemType: .epub, title: "The Harbour Town", canonicalURL: nil, text: text)
+        let items = [textItem(id: "book", title: "Book", body: extracted, reference: "file:///Documents/Sources/book.epub", mediaType: "epub")]
+        XCTAssertEqual(ListeningMapPacketItemMatcher.match(packetItem: epubIdentity, proposal: try proposal(), among: items), .item("book"))
+    }
+
+    func testAudioIsNeverACandidateForAMap() throws {
+        let items = [textItem(id: "audio", title: "The Harbour Town", body: text, reference: "https://example.com/harbour", mediaType: "audiobook")]
+        XCTAssertEqual(ListeningMapPacketItemMatcher.match(packetItem: article(), proposal: try proposal(), among: items), .none)
+    }
+
     func testTwoPDFsThatHoldTheMapEquallyAreAmbiguous() throws {
         let extracted = paragraphs.joined(separator: "\n").replacingOccurrences(of: "harbour", with: "harbor")
         let pdfIdentity = ListeningMapPacketBuilder.identity(itemType: .pdf, title: "The Harbour Town", canonicalURL: nil, text: text)
-        let items = [textItem(id: "a", title: "a.pdf", body: extracted, reference: "a.pdf"),
-                     textItem(id: "b", title: "b.pdf", body: extracted, reference: "b.pdf")]
+        let items = [textItem(id: "a", title: "a.pdf", body: extracted, reference: "a.pdf", mediaType: "pdf"),
+                     textItem(id: "b", title: "b.pdf", body: extracted, reference: "b.pdf", mediaType: "pdf")]
         XCTAssertEqual(ListeningMapPacketItemMatcher.match(packetItem: pdfIdentity, proposal: try proposal(), among: items), .ambiguous)
     }
 

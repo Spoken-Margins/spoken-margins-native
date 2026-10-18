@@ -907,7 +907,10 @@ public final class SQLiteSessionStore: SessionRepositoryTransaction, @unchecked 
     }
 
     public func removePortableListeningMapProposals(itemId: String) throws {
-        try deleteRecords(kind: "portable_listening_map_proposal", itemId: itemId)
+        try withTransaction {
+            try deleteRecords(kind: "portable_listening_map_proposal", itemId: itemId)
+            try deleteRecords(kind: "resolved_listening_map_projection", itemId: itemId)
+        }
     }
 
     public func loadPortableListeningMapProposals(itemId: String) throws -> [PortableListeningMapProposalArtifact] {

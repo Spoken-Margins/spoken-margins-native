@@ -154,7 +154,7 @@ final class SpokenMarginsPackageImportCoordinatorTests: XCTestCase {
 
     func testAPickedPDFWithDifferentTextIsMatchedByWhereTheChaptersLand() throws {
         let h = try makeHarness()
-        let pdf = try h.seedArticle(id: "pdf", reference: "harbour.pdf", text: Self.harbourText.replacingOccurrences(of: "harbour", with: "harbor"))
+        let pdf = try h.seedArticle(id: "pdf", reference: "harbour.pdf", mediaType: "pdf", text: Self.harbourText.replacingOccurrences(of: "harbour", with: "harbor"))
         let packet = try h.writeMapPacket(named: "map-pdf", itemType: .pdf, link: nil)
 
         assertStaged(h.coordinator.stage(from: packet.url))
@@ -510,8 +510,8 @@ private final class ImportHarness {
     }
 
     @discardableResult
-    func seedArticle(id: String, reference: String, text: String = SpokenMarginsPackageImportCoordinatorTests.harbourText) throws -> Item {
-        let item = Item(id: id, title: "The Harbour Town", mediaType: "text", text: text,
+    func seedArticle(id: String, reference: String, mediaType: String = "text", text: String = SpokenMarginsPackageImportCoordinatorTests.harbourText) throws -> Item {
+        let item = Item(id: id, title: "The Harbour Town", mediaType: mediaType, text: text,
                         externalReference: reference, status: "ready", externalReferenceType: "url")
         try store.seed(item: item)
         return item

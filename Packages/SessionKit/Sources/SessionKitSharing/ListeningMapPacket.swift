@@ -46,19 +46,32 @@ public enum ListeningMapPacketItemMatcher {
     /// A file of the same kind must hold at least this share of the map's chapters to stand for the packet's item.
     public static let minimumPlacedFraction = 0.8
 
+    /// The media types the app saves readable documents under: articles, PDFs and EPUBs. Audio never carries a text map.
+    static let readableDocumentTypes: Set<String> = ["text", "pdf", "epub"]
+
+    /// What the item is as a document. The saved media type decides first, because a PDF fetched from a link may have
+    /// no `.pdf` ending for `SharedItemIdentityBuilder.itemType(for:)` to read.
+    static func documentType(of item: Item) -> SharedItemType {
+        switch item.mediaType {
+        case "pdf": return .pdf
+        case "epub": return .epub
+        default: return SharedItemIdentityBuilder.itemType(for: item)
+        }
+    }
+
     public static func match(
         packetItem: SharedItemIdentity,
         proposal: PortableListeningMapProposalArtifact,
         among items: [Item]
     ) -> Match {
-        let candidates = items.filter { $0.deletedAt == nil && $0.mediaType == "text" }
+        let candidates = items.filter { $0.deletedAt == nil && readableDocumentTypes.contains($0.mediaType) }
         if let identityMatch = SharedPacketItemMatcher.matchingItemId(for: packetItem, among: candidates) {
             return .item(identityMatch)
         }
         guard packetItem.itemType == .pdf || packetItem.itemType == .epub else { return .none }
         var best: (id: String, fraction: Double)?
         var tied = false
-        for item in candidates where SharedItemIdentityBuilder.itemType(for: item) == packetItem.itemType {
+        for item in candidates where documentType(of: item) == packetItem.itemType {
             guard let text = item.text, !text.isEmpty else { continue }
             let placement = TextListeningMapPlacer.place(
                 proposal, in: text, expectedExactEditionSHA256: packetItem.exactEditionSHA256,

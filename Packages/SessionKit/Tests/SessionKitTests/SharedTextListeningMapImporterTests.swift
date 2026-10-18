@@ -101,7 +101,7 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
 
     func testAnItemWithNoMapSaysNoneAndAHeadingMapDoesNotCountAsAnotherMap() throws {
         let item = try seed(text: text)
-        try store.saveListeningMap(ListeningMap(id: "derived", itemId: item.id, overview: "", chapters: [
+        try store.saveListeningMap(ListeningMap(id: "map-\(item.id)-markdown", itemId: item.id, overview: "", chapters: [
             Chapter(id: "h1", title: "Heading", startChar: 0, endChar: 10, percent: 0)
         ]))
         let proposal = try XCTUnwrap(ListeningMapPacket.proposal(in: try package()))
@@ -109,6 +109,29 @@ final class SharedTextListeningMapImporterTests: XCTestCase {
         let outcome = try SharedTextListeningMapImporter.importMap(try package(), into: item, repository: store)
         XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: false))
         XCTAssertEqual(try store.loadListeningMap(itemId: item.id)?.chapters.count, 5, "the sender's chapters replace the heading-derived ones")
+    }
+
+    func testAMapTheListenerMadeOrPastedInCountsAsAnotherMapSoItIsNotLostSilently() throws {
+        let item = try seed(text: text)
+        try store.saveListeningMap(ListeningMap(id: "map-\(item.id)-manual", itemId: item.id, overview: "Mine", chapters: [
+            Chapter(id: "c1", title: "My chapter", startChar: 0, endChar: 10, percent: 0)
+        ]))
+        let contents = try package()
+        let proposal = try XCTUnwrap(ListeningMapPacket.proposal(in: contents))
+        XCTAssertEqual(try SharedTextListeningMapImporter.existing(for: proposal, itemId: item.id, repository: store), .differentMap)
+        let outcome = try SharedTextListeningMapImporter.importMap(contents, into: item, repository: store)
+        XCTAssertEqual(outcome, .added(placed: 5, total: 5, replacedAnotherMap: true))
+    }
+
+    func testReplacingAMapAlsoDropsTheProjectionThatPointedAtTheOldProposal() throws {
+        let item = try seed(text: text)
+        _ = try SharedTextListeningMapImporter.importMap(try package(mapId: "map-a"), into: item, repository: store)
+        try store.saveResolvedListeningMapProjection(ResolvedListeningMapProjection(
+            id: "projection-\(item.id)", itemId: item.id, proposalId: "map-a", points: [], intervals: []
+        ))
+        _ = try SharedTextListeningMapImporter.importMap(try package(mapId: "map-b"), into: item, repository: store)
+        XCTAssertNil(try store.loadResolvedListeningMapProjection(itemId: item.id), "a projection never outlives its proposal")
+        XCTAssertEqual(try store.loadPortableListeningMapProposals(itemId: item.id).map(\.id), ["map-b"])
     }
 
     func testATextThatLacksTheChaptersSavesNothingAndSaysWhy() throws {
